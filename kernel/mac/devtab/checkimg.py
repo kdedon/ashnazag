@@ -167,7 +167,7 @@ for t in ('io_init', 'io_start', 'io_halt', 'io_poll', 'init_tbl'):
 check([nm(x) for x in tbl('io_start')] == ['mac_diskprobe'], 'io_start = { mac_diskprobe }')
 fm = []
 for i in range(L(byname['fmodcnt'])):
-    a = byname['fmodsw'] + 20 * i
+    a = byname.get('__amix_fmodsw', byname['fmodsw']) + 20 * i   # stock rows
     o = DOFF + a - D0
     fm.append((img[o:o + 9].split(b'\0')[0].decode(), nm(L(a + 12))))
 print('fmodsw  ' + ' '.join('%s=%s' % f for f in fm))

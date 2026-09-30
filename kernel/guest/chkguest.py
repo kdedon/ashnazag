@@ -11,8 +11,10 @@
 #   handler and reaches guest_gate_c only after testing p_evpdp;
 # - guest_gate_c calls guest_trap and leaves through ureturn or the
 #   chain;
-# - hooksw names the six hook pointers, all 0 at link time;
-# - the events stubs, sendsig, valid_usr_range and execsw are ours,
+# - the A-line gate sends a guest with GPF_ALINE to guest_linea, which
+#   leaves by rte or through guest_gate_c;
+# - hooksw names the seven hook pointers, all 0 at link time;
+# - the events stubs, sendsig, valid_usr_range, fsig and execsw are ours,
 #   with the stock bodies at __amix_*; execsw has 11 rows and the
 #   stock table's three rows are coffexec, elfexec, intpexec.
 # One OK/FAIL line per check; exit 1 on any FAIL.
@@ -82,7 +84,7 @@ gc = sym['guest_gate_c'][0]
 bad_g = []
 for v, t in gated:
     a = sym['guest_gate_%d' % v][0]
-    txt = dis(a, 0x40)
+    txt = dis(a, 0x60)
     body = txt[txt.index('<guest_gate_%d>:' % v):]
     body = body.split('<guest_gate_', 2)
     body = body[0] + body[1]
@@ -100,6 +102,15 @@ check(not bad_g, 'gates: native and supervisor paths reach the stock handler, '
 txt = dis(gc, 0x60)
 check(('<guest_trap>' in txt) and ('<ureturn>' in txt) and txt.count('jsr') == 1,
       'guest_gate_c: one call, guest_trap; exit through ureturn')
+txt = dis(sym['guest_gate_10'][0], 0x60)
+txt = txt[txt.index('<guest_gate_10>:'):].split('<guest_gate_', 2)[1]
+check('btst #0,%a0@(15)' in txt and '<guest_linea>' in txt,
+      'A-line gate: GPF_ALINE (gp_flags bit 0) selects guest_linea')
+la = sym['guest_linea'][0]
+txt = dis(la, 0xa0)
+ins = [l.split('\t')[2] for l in txt.splitlines() if l.count('\t') >= 2]
+check('rte' in ins and '<guest_gate_c>' in txt and '<u+0x374>' in txt,
+      'guest_linea: returns by rte, falls back to guest_gate_c')
 
 hs = sym['hooksw'][0]
 names, ok = [], True
@@ -112,15 +123,16 @@ for i in range(16):
     p = L(hs + 16 * i + 4)
     ok = ok and byaddr.get(p) == names[-1] + '_hook' and L(p) == 0 and L(hs + 16 * i + 12) == 0
 check(ok and names == ['guest_trap', 'guest_exec', 'guest_fork', 'guest_exit',
-                       'guest_sendsig', 'guest_vur'],
+                       'guest_sendsig', 'guest_vur', 'guest_fsig'],
       'hooksw: %s, pointers 0, no owner' % ' '.join(names))
 
-own = [s for s in ('ev_config', 'ev_fork', 'ev_exec', 'ev_exit', 'sendsig', 'valid_usr_range')
+own = [s for s in ('ev_config', 'ev_fork', 'ev_exec', 'ev_exit', 'sendsig', 'valid_usr_range',
+                   'fsig')
        if abs(sym[s][0] - sym['guest_trap'][0]) > 0x1000]
 check(not own, 'events stubs and wrappers bound to the guest shims' + (' (not: %s)' % own if own else ''))
 check(all('__amix_' + s in sym and sym['__amix_' + s][0] != sym[s][0]
-          for s in ('sendsig', 'valid_usr_range', 'execsw')),
-      '__amix_sendsig, __amix_valid_usr_range, __amix_execsw present')
+          for s in ('sendsig', 'valid_usr_range', 'fsig', 'execsw')),
+      '__amix_sendsig, __amix_valid_usr_range, __amix_fsig, __amix_execsw present')
 check(sym['execsw'][1] == 11 * 12 and L(sym['nexectype'][0]) == 3,
       'execsw: 11 rows, nexectype 3 at link time')
 ae = sym['__amix_execsw'][0]

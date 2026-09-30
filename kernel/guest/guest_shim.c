@@ -1,7 +1,7 @@
 /*
  * guest_shim.c -- static part of guest-process support: the events
- * stubs, the sendsig and valid_usr_range wrappers, the hook table and
- * the C entry of the vector gates.
+ * stubs, the sendsig, valid_usr_range and fsig wrappers, the hook
+ * table and the C entry of the vector gates.
  *
  * A shim calls its hook only for a guest process (p_evpdp set), which
  * holds the module that owns the hook, or for the process whose exec
@@ -38,6 +38,7 @@ int	(*guest_fork_hook)();
 void	(*guest_exit_hook)();
 int	(*guest_sendsig_hook)();
 int	(*guest_vur_hook)();
+int	(*guest_fsig_hook)();
 
 struct hooksw hooksw[] = {
 	{ "guest_trap",		(char **)&guest_trap_hook,	0, 0 },
@@ -46,11 +47,17 @@ struct hooksw hooksw[] = {
 	{ "guest_exit",		(char **)&guest_exit_hook,	0, 0 },
 	{ "guest_sendsig",	(char **)&guest_sendsig_hook,	0, 0 },
 	{ "guest_vur",		(char **)&guest_vur_hook,	0, 0 },
+	{ "guest_fsig",		(char **)&guest_fsig_hook,	0, 0 },
 	{ 0, 0, 0, 0 }
 };
 
-/* the vector gates read p_evpdp at this offset */
+/* the vector gates read p_evpdp, p_sig, p_hold and gp_flags, gp_vsr, gp_vvbr at these offsets */
 extern char guest_evpdp_at_c8[(int)&((struct proc *)0)->p_evpdp == 0xc8 ? 1 : -1];
+extern char guest_sig_at_9c[(int)&((struct proc *)0)->p_sig == 0x9c &&
+    (int)&((struct proc *)0)->p_hold == 0xa4 ? 1 : -1];
+extern char guest_vcpu_at[(int)&((struct guest_proc *)0)->gp_flags == 12 &&
+    (int)&((struct guest_proc *)0)->gp_vsr == 20 &&
+    (int)&((struct guest_proc *)0)->gp_vvbr == 28 ? 1 : -1];
 
 /*
  * procdup: ev_fork runs only when this says the parent is a guest.
@@ -113,6 +120,16 @@ valid_usr_range(a, len)
 	if (p && p->p_evpdp && guest_vur_hook)
 		return (*guest_vur_hook)(a, len);
 	return __amix_valid_usr_range(a, len);
+}
+
+/* issig: the next signal to take; a guest's profile may hold some back */
+int
+fsig(p)
+	struct proc *p;
+{
+	if (p->p_evpdp && guest_fsig_hook)
+		return (*guest_fsig_hook)(p);
+	return __amix_fsig(p);
 }
 
 /* from the vector gates, guest processes only: 0 handled, else decline */

@@ -6,7 +6,9 @@ environment running on top.
 
 Status: a Quadra 800 boots this kernel straight from disk to a multi-user login on its
 built-in screen, with SCSI, Ethernet, a clock, loadable kernel modules and support for
-A/UX programs (static and shared-library, e.g. `sh`, `ls`, `more`, `vi`). Tested in
+A/UX programs (static and shared-library, e.g. `sh`, `ls`, `more`, `vi`). A/UX's Mac
+environment runs in its own screen session up to an idle Finder desktop, with mouse, keyboard
+and Ctrl-Opt-Cmd-digit switching between the Mac and the console. Tested in
 QEMU's `q800` machine with a real Quadra 800 ROM; hardware testing is in progress.
 
 ## Layout
@@ -15,7 +17,7 @@ QEMU's `q800` machine with a real Quadra 800 ROM; hardware testing is in progres
 |---|---|
 | `kernel/mac/` | Quadra 800 platform layer: boot, MMU map, SCC, 53C96 SCSI, DAFB console, ADB, SONIC, RTC, device tables, root selection, boot blocks |
 | `kernel/dlm/` | SVR4.2-style loadable kernel modules |
-| `kernel/guest/` | A/UX personality: trap gates, A/UX system calls, COFF and shared-library exec |
+| `kernel/guest/` | A/UX personality: trap gates, A/UX system calls, COFF and shared-library exec, Mac environment interface (screens, events, cursor, PRAM) |
 | `kernel/tools/`, `kernel/build.sh` | build: AMIX link kit relink, port build, Mac overlay, checks |
 | `kernel/port-local.diff` | two local changes to the 040/060 port |
 | `images/` | disk-image builders (A/UX Startup, direct boot, disk root) and QEMU scripts |

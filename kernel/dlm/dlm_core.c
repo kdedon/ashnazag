@@ -239,6 +239,12 @@ knownops(a)
 		return &mod_execops;
 	if (a == DLM_KADDR(&mod_hookops, "mod_hookops"))
 		return &mod_hookops;
+	if (a == DLM_KADDR(&mod_drvops, "mod_drvops"))
+		return &mod_drvops;
+#ifndef DLM_HOST
+	if (a == DLM_KADDR(&mod_strops, "mod_strops"))
+		return &mod_strops;
+#endif
 	return 0;
 }
 
@@ -971,7 +977,7 @@ dlm_modadm(uap, rvp)
 {
 	struct mod_mreg r;
 	struct mod_execreg er;
-	int i;
+	int i, mj;
 
 	if (!dlm_inited)
 		return ENOSYS;
@@ -993,6 +999,11 @@ dlm_modadm(uap, rvp)
 		if (copyin(r.md_typedata, (caddr_t)&er, sizeof er))
 			return EFAULT;
 		return dlm_xreg(r.md_modname, &er);
+	}
+	if (uap->type == MOD_TY_CDEV) {
+		if (copyin(r.md_typedata, (caddr_t)&mj, sizeof mj))
+			return EFAULT;
+		return dlm_creg(r.md_modname, mj);
 	}
 	return EINVAL;			/* other slot types not implemented yet */
 }
@@ -1084,6 +1095,9 @@ dlm_init()
 	int i;
 
 	dlm_slot_init();
+#ifndef DLM_HOST
+	dlm_str_init();
+#endif
 	if (dlm_blkcheck(dlm_ksym, (long)KSYM_SPACE) != 0 ||
 	    G32(dlm_ksym + KH_LO) != DLM_KLO || G32(dlm_ksym + KH_HI) != DLM_KHI) {
 		printf("dlm: no kernel symbol table, modules disabled\n");

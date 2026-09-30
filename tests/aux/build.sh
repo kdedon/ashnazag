@@ -5,9 +5,14 @@
 #
 #   sh tests/aux/build.sh kernel.elf outdir
 #
-# Out: outdir/mod.d/{guestcore,auxcore,auxexec}, outdir/bin/<program>,
-# outdir/root/<path> (shared libraries, terminfo, termcap).
-# AUXROOT names the A/UX root (proprietary, never in the repository).
+# Out: outdir/mod.d/{guestcore,auxcore,auxexec,uinter}, outdir/bin/<program>,
+# outdir/root/<path> (shared libraries, terminfo, termcap; for t_mac the
+# Mac environment: startmac, libmac1_s, Patch.067C, the System file in
+# /mac/sys/Sys7 with the Finder, the ROM image at /etc/aux/rom, fidd at
+# /etc/aux/fidd).
+# AUXROOT names the A/UX root, AUXROM the Mac ROM image (default: the
+# Quadra 700 ROM beside the repository); both proprietary, never in the
+# repository.
 # A kernel without guest support gets nothing, and t_aux skips.
 set -e
 
@@ -40,6 +45,23 @@ for f in shlib/libc1_s usr/lib/terminfo/v/vt100 etc/termcap; do
 	fi
 done
 
+# the Mac environment, when the kernel has the uinter module
+AUXROM=${AUXROM:-$AUX/420DBFF3 - Quadra 700&900 & PB140&170.ROM}
+SYSF="$AUXROOT/mac/sys/System Folder/System"
+if [ -f "$OUT/mod.d/uinter" ] && [ -f "$AUXROOT/mac/bin/startmac" ] && [ -f "$SYSF" ] &&
+    [ -f "$AUXROM" ]; then
+	mkdir -p "$OUT/root/mac/bin" "$OUT/root/mac/lib/Patches" "$OUT/root/mac/sys/Sys7" \
+		"$OUT/root/shlib" "$OUT/root/etc/aux"
+	cp "$AUXROOT/mac/bin/startmac" "$OUT/root/mac/bin/"
+	cp "$AUXROOT/shlib/libmac1_s" "$OUT/root/shlib/"
+	cp "$AUXROOT/mac/lib/Patches/Patch.067C" "$OUT/root/mac/lib/Patches/"
+	cp "$SYSF" "$OUT/root/mac/sys/Sys7/System"
+	cp "$AUXROOT/mac/lib/SystemFiles/shared/Finder" "$OUT/root/mac/sys/Sys7/Finder"
+	cp "$AUXROM" "$OUT/root/etc/aux/rom"
+	# the File ID daemon, which the Mac side needs to create folders
+	cp "$AUXROOT/etc/fidd" "$OUT/root/etc/aux/fidd"
+fi
+
 TC=$AUX/toolchain/amix
 O=$OUT/obj
 mkdir -p "$O"
@@ -50,4 +72,12 @@ nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -Wall -m68020 -fno-builtin \
 "$TC/bin/m68k-cbm-sysv4-ld" -T "$T/aux/abi.ld" -o "$O/abi.elf" "$O/abi0.o" "$O/abi.o" \
 	"$LIBGCC"
 python3 "$T/aux/elf2aux.py" "$O/abi.elf" "$OUT/bin/abi"
+# macabi: a Mac task without startmac (text at 0x100000a8, clear of Mac RAM)
+nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -Wall -m68020 -fno-builtin \
+	-c "$T/aux/macabi.c" -o "$O/macabi.o"
+"$TC/bin/m68k-cbm-sysv4-as" -o "$O/macabi0.o" "$T/aux/macabi0.s"
+sed 's/0x10a8/0x100000a8/; s/0x400000/0x10400000/' "$T/aux/abi.ld" > "$O/macabi.ld"
+"$TC/bin/m68k-cbm-sysv4-ld" -T "$O/macabi.ld" -o "$O/macabi.elf" "$O/macabi0.o" \
+	"$O/macabi.o" "$LIBGCC"
+python3 "$T/aux/elf2aux.py" "$O/macabi.elf" "$OUT/bin/macabi"
 echo "[ok] $(ls "$OUT/mod.d" | wc -l) modules, $(ls "$OUT/bin" | wc -l) A/UX programs"

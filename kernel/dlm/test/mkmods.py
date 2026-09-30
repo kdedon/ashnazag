@@ -107,3 +107,20 @@ def hookmod(p, names):
 hookmod('hk', ['h_one', 'h_two'])
 hookmod('hk2', ['h_one'])
 hookmod('hk3', ['h_none'])
+
+
+# character drivers: cd for major 60 (read, ioctl; no write), cdold is
+# D_OLD, cdblk also asks for a block major
+def drvmod(p, major, flag='0', bcount=0):
+    fns = ''.join('\t.globl\t{p}_{f}\n{p}_{f}:\n\tmoveq\t&0,%d0\n\trts\n'.format(p=p, f=f)
+                  for f in ('open', 'close', 'read', 'ioctl'))
+    flagdef = '{p}_flag:\n\t.long\t{v}\n'.format(p=p, v=flag)
+    mod(p, ops='mod_drvops', pdata=p + '_dd', text=fns,
+        data=flagdef + '{p}_dd:\n\t.space\t32\n\t.long\t0, {bc}\n'
+        '\t.long\t{p}_open, {p}_close, {p}_read, 0, {p}_ioctl, 0, 0, 0, 0, 0\n'
+        '\t.long\t0, 0, {p}_flag\n\t.long\t{mj}, 1\n'.format(p=p, bc=bcount, mj=major))
+
+
+drvmod('cd', 60)
+drvmod('cdold', 61, flag='1')
+drvmod('cdblk', 62, bcount=1)

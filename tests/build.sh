@@ -60,7 +60,7 @@ for s in ${ONLY:-"$T"/src/t_*.c "$T/src/runall.c"}; do
 	n=$(basename "$s" .c)
 	cc "$s" "$O/$n.o" $XA -I"$KDIR/dlm/include" -I"$KDIR/mac/display"
 	extra=
-	case $n in t_dlm|t_aux) extra=$MODO ;; esac
+	case $n in t_dlm|t_aux|t_mac) extra=$MODO ;; esac
 	link "$BIN/$n" "$O/$n.o" "$O/t.o" $extra
 	echo "[ok] $n"
 done
@@ -68,6 +68,16 @@ if [ -n "$MODO" ]; then
 	cc "$KDIR/dlm/modadmin.c" "$O/modadmin.o" $XA -w -I"$KDIR/dlm/include"
 	link "$BIN/modadmin" "$O/modadmin.o" $MODO
 	echo "[ok] modadmin"
+fi
+
+# otb/t_*: Open Transport bridge, with the module calls and otwire.h
+if [ -z "$ONLY" ] && [ -f "$KDIR/otbridge/otwire.h" ]; then
+	for s in "$T"/otb/t_*.c; do
+		n=$(basename "$s" .c)
+		cc "$s" "$O/$n.o" $XA -I"$KDIR/dlm/include" -I"$KDIR/otbridge"
+		link "$BIN/$n" "$O/$n.o" "$O/t.o" $MODO
+		echo "[ok] $n"
+	done
 fi
 
 # net/t_*: also libsocket and libnsl; into netbin, for the net root only

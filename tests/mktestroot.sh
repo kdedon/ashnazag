@@ -5,6 +5,8 @@
 #
 # KERNEL supplies the addresses in /tests/ksyms.  Default IMG: build/testroot.img.
 # NOAUX=1 leaves out t_aux's A/UX files and modules (t_aux skips).
+# TESTKB grows by the size of the A/UX files (the Mac environment's are
+# several MB).  INITTAB replaces etc/inittab (e.g. to run fewer tests).
 # NET=1: the network root instead (build/netroot.img, 6 MB): net/net.manifest,
 # build/netbin, and init runs only t_net.
 set -e
@@ -15,17 +17,17 @@ KDIR=${KDIR:-$AUX/kernel}
 RD=$KDIR/mac/ramdisk
 B=$T/build
 KERNEL=${KERNEL:-$KDIR/build/unix-mac.elf}
+BASEKB=4096
 if [ -n "$NET" ]; then
-	TESTKB=${TESTKB:-6144}
+	BASEKB=6144
 	M=$B/netroot.manifest
 	IMG=${IMG:-$B/netroot.img}
 	INITTAB=$T/net/inittab
 	[ -f "$B/net07/usr/sbin/ping" ] || { echo "[FAIL] no build/net07 (run net/getnet.sh)"; exit 1; }
 else
-	TESTKB=${TESTKB:-4096}
 	M=$B/testroot.manifest
 	IMG=${IMG:-$B/testroot.img}
-	INITTAB=$T/etc/inittab
+	INITTAB=${INITTAB:-$T/etc/inittab}
 fi
 
 [ -f "$RD/build/core/sbin/init" ] || { echo "[FAIL] no $RD/build/core (run mkroot.sh)"; exit 1; }
@@ -35,6 +37,8 @@ nm "$KERNEL" | awk '$3 ~ /^(freemem|availrmem|availsmem|lbolt|fpu_present|anonin
 	> "$B/ksyms"
 # t_dlm's modules, built against this kernel (none without module support)
 KDIR=$KDIR sh "$T/dlm/build.sh" "$KERNEL" "$B/dlm"
+# t_otb's module (none without otbridge or its kernel linkages)
+KDIR=$KDIR sh "$T/otb/build.sh" "$KERNEL" "$B/otb"
 # t_aux's modules and A/UX programs (none without guest support)
 AUXB=$B/aux
 if [ -n "$NOAUX" ]; then
@@ -42,6 +46,10 @@ if [ -n "$NOAUX" ]; then
 	rm -rf "$AUXB"
 else
 	KDIR=$KDIR sh "$T/aux/build.sh" "$KERNEL" "$AUXB"
+fi
+if [ -z "$TESTKB" ]; then
+	TESTKB=$BASEKB
+	[ -d "$AUXB/root" ] && TESTKB=$((TESTKB + $(du -sk "$AUXB/root" | cut -f1)))
 fi
 
 # /etc/group with the display devices' group
@@ -73,6 +81,7 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 		done
 		sed -e "s#@CORE@#$RD/build/core#" -e "s#@NET07@#$B/net07#" "$T/net/net.manifest"
 	fi
+	[ -f "$AUXB/mod.d/uinter" ] && echo "c /dev/uinter0 666 0 3 54 0"
 	if [ -d "$AUXB/mod.d" ]; then
 		echo "d /tests/aux 755 0 3"
 		echo "d /tests/aux/mod.d 755 0 3"
@@ -97,6 +106,11 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 		(cd "$AUXB/root" && find . -type f | sed 's#^\.##' | sort) | while read -r f; do
 			echo "f $f 755 0 3 $AUXB/root$f"
 		done
+	fi
+	if [ -f "$B/otb/mod.d/otbridge" ]; then
+		echo "d /tests/otb 755 0 3"
+		echo "f /tests/otb/otbridge 644 0 3 $B/otb/mod.d/otbridge"
+		grep -q '^c /dev/otbridge' "$M" || echo "c /dev/otbridge 666 0 3 55 0"
 	fi
 	if [ -d "$B/dlm/mod.d" ]; then
 		echo "d /tests/mod.d 755 0 3"

@@ -26,7 +26,7 @@ as `coinfo` is. Reasons for overriding the tables rather than each driver with `
   base's `.rela.data`.
 - `coinfo` and `ram*` bind to the Mac objects by name.
 
-`fmodsw` is all generic, so it is not overridden.
+`fmodsw` is all generic; the loader replaces it with a larger copy (`dlm/dlm_str.c`).
 
 ## Major table
 
@@ -63,6 +63,7 @@ Mac table.
 | 46 | audio (`audioinfo`) | **empty** | Paula audio |
 | 50 | sad | kept | generic |
 | 51, 52, 53 | — | **new**: fb, kbd, mouse | display service (`display/NOTES.md`) |
+| 55 | — | empty statically | `modadm` registers it for the loadable `otbridge` module, `/dev/otbridge` (`otbridge/NOTES.md`) |
 
 **bdevsw.** Majors 0–15 and 21–31 are empty.
 

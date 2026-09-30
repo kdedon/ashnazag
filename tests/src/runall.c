@@ -38,8 +38,10 @@ static struct {
 	{ "t_streams", 60 },
 	{ "t_stress", 90 },
 	{ "t_dlm", 90 },
+	{ "t_otb", 300 },
 	{ "t_gate", 150 },
 	{ "t_aux", 300 },
+	{ "t_mac", 330 },
 	{ "t_vtop", 60 },
 	{ "t_display", 360 },
 	{ 0, 0 }

@@ -302,12 +302,18 @@ char *uap, *rvp;
 void
 mac_reboot()
 {
+	register int i;
+
 	printf("\nRestarting the system.\n");
 	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (0x2700) : "memory");
 	VWR(V_IER, 0x7F);
 	VIA2_IER = 0x7F;
 	SN_IMR = 0;
+	/* reset, then leave reset: the ROM's Ethernet start-up stalls with RST set */
 	SN_CR = 0x80;
+	for (i = 0; i < 1000; i++)
+		(void)SN_CR;
+	SN_CR = 0;
 	NCR_CMD = 0x02;
 	NCR_CMD = 0x00;
 	NCR_CMD = 0x03;

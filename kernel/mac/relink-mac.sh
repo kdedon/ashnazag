@@ -95,13 +95,13 @@ sdopen sdqueue sdhardwarename sdpartition sdvalid sdblkno sddevsize
 ramopen ramclose ramstrategy ramprint ramsize
 config_orig
 dmainit
-ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range
+ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig
 clkset stime mdboot $VTOP"
 # Amiga data replaced: the console streamtab named by cdevsw[0] and oncons(),
 # the device switches and io_start[].
-OVRD="coinfo cdevsw bdevsw io_start execsw"
+OVRD="coinfo cdevsw bdevsw io_start execsw fmodsw"
 # Stock bodies kept under __amix_<name>: the wrappers and dlm_init call them.
-ALIAS="sendsig:T valid_usr_range:T execsw:D stime:T"
+ALIAS="sendsig:T valid_usr_range:T fsig:T execsw:D stime:T fmodsw:D"
 
 # uiomove: the wrapper marks the segkmap pages it writes modified.
 OVR="$OVR uiomove"

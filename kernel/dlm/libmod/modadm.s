@@ -10,6 +10,8 @@ modadm:
 	bcc.b	Lmodadm
 	cmpib	&91,%d0
 	beq.b	_modadm
-	jbra	_cerror
+	movel	%d0,errno		| not _cerror: its PLT binder clobbers %d0
+	moveq	&-1,%d0
+	rts
 Lmodadm:
 	rts

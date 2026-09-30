@@ -1,5 +1,5 @@
 /*
- * dlm_slot.c -- exec-format and hook linkages.
+ * dlm_slot.c -- exec-format, hook and character-driver linkages.
  *
  * execsw is replaced by a larger table; dlm_slot_init copies the stock
  * rows in from __amix_execsw.  A registered magic gets a row whose
@@ -16,12 +16,20 @@
  * Hooks: each entry of a module's hook data sets one hooksw pointer,
  * which the static shims call through.  Removal restores the default.
  *
+ * Character drivers: a registered major gets a placeholder row whose
+ * d_open and d_close are the loader's trampolines.  The first open
+ * loads the module, which fills the other entries.  The module is held
+ * once per (dev, otyp) it has open, as its driver sees them; layered
+ * opens hold per call.
+ *
  * K&R C.
  */
 
 #include "dlm.h"
 #ifndef DLM_HOST
 #include "sys/exec.h"
+#include "sys/conf.h"
+#include "sys/open.h"
 #endif
 
 #define	EXEC_STATIC	3
@@ -367,3 +375,332 @@ hook_info(m, td, st)
 }
 
 struct mod_operations mod_hookops = { hook_install, hook_remove, hook_info };
+
+/* ---- character-driver linkage ---- */
+
+#define	CDEV_SLOTS	8
+#define	CDEV_NOPEN	32
+#define	DRVSZ		100		/* struct mod_drv_data */
+#define	DRV_BCOUNT	36
+#define	DRV_CDEVSW	40
+#define	DRV_CMAJOR	92
+#define	DRV_CCOUNT	96
+#define	CD_NFN		10		/* d_open .. d_xhalt */
+#define	CD_TTYS		40
+#define	CD_STR		44
+#define	CD_FLAG		48
+
+struct dlm_cslot {
+	char		cs_name[MODMAXNAMELEN];	/* "" = free */
+	int		cs_major;
+	struct dlm_mod	*cs_mod;		/* installed module */
+	unsigned long	cs_open, cs_close;	/* its entries */
+	int		cs_nopen;
+	struct {
+		dev_t	o_dev;
+		int	o_otyp;
+	} cs_set[CDEV_NOPEN];
+};
+
+struct dlm_cslot dlm_cslot[CDEV_SLOTS];
+int dlm_cflag[1];		/* the placeholder's d_flag */
+int dlm_stale_close;		/* closes of keys never opened */
+
+#ifdef DLM_HOST
+#define	dlm_splhi()	0
+#define	dlm_splx(s)
+#else
+static int
+dlm_splhi()
+{
+	int s;
+
+	__asm__ __volatile__("mov.w %%sr,%0" : "=d" (s) : : "memory");
+	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (s | 0x700) : "memory");
+	return s;
+}
+
+static void
+dlm_splx(s)
+	int s;
+{
+	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (s) : "memory");
+}
+#endif
+
+static struct dlm_cslot *
+cslot(mj)
+	int mj;
+{
+	int k;
+
+	for (k = 0; k < CDEV_SLOTS; k++)
+		if (dlm_cslot[k].cs_name[0] && dlm_cslot[k].cs_major == mj)
+			return &dlm_cslot[k];
+	return 0;
+}
+
+/* the ten routine entries, d_open first */
+#define	cfn(cp)	((int (**)())&(cp)->d_open)
+
+static int
+cempty(cp)
+	struct cdevsw *cp;
+{
+	int k;
+
+	for (k = 0; k < CD_NFN; k++)
+		if (cfn(cp)[k] != nodev)
+			return 0;
+	return cp->d_ttys == 0 && cp->d_str == 0 && (cp->d_flag == 0 || *cp->d_flag == 0);
+}
+
+int dlm_cdev_open(), dlm_cdev_close();
+
+/* the placeholder: trampolines, everything else nodev */
+static void
+cplace(cp)
+	struct cdevsw *cp;
+{
+	int k;
+
+	for (k = 0; k < CD_NFN; k++)
+		cfn(cp)[k] = nodev;
+	cp->d_open = dlm_cdev_open;
+	cp->d_close = dlm_cdev_close;
+	cp->d_ttys = 0;
+	cp->d_str = 0;
+	cp->d_flag = dlm_cflag;
+}
+
+/* modadm(MOD_TY_CDEV): a slot for (name, major) over an empty row */
+int
+dlm_creg(name, mj)
+	char *name;
+	int mj;
+{
+	struct dlm_cslot *cs, *fr = 0;
+	int k, s;
+
+	if (mj < 0 || mj >= cdevcnt)
+		return ECONFIG;
+	if ((cs = cslot(mj)) != 0)
+		return strcmp(cs->cs_name, name) == 0 ? 0 : EEXIST;
+	if (!cempty(&cdevsw[mj]))
+		return EEXIST;
+	for (k = 0; k < CDEV_SLOTS && fr == 0; k++)
+		if (dlm_cslot[k].cs_name[0] == 0)
+			fr = &dlm_cslot[k];
+	if (fr == 0)
+		return ECONFIG;
+	bzero((caddr_t)fr, sizeof *fr);
+	strcpy(fr->cs_name, name);
+	fr->cs_major = mj;
+	s = dlm_splhi();
+	cplace(&cdevsw[mj]);
+	dlm_splx(s);
+	return 0;
+}
+
+static int
+cfind(cs, dev, otyp)
+	struct dlm_cslot *cs;
+	dev_t dev;
+	int otyp;
+{
+	int i;
+
+	for (i = 0; i < cs->cs_nopen; i++)
+		if (cs->cs_set[i].o_dev == dev && cs->cs_set[i].o_otyp == otyp)
+			return i;
+	return -1;
+}
+
+/*
+ * cdevsw d_open of a registered major: load if needed, then the
+ * driver's open under a hold that stays while the key is open.
+ */
+int
+dlm_cdev_open(devp, flag, otyp, cr)
+	dev_t *devp;
+	int flag, otyp;
+	struct cred *cr;
+{
+	struct dlm_cslot *cs = cslot((int)getmajor(*devp));
+	struct dlm_guard g;
+	struct { struct dlm_mod *m; } h;	/* in memory: read after a longjmp */
+	label_t save;
+	struct dlm_mod *m;
+	long a[8];
+	int e;
+
+	if (cs == 0)
+		return ENXIO;
+	bzero((caddr_t)&g, sizeof g);
+	bzero((caddr_t)&h, sizeof h);
+	bcopy((caddr_t)&u.u_qsav, (caddr_t)&save, sizeof (label_t));
+	if (DLM_SETJMP(&u.u_qsav)) {
+		bcopy((caddr_t)&save, (caddr_t)&u.u_qsav, sizeof (label_t));
+		dlm_abort(&g);
+		if (h.m)
+			dlm_rele(h.m);
+		DLM_LONGJMP(&u.u_qsav);
+	}
+	e = 0;
+	if (cs->cs_mod == 0 &&
+	    ((e = dlm_load(cs->cs_name, DL_SYS, 1, &g, &m)) != 0 || cs->cs_mod == 0))
+		e = ENXIO;
+	if (e == 0) {
+		h.m = m = cs->cs_mod;
+		dlm_hold(m);
+		a[0] = (long)devp;
+		a[1] = flag;
+		a[2] = otyp;
+		a[3] = (long)cr;
+		a[4] = a[5] = a[6] = a[7] = 0;
+		e = DLM_CALL8(m, cs->cs_open, a);
+		if (e == 0 && otyp != OTYP_LYR && cfind(cs, *devp, otyp) < 0) {
+			if (cs->cs_nopen < CDEV_NOPEN) {
+				cs->cs_set[cs->cs_nopen].o_dev = *devp;
+				cs->cs_set[cs->cs_nopen++].o_otyp = otyp;
+			}			/* else the hold stays for good */
+		} else if (e != 0 || otyp != OTYP_LYR)
+			dlm_rele(m);
+		h.m = 0;
+	}
+	bcopy((caddr_t)&save, (caddr_t)&u.u_qsav, sizeof (label_t));
+	return e;
+}
+
+/* cdevsw d_close: the driver's close, then the key's hold goes */
+int
+dlm_cdev_close(dev, flag, otyp, cr)
+	dev_t dev;
+	int flag, otyp;
+	struct cred *cr;
+{
+	struct dlm_cslot *cs = cslot((int)getmajor(dev));
+	struct dlm_mod *m;
+	long a[8];
+	int e, i;
+
+	if (cs == 0 || (m = cs->cs_mod) == 0) {
+		dlm_stale_close++;
+		return 0;
+	}
+	a[0] = (long)dev;
+	a[1] = flag;
+	a[2] = otyp;
+	a[3] = (long)cr;
+	a[4] = a[5] = a[6] = a[7] = 0;
+	m->m_incall++;
+	e = DLM_CALL8(m, cs->cs_close, a);
+	m->m_incall--;
+	if (otyp == OTYP_LYR)
+		dlm_rele(m);
+	else if ((i = cfind(cs, dev, otyp)) >= 0) {
+		cs->cs_set[i] = cs->cs_set[--cs->cs_nopen];
+		dlm_rele(m);
+	} else
+		dlm_stale_close++;
+	return e;
+}
+
+static int
+drv_install(m, td)
+	struct dlm_mod *m;
+	unsigned long td;
+{
+	struct dlm_cslot *cs;
+	struct cdevsw *cp;
+	unsigned long d, c, fl, f;
+	char *r;
+	int mj, n, i, k, s;
+
+	if (!inimg(m, td, 8L))
+		return ERELOC;
+	d = G32(DLM_RP(m, td) + 4);
+	if (!inimg(m, d, (unsigned long)DRVSZ))
+		return ERELOC;
+	r = DLM_RP(m, d);
+	c = d + DRV_CDEVSW;
+	mj = (int)S32(G32(r + DRV_CMAJOR));
+	n = (int)S32(G32(r + DRV_CCOUNT));
+	if (G32(r + DRV_BCOUNT) != 0 || n < 1 || n > CDEV_SLOTS)
+		return EINVAL;
+	if (G32(DLM_RP(m, c) + CD_TTYS) || G32(DLM_RP(m, c) + CD_STR))
+		return EINVAL;
+	if ((fl = G32(DLM_RP(m, c) + CD_FLAG)) != 0) {
+		if (!inimg(m, fl, 4L))
+			return ERELOC;
+		if (G32(DLM_RP(m, fl)) & D_OLD)
+			return EINVAL;
+	}
+	for (k = 0; k < CD_NFN; k++) {
+		f = G32(DLM_RP(m, c) + 4 * k);
+		if (f && (f < DLM_KLO || f >= DLM_KHI) && !inimg(m, f, 2L))
+			return ERELOC;
+	}
+	for (i = 0; i < n; i++) {
+		cs = cslot(mj + i);
+		if (cs == 0 || strcmp(cs->cs_name, m->m_name) != 0 ||
+		    (cs->cs_mod && cs->cs_mod != m))
+			return EINVAL;
+	}
+	for (i = 0; i < n; i++) {
+		cs = cslot(mj + i);
+		cp = &cdevsw[mj + i];
+		s = dlm_splhi();
+		for (k = 2; k < CD_NFN; k++) {
+			f = G32(DLM_RP(m, c) + 4 * k);
+			cfn(cp)[k] = f ? (int (*)())f : nodev;
+		}
+		cp->d_flag = fl ? (int *)DLM_RP(m, fl) : dlm_cflag;
+		cs->cs_open = G32(DLM_RP(m, c));
+		cs->cs_close = G32(DLM_RP(m, c) + 4);
+		cs->cs_mod = m;
+		dlm_splx(s);
+	}
+	return 0;
+}
+
+static int
+drv_remove(m, td)
+	struct dlm_mod *m;
+	unsigned long td;
+{
+	int k, s;
+
+	for (k = 0; k < CDEV_SLOTS; k++)
+		if (dlm_cslot[k].cs_name[0] && dlm_cslot[k].cs_mod == m) {
+			s = dlm_splhi();
+			cplace(&cdevsw[dlm_cslot[k].cs_major]);
+			dlm_cslot[k].cs_mod = 0;
+			dlm_cslot[k].cs_open = dlm_cslot[k].cs_close = 0;
+			dlm_cslot[k].cs_nopen = 0;
+			dlm_splx(s);
+		}
+	return 0;
+}
+
+static void
+drv_info(m, td, st)
+	struct dlm_mod *m;
+	unsigned long td;
+	struct modspecific_stat *st;
+{
+	int k;
+
+	st->mss_type = MOD_TY_CDEV;
+	st->mss_p0[0] = st->mss_p0[1] = -1;
+	st->mss_p1[0] = -1;
+	st->mss_p1[1] = 0;
+	for (k = 0; k < CDEV_SLOTS; k++)
+		if (dlm_cslot[k].cs_name[0] && dlm_cslot[k].cs_mod == m) {
+			if (st->mss_p1[0] < 0 || dlm_cslot[k].cs_major < st->mss_p1[0])
+				st->mss_p1[0] = dlm_cslot[k].cs_major;
+			st->mss_p1[1]++;
+		}
+}
+
+struct mod_operations mod_drvops = { drv_install, drv_remove, drv_info };

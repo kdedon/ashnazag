@@ -60,9 +60,28 @@ struct guest_proc {
 	struct proc		*gp_proc;
 	struct guest_profile	*gp_prof;
 	struct guest_ctr	*gp_ctr;	/* container, 0 = none */
-	unsigned int		gp_flags;
+	unsigned int		gp_flags;	/* GPF_* */
 	unsigned int		gp_size;	/* bytes allocated */
+	/* virtual CPU: the real SR keeps CCR and T */
+	unsigned short		gp_vsr;		/* S, M, IPL */
+	unsigned short		gp_vpad;
+	unsigned long		gp_vusp;	/* the inactive stack pointer */
+	unsigned long		gp_vvbr;
+	unsigned long		gp_vcacr;
+	unsigned long		gp_vsfc, gp_vdfc;
+	/* the last access fault, while GPF_FAULT */
+	unsigned long		gp_fpc, gp_fea;
+	unsigned long		gp_fpre;	/* SIGBUS/SIGSEGV pending before it */
+	unsigned short		gp_fssw, gp_fpad;
 };
+
+/* gp_flags; the A-line gate reads GPF_ALINE at offset 15 */
+#define	GPF_ALINE	0x01	/* A-line: frame to vVBR + $28 */
+#define	GPF_PRIV	0x02	/* privileged instructions emulated */
+#define	GPF_SPIN	0x04	/* vSR.S pinned on, one stack */
+#define	GPF_VPEND	0x08	/* a signal waits for the virtual IPL */
+#define	GPF_FAULT	0x10	/* gp_fpc.. hold an access fault */
+#define	GPF_PROFILE	0xffff0000	/* profile's own bits */
 #define	GUEST_PRIV(gp)	((char *)((gp) + 1))	/* profile state */
 #define	GUESTP(p)	((struct guest_proc *)(p)->p_evpdp)
 
@@ -114,11 +133,16 @@ extern int (*guest_fork_hook)();	/* (pp, cp) */
 extern void (*guest_exit_hook)();	/* (p, stat) */
 extern int (*guest_sendsig_hook)();	/* (sig, sip, hdlr) */
 extern int (*guest_vur_hook)();		/* (addr, len) */
+extern int (*guest_fsig_hook)();	/* (p) */
 extern int __amix_sendsig();
 extern int __amix_valid_usr_range();
+extern int __amix_fsig();
 
 /* guestcore */
 extern int guest_profile_add();		/* (pf) */
 extern void guest_profile_del();	/* (pf) */
+extern int guest_aline();		/* disposition: A-line reflection */
+extern int guest_priv();		/* disposition: privilege emulation */
+extern int guest_fnote();		/* disposition: note an access fault */
 
 #endif	/* _GUEST_H */

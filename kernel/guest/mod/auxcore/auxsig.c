@@ -27,8 +27,11 @@
 
 #include "auxcore.h"
 #include "sys/sysm68k.h"
+#include "sys/sysinfo.h"
+#include "sys/var.h"
 
 extern int aux_amix();
+extern int freemem, physmem;
 extern void dlm_cacheflush();
 extern int pause();
 extern k_sigset_t cantmask;
@@ -119,6 +122,8 @@ aux_sendsig(gp, sig, sip, hdlr)
 	char *r = (char *)u.u_ar0, b[16];
 	long usp = GR_USP(r) - 16;
 
+	if (sig == SIGIOT && AUXP(gp)->ap_mac && aux_uitick)
+		(*aux_uitick)(gp);
 	if (AUXP(gp)->ap_compat & COMPAT_BSDSIGNALS)
 		return bsdframe(AUXP(gp), aux_sig_out(sig), hdlr);
 
@@ -136,7 +141,15 @@ aux_sendsig(gp, sig, sip, hdlr)
 	return 1;
 }
 
-/* sysm68k(cmd, ...): 2 is the SVR3 signal return */
+/*
+ * sysm68k(cmd, ...): 2 is the SVR3 signal return; 0x69 (CacheFlush:
+ * addr, len, caches) pushes and invalidates both caches whole.  0x6a
+ * reads and clears the File Manager's change flags; 0x6b-0x6d report
+ * buffer-cache use and size.
+ */
+u_long aux_fmgrflag;
+static long aux_lread0, aux_bread0;
+
 int
 aux_sysm68k(ap, a, rv, r)
 	struct aux_proc *ap;
@@ -144,8 +157,35 @@ aux_sysm68k(ap, a, rv, r)
 	rval_t *rv;
 	char *r;
 {
-	long usp, fs;
+	long usp, fs, b[4];
 
+	switch (a[0]) {
+	case 0x69:
+		dlm_cacheflush();
+		return 0;
+	case 0x6a:			/* tclrFileMgrFlag */
+		rv->r_val1 = aux_fmgrflag;
+		aux_fmgrflag = 0;
+		return 0;
+	case 0x6b:			/* get_cache_info: logical, physical reads */
+		b[0] = sysinfo.lread - aux_lread0;
+		b[1] = sysinfo.bread - aux_bread0;
+		b[2] = 0;
+		b[3] = (long)v.v_bufhwm << 10;
+		return copyout((caddr_t)b, (caddr_t)a[1], sizeof b) ? EFAULT : 0;
+	case 0x6c:			/* clear_cache_info */
+		if (!suser(u.u_cred))
+			return EPERM;
+		aux_lread0 = sysinfo.lread;
+		aux_bread0 = sysinfo.bread;
+		return 0;
+	case 0x6d:			/* getBufCache */
+		b[0] = v.v_buf;
+		b[1] = v.v_buf ? ((long)v.v_bufhwm << 10) / v.v_buf : 0;
+		b[2] = ctob(freemem);
+		b[3] = ctob(physmem);
+		return copyout((caddr_t)b, (caddr_t)a[1], sizeof b) ? EFAULT : 0;
+	}
 	if (a[0] != 2)
 		return EINVAL;
 	usp = GR_USP(r);

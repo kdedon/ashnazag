@@ -7,7 +7,7 @@
 #   serial:TEXT     write TEXT to the serial console socket ("\n" = CR)
 #   hmp:CMD         run a monitor command, append output to OUTDIR/monitor.txt
 #   quit            stop QEMU
-import json, os, socket, struct, sys, time, zlib
+import json, os, socket, struct, sys, threading, time, zlib
 
 KEYS = {' ': 'spc', '\n': 'ret', '-': 'minus', '/': 'slash', '.': 'dot',
         '=': 'equal', ',': 'comma', ';': 'semicolon', "'": 'apostrophe'}
@@ -59,6 +59,13 @@ def keys(q, text):
               **{'hold-time': 80})
         time.sleep(0.25)
 
+def drain(s):
+    try:
+        while s.recv(4096):
+            pass
+    except OSError:
+        pass
+
 def main():
     sock, out = sys.argv[1], sys.argv[2]
     q = QMP(sock)
@@ -82,6 +89,8 @@ def main():
             if ser is None:
                 ser = socket.socket(socket.AF_UNIX)
                 ser.connect(os.path.join(out, 'serial.sock'))
+                # drain the echo: unread single-byte writes fill the socket and stall the guest
+                threading.Thread(target=drain, args=(ser,), daemon=True).start()
             for c in arg.replace('\\n', '\r').encode():
                 ser.send(bytes([c]))
                 time.sleep(0.05)

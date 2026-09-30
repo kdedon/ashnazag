@@ -8,7 +8,8 @@
 # A/UX Startup from mkromimage.sh's disk.  --net: direct boot of the
 # network root (t_net only) on user-mode networking, with a TCP echo
 # service (cat) at 10.0.2.100:7.  --kernel-dir: a kernel/ tree
-# (built) to test instead of ../kernel.  ROM, MEM (MB), TMO (s) override.
+# (built) to test instead of ../kernel.  ROM, MEM (MB), TMO (s), GEOM
+# (QEMU -g: WxHxDEPTH) override.
 # Direct boot also serves t_display's host requests on SCC channel B
 # (display/hostio.py: keys, mouse, screen dumps in results/.../display/).
 # Out: results/<time>-<mode>/ with serial.log, serial.ts (host time of each
@@ -52,6 +53,8 @@ fi
 
 SOCK=$OUT/qmp.sock
 QEMU="$Q/usr/bin/qemu-system-m68k -L $Q/usr/share/qemu -M q800 -display none"
+# GEOM: the screen, e.g. 800x600x1 for a 1-bit display
+[ -n "$GEOM" ] && QEMU="$QEMU -g $GEOM"
 if [ $MODE = direct ]; then
 	MEM=${MEM:-128}
 	set -- -m "$MEM" -kernel "$KERNEL" -initrd "$T/build/testroot.img"

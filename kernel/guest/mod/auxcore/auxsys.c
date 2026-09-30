@@ -22,7 +22,62 @@ extern int preempt(), issig();
 extern void psig();
 extern char runrun;
 
-int aux_trace = 0;		/* 1: print every call, 2: and results */
+int aux_trace = 0;	/* 1: every call, 2: results, 4: open paths, 8: failures, name changes */
+void (*aux_macdetach)() = 0;
+int (*aux_slotmgr)() = 0;
+void (*aux_uitick)() = 0;
+
+/*
+ * Trace ring: "pid text value" lines, readable through /dev/kmem
+ * (aux_tbuf, aux_tpos = bytes ever written).
+ */
+char aux_tbuf[AUX_TBUF] = { 0 };
+long aux_tpos = 0;
+
+static void
+tput(s)
+	char *s;
+{
+	while (*s)
+		aux_tbuf[aux_tpos++ % AUX_TBUF] = *s++;
+}
+
+static void
+tdec(v)
+	long v;
+{
+	char b[12];
+	int n = sizeof b - 1;
+	u_long w = v < 0 ? -v : v;
+
+	b[n] = 0;
+	do
+		b[--n] = '0' + w % 10;
+	while ((w /= 10) != 0);
+	if (v < 0)
+		b[--n] = '-';
+	tput(b + n);
+}
+
+void
+aux_tlog(pid, s, v)
+	int pid;
+	char *s;
+	long v;
+{
+	int sr;
+
+	__asm__ __volatile__("mov.w %%sr,%0" : "=d" (sr) : : "memory");
+	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (sr | 0x700) : "memory");
+	tdec((long)pid);
+	tput(" ");
+	tput(s);
+	tput(" ");
+	tdec(v);
+	tput("\n");
+	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (sr) : "memory");
+}
+
 static struct auxent *auxtab[AUX_NCALL];
 static unsigned char aux_warned[AUX_NCALL / 8];
 
@@ -35,6 +90,60 @@ aux_amix(n, a, rv)
 {
 	u.u_syscall = n;
 	return (*sysent[n].sy_call)(a, rv);
+}
+
+/*
+ * The Mac File Manager rescans directories after names (1) or
+ * attributes (2) changed; 4 and 8 when a process outside the Mac
+ * environment made the change.
+ */
+static int
+fmgrnote(ap, num, a)
+	struct aux_proc *ap;
+	int num;
+	long *a;
+{
+	u_long b;
+
+	switch (num) {
+	case 5:
+		if (!(a[1] & 0x100))		/* O_CREAT */
+			return 0;
+		/* fall through */
+	case 8: case 9: case 10: case 14: case 108: case 109: case 112: case 123:
+		b = 1;
+		break;
+	case 15: case 16: case 30: case 143: case 144: case 145: case 164: case 165:
+		b = 2;
+		break;
+	default:
+		return 0;
+	}
+	aux_fmgrflag |= ap->ap_mac & APM_TASK ? b : b << 2;
+	return 1;
+}
+
+/* trace ring: "sys NNN" and the first argument, a path or hex; the result */
+static void
+tracecall(num, a, v)
+	int num;
+	long *a, v;
+{
+	char t[72];
+	u_int i;
+
+	bcopy("sys ", t, 4);
+	t[4] = '0' + num / 100;
+	t[5] = '0' + num / 10 % 10;
+	t[6] = '0' + num % 10;
+	t[7] = ' ';
+	if (copyinstr((caddr_t)a[0], t + 8, sizeof t - 8, &i) ||
+	    i < 2 || t[8] < ' ') {
+		for (i = 0; i < 8; i++)
+			t[8 + i] = "0123456789abcdef"[a[0] >> (28 - 4 * i) & 15];
+		t[16] = 0;
+	}
+	aux_tlog((int)u.u_procp->p_pid, t, v);
 }
 
 /*
@@ -73,7 +182,7 @@ aux_systrap(gp, r, vec)
 	}
 	ae = auxtab[num];
 	if (ae == 0 || (ae->ae_flags & AE_NOSYS)) {
-		if (aux_trace)
+		if (aux_trace & 3)
 			printf("aux %d: nosys %d\n", (int)p->p_pid, num);
 		psignal(p, SIGSYS);
 		goto out;
@@ -92,7 +201,7 @@ aux_systrap(gp, r, vec)
 	u.u_ap = (int *)a;
 	rv.r_val1 = 0;
 	rv.r_val2 = GR_D(r, 1);
-	if (aux_trace)
+	if (aux_trace & 3)
 		printf("aux %d: %d(%x, %x, %x)\n", (int)p->p_pid, num, (int)a[0],
 		    (int)a[1], (int)a[2]);
 	if (ae->ae_flags & AE_TODO) {
@@ -116,7 +225,7 @@ aux_systrap(gp, r, vec)
 		e = (*ae->ae_fn)(ap, a, &rv, r);
 	else
 		e = aux_amix(ae->ae_amix, a, &rv);
-	if (aux_trace > 1)
+	if (aux_trace & 2)
 		printf("aux %d: %d -> %d %x %x\n", (int)p->p_pid, num, e, rv.r_val1,
 		    rv.r_val2);
 	if (e == EINTR || e == ERESTART) {
@@ -130,6 +239,8 @@ aux_systrap(gp, r, vec)
 	}
 	if (e) {
 err:
+		if (aux_trace & 8)
+			tracecall(num, a, (long)-e);
 		if (e == EFBIG)
 			psignal(p, SIGXFSZ);
 		GR_D(r, 0) = aux_errno_out(e, ap);
@@ -137,6 +248,8 @@ err:
 	} else {
 		GR_D(r, 0) = rv.r_val1;
 		GR_D(r, 1) = rv.r_val2;
+		if (fmgrnote(ap, num, a) && (aux_trace & 8))
+			tracecall(num, a, 0L);
 	}
 out:
 	if (runrun)
@@ -157,6 +270,9 @@ aux_pexec(gp)
 {
 	struct aux_proc *ap = AUXP(gp);
 
+	if (ap->ap_mac && aux_macdetach)
+		(*aux_macdetach)(gp);
+	ap->ap_mac = 0;
 	if (!(ap->ap_compat & COMPAT_EXEC))
 		ap->ap_compat = COMPAT_DEFAULT;
 	ap->ap_flags = 0;
@@ -172,6 +288,7 @@ aux_pfork(pg, cg)
 	struct guest_proc *pg, *cg;
 {
 	AUXP(cg)->ap_itid = 0;
+	AUXP(cg)->ap_mac = 0;		/* the child is no task of the layer */
 	return 0;
 }
 
@@ -180,6 +297,8 @@ aux_pexit(gp)
 	struct guest_proc *gp;
 {
 	aux_itstop(AUXP(gp));
+	if (AUXP(gp)->ap_mac && aux_macdetach)
+		(*aux_macdetach)(gp);
 }
 
 /*
@@ -226,6 +345,19 @@ auxcore_load()
 	d->gd_flags = GDF_USER;
 	d->gd_fn = aux_systrap;
 	aux_profile.gpf_disp[47] = *d;
+	/* Mac tasks after UI_SET (gp_flags); others get the stock signal */
+	d = &aux_profile.gpf_disp[8];
+	d->gd_kind = GD_EMULATE;
+	d->gd_flags = GDF_USER;
+	d->gd_fn = guest_priv;
+	d = &aux_profile.gpf_disp[10];
+	d->gd_kind = GD_REFLECT;
+	d->gd_flags = GDF_USER;
+	d->gd_fn = guest_aline;
+	d = &aux_profile.gpf_disp[2];
+	d->gd_kind = GD_REFLECT;
+	d->gd_flags = GDF_USER;
+	d->gd_fn = guest_fnote;
 	return guest_profile_add(&aux_profile);
 }
 
@@ -233,6 +365,7 @@ static int
 auxcore_unload()
 {
 	guest_profile_del(&aux_profile);
+	aux_fidfree();
 	return 0;
 }
 

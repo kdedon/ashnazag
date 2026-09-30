@@ -33,14 +33,14 @@ KCC="$NICE m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -Wall -I$DLM/include -I$DLM"
 # kernel objects into $1 (dlm.o), warnings into $2
 kobj() {
 	rm -f "$2"
-	for f in dlm_core dlm_ld dlm_sym dlm_slot dlmconf; do
+	for f in dlm_core dlm_ld dlm_sym dlm_slot dlm_str dlmconf; do
 		$KCC -c "$DLM/$f.c" -o "$1/$f.o" 2>> "$2"
 	done
 	for f in dlm_cache dlmksym dlm_hooksw; do
 		$NICE m68k-cbm-sysv4-gcc -c "$DLM/$f.s" -o "$1/$f.o"
 	done
 	m68k-cbm-sysv4-ld -r -o "$1/dlm.o" "$1/dlm_core.o" "$1/dlm_ld.o" \
-		"$1/dlm_sym.o" "$1/dlm_slot.o" "$1/dlmconf.o" "$1/dlm_cache.o" \
+		"$1/dlm_sym.o" "$1/dlm_slot.o" "$1/dlm_str.o" "$1/dlmconf.o" "$1/dlm_cache.o" \
 		"$1/dlmksym.o" "$1/dlm_hooksw.o"
 	# no warnings beyond the AMIX header's own
 	! grep -v 'types.h:182\|In file included\|^ *from ' "$2" | grep .

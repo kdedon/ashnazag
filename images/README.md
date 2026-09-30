@@ -1,6 +1,6 @@
 # Quadra 800 test disk
 
-There are two images. Both boot the same way and start the same kernel. A third, `q800-unix.img`, boots the kernel straight from the ROM (see [Direct boot](#direct-boot)).
+There are two images. Both boot the same way and start the same kernel. A third, `q800-unix.img`, boots the kernel straight from the ROM (see [Direct boot](#direct-boot)). `q800-unix-disk.img` adds a Unix root on disk (see [Disk with a Unix root](#disk-with-a-unix-root)).
 
 | Image | Size | Contents |
 |---|---|---|
@@ -140,3 +140,52 @@ sh images/mkboot.sh [-c cmdline] [-m MB] [kernel.elf [out.img]]
 ```
 
 The default kernel is `kernel/build/unix-mac.elf`. `-c` stores a kernel command line in the boot blocks, for example `-c root=c0d0s1`. The map and driver come from `q800-test-small.img`, so build that first. Write the image to the disk as above (SCSI ID 0, at least 8288 blocks) and make that disk the startup disk, or attach no other bootable disk: the ROM tries the PRAM startup disk first. To change the kernel, rebuild the image; the boot blocks hold the file's position and checksum. Details and the error ids (101–105, shown on a Sad Mac as 0x65–0x69) are in `kernel/mac/bootblk/NOTES.md`.
+
+## Disk with a Unix root
+
+`q800-unix-disk.img` (104,906,752 bytes, SCSI ID 0) boots like `q800-unix.img` and then runs AMIX multi-user from its own root partition. Log in on the screen and keyboard as `root` (no password). The previous build is `q800-unix-disk.prev.img`.
+
+| Part | Contents |
+|---|---|
+| Kernel | `kernel/build/unix-mac.elf`, with the display service and A/UX shared-library support |
+| Root (64 MB ufs) | AMIX 2.1 core, bsd and terminfo; `dstest`; `ping`, `route`, `arp`, `netstat` |
+| `/usr/aux/bin` | A/UX 3.1 `ls`, `more`, `sh`, `sleep`, `vi` |
+| `/shlib` | A/UX shared libraries (`libc_s`, `libc1_s`, `libmac_s`, `libmac1_s`, `libuucp_s`, `libX11_s`) |
+| `/usr/aux/lib` | the guest modules, registered at run level 2 (`/etc/rc2.d/S05aux`) |
+| `/usr/apkg` | apkg 0.2.2 and its engine package, installed; `/etc/inet/hosts` names `pkg.amigaux.org` |
+| Swap | 32 MB |
+
+### A/UX programs
+
+Run them by path, for example `/usr/aux/bin/ls -l /` or `/usr/aux/bin/vi file`. They use the AMIX `vt100` terminal entries (`TERM=vt100`, set on the console). The A/UX `vt100` terminfo and termcap files are also in `/usr/aux/lib/terminfo` and `/usr/aux/etc/termcap` (select them with `TERMINFO` or `TERMCAP`).
+
+### Network and packages
+
+The Ethernet is not configured. Set the address, netmask and gateway in `/etc/inet/network-config` and remove the `#`s; it runs at boot. By hand:
+
+```sh
+/usr/sbin/slink addaen /dev/aen0 aen0
+/usr/sbin/ifconfig aen0 192.168.1.80 netmask 255.255.255.0 up
+/usr/sbin/route add default 192.168.1.1 1
+```
+
+AMIX has no resolver: the server's address is in `/etc/inet/hosts` (check it with `ping pkg.amigaux.org`), or put `nameserver=ADDRESS` in `/etc/apkg.conf`. Then:
+
+```sh
+apkg update                  # fetch the catalog
+apkg list                    # or: apkg search WORD, apkg info NAME
+apkg install gzip less       # dependencies too
+apkg list installed
+```
+
+Most packages install into `/opt/amix/bin`; add it to `PATH`. apkg is set to use the stock `pkgadd` and `pkgrm` (`/etc/apkg.conf`). The engine package's `pkgadd` stops with a bus error in `pkginstall` once it has rewritten the package database itself.
+
+### Rebuilding
+
+```sh
+sh kernel/mac/diskroot/pkg/getapkg.sh DIR                  # apkg datastreams, md5-checked
+sh kernel/mac/diskroot/pkg/mkpkgimage.sh -p DIR WORK [kernel.elf [out.img]]
+```
+
+`mkpkgimage.sh` builds from a copy of `kernel/mac/diskroot` in `WORK` with `root.manifest` plus `pkg/root.manifest.add`. It needs the A/UX root named in `tests/aux/auxroot`, `tests/build/net07` (`tests/net/getnet.sh`) and the tape segments in `kernel/mac/diskroot/build/tape`. `-q` configures the Ethernet for an emulator's user-mode network (10.0.2.15, gateway 10.0.2.2).
+

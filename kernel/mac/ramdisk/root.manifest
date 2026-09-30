@@ -48,6 +48,7 @@ c /dev/rawip	666 0 3 27 35
 c /dev/icmp	666 0 3 27 36
 c /dev/arp	660 0 3 27 37
 c /dev/loop	666 0 3 27 20
+c /dev/otbridge	666 0 3 55 0
 # display service (group display, 25): frame buffer, keyboard, mouse
 c /dev/fb0	660 0 25 51 0
 h /dev/fb	/dev/fb0

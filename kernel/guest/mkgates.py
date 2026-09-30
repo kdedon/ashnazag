@@ -8,7 +8,9 @@
 # (nullvect, an FPSP entry, isp61_vec) becomes:
 #   guest_gate_N: native process -> jmp T; guest -> jmp guest_gate_c
 # and guest_chain[N] = T for the gate's decline path.  Fault vectors
-# first send supervisor-mode exceptions to T.  out.lst records "N T"
+# first send supervisor-mode exceptions to T.  The A-line gate (10)
+# sends a guest with GPF_ALINE to guest_linea, the fast reflection.
+# out.lst records "N T"
 # for patch_vec.py.  Vector 42 (trap #10, the same system-call path as
 # trap #0) stays ungated as the reference for the gate-cost test.
 # Fails closed.
@@ -20,6 +22,8 @@ TRAPS = [v for v in range(32, 48) if v != 42]
 GATED = sorted(FAULTS + TRAPS)
 R_68K_32 = 1
 P_EVPDP = 0xc8
+GP_FLAGS_LSB = 15	# gp_flags, big-endian long at 12: GPF_ALINE is bit 0 here
+ALINE = 10
 
 e = Elf(sys.argv[1])
 base = e.syms[e.sym('M68Kvec')]['value']
@@ -52,8 +56,15 @@ for v in GATED:
           '\tmoveal\t%sp@+,%a0',
           '\tbnew\tLg%d' % v,
           '\tjmp\t%s' % t,
-          'Lg%d:' % v,
-          '\tjmp\tguest_gate_c']
+          'Lg%d:' % v]
+    if v == ALINE:
+        s += ['\tmovel\t%a0,%sp@-',
+              '\tmoveal\tcurproc,%a0',
+              '\tmoveal\t%%a0@(%#x),%%a0' % P_EVPDP,
+              '\tbtst\t&0,%%a0@(%d)' % GP_FLAGS_LSB,
+              '\tmoveal\t%sp@+,%a0',
+              '\tbnew\tguest_linea']
+    s += ['\tjmp\tguest_gate_c']
 s += ['', '\t.data', '\t.globl\tguest_chain', 'guest_chain:']
 for v in range(256):
     s.append('\t.long\t%s' % (tgt[v] if v in GATED else '0'))

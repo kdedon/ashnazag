@@ -15,13 +15,14 @@ extern int aux_xstat(), aux_xlstat(), aux_xfstat();
 extern int aux_getdirentries(), aux_utssys(), aux_gethostname();
 extern int aux_getdomainname(), aux_gettimeofday(), aux_getdtablesize();
 extern int aux_getcompat(), aux_setcompat(), aux_setpgrp(), aux_setsid();
-extern int aux_setpgid(), aux_swapmmumode(), aux_netdown();
+extern int aux_setpgid(), aux_swapmmumode(), aux_netdown(), aux_slotmanager();
 extern int aux_sigvec(), aux_sigblock(), aux_sigsetmask(), aux_sigpause();
 extern int aux_sigstack();
 extern int aux_read(), aux_select(), aux_waitpid(), aux_flock();
 extern int aux_statfs(), aux_fstatfs(), aux_truncate(), aux_ftruncate();
 extern int aux_utimes(), aux_getitimer(), aux_setitimer();
 extern int aux_setreuid(), aux_setregid(), aux_shmsys(), aux_sigpending();
+extern int aux_fidop(), aux_csop(), aux_setxinfo(), aux_fsetxinfo();
 
 #define	S	AE_SETJMP
 #define	T	AE_TODO
@@ -84,7 +85,7 @@ struct auxent auxcalls[] = {
 	{ 63, 2, S, 63, 0 },		/* ulimit */
 	{ 64, 1, T, 0, 0 },		/* reboot */
 	{ 65, 1, T, 0, 0 },		/* powerdown */
-	{ 66, 2, T, 0, 0 },		/* sysslotmanager */
+	{ 66, 2, 0, 0, aux_slotmanager },
 	{ 67, 1, S, 0, aux_swapmmumode },
 	{ 70, 3, S, 0, aux_netdown },	/* accept */
 	{ 71, 3, S, 0, aux_netdown },	/* bind */
@@ -155,7 +156,7 @@ struct auxent auxcalls[] = {
 	{ 148, 0, T, 0, 0 },		/* getcterm */
 	{ 149, 1, S, 0, aux_sigpending },
 	{ 151, 3, S, 0, aux_waitpid },
-	{ 152, 2, T, 0, 0 },		/* fidop */
+	{ 152, 2, S, 0, aux_fidop },
 	{ 153, 5, T, 0, 0 },		/* asioread */
 	{ 154, 5, T, 0, 0 },		/* asiowrite */
 	{ 155, 0, T, 0, 0 },		/* asiowait */
@@ -164,11 +165,11 @@ struct auxent auxcalls[] = {
 	{ 158, 3, T, 0, 0 },		/* _memlock */
 	{ 159, 3, T, 0, 0 },		/* _memunlock */
 	{ 160, 3, T, 0, 0 },		/* chnod */
-	{ 161, 3, T, 0, 0 },		/* csop */
+	{ 161, 3, S, 0, aux_csop },
 	{ 162, 2, S, 0, aux_xfstat },
 	{ 163, 2, S, 0, aux_xstat },
-	{ 164, 2, T, 0, 0 },		/* fsetxinfo */
-	{ 165, 2, T, 0, 0 },		/* setxinfo */
+	{ 164, 2, S, 0, aux_fsetxinfo },
+	{ 165, 2, S, 0, aux_setxinfo },
 	{ 166, 2, S, 0, aux_xlstat },
 	{ 167, 4, T, 0, 0 },		/* atp_control */
 	{ 168, 2, S, 0, aux_gettimeofday },

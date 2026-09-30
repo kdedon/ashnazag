@@ -299,7 +299,11 @@ extern void dlm_undef();
 /* dlm_slot.c */
 extern void dlm_slot_init();
 extern int dlm_xreg();
+extern int dlm_creg();
 extern int dlm_autoload();
+
+/* dlm_str.c */
+extern void dlm_str_init();
 
 /* dlmconf.c */
 extern long dlm_maximage;

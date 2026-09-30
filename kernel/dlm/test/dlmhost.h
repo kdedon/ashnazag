@@ -85,6 +85,30 @@ struct execsw {
 };
 extern int nexectype;
 
+struct cdevsw {
+	int	(*d_open)();
+	int	(*d_close)();
+	int	(*d_read)();
+	int	(*d_write)();
+	int	(*d_ioctl)();
+	int	(*d_mmap)();
+	int	(*d_segmap)();
+	int	(*d_poll)();
+	int	(*d_xpoll)();
+	int	(*d_xhalt)();
+	struct tty *d_ttys;
+	struct streamtab *d_str;
+	int	*d_flag;
+};
+extern struct cdevsw cdevsw[];
+extern int cdevcnt;
+#define	D_OLD		0x01
+#define	OTYP_CHR	2
+#define	OTYP_LYR	4
+#define	getmajor(d)	((int)(((unsigned long)(d) >> 18) & 0x3fff))
+#define	getminor(d)	((int)((unsigned long)(d) & 0x3ffff))
+#define	makedevice(j, n) ((dev_t)(((unsigned long)(j) << 18) | (n)))
+
 /* image and kernel addresses: see hostk.c */
 extern char *host_rp();
 extern unsigned long host_runaddr();

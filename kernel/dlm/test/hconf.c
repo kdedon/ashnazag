@@ -49,3 +49,27 @@ struct hooksw hooksw[] = {
 	{ "h_two", &h_two, 0, 0 },
 	{ 0, 0, 0, 0 },
 };
+
+/* character switch: row 3 in use, the rest empty */
+static int zflag[1];
+int cdevcnt = 70;
+struct cdevsw cdevsw[70];
+
+int
+hconf_used()
+{
+	return 0;
+}
+
+void
+hconf_cdev()
+{
+	int i, k;
+
+	for (i = 0; i < 70; i++) {
+		for (k = 0; k < 10; k++)
+			(&cdevsw[i].d_open)[k] = nodev;
+		cdevsw[i].d_flag = zflag;
+	}
+	cdevsw[3].d_open = hconf_used;
+}

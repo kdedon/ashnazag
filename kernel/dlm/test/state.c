@@ -346,15 +346,127 @@ hook_tests()
 	moduload(0);
 }
 
+/* cd_open / cd_close: count calls, return cd_rv */
+int cd_rv, cd_opens, cd_closes;
+
+int
+h_cdopen(m, a, b)
+	struct dlm_mod *m;
+	char *a;
+	long b;
+{
+	cd_opens++;
+	return cd_rv;
+}
+
+int
+h_cdclose(m, a, b)
+	struct dlm_mod *m;
+	char *a;
+	long b;
+{
+	cd_closes++;
+	return 0;
+}
+
+extern struct cdevsw cdevsw[];
+extern int dlm_cdev_open(), dlm_cdev_close(), dlm_stale_close;
+extern void hconf_cdev();
+
+int
+creg(name, mj)
+	char *name;
+	int mj;
+{
+	struct mod_mreg reg;
+
+	strcpy(reg.md_modname, name);
+	reg.md_typedata = (caddr_t)&mj;
+	return modadm(MOD_TY_CDEV, MOD_C_MREG, (char *)&reg);
+}
+
+int
+copen(mj, mn, otyp)
+	int mj, mn, otyp;
+{
+	dev_t d = makedevice(mj, mn);
+
+	return (*cdevsw[mj].d_open)(&d, 3, otyp, (struct cred *)0);
+}
+
+int
+cclose(mj, mn, otyp)
+	int mj, mn, otyp;
+{
+	return (*cdevsw[mj].d_close)(makedevice(mj, mn), 3, otyp, (struct cred *)0);
+}
+
+void
+drv_tests()
+{
+	struct modstatus st;
+	struct dlm_mod *m;
+	int e;
+
+	check(creg("cd", 60) == 0 && cdevsw[60].d_open == dlm_cdev_open &&
+	    cdevsw[60].d_close == dlm_cdev_close && cdevsw[60].d_read == nodev,
+	    "cdev: registration puts the trampolines in the empty row");
+	check(creg("cd", 60) == 0, "cdev: re-registration is idempotent");
+	check(creg("zz", 60) == EEXIST && creg("zz", 3) == EEXIST,
+	    "cdev: another module's major or a used row -> EEXIST");
+	check(creg("zz", 70) == ECONFIG && creg("zz", -1) == ECONFIG,
+	    "cdev: major outside the switch -> ECONFIG");
+	cd_rv = 0;
+	e = copen(60, 0, OTYP_CHR);
+	m = byname("cd");
+	check(e == 0 && m && cd_opens == 1 && m->m_refs == 1 &&
+	    cdevsw[60].d_read == (int (*)())modsym(m, "cd_read") &&
+	    cdevsw[60].d_ioctl == (int (*)())modsym(m, "cd_ioctl") &&
+	    cdevsw[60].d_write == nodev && cdevsw[60].d_open == dlm_cdev_open,
+	    "cdev: first open loads the module, fills the row, holds it");
+	check(copen(60, 0, OTYP_CHR) == 0 && m->m_refs == 1 && cd_opens == 2,
+	    "cdev: reopen of an open key holds nothing more");
+	check(copen(60, 1, OTYP_CHR) == 0 && m->m_refs == 2, "cdev: another minor holds once more");
+	check(copen(60, 2, OTYP_LYR) == 0 && copen(60, 2, OTYP_LYR) == 0 && m->m_refs == 4,
+	    "cdev: layered opens hold per call");
+	check(cclose(60, 2, OTYP_LYR) == 0 && cclose(60, 2, OTYP_LYR) == 0 && m->m_refs == 2,
+	    "cdev: layered closes release per call");
+	check(moduload(m->m_id) == EBUSY, "cdev: open driver does not unload");
+	check(modstat(m->m_id, &st, 0) == 0 && st.ms_msinfo[0].mss_type == MOD_TY_CDEV &&
+	    st.ms_msinfo[0].mss_p1[0] == 60 && st.ms_msinfo[0].mss_p1[1] == 1,
+	    "cdev: modstat reports the major");
+	check(cclose(60, 0, OTYP_CHR) == 0 && cclose(60, 1, OTYP_CHR) == 0 &&
+	    cd_closes == 4 && m->m_refs == 0 && (m->m_flags & DM_CAND) && candok(),
+	    "cdev: last closes release, module becomes a candidate");
+	e = dlm_stale_close;
+	check(cclose(60, 5, OTYP_CHR) == 0 && dlm_stale_close == e + 1 && m->m_refs == 0,
+	    "cdev: close of a key never opened is counted, not released");
+	cd_rv = ENXIO;
+	check(copen(60, 0, OTYP_CHR) == ENXIO && m->m_refs == 0, "cdev: failed open releases");
+	cd_rv = 0;
+	check(moduload(m->m_id) == 0 && !byname("cd") && cdevsw[60].d_read == nodev &&
+	    cdevsw[60].d_open == dlm_cdev_open, "cdev: unload puts the placeholder back");
+	check(creg("cdold", 61) == 0 && copen(61, 0, OTYP_CHR) == ENXIO && !byname("cdold"),
+	    "cdev: D_OLD driver is refused");
+	check(creg("cdblk", 62) == 0 && copen(62, 0, OTYP_CHR) == ENXIO && !byname("cdblk"),
+	    "cdev: block majors are refused");
+	check(creg("zz", 63) == 0 && copen(63, 0, OTYP_CHR) == ENXIO && !byname("zz"),
+	    "cdev: module that cannot be loaded -> ENXIO");
+	check(copen(60, 0, OTYP_CHR) == 0 && byname("cd") && cclose(60, 0, OTYP_CHR) == 0,
+	    "cdev: loads again after unload");
+	moduload(0);
+}
+
 /* kernel table plus the names the harness modules need */
 void
 kernel_table(path)
 	char *path;
 {
 	FILE *f = fopen(path, "rb");
-	static char *ops[3] = { "mod_miscops", "mod_execops", "mod_hookops" };
+	static char *ops[4] = { "mod_miscops", "mod_execops", "mod_hookops",
+	    "mod_drvops" };
 	char *b, *nb, *s, *e;
-	long len, n, i, k, ss, so, miss[3];
+	long len, n, i, k, ss, so, miss[4];
 	unsigned long v;
 
 	if (!f) {
@@ -368,7 +480,7 @@ kernel_table(path)
 		fprintf(stderr, "bad kernel table %s\n", path);
 		exit(2);
 	}
-	for (k = i = 0; i < 3; i++)
+	for (k = i = 0; i < 4; i++)
 		if (!dlm_blklookup(b, ops[i], &v, (int *)0))
 			miss[k++] = i;
 	if (k == 0) {
@@ -718,6 +830,10 @@ main(argc, argv)
 	host_handler("xa_exec", h_xa);
 	exec_tests();
 	hook_tests();
+	hconf_cdev();
+	host_handler("cd_open", h_cdopen);
+	host_handler("cd_close", h_cdclose);
+	drv_tests();
 
 	printf("%d passed, %d failed\n", passes, fails);
 	return fails != 0;

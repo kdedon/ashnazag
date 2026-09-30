@@ -12,6 +12,8 @@
 #include "sys/utsname.h"
 #include "sys/pathname.h"
 #include "sys/procset.h"
+#include "sys/conf.h"
+#include "sys/var.h"
 
 extern int aux_amix();
 
@@ -46,6 +48,8 @@ aux_errno_out(e, ap)
 		return ap->ap_compat & COMPAT_BSDNBIO ? AUX_EWOULDBLOCK : EAGAIN;
 	if (e == AUXE_WOULDBLOCK)
 		return AUX_EWOULDBLOCK;
+	if (e == AUXE_AGAIN)
+		return EAGAIN;
 	if (e == ERESTART)
 		return EINTR;
 	if (e > 0 && e <= 45)
@@ -164,8 +168,36 @@ aux_open(ap, a, rv, r)
 	rval_t *rv;
 	char *r;
 {
+	char b[80];
+	u_int n;
+	int e, global = a[1] & AUX_OGLOBAL;
+	long d[3], fd;
+	rval_t dv;
+
 	a[1] = aux_oflags_in((int)a[1], ap);
-	return aux_amix(5, a, rv);
+	e = aux_amix(5, a, rv);
+	/*
+	 * O_GLOBAL: from fd 128 on, as the Mac side's shared files; else
+	 * where it is.  Closed on exec: a new image leaves the layer.
+	 */
+	if (e == 0 && global && rv->r_val1 < AUX_GFD) {
+		d[0] = rv->r_val1;
+		d[1] = 0;			/* F_DUPFD */
+		d[2] = AUX_GFD;
+		if (aux_amix(62, d, &dv) == 0) {
+			fd = dv.r_val1;
+			aux_amix(6, d, &dv);	/* close */
+			d[0] = rv->r_val1 = fd;
+			d[1] = 2;		/* F_SETFD */
+			d[2] = 1;		/* FD_CLOEXEC */
+			(void)aux_amix(62, d, &dv);
+		}
+	}
+	if ((aux_trace & 4) && copyinstr((caddr_t)a[0], b + 5, sizeof b - 5, &n) == 0) {
+		bcopy("open ", b, 5);
+		aux_tlog((int)u.u_procp->p_pid, b, e ? (long)-e : (long)rv->r_val1);
+	}
+	return e;
 }
 
 int
@@ -263,6 +295,21 @@ static long iocmap[][2] = {
 	{ 0, 0 }
 };
 
+/* fd is a character device without STREAMS */
+static int
+plaindev(fd)
+	int fd;
+{
+	file_t *fp;
+	struct vnode *vp;
+
+	if (getf(fd, &fp))
+		return 0;
+	vp = fp->f_vnode;
+	return vp->v_type == VCHR && getmajor(vp->v_rdev) < cdevcnt &&
+	    cdevsw[getmajor(vp->v_rdev)].d_str == 0;
+}
+
 int
 aux_ioctl(ap, a, rv, r)
 	struct aux_proc *ap;
@@ -312,12 +359,14 @@ aux_ioctl(ap, a, rv, r)
 			fp->f_flag &= ~FNONBLOCK;
 		return 0;
 	}
+	if ((cmd & 0xff00) == 0x5100 && plaindev((int)a[0]))
+		return aux_amix(54, a, rv);	/* 'Q': /dev/uinter0, unchanged */
 	for (i = 0; iocmap[i][0]; i++)
 		if (iocmap[i][0] == cmd) {
 			a[1] = iocmap[i][1];
 			return aux_amix(54, a, rv);
 		}
-	if (aux_trace)
+	if (aux_trace & 3)
 		printf("aux %d: ioctl %x\n", (int)u.u_procp->p_pid, (int)cmd);
 	return EINVAL;
 }
@@ -479,6 +528,51 @@ aux_xfstat(ap, a, rv, r)
 	return fstat_((int)a[0], (caddr_t)a[1], AXSTAT_SIZE);
 }
 
+/*
+ * setxinfo/fsetxinfo(file, xinfo): no file system here keeps Finder
+ * info (xstat's st_xerror), so after the checks this fails as on
+ * A/UX's SVFS; the Mac side keeps it in its AppleDouble files.
+ */
+static int
+xinfo_in(ub)
+	caddr_t ub;
+{
+	char b[36];
+
+	return copyin(ub, b, sizeof b) ? EFAULT : EINVAL;
+}
+
+int
+aux_setxinfo(ap, a, rv, r)
+	struct aux_proc *ap;
+	long *a;
+	rval_t *rv;
+	char *r;
+{
+	struct vnode *vp;
+	int e;
+
+	if ((e = lookupname((caddr_t)a[0], UIO_USERSPACE, FOLLOW, NULLVPP, &vp)) != 0)
+		return e;
+	VN_RELE(vp);
+	return xinfo_in((caddr_t)a[1]);
+}
+
+int
+aux_fsetxinfo(ap, a, rv, r)
+	struct aux_proc *ap;
+	long *a;
+	rval_t *rv;
+	char *r;
+{
+	file_t *fp;
+	int e;
+
+	if ((e = getf((int)a[0], &fp)) != 0)
+		return e;
+	return xinfo_in((caddr_t)a[1]);
+}
+
 /* ---- getdirentries(fd, buf, nbytes, basep) ---- */
 
 #define	DIRMAX	8192
@@ -576,6 +670,31 @@ cpname(d, s, n)
 		d[i] = 0;
 }
 
+/*
+ * utssys(buf, 0, 33): A/UX uvar(), a 512-byte struct var.  Filled:
+ * v_call, v_proc, v_maxup, v_hz, v_pageshift, v_pagemask, v_maxpmem
+ * (physical memory in pages, which the Mac side sizes its RAM from).
+ */
+static int
+uvar(ub)
+	caddr_t ub;
+{
+	char *b;
+	int e;
+
+	b = kmem_zalloc(512, KM_SLEEP);
+	P32(b + 0x04, v.v_call);
+	P32(b + 0x20, v.v_proc);
+	P32(b + 0x38, v.v_maxup);
+	P32(b + 0x68, HZ);
+	P32(b + 0x70, 12);			/* 4 KB pages */
+	P32(b + 0x74, 0xfff);
+	P32(b + 0xc4, physmem);
+	e = copyout(b, ub, 512) ? EFAULT : 0;
+	kmem_free((_VOID *)b, 512);
+	return e;
+}
+
 /* utssys(buf, 0, 0): uname in 5 x 9 bytes */
 int
 aux_utssys(ap, a, rv, r)
@@ -586,6 +705,8 @@ aux_utssys(ap, a, rv, r)
 {
 	char b[45];
 
+	if (a[2] == 33)
+		return uvar((caddr_t)a[0]);
 	if (a[2] != 0)
 		return EINVAL;
 	cpname(b, utsname.sysname, 9);
@@ -751,6 +872,23 @@ aux_swapmmumode(ap, a, rv, r)
 {
 	rv->r_val1 = 1 - a[0];
 	return 0;
+}
+
+/* sysslotmanager(selector, SpBlock *): the Slot Manager result in d0 */
+int
+aux_slotmanager(ap, a, rv, r)
+	struct aux_proc *ap;
+	long *a;
+	rval_t *rv;
+	char *r;
+{
+	int e, res = 0;
+
+	if (aux_slotmgr == 0)
+		return EINVAL;
+	e = (*aux_slotmgr)((int)a[0], (caddr_t)a[1], &res);
+	rv->r_val1 = res;
+	return e;
 }
 
 int

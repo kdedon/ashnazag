@@ -9,7 +9,7 @@ All runs are headless under `nice -n 19` and `timeout`, drive QEMU over QMP for 
 | File | Purpose |
 |---|---|
 | `run-direct.sh [OUT] [STEP...]` | direct ELF boot (`-kernel`, no ROM); `KERNEL=` selects the ELF (default `kernel/build/unix-mac.elf`) |
-| `run-mac.sh ROM DISK MB OUT [STEP...]` | ROM boot with the disk at SCSI ID 0; `GDB=1` adds a gdbstub socket `OUT/gdb.sock`, `QEXTRA=` adds QEMU options, `TMO=` sets the timeout (260 s) |
+| `run-mac.sh [--net] [--sock] [--tmo S] ROM DISK MB OUT [STEP...]` | ROM boot with the disk at SCSI ID 0; `--net` user-mode network, `--sock` serial A on `OUT/serial.sock` for `serial:` steps, `--tmo` timeout; `GDB=1` adds a gdbstub socket `OUT/gdb.sock`, `QEXTRA=` adds QEMU options, `TMO=` sets the timeout (260 s) |
 | `run-rom.sh ROM [DISK] [OUT]` | minimal ROM boot, optional disk |
 | `qmp.py` | QMP steps: `wait:N`, `shot:NAME`, `type:TEXT` (ADB keys), `serial:TEXT`, `hmp:CMD`, `quit` |
 | `s5write-model.py` | host model of the s5 write path on 4 KB pages; checks the byte patches of `kernel/mac/patch_s5pages.py` (`-x` drops one patch group at a time) |

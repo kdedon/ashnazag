@@ -82,6 +82,30 @@ def diff(a, b):
 
 
 # dspat.h, in Python
+def macscreen(w, h, px, x0=0, y0=0, x1=None, y1=None):
+    # per mille: 50% dither (pixel differs from its right and lower
+    # neighbours), white pixels, white pixels in the top 19 rows (menu bar);
+    # over the whole screen or the rectangle x0, y0 to x1, y1
+    row = 3 * w
+    x1 = w if x1 is None else min(x1, w)
+    y1 = h if y1 is None else min(y1, h)
+    chk = white = top = 0
+    for y in range(y0, y1):
+        o = y * row
+        for x in range(x0, x1):
+            p = px[o + 3 * x:o + 3 * x + 3]
+            if p == b'\xff\xff\xff':
+                white += 1
+                if y < 19:
+                    top += 1
+            if x + 1 < w and y + 1 < h and p != px[o + 3 * x + 3:o + 3 * x + 6] and \
+                    p != px[o + row + 3 * x:o + row + 3 * x + 3]:
+                chk += 1
+    n = max(1, (x1 - x0) * (y1 - y0))
+    return 'checker %d white %d top %d' % (1000 * chk // n, 1000 * white // n,
+                                           1000 * top // max(1, 19 * (x1 - x0)))
+
+
 def pattern(w, h, depth, seed, k):
     n = 1 << depth if depth <= 8 else 256
     pal = [bytes(((37 * i + seed) & 255, (91 * i + 40) & 255, (255 - 7 * i) & 255))
@@ -151,6 +175,15 @@ def serve(q, cmd, a):
         q.hmp('mouse_button %d' % int(a[0]))
         time.sleep(0.3)
         return 'done'
+    if cmd == 'click':
+        # n quick clicks: a double click is two
+        for _ in range(int(a[0])):
+            q.hmp('mouse_button 1')
+            time.sleep(0.05)
+            q.hmp('mouse_button 0')
+            time.sleep(0.1)
+        time.sleep(0.3)
+        return 'done'
     if cmd == 'shot':
         name = os.path.basename(a[0])
         ppm = os.path.join(D, name + '.ppm')
@@ -172,6 +205,9 @@ def serve(q, cmd, a):
         w2, h2, p2 = readppm(os.path.join(D, os.path.basename(a[1]) + '.ppm'))
         n = diff(p1, p2) if (w1, h1) == (w2, h2) else -1
         return 'same' if n == 0 else 'diff %d' % n
+    if cmd == 'mac':
+        w, h, px = readppm(os.path.join(D, os.path.basename(a[0]) + '.ppm'))
+        return macscreen(w, h, px, *[int(v) for v in a[1:5]])
     if cmd == 'ref':
         name, shot = os.path.basename(a[0]), os.path.basename(a[1])
         depth, seed, k = int(a[2]), int(a[3]), int(a[4])

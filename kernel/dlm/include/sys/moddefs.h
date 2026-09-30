@@ -40,6 +40,8 @@ struct modwrapper {
 extern struct mod_operations mod_miscops;
 extern struct mod_operations mod_execops;
 extern struct mod_operations mod_hookops;
+extern struct mod_operations mod_drvops;
+extern struct mod_operations mod_strops;
 
 extern int mod_hold();			/* (struct modwrapper *) */
 extern void mod_rele();			/* (struct modwrapper *) */
@@ -50,6 +52,31 @@ struct mod_exec_data {
 	short	ex_flags;
 	int	(*ex_func)();		/* as an execsw exec_func */
 	int	(*ex_core)();		/* unused */
+};
+
+/*
+ * A driver: its switch rows and majors.  Character drivers only, one
+ * or more consecutive majors, not STREAMS; drv_bcount must be 0.
+ * d_open and d_close of a loaded row stay the loader's trampolines.
+ */
+#ifdef _SYS_CONF_H
+struct mod_drv_data {
+	struct bdevsw	drv_bdevsw;
+	int		drv_bmajor, drv_bcount;
+	struct cdevsw	drv_cdevsw;
+	int		drv_cmajor, drv_ccount;
+};
+#endif
+
+/*
+ * A STREAMS module: an fmodsw row under str_name.  The loader holds the
+ * module from the open that sets q_ptr to the close, so the module
+ * sets q_ptr on its first open.  Not D_OLD, not a multiplexor.
+ */
+struct mod_str_data {
+	char		str_name[9];	/* FMNAMESZ + 1 */
+	struct streamtab *str_tab;
+	int		*str_flag;
 };
 
 /* hooks: array, ends with hd_name == 0 */
@@ -117,6 +144,18 @@ struct hooksw {
 	MOD_TWRAPPER_(p, mod_execops, exec, load, unload, desc)
 #define	MOD_HOOK_WRAPPER(p, load, unload, desc) \
 	MOD_TWRAPPER_(p, mod_hookops, hook, load, unload, desc)
+#define	MOD_STR_WRAPPER(p, load, unload, desc) \
+	MOD_TWRAPPER_(p, mod_strops, str, load, unload, desc)
+#define	MOD_DRV_WRAPPER(p, load, unload, halt, desc) \
+	extern struct mod_drv_data p##_drvdata[]; \
+	static struct mod_type_data p##_mod_td = \
+		{ desc, (void *)p##_drvdata }; \
+	static struct modlink p##_mod_link[] = { \
+		{ &mod_drvops, (void *)&p##_mod_td }, { 0, 0 } }; \
+	asm(".weak " #p "_conf_data"); \
+	extern struct mod_conf_data p##_conf_data; \
+	struct modwrapper p##_wrapper = { \
+		MODREV, load, unload, halt, &p##_conf_data, p##_mod_link }
 #else
 #define	MOD_EXEC_WRAPPER(p, load, unload, desc) \
 	extern struct mod_exec_data p/**/_execdata[]; \
@@ -138,6 +177,26 @@ struct hooksw {
 	extern struct mod_conf_data p/**/_conf_data; \
 	struct modwrapper p/**/_wrapper = { \
 		MODREV, load, unload, 0, &p/**/_conf_data, p/**/_mod_link }
+#define	MOD_STR_WRAPPER(p, load, unload, desc) \
+	extern struct mod_str_data p/**/_strdata[]; \
+	static struct mod_type_data p/**/_mod_td = \
+		{ desc, (char *)p/**/_strdata }; \
+	static struct modlink p/**/_mod_link[] = { \
+		{ &mod_strops, (char *)&p/**/_mod_td }, { 0, 0 } }; \
+	asm(".weak p" "_conf_data"); \
+	extern struct mod_conf_data p/**/_conf_data; \
+	struct modwrapper p/**/_wrapper = { \
+		MODREV, load, unload, 0, &p/**/_conf_data, p/**/_mod_link }
+#define	MOD_DRV_WRAPPER(p, load, unload, halt, desc) \
+	extern struct mod_drv_data p/**/_drvdata[]; \
+	static struct mod_type_data p/**/_mod_td = \
+		{ desc, (char *)p/**/_drvdata }; \
+	static struct modlink p/**/_mod_link[] = { \
+		{ &mod_drvops, (char *)&p/**/_mod_td }, { 0, 0 } }; \
+	asm(".weak p" "_conf_data"); \
+	extern struct mod_conf_data p/**/_conf_data; \
+	struct modwrapper p/**/_wrapper = { \
+		MODREV, load, unload, halt, &p/**/_conf_data, p/**/_mod_link }
 #endif
 
 /* host bus adapter: no slot, no auto-load; _unload returns EBUSY */

@@ -1,7 +1,9 @@
 /*
  * guestcore.c -- guest processes: the guest_proc record, its life
  * across exec, fork and exit, and dispatch of exceptions, signal
- * frames and address checks to the process's profile.
+ * frames and address checks to the process's profile.  The virtual
+ * CPU (A-line reflection, privileged instructions, the virtual IPL)
+ * is in gcpu.c.
  *
  * A guest process holds its profile's module (gpf_wrapper) from
  * creation to free; profile modules depend on this one.
@@ -10,6 +12,8 @@
  */
 
 #include "kinc.h"
+
+extern int guest_fsig();
 
 static struct guest_profile *gc_profiles;
 static int gc_nproc;
@@ -75,14 +79,20 @@ gc_exec(p)
 	struct proc *p;
 {
 	struct guest_profile *pf = guest_loading == p ? guest_loadprof : 0;
+	struct guest_proc *gp;
 
 	if (p->p_evpdp && GUESTP(p)->gp_prof != pf)
 		gc_free(p);
 	if (pf) {
 		if (!p->p_evpdp)
 			(void)gc_alloc(p, pf);
+		gp = GUESTP(p);
+		gp->gp_flags = 0;		/* a new image: no virtual CPU state */
+		gp->gp_vsr = 0;
+		gp->gp_vusp = gp->gp_vvbr = gp->gp_vcacr = 0;
+		gp->gp_vsfc = gp->gp_vdfc = 0;
 		if (pf->gpf_exec)
-			(*pf->gpf_exec)(GUESTP(p));
+			(*pf->gpf_exec)(gp);
 	}
 }
 
@@ -95,7 +105,13 @@ gc_fork(pp, cp)
 	int e;
 
 	cg = gc_alloc(cp, pf);
-	cg->gp_flags = pg->gp_flags;
+	cg->gp_flags = pg->gp_flags & ~GPF_VPEND;
+	cg->gp_vsr = pg->gp_vsr;
+	cg->gp_vusp = pg->gp_vusp;
+	cg->gp_vvbr = pg->gp_vvbr;
+	cg->gp_vcacr = pg->gp_vcacr;
+	cg->gp_vsfc = pg->gp_vsfc;
+	cg->gp_vdfc = pg->gp_vdfc;
 	bcopy(GUEST_PRIV(pg), GUEST_PRIV(cg), pf->gpf_privsz);
 	if (pf->gpf_fork && (e = (*pf->gpf_fork)(pg, cg)) != 0) {
 		gc_free(cp);
@@ -124,6 +140,7 @@ gc_trap(r)
 		return 1;
 	if ((d->gd_flags & GDF_USER) && (GR_SR(r) & 0x2000))
 		return 1;
+	u.u_ar0 = (struct pcb *)r;	/* for sendsig from the handler's tail */
 	return (*d->gd_fn)(gp, r, v);
 }
 
@@ -165,6 +182,7 @@ struct mod_hook_data guestcore_hookdata[] = {
 	{ "guest_exit",		(int (*)())gc_exit },
 	{ "guest_sendsig",	gc_sendsig },
 	{ "guest_vur",		gc_vur },
+	{ "guest_fsig",		guest_fsig },
 	{ 0, 0 }
 };
 
