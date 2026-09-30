@@ -27,7 +27,7 @@ python3 "$V/mkfont.py" --check "$V/fbfont.c" >/dev/null 2>&1 ||
 	echo "[--] fbfont.c not checked against the source font (font file missing or differs)"
 
 for f in fbcons fbprobe fbfont fbtty; do
-	nice -n 19 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68040 -Wall -Wno-comment \
+	nice -n 19 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS $AMIX_DIAG_CFLAGS -m68040 -Wall -Wno-comment \
 		-c "$V/$f.c" -o "$OUT/$f.o" 2> "$OUT/$f.warn" || {
 		cat "$OUT/$f.warn"; echo "[FAIL] $f.c"; exit 1; }
 	if [ -s "$OUT/$f.warn" ]; then

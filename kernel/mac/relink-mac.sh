@@ -39,11 +39,20 @@ fi
 echo "[*] base $BASE ($MODE)"
 
 echo "[*] assembling / compiling the Mac platform objects"
+# BOOTDIAG=1: status lines at the bottom of the screen (bootdiag/diag.c)
+DIAGAS=
+AMIX_DIAG_CFLAGS=
+if [ "${BOOTDIAG:-0}" = 1 ]; then
+	DIAGAS=-Wa,--defsym,BOOTDIAG=1
+	AMIX_DIAG_CFLAGS=-DBOOTDIAG
+	echo "[*] BOOTDIAG: boot status lines"
+fi
+export AMIX_DIAG_CFLAGS
 for s in macentry macintr pstartmac $ADAPT; do
-	m68k-cbm-sysv4-gcc -m68040 -c "$MAC/$s.s" -o "$W/$s.o"
+	m68k-cbm-sysv4-gcc -m68040 $DIAGAS -c "$MAC/$s.s" -o "$W/$s.o"
 done
 m68k-cbm-sysv4-gcc -m68040 -c "$MAC/boot/auxentry.s" -o "$W/auxentry.o"
-m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68040 -c "$MAC/macconf.c" -o "$W/macconf.o"
+m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS $AMIX_DIAG_CFLAGS -m68040 -c "$MAC/macconf.c" -o "$W/macconf.o"
 OBJS="$W/macentry.o $W/auxentry.o $W/macconf.o $W/macintr.o $W/pstartmac.o $W/$ADAPT.o"
 
 echo "[*] drivers: SCC tty, 53C96 SCSI, RAM disk, frame-buffer console, ADB, SONIC, RTC, display"
@@ -106,6 +115,14 @@ ALIAS="sendsig:T valid_usr_range:T fsig:T execsw:D stime:T fmodsw:D"
 # uiomove: the wrapper marks the segkmap pages it writes modified.
 OVR="$OVR uiomove"
 ALIAS="$ALIAS uiomove:T"
+if [ -n "$AMIX_DIAG_CFLAGS" ]; then
+	m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS $AMIX_DIAG_CFLAGS -m68040 -c "$MAC/bootdiag/diag.c" \
+		-o "$W/diag.o"
+	m68k-cbm-sysv4-gcc -m68040 -c "$MAC/bootdiag/diagvec.s" -o "$W/diagvec.o"
+	OBJS="$OBJS $W/diag.o $W/diagvec.o"
+	OVR="$OVR vfs_mountroot swapconf exece fpuinit idle"
+	ALIAS="$ALIAS vfs_mountroot:T swapconf:T exece:T fpuinit:T"
+fi
 
 echo "[*] weakening the Amiga platform entry points"
 WEAK=""

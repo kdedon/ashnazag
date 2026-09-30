@@ -8,6 +8,7 @@
 | `sonic.h`, `sonic.c` | chip core: pool, rings, CAM, tx/rx, interrupt, watchdog. No STREAMS; builds on the host with `-DSN_HOST` |
 | `sndlpi.c` | STREAMS DLPI provider `sninfo`, AEN-compatible ioctls, bring-up, `snintr` |
 | `snsup.s` | `sn_dcpush`/`sn_dcinval` (68040 line push/invalidate) |
+| `snvst.c` | virtual stations (`vst_ops`, `otbridge/vstation.h`): own CAM entries, local switching; builds on the host with `-DSN_HOST` |
 | `test/` | behavioural SONIC model + host tests |
 | `verify.sh` | image checks + host tests |
 
@@ -29,6 +30,14 @@
 - `DL_ENABMULTI_REQ` 0x1d / `DL_DISABMULTI_REQ` 0x1e / `DL_PHYS_ADDR_REQ` 0x31 (DLPI 2.0 numbers; this `dlpi.h` lacks them). Multicast addresses go into CAM entries 1–15, reference counted, 4 per stream. Non-broadcast multicast frames reach only streams that enabled them.
 - SNAP tx: 11-byte address (MAC + OUI/type) or the stream's first subs-bind. 802.3 length field written from the payload; rx trims to it.
 - Not supported: trailers (dropped), `DL_ATTACH_REQ` (style 1), promiscuous primitives (use `AEN_SET_CONFIG` mode `PROM`).
+
+## Virtual stations
+
+- Up to 4 stations, each a unicast address in a CAM entry (1–15, shared with multicast through `sn_camref`; stations hold at most 9, so 6 stay the host's) and a receive handler; `/dev/otbstation` (`otbridge`) is the user.
+- Wire → unicast to a station: that station only (`sn_vinput`, the host's streams skip it); broadcast and wanted multicast: stations and host.
+- Host → station unicast stays local (`sn_vlocal`, no transmit); broadcast/multicast: stations and the wire.
+- Station → frames must carry its own source address; bridge control (01:80:c2:00:00:0x) and MAC control (type 8808) are refused; to the host or another station: local only; broadcast/multicast: host (`sn_input` with `sn_vquiet`), the other stations, the wire (padded to 60).
+- `test/tvst.c`: 39 host checks against a model of the rest of the driver.
 
 ## Hardware facts used
 

@@ -29,7 +29,13 @@ extern void	sim_wr(), sim_pwr(), sim_via_wr();
 #define VIA2_WR(r, v)	sim_via_wr(r, v)
 #else
 #define NCR_RD(r)	(*(__volatile__ unsigned char *)NCR_ADDR(r))
+#ifdef BOOTDIAG
+extern unsigned long diag_scmd;
+#define NCR_WR(r, v)	((r) == CMD ? (diag_scmd = (v)) : 0, \
+			 *(__volatile__ unsigned char *)NCR_ADDR(r) = (v))
+#else
 #define NCR_WR(r, v)	(*(__volatile__ unsigned char *)NCR_ADDR(r) = (v))
+#endif
 #define PDMA_PORT	((__volatile__ unsigned short *)NCR_PDMA)
 #define PDMA_RD(p)	(*(p))
 #define PDMA_WR(p, w)	(*(p) = (w))
@@ -94,7 +100,7 @@ extern void	sim_wr(), sim_pwr(), sim_via_wr();
 #define P_MSGOUT	6
 #define P_MSGIN		7
 
-/* values used by A/UX for a 25 MHz chip clock */
+/* A/UX's values; the Q800 chip clock is 16.5 MHz (CCF 5 covers 15-20 MHz) */
 #define NCR_CCF		5
 #define NCR_SELTO	0xA4
 #define NCR_CFG1	0x47	/* bus ID 7, reset interrupt disabled */

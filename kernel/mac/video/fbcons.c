@@ -850,6 +850,9 @@ register struct fbmode *m;
 	FC->fc_m.fm_base = FB_MAP(m->fm_base);
 	FC->fc_cols = m->fm_width / FB_CW;
 	FC->fc_rows = m->fm_height / FB_CH;
+#ifdef BOOTDIAG
+	FC->fc_rows -= 6;		/* status lines below the console */
+#endif
 	if (d <= 8) {
 		FC->fc_fg = fb_repl(d == 8 ? 0xFFUL : (1UL << d) - 1, d);
 		FC->fc_bg = 0;

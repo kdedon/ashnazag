@@ -1,0 +1,19 @@
+#!/sbin/sh
+# startmac -- the Mac environment, System Folder in /mac/sys/Sys7.
+# Other users get their own copy, as the System file must be writable.
+umask 022
+/usr/bin/ps -e | /usr/bin/grep -s ' fidd$' > /dev/null || /etc/aux/fidd < /dev/null
+case `/usr/bin/id` in
+uid=0\(*)
+	S=/mac/sys/Sys7 ;;
+*)
+	S="$HOME/System Folder"
+	if [ ! -f "$S/System" ]; then
+		/usr/bin/mkdir -p "$S" && /usr/bin/cp /mac/sys/Sys7/System /mac/sys/Sys7/Finder "$S" ||
+			{ echo "startmac: cannot make $S" >&2; exit 1; }
+	fi ;;
+esac
+TBSYSTEM=${TBSYSTEM:-$S}
+TBMEMORY=${TBMEMORY:-8M}
+export TBSYSTEM TBMEMORY
+exec /mac/bin/startmac "$@"

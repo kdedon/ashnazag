@@ -14,7 +14,7 @@ OUT="${1:-$K/build/mac}"
 . "$AUX/toolchain/src/gcc-cross-amix/build/env.sh"
 mkdir -p "$OUT"
 
-CFLAGS="$AMIX_KERNEL_CFLAGS -m68040 -I$AMIX_ROOT/usr/sys/amiga/alien -I$HERE"
+CFLAGS="$AMIX_KERNEL_CFLAGS $AMIX_DIAG_CFLAGS -m68040 -I$AMIX_ROOT/usr/sys/amiga/alien -I$HERE"
 for c in ncr96 scsimac apm; do
 	m68k-cbm-sysv4-gcc $CFLAGS -c "$HERE/$c.c" -o "$OUT/$c.o"
 done

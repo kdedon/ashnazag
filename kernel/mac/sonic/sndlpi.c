@@ -114,6 +114,7 @@ extern int bcmp();
 int snopen(), snclose(), snwput(), snwsrv();
 void snintr();
 static void sn_watchdog(), sn_ioctl(), sn_proto();
+extern int sn_vinput(), sn_vlocal();
 
 static struct module_info sn_minfo = {
 	0x736e, "sn", 1, ETHERMTU, 5 * 1024, 3 * 1024,
@@ -151,7 +152,7 @@ char *sn_ifname = "aen";		/* ifstats name, as netstat shows it */
 static unsigned char sn_bcast[6] = { 255, 255, 255, 255, 255, 255 };
 
 /* raise to IPL 2, never lower; returns the old SR */
-static int
+int
 sn_spl()
 {
 	int s, n;
@@ -164,7 +165,7 @@ sn_spl()
 	return s;
 }
 
-static void
+void
 sn_splx(s)
 int s;
 {
@@ -269,6 +270,17 @@ sn_start()
 
 	if (sn_up)
 		return sn_up > 0;
+#ifdef BOOTDIAG
+	{
+		extern int diag_opts;
+
+		if (diag_opts & 0x08) {
+			printf("sn0: off (nosonic)\n");
+			sn_up = -1;
+			return 0;
+		}
+	}
+#endif
 	if (mac_model != 35 && !sn_anymodel) {
 		printf("sn0: machine %d is not a Quadra 800; no Ethernet\n",
 		    (int)mac_model);
@@ -308,6 +320,13 @@ sn_start()
 	    SN_RD(SN_SR), SN_BOARD, ea[0], ea[1], ea[2], ea[3], ea[4], ea[5], how);
 	sn_wid = timeout(sn_watchdog, (caddr_t)0, SN_HZ);
 	return 1;
+}
+
+/* bring the chip up for a virtual station */
+int
+sn_vup()
+{
+	return sn_start();
 }
 
 static void
@@ -497,7 +516,8 @@ mblk_t *mp;
 		b[12] = (n + hl - HDRSZ) >> 8;	/* 802.3 length */
 		b[13] = n + hl - HDRSZ;
 	}
-	sn_txstart(&sn_sc, hl + n);
+	if (!sn_vlocal(b, hl + n))
+		sn_txstart(&sn_sc, hl + n);
 	sn_ifstats.ifs_opackets++;
 	freemsg(mp);
 	return 1;
@@ -657,6 +677,8 @@ unsigned int st;
 	int plen, type, mcast, other;
 
 	sn_ifstats.ifs_ipackets++;
+	if (sn_vinput(pkt, len))
+		return;
 	tl = pkt[12] << 8 | pkt[13];
 	llc = pkt + HDRSZ;
 	if (tl > ETHERMTU) {
@@ -802,6 +824,45 @@ struct sn_str *sp;
 	bcopy((caddr_t)sn_sc.cam[0], (caddr_t)mp->b_wptr, 6);
 	mp->b_wptr += 6;
 	qreply(q, mp);
+}
+
+/*
+ * Reference the CAM entry (1..15) for a: delta 1 adds one, -1 drops one.
+ * Virtual stations use it for their own and their multicast addresses.
+ */
+int
+sn_camref(a, delta)
+unsigned char *a;
+int delta;
+{
+	register int k, fr = -1;
+
+	for (k = 1; k < SN_NCAM; k++) {
+		if (sn_mcref[k] && bcmp((caddr_t)sn_sc.cam[k], (caddr_t)a, 6) == 0)
+			break;
+		if (!sn_mcref[k] && fr < 0)
+			fr = k;
+	}
+	if (delta < 0) {
+		if (k < SN_NCAM && --sn_mcref[k] == 0) {
+			sn_sc.camvalid &= ~(1 << k);
+			(void)sn_filter(&sn_sc);
+		}
+		return 0;
+	}
+	if (k == SN_NCAM) {
+		if (fr < 0)
+			return ENOSPC;
+		k = fr;
+		bcopy((caddr_t)a, (caddr_t)sn_sc.cam[k], 6);
+		sn_sc.camvalid |= 1 << k;
+		if (sn_filter(&sn_sc) < 0) {
+			sn_sc.camvalid &= ~(1 << k);
+			return EIO;
+		}
+	}
+	sn_mcref[k]++;
+	return 0;
 }
 
 /* CAM entries 1..15 are shared, reference-counted multicast addresses. */

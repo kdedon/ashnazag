@@ -310,6 +310,20 @@ plaindev(fd)
 	    cdevsw[getmajor(vp->v_rdev)].d_str == 0;
 }
 
+/* fd is /dev/otbridge (character major 55) */
+static int
+otbdev(fd)
+	int fd;
+{
+	file_t *fp;
+	struct vnode *vp;
+
+	if (getf(fd, &fp))
+		return 0;
+	vp = fp->f_vnode;
+	return vp->v_type == VCHR && getmajor(vp->v_rdev) == 55;
+}
+
 int
 aux_ioctl(ap, a, rv, r)
 	struct aux_proc *ap;
@@ -361,6 +375,8 @@ aux_ioctl(ap, a, rv, r)
 	}
 	if ((cmd & 0xff00) == 0x5100 && plaindev((int)a[0]))
 		return aux_amix(54, a, rv);	/* 'Q': /dev/uinter0, unchanged */
+	if ((cmd & 0xff00) == ('o' << 8) && otbdev((int)a[0]))
+		return aux_amix(54, a, rv);	/* 'o': /dev/otbridge, unchanged */
 	for (i = 0; iocmap[i][0]; i++)
 		if (iocmap[i][0] == cmd) {
 			a[1] = iocmap[i][1];

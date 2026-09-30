@@ -189,3 +189,21 @@ sh kernel/mac/diskroot/pkg/mkpkgimage.sh -p DIR WORK [kernel.elf [out.img]]
 
 `mkpkgimage.sh` builds from a copy of `kernel/mac/diskroot` in `WORK` with `root.manifest` plus `pkg/root.manifest.add`. It needs the A/UX root named in `tests/aux/auxroot`, `tests/build/net07` (`tests/net/getnet.sh`) and the tape segments in `kernel/mac/diskroot/build/tape`. `-q` configures the Ethernet for an emulator's user-mode network (10.0.2.15, gateway 10.0.2.2).
 
+
+## The Mac environment
+
+`q800-mac.img` is the X disk image plus A/UX 3.1's Mac environment (System 7 and the Finder). Log in as `root` and type:
+
+```sh
+startmac
+```
+
+The Finder desktop appears in about two minutes.  Ctrl-Option-Command-0 shows the console, Ctrl-Option-Command-1 the Mac again.  Special > Logout quits back to the shell.  The kernel's `User BUS ERROR` notices while it starts are expected.
+
+The guest modules are registered at run level 2 (`/etc/rc2.d/S05aux`), which also starts the File ID daemon (`/etc/aux/fidd`).  root's System Folder is `/mac/sys/Sys7`, other users (group `display`) get a copy in `$HOME/System Folder`; the Mac's PRAM is kept in `/etc/aux/pram`.
+
+Rebuild (needs the A/UX root in `tests/aux/auxroot`, the Quadra 700 ROM beside the repository, and the inputs of `x11/mkimage.sh`; the image goes to `$X11W/q800-mac.img`, default `images/work/x11`):
+
+```sh
+sh images/macenv/mkmacimage.sh [kernel.elf [out.img]]
+```

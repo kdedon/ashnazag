@@ -402,6 +402,9 @@ bi_parse()
 			mac_puts((char *)p);
 			mac_puts("\"\n");
 			mac_rootparse((char *)p);
+#ifdef BOOTDIAG
+			diag_parse((char *)p);
+#endif
 			break;
 		}
 	}

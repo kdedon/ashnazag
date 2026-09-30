@@ -110,6 +110,9 @@ long	ncr_ncmd = 0, ncr_nintr = 0, ncr_nerr = 0;
 long	ncr_nlost = 0, ncr_nfault = 0, ncr_nnosel = 0;
 long	ncr_ndisc = 0, ncr_nresel = 0, ncr_nchunk = 0, ncr_nnodreq = 0;
 
+#ifdef BOOTDIAG
+extern unsigned long diag_sdma;
+#endif
 static struct tgt	tg[NTGT];
 static int	act = -1;		/* target on the bus */
 static int	state;
@@ -152,6 +155,9 @@ struct ev *e;
 	e->stat = NCR_RD(STAT);
 	e->step = NCR_RD(STEP) & 7;
 	e->intr = NCR_RD(INTR);		/* last: the read clears the interrupt */
+#ifdef BOOTDIAG
+	diag_scsi(e->stat, e->step, e->intr, state);
+#endif
 }
 
 static void
@@ -159,6 +165,7 @@ ncr_setup()
 {
 	NCR_WR(CMD, C_RSTCHIP);
 	NCR_WR(CMD, C_NOP);
+	delayus(500);			/* the chip needs time after a reset */
 	NCR_WR(CCF, NCR_CCF);
 	NCR_WR(SELTO, NCR_SELTO);
 	NCR_WR(CFG1, NCR_CFG1);
@@ -205,7 +212,8 @@ int cansleep;
 	    ncr_intrmode == 0 ? "polled" : "interrupts", ncr_pdmamode);
 	if (ncr_intrmode) {
 		s = splscsi();
-		VIA2_WR(VIA_PCR, (VIA2_RD(VIA_PCR) & 0x1F) | 0x20);	/* CB2: falling edge */
+		/* CB2 (IRQ) and CA2 (DREQ): independent falling-edge inputs */
+		VIA2_WR(VIA_PCR, (VIA2_RD(VIA_PCR) & 0x11) | 0x22);
 		VIA2_WR(VIA_IFR, V2_SCSIIRQ);
 		VIA2_WR(VIA_IER, 0x80 | V2_SCSIIRQ);
 		splrestore(s);
@@ -266,6 +274,12 @@ ncr_busy()
 static void
 ncr_poll()
 {
+	/*
+	 * CB2 off while polling: where the VIA2 flag follows the chip's
+	 * INT line, an interrupt taken now would be ignored and repeat.
+	 */
+	if (inited && ncr_intrmode)
+		VIA2_WR(VIA_IER, V2_SCSIIRQ);
 	polling = TRUE;
 	for (;;) {
 		ncr_start();
@@ -277,6 +291,8 @@ ncr_poll()
 			ncr_abort("command timeout");
 	}
 	polling = FALSE;
+	if (inited && ncr_intrmode)
+		VIA2_WR(VIA_IER, 0x80 | V2_SCSIIRQ);
 }
 
 /*
@@ -286,6 +302,9 @@ void
 ncr96intr()
 {
 	ncr_nintr++;
+#ifdef BOOTDIAG
+	diag_poke();
+#endif
 	if (!inited) {
 		if (NCR_RD(STAT) & S_INT)
 			(void)NCR_RD(INTR);
@@ -469,7 +488,7 @@ char *why;
 	    act, cp ? cp->cdb[0] : 0, state);
 	NCR_WR(CMD, C_RSTSCSI);
 	NCR_WR(CMD, C_NOP);
-	delayus(250000);
+	delayus(ncr_settle * (1000000 / TICKS));	/* as long as at init */
 	ncr_setup();
 	if (NCR_RD(STAT) & S_INT)
 		(void)NCR_RD(INTR);
@@ -842,6 +861,8 @@ int ph;
 		n &= ~1;
 	xlen = n;
 	xin = in;
+	if (!in)
+		NCR_WR(CMD, C_FLUSH);	/* no stale bytes ahead of the data */
 	if (mode == 3 && (*ncr_dmaops->start)(t->dp, n, in) != 0) {
 		ncr_abort("DMA start");
 		return;
@@ -900,6 +921,9 @@ struct ev *e;
 		took = n > took ? 0 : took - n;
 		NCR_WR(CMD, C_FLUSH);
 	}
+#ifdef BOOTDIAG
+	diag_sdma += took;
+#endif
 	t->dp += took;
 	t->dl -= took;
 	state = N_PHASE;
@@ -982,6 +1006,9 @@ long us;
 		if (NCR_RD(STAT) & S_INT)
 			return 1;
 		delayus(WAITUS);
+#ifdef BOOTDIAG
+		diag_poke();
+#endif
 	}
 	return (NCR_RD(STAT) & S_INT) != 0;
 }

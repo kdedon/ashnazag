@@ -22,7 +22,7 @@ PY="nice -n 19 python3"
 KERNEL=$KERNEL sh "$D/mkdiskroot.sh"
 mkdir -p "$(dirname "$OUT")"
 
-sh "$AUX/images/mkboot.sh" -c root=c0d0s1 "$KERNEL" "$OUT.new"
+sh "$AUX/images/mkboot.sh" -c "${CMDLINE:-root=c0d0s1}" "$KERNEL" "$OUT.new"
 $PY "$D/addparts.py" "$OUT.new" "$B/root.img" "$SWAPMB" $SPARE
 
 echo "== checks"

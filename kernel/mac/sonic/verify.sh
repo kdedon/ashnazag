@@ -86,4 +86,7 @@ EOF
 nice -n 19 cc -std=gnu89 -DSN_HOST -w -o "$T/tsonic" "$HERE/test/tsonic.c" \
 	"$HERE/test/simsonic.c" "$HERE/sonic.c"
 "$T/tsonic" || rc=1
+nice -n 19 cc -std=gnu89 -DSN_HOST -w -I"$HERE/test" -I"$HERE/../../otbridge" \
+	-o "$T/tvst" "$HERE/test/tvst.c" "$HERE/snvst.c"
+"$T/tvst" || rc=1
 exit $rc
