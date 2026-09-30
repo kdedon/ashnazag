@@ -5,7 +5,10 @@
  * The transceiver acts on port-B state changes: CMD sends the byte in
  * SR, EVEN/ODD move the next data byte, IDLE lets sim_idle() auto-poll
  * the last talk command.  Every byte ends by setting IFR bit 2, with
- * PB3 reflecting the rules in adb.c's header.
+ * PB3 reflecting the rules in adb.c's header.  With sim_pollall every
+ * auto-poll interrupts, timeouts too, and a read auto-poll reply stays
+ * pending, so the next command is dropped.  sim_cmdlow holds PB3 low
+ * after every command (sent anyway); sim_noauto never auto-polls.
  */
 #include <stdio.h>
 #include <string.h>
@@ -19,12 +22,15 @@ int sim_dead;		/* transceiver never interrupts */
 int sim_stall;		/* stop interrupting after this many bytes (0 = never) */
 int sim_end2;		/* 2-byte replies signal the end on byte 1 */
 int sim_nbytes;
-unsigned long sim_ncmd;
+int sim_pollall, sim_cmdlow, sim_noauto;	/* see above */
+unsigned long sim_ncmd, sim_ndrop, sim_npoll;
 
 static unsigned char orb = 0x3F, ddrb, acr, sr, ifr, ier;
 static int pb3 = 1;		/* 1 = high (inactive) */
 static int lastst = ST_IDLE;
 static int lastcmd = -1;
+static int lasttalk = -1;
+static int pollreply;	/* an auto-poll reply is pending */
 static int mode;		/* 0 none, 1 talk, 2 listen */
 static unsigned char reply[8];
 static int nreply, ridx;
@@ -176,6 +182,12 @@ int c;
 {
 	int i;
 
+	if (pollreply) {
+		/* the pending auto-poll reply wins: c is dropped */
+		sim_ndrop++;
+		irq(sr, 1);
+		return;
+	}
 	sim_ncmd++;
 	lastcmd = c;
 	mode = 0;
@@ -188,6 +200,7 @@ int c;
 		}
 	} else if (ADB_ISTALK(c)) {
 		mode = 1;
+		lasttalk = c;
 		nreply = talk(ADB_ADDR(c), ADB_REG(c), reply);
 		ridx = 0;
 	} else if (ADB_ISLISTEN(c)) {
@@ -195,19 +208,25 @@ int c;
 		nldata = 0;
 		lcmd = c;
 	}
-	irq(c, srq_others(ADB_ADDR(c)));
+	irq(c, sim_cmdlow);
 }
 
 static void
 datastep()
 {
+	int low;
+
 	if (mode == 1) {
-		if (nreply == 0 || ridx >= nreply) {
-			irq(0xFF, 1);
-			ridx++;
-			return;
-		}
-		irq(reply[ridx], sim_end2 && nreply == 2 && ridx == 1);
+		if (ridx == 0)
+			low = nreply == 0;
+		else if (ridx == 1)
+			low = srq_others(ADB_ADDR(lasttalk)) ||
+			    (sim_end2 && nreply == 2);
+		else
+			low = ridx >= nreply;
+		irq(ridx < nreply ? reply[ridx] : 0xFF, low);
+		if (ridx > nreply || (!sim_pollall && ridx == nreply))
+			pollreply = 0;
 		ridx++;
 	} else if (mode == 2) {
 		if (nldata < 8)
@@ -237,7 +256,8 @@ int st;
 		datastep();
 		break;
 	case ST_IDLE:
-		mode = 0;
+		if (!pollreply)
+			mode = 0;
 		break;
 	}
 }
@@ -294,17 +314,20 @@ int r, v;
 void
 sim_idle()
 {
-	int c = lastcmd;
+	int c = lasttalk;
 
-	if (lastst != ST_IDLE || (ifr & IFR_SR) || c < 0 || !ADB_ISTALK(c) ||
+	if (sim_noauto || lastst != ST_IDLE || (ifr & IFR_SR) || c < 0 ||
 	    ADB_REG(c) != 0)
 		return;
 	mode = 1;
+	pollreply = 0;
 	nreply = talk(ADB_ADDR(c), 0, reply);
 	ridx = 0;
-	if (nreply > 0 || srq_others(ADB_ADDR(c)))
+	if (nreply > 0 || sim_pollall || srq_others(ADB_ADDR(c))) {
+		sim_npoll++;
+		pollreply = nreply > 0;
 		irq(c, 1);
-	else
+	} else
 		mode = 0;
 }
 
@@ -316,9 +339,11 @@ void
 sim_reset()
 {
 	orb = 0x3F; ddrb = acr = sr = ifr = ier = 0;
-	pb3 = 1; lastst = ST_IDLE; lastcmd = -1; mode = 0;
+	pb3 = 1; lastst = ST_IDLE; lastcmd = lasttalk = -1; mode = 0;
+	pollreply = 0;
 	sim_ndev = 0; sim_dead = sim_stall = sim_end2 = sim_nbytes = 0;
-	sim_ncmd = 0;
+	sim_cmdlow = sim_noauto = 0;
+	sim_ncmd = sim_ndrop = sim_npoll = 0;
 	memset(sim_dev, 0, sizeof sim_dev);
 }
 

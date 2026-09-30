@@ -35,6 +35,7 @@
 
 #define MACH_MAC	3
 #define MAXCHUNK	4
+#define MAC_MAXRAM	0x8000000	/* kvsegmap holds 512 segments of 256 KB */
 #define BISIZE		1024
 
 #define VIA1_BASE	0x50F00000
@@ -290,6 +291,21 @@ extern int mac_rd_config(), mac_diskpick();
 extern void mac_dskname();
 
 long mac_rootarg = -1;		/* dd minor from root=, -1 none */
+extern long mac_nofpu;
+
+/* nofpu as a word of the boot command line: probe no FPU */
+static void
+mac_fpuparse(s)
+char *s;
+{
+	register char *p;
+
+	for (p = s; *p; p++)
+		if ((p == s || p[-1] == ' ') && p[0] == 'n' && p[1] == 'o'
+		&& p[2] == 'f' && p[3] == 'p' && p[4] == 'u'
+		&& (p[5] == 0 || p[5] == ' '))
+			mac_nofpu = 1;
+}
 
 /*
  * root=cNd0sM as a word of the boot command line.  Slice 0 (whole disk)
@@ -402,6 +418,7 @@ bi_parse()
 			mac_puts((char *)p);
 			mac_puts("\"\n");
 			mac_rootparse((char *)p);
+			mac_fpuparse((char *)p);
 #ifdef BOOTDIAG
 			diag_parse((char *)p);
 #endif
@@ -498,8 +515,10 @@ unsigned long arg0, arg1;
 	}
 	if (VSIZOFMEM == 0)
 		mac_halt("config: no memory chunk holds the kernel");
-	if (MAINSTORE + VSIZOFMEM > 0x40000000)
-		VSIZOFMEM = 0x40000000 - MAINSTORE;
+	if (MAINSTORE + VSIZOFMEM > MAC_MAXRAM) {
+		VSIZOFMEM = MAC_MAXRAM - MAINSTORE;
+		mac_puts("config: memory limited to 128 MB\n");
+	}
 	mac_root();
 	putkv("config: MAINSTORE ", MAINSTORE);
 	putkv(" VSIZOFMEM ", VSIZOFMEM);
@@ -638,6 +657,17 @@ struct iomap mac_iomap[] = {
 /* 9 page tables of 64 entries, 256-byte aligned */
 unsigned long mac_iopt[10 * 64] = { 1 };
 
+/*
+ * Cached window onto the first RAM_WIN bytes of RAM, VA = PA | RAM_VA.
+ * The page array lives here (see patch_kvmpages.py): the identity map
+ * (DTT0) is noncacheable.  Nothing else reaches these addresses through
+ * a cacheable mapping, so the two views do not alias in the cache.
+ */
+#define RAM_VA	0x60000000
+#define RAM_WIN	0x1000000
+unsigned long mac_rampt[(RAM_WIN >> 18) * 64 + 64] = { 1 };
+extern unsigned long hat_cm_ram;
+
 /* Called by pstart with kptr040 set, before translation is enabled. */
 void
 mac_iomap_build()
@@ -657,6 +687,28 @@ mac_iomap_build()
 			kp[(va - 0x40000000) >> 18] = (unsigned long)pt | 2;
 			pt += 64;
 		}
+
+	pt = (unsigned long *)(((unsigned long)mac_rampt + 255) & ~255);
+	for (pa = 0; pa < RAM_WIN; pa += 1 << 18) {
+		for (i = 0; i < 64; i++)
+			pt[i] = (pa + (i << 12)) | 0x99 | hat_cm_ram;
+		kp[(RAM_VA + pa - 0x40000000) >> 18] = (unsigned long)pt | 2;
+		pt += 64;
+	}
+}
+
+/* Called by pstart after mlsetup: the page array must fit the window. */
+extern char *page_hash;
+extern int page_hashsz;
+
+void
+mac_ramwin_check()
+{
+	unsigned long e;
+
+	e = (unsigned long)(page_hash + page_hashsz * sizeof (char *));
+	if (page_hash < (char *)RAM_VA || e > RAM_VA + RAM_WIN)
+		mac_halt("kvm: page array outside the cached RAM window");
 }
 
 /* First output through the mapped I/O page. */

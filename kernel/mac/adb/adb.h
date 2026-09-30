@@ -118,7 +118,8 @@ void	adbms_input();		/* (addr, data, n) */
 #define LED_SCROLL	0x04
 
 /* statistics */
-extern unsigned long adb_nintr, adb_nspur, adb_ntmo, adb_nsrq, adb_nwdog, adb_nlost;
+extern unsigned long adb_nintr, adb_nspur, adb_ntmo, adb_nsrq, adb_nwdog, adb_nlost,
+    adb_ndrop;
 
 #ifndef ADB_HOST
 extern int printf();

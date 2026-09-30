@@ -492,13 +492,61 @@ int h, v;
 	return 0;
 }
 
+/* n clicks held hold ms, gap ms apart: mouseDowns the Mac took */
+static long
+clicks(n, hold, gap)
+int n, hold, gap;
+{
+	char r[40];
+	long d0 = getsym("uin_ndown");
+	int i;
+
+	sprintf(r, "clicks %d %d %d", n, hold, gap);
+	host(r);
+	for (i = 0; i < 20 && getsym("uin_ndown") - d0 < n; i++)
+		pause_ms(100L);
+	return getsym("uin_ndown") - d0;
+}
+
+/*
+ * The Apple menu, held: it drops down only when MBState says the button
+ * is down as the Mac takes the mouseDown.
+ */
+static void
+menus()
+{
+	char *r;
+	int i, ok = 0, bad = -1, diff;
+	long d0 = getsym("uin_ndown");
+
+	if (!t_check("menu_reached", moveto(20, 9), "mouse %#lx", getsym("uin_mouse")))
+		return;
+	for (i = 0; i < 20; i++) {
+		host("button 1");
+		pause_ms(i & 1 ? 100L : 500L);
+		host("shot menu");
+		host("button 0");
+		pause_ms(i & 2 ? 1500L : 300L);
+		host("shot nomenu");
+		diff = 0;
+		if ((r = host("cmp menu nomenu")) != 0)
+			sscanf(r, "diff %d", &diff);
+		if (diff > 1000)
+			ok++;
+		else if (bad < 0)
+			bad = i;
+	}
+	t_check("menu_opens", ok == 20, "%d of 20, first miss %d, mouseDowns %ld", ok, bad,
+	    getsym("uin_ndown") - d0);
+}
+
 /* the desktop without an alert; the Mac setting the mouse; the disk opened */
 static void
 desk()
 {
 	unsigned char *lm;
 	char *r;
-	long m0, m1, want, dbl = -1;
+	long m0, m1, want, n, dbl = -1;
 	int id, w0 = 0, w1 = 0, chk = 0;
 
 	r = host("mac mac_after 220 120 580 230");
@@ -531,6 +579,11 @@ desk()
 	if (r)
 		sscanf(r, "checker %d", &w0);
 	t_check("disk_icon_reached", moveto(scrw - 40, 48), "mouse %#lx", getsym("uin_mouse"));
+	n = clicks(20, 30, 100);
+	t_check("clicks_fast", n == 20, "20 clicks held 30 ms: %ld mouseDowns", n);
+	/* the mouse reports every 20 ms: shorter clicks may not reach the kernel */
+	t_info("clicks_short", "20 clicks held 8 ms: %ld mouseDowns", clicks(20, 8, 60));
+	menus();
 	m0 = getsym("uin_nbtn");
 	host("click 2");
 	t_info("dblclick", "DoubleTime %ld, button events taken %ld", dbl,

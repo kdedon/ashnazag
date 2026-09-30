@@ -197,6 +197,51 @@ do_cpush:
 	.word	0xf4f8			| cpusha bc
 	rts
 
+| fp_state(): fsave -(sp), frestore (sp)+ with fp1 live; minus the frame
+| size, or 1 if sp or fp1 came back wrong
+	.globl	fp_state
+fp_state:
+	movel	%sp,%a1
+	fmovel	&7,%fp1
+	.word	0xf327			| fsave -(sp)
+	movel	%sp,%d0
+	subl	%a1,%d0
+	.word	0xf35f			| frestore (sp)+
+	cmpal	%sp,%a1
+	movel	%a1,%sp
+	bnes	Lfbad
+	fmovel	%fp1,%d1
+	subql	&7,%d1
+	beqs	Lfok
+Lfbad:
+	moveq	&1,%d0
+Lfok:
+	rts
+
+| fp7_set(), fp7_get(): fp7 = 7, d0 = fp7
+	.globl	fp7_set
+fp7_set:
+	fmovel	&7,%fp7
+	rts
+
+	.globl	fp7_get
+fp7_get:
+	fmovel	%fp7,%d0
+	rts
+
+| fsave_at(buf), frestore_at(buf)
+	.globl	fsave_at
+fsave_at:
+	moveal	%sp@(4),%a0
+	.word	0xf310			| fsave (a0)
+	rts
+
+	.globl	frestore_at
+frestore_at:
+	moveal	%sp@(4),%a0
+	.word	0xf350			| frestore (a0)
+	rts
+
 	.globl	do_reset
 do_reset:
 	.word	0x4e70			| reset: not emulated

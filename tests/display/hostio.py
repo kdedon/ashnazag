@@ -10,6 +10,7 @@
 #   down K, up K        one transition
 #   move DX DY          relative mouse motion
 #   button MASK         mouse buttons (1 = left)
+#   clicks N HOLD GAP   N left clicks, HOLD and GAP in ms
 #   shot NAME           screen dump -> display/NAME.ppm, .png; "W H"
 #   cmp A B             "same" or "diff N" (pixels)
 #   ref NAME SHOT DEPTH SEED K
@@ -182,6 +183,16 @@ def serve(q, cmd, a):
             time.sleep(0.05)
             q.hmp('mouse_button 0')
             time.sleep(0.1)
+        time.sleep(0.3)
+        return 'done'
+    if cmd == 'clicks':
+        # n clicks held hold ms, gap ms apart
+        n, hold, gap = int(a[0]), int(a[1]) / 1000., int(a[2]) / 1000.
+        for _ in range(n):
+            q.hmp('mouse_button 1')
+            time.sleep(hold)
+            q.hmp('mouse_button 0')
+            time.sleep(gap)
         time.sleep(0.3)
         return 'done'
     if cmd == 'shot':

@@ -165,6 +165,21 @@ test_kmem()
 	    t_kmem("anoninfo+4"), t_kmem("anoninfo+8"));
 }
 
+/* SR interrupt and SRQ scan rates with no input */
+static void
+test_adb()
+{
+	long i0 = t_kmem("adb_nintr"), s0 = t_kmem("adb_nsrq");
+
+	if (i0 == -1) {
+		t_skip("adb_idle", "no adb_nintr");
+		return;
+	}
+	sleep(4);
+	t_info("adb_idle", "%ld SR interrupts/s, %ld SRQ scans/s",
+	    (t_kmem("adb_nintr") - i0) / 4, (t_kmem("adb_nsrq") - s0) / 4);
+}
+
 int
 main()
 {
@@ -174,5 +189,6 @@ main()
 	test_env();
 	test_proc();
 	test_kmem();
+	test_adb();
 	return t_done();
 }

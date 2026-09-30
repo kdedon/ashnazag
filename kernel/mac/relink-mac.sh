@@ -112,6 +112,11 @@ OVRD="coinfo cdevsw bdevsw io_start execsw fmodsw"
 # Stock bodies kept under __amix_<name>: the wrappers and dlm_init call them.
 ALIAS="sendsig:T valid_usr_range:T fsig:T execsw:D stime:T fmodsw:D"
 
+echo "[*] FPU probe: null or idle frame, boot option nofpu"
+m68k-cbm-sysv4-gcc -m68040 -c "$MAC/fpu/chkfpu.s" -o "$W/chkfpu.o"
+OBJS="$OBJS $W/chkfpu.o"
+OVR="$OVR chk_fpu"
+
 # uiomove: the wrapper marks the segkmap pages it writes modified.
 OVR="$OVR uiomove"
 ALIAS="$ALIAS uiomove:T"
@@ -146,6 +151,7 @@ done
 m68k-linux-gnu-objcopy $WEAK "$BASE" "$W/base.weak"
 python3 "$MAC/patch_s5pages.py" "$W/base.weak"
 [ $MODE = stock ] || python3 "$MAC/vtop/patch_vtop.py" "$W/base.weak"
+[ $MODE = stock ] || python3 "$MAC/patch_kvmpages.py" "$W/base.weak"
 
 # The switches must keep the base sizes: shadowcsw/shadowbsw and the
 # counts come from the base.
@@ -196,6 +202,7 @@ echo "[*] final link at 0x10000"
 m68k-elf-ld -T "$MAC/mac.ld" -Map "$OUT.map" -o "$OUT.elf" "$OUT"
 python3 "$MAC/patch_s5pages.py" -c "$OUT.elf"
 [ $MODE = stock ] || python3 "$MAC/vtop/patch_vtop.py" -c "$OUT.elf"
+[ $MODE = stock ] || python3 "$MAC/patch_kvmpages.py" -c "$OUT.elf"
 
 echo "[*] kernel symbol table into dlm_ksym"
 "$W/dlm/mkksym" "$OUT.elf"

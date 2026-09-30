@@ -33,13 +33,15 @@ char *what;
 static void
 run()
 {
-	int i;
+	int i, polls = 0;
 
 	for (i = 0; i < 2000; i++) {
 		if (sim_pending())
 			adb_intr();
 		else {
 			adb_soft();
+			if (++polls > 8)
+				break;	/* sim_pollall never goes quiet */
 			sim_idle();
 			if (!sim_pending())
 				break;
@@ -106,13 +108,12 @@ int unit, type, r0, ch;
 	mch = ch;
 }
 
-int
-main()
+static void
+suite()
 {
 	int i, a, b;
+	unsigned long p;
 	char msg[128];
-
-	adb_ttyin = ttyin;
 
 	/* enumeration */
 	boot2();
@@ -138,6 +139,8 @@ main()
 	nout = 0;
 	{ int k[] = { 0x39 }; type(kbd, k, 1); }
 	check(sim_dev[kbd].leds == LED_CAPS, "caps lock down lights the LED");
+	if (sim_pollall)
+		check(sim_ndrop > 0, "LED listen dropped behind an auto-poll reply, then resent");
 	{ int k[] = { 0x00, 0x80, 0x12, 0x92, 0xB9 }; type(kbd, k, 5); }
 	check(strcmp(out, "A1") == 0, "caps lock: A, digits unshifted");
 	check(sim_dev[kbd].leds == 0, "caps lock up clears the LED");
@@ -163,6 +166,7 @@ main()
 
 	/* mouse through SRQ while the keyboard is auto-polled */
 	a = adb_mouse_x; b = adb_mouse_y;
+	mcalls = 0;
 	adb_mousehook(mhook);
 	sim_dev[1].mdx = 5; sim_dev[1].mdy = -3; sim_dev[1].mbtn = 1;
 	run();
@@ -178,6 +182,14 @@ main()
 	check(adb_mouse_button == 0 && mch == 1, "button release");
 	adb_mousehook(0);
 
+	/* idle bus: no SRQ scans, at most 3 interrupts per poll */
+	a = adb_nintr; b = adb_nsrq; p = sim_npoll;
+	run();
+	sprintf(msg, "idle: %lu interrupts in %lu polls, %lu SRQ scans",
+	    adb_nintr - a, sim_npoll - p, adb_nsrq - b);
+	check(adb_nsrq == (unsigned long)b && adb_nintr - a <= 3 * (sim_npoll - p) &&
+	    (!sim_pollall || sim_npoll > p), msg);
+
 	/* raw consumer, A/UX shape */
 	rawn = 0;
 	adb_keyhook(rawhook);
@@ -190,7 +202,7 @@ main()
 	    raw[3][2] == 0, "raw: power key 0x7F7F as 0x7F twice");
 	adb_keyhook(0);
 
-	/* 2-byte replies that end on byte 1 */
+	/* PB3 low on byte 1 read as SRQ: the data still arrives */
 	sim_end2 = 1;
 	nout = 0;
 	{ int k[] = { 0x01, 0x81 }; type(kbd, k, 2); }
@@ -248,6 +260,62 @@ main()
 	{ int k[] = { 0x03, 0x83 }; type(kbd, k, 2); }
 	check(strchr(out, 'f') != 0, "input works after the watchdog");
 
+}
+
+/* PB3 stuck low after commands; a transceiver without auto-poll */
+static void
+edge()
+{
+	struct adbreq r;
+	int n;
+
+	printf("-- PB3 low after every command\n");
+	boot2();
+	sim_cmdlow = 1;
+	{ int k[] = { 0x39 }; type(kbd, k, 1); }
+	ticks(2);
+	check(sim_dev[kbd].leds == LED_CAPS, "LED listen completes despite the drops");
+	r.r_cmd = ADB_TALK(3, 3);
+	r.r_len = 0;
+	r.r_done = 0;
+	n = adb_op_sync(&r);
+	check(n >= 2, "talk R3 completes after 3 resends");
+	sim_cmdlow = 0;
+	{ int k[] = { 0xB9, 0x0B, 0x8B }; type(kbd, k, 3); }
+	nout = 0;
+	{ int k[] = { 0x0B, 0x8B }; type(kbd, k, 2); }
+	check(strcmp(out, "b") == 0, "keys after PB3 recovers");
+
+	printf("-- no auto-poll, state edges only\n");
+	sim_reset();
+	sim_noauto = 1;
+	kbd = sim_add(SIM_KBD, 2, 2, 3);
+	sim_add(SIM_MOUSE, 3, 1, 2);
+	adb_init();
+	run();
+	check(adb_ready && adb_ndev == 2, "reset then talks: enumeration over CMD-to-CMD");
+	sim_dev[kbd].leds = 7;
+	adbkbd_setleds(0);
+	run();
+	check(sim_dev[kbd].leds == 0, "LED listen R2 without auto-poll");
+	sim_key(kbd, 0x0C);
+	r.r_cmd = ADB_TALK(2, 0);
+	r.r_len = 0;
+	r.r_done = 0;
+	n = adb_op_sync(&r);
+	check(n == 2 && r.r_data[0] == 0x0C, "explicit talk R0 gets the key");
+}
+
+int
+main()
+{
+	adb_ttyin = ttyin;
+	printf("-- transceiver interrupts only for data or SRQ\n");
+	suite();
+	printf("-- every auto-poll interrupts\n");
+	sim_pollall = 1;
+	suite();
+	edge();
 	printf("%s\n", bad ? "FAILED" : "all passed");
 	return bad;
 }

@@ -33,7 +33,7 @@ fi
 [ -f "$RD/build/core/sbin/init" ] || { echo "[FAIL] no $RD/build/core (run mkroot.sh)"; exit 1; }
 [ -x "$B/bin/runall" ] || { echo "[FAIL] no tests/build/bin (run build.sh)"; exit 1; }
 
-nm "$KERNEL" | awk '$3 ~ /^(freemem|availrmem|availsmem|lbolt|fpu_present|anoninfo|ticks_til_clock|mac_ticks|dlm_inited|sn_nintr|sn_nslot|guest_loading|rd_unit)$/ { print $3, $1 }' \
+nm "$KERNEL" | awk '$3 ~ /^(freemem|availrmem|availsmem|lbolt|fpu_present|anoninfo|ticks_til_clock|mac_ticks|dlm_inited|sn_nintr|sn_nslot|guest_loading|rd_unit|adb_nintr|adb_nsrq)$/ { print $3, $1 }' \
 	> "$B/ksyms"
 # t_dlm's modules, built against this kernel (none without module support)
 KDIR=$KDIR sh "$T/dlm/build.sh" "$KERNEL" "$B/dlm"
@@ -48,7 +48,7 @@ else
 	KDIR=$KDIR sh "$T/aux/build.sh" "$KERNEL" "$AUXB"
 fi
 if [ -z "$TESTKB" ]; then
-	TESTKB=$BASEKB
+	TESTKB=$((BASEKB + 128))
 	[ -d "$AUXB/root" ] && TESTKB=$((TESTKB + $(du -sk "$AUXB/root" | cut -f1)))
 fi
 
@@ -72,6 +72,8 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 	for i in 0 1 2 3 4 5 6 7; do echo "c /dev/pts/$i 620 0 7 14 $i"; done
 	echo "d /tests 755 0 3"
 	echo "f /tests/ksyms 444 0 3 $B/ksyms"
+	# t_arith's FP through awk
+	grep -q '^f /usr/bin/awk ' "$M" || echo "f /usr/bin/awk 755 0 3 $RD/build/core/usr/bin/nawk"
 	for f in "$B"/bin/*; do
 		echo "f /tests/$(basename "$f") 755 0 3 $f"
 	done

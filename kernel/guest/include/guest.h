@@ -81,6 +81,7 @@ struct guest_proc {
 #define	GPF_SPIN	0x04	/* vSR.S pinned on, one stack */
 #define	GPF_VPEND	0x08	/* a signal waits for the virtual IPL */
 #define	GPF_FAULT	0x10	/* gp_fpc.. hold an access fault */
+#define	GPF_PRIVBAD	0x20	/* an unemulated instruction was reported */
 #define	GPF_PROFILE	0xffff0000	/* profile's own bits */
 #define	GUEST_PRIV(gp)	((char *)((gp) + 1))	/* profile state */
 #define	GUESTP(p)	((struct guest_proc *)(p)->p_evpdp)

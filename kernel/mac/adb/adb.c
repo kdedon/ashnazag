@@ -9,13 +9,15 @@
  *        in (talk) or out (listen).
  *   IDLE (11): the transceiver repeats the last talk command by itself
  *        (auto-poll) and interrupts with the command byte in SR and PB3
- *        low when the device answers or another device raises SRQ.
+ *        low when it has a reply or a timeout to hand over.
  * Every byte ends with the SR interrupt (IFR bit 2).  PB3, sampled at
  * that interrupt:
- *   after the command byte     low = some other device asserts SRQ
- *   on data byte 0             low = no reply (timeout)
- *   on data byte 1             byte valid; low = reply ends here
- *   on data byte 2..7          low = reply ended, byte is filler
+ *   after the command byte     low = an auto-poll reply got in first and
+ *                              the command was not sent: read the reply,
+ *                              then send the command again
+ *   on data byte 0             low = no reply (timeout); read byte 1 too
+ *   on data byte 1             byte valid; low = another device wants SRQ
+ *   on data byte 2..8          low = reply ended, byte is filler
  *
  * adb_intr() runs the per-byte state machine at IPL 4 and hands finished
  * packets to adb_soft() through a ring.  adb_soft() runs at IPL 1 and
@@ -32,6 +34,7 @@
 #define NPK	16		/* finished packets awaiting adb_soft */
 #define WDOG	6		/* ticks without progress before reset */
 #define SCANMAX	16		/* SRQ scan steps without data */
+#define NTRY	3		/* resends of a dropped command */
 #define OPUS	30000		/* sync op budget, VIA reads (>= 1 us each) */
 
 /* software states */
@@ -51,7 +54,7 @@ struct adbpkt {
 struct adbdev adb_dev[16] = { { 0, 0 } };
 int adb_ndev = 0, adb_ready = 0, adb_polladdr = ADB_ADDR_KBD;
 unsigned long adb_nintr = 0, adb_nspur = 0, adb_ntmo = 0, adb_nsrq = 0;
-unsigned long adb_nwdog = 0, adb_nlost = 0;
+unsigned long adb_nwdog = 0, adb_nlost = 0, adb_ndrop = 0;
 
 static VOL int adb_st = S_IDLE;
 static VOL int adb_bus = ST_IDLE;	/* last state written */
@@ -59,9 +62,14 @@ static struct adbreq *adb_q[NQ];
 static VOL int adb_qh = 0, adb_qt = 0;
 static struct adbreq *adb_cur = 0;
 static struct adbpkt adb_pk;		/* packet being received */
-static int adb_idx = 0;			/* listen byte index */
+static int adb_idx = 0;			/* listen/talk byte index */
 static int adb_lastcmd = -1;		/* last command on the bus */
-static int adb_srq = 0;			/* SRQ seen on the last command */
+static int adb_lasttalk = -1;		/* last talk sent: what auto-poll repeats */
+static int adb_srq = 0;			/* SRQ seen on the last reply */
+static int adb_tmo = 0;			/* reply timed out at byte 0 */
+static int adb_drop = 0;		/* reading an auto-poll reply that beat a command */
+static struct adbreq *adb_retry = 0;	/* that command, sent next */
+static int adb_ntry = 0;		/* drops of it so far */
 static int adb_scan = 0;		/* SRQ scan steps left, 0 = not scanning */
 static int adb_scanaddr = 0;
 static int adb_scanhit = -1;		/* address that answered during the scan */
@@ -135,8 +143,11 @@ register struct adbreq *r;
 	adb_cur = r;
 	adb_lastcmd = r->r_cmd;
 	adb_st = S_CMD;
-	if (adb_bus != ST_IDLE)
-		setst(ST_IDLE);		/* every command starts from IDLE */
+	if (adb_bus == ST_CMD) {
+		/* CMD to CMD is no edge: show IDLE for a while first */
+		setst(ST_IDLE);
+		adb_delay(150);
+	}
 	setsr(ACR_SROUT);
 	VWR(V_SR, r->r_cmd);
 	setst(ST_CMD);
@@ -179,6 +190,19 @@ int a;
 	return a;
 }
 
+/* start reading a talk reply or auto-poll packet (SR already in) */
+static void
+adb_read(st, cmd)
+int st, cmd;
+{
+	adb_st = st;
+	adb_pk.p_cmd = cmd;
+	adb_pk.p_n = 0;
+	adb_idx = 0;
+	adb_tmo = 0;
+	setst(ST_EVEN);
+}
+
 /* a packet is complete: hand it to adb_soft, then start what is next */
 static void
 adb_end(n)
@@ -188,8 +212,9 @@ int n;
 	register int i;
 
 	adb_pk.p_n = n;
-	if (n < 0)
+	if (n < 0 && adb_st == S_TALK)
 		adb_ntmo++;
+	adb_drop = 0;
 	if (r) {
 		r->r_n = n;
 		for (i = 0; i < n; i++)
@@ -197,7 +222,7 @@ int n;
 	}
 	adb_pk.p_req = (r && r != &adb_pollreq) ? r : 0;
 	if (ADB_ISTALK(adb_pk.p_cmd) && ADB_REG(adb_pk.p_cmd) == 0 && n > 0 &&
-	    adb_scan)
+	    adb_scan && !adb_drop)
 		adb_scanhit = ADB_ADDR(adb_pk.p_cmd);
 	if (((adb_rt + 1) & (NPK - 1)) == adb_rh)
 		adb_nlost++;
@@ -220,6 +245,11 @@ adb_next()
 {
 	register struct adbreq *r;
 
+	if ((r = adb_retry) != 0) {
+		adb_retry = 0;
+		adb_startreq(r);
+		return;
+	}
 	if (adb_qh != adb_qt) {
 		r = adb_q[adb_qh];
 		adb_qh = (adb_qh + 1) & (NQ - 1);
@@ -273,24 +303,36 @@ adb_intr()
 			return;
 		}
 		/* auto-poll: SR holds the command it repeated */
-		adb_pk.p_cmd = b;
-		adb_pk.p_n = 0;
-		adb_st = S_AUTO;
 		setsr(ACR_SRIN);
-		setst(ST_EVEN);
+		adb_read(S_AUTO, b);
 		return;
 
 	case S_CMD:
 		(void)VRD(V_SR);
 		r = adb_cur;
-		adb_srq = low;
+		if (low && adb_ntry < NTRY) {
+			/* an auto-poll reply is pending: r was not sent */
+			adb_ntry++;
+			adb_ndrop++;
+			adb_retry = r;
+			adb_cur = 0;
+			adb_drop = 1;
+			setsr(ACR_SRIN);
+			(void)VRD(V_SR);
+			adb_read(S_AUTO, adb_lasttalk >= 0 ? adb_lasttalk :
+			    ADB_TALK(adb_polladdr, 0));
+			return;
+		}
+		if (low)
+			adb_srq = 1;	/* still low: take it as SRQ */
+		adb_ntry = 0;
 		adb_pk.p_cmd = r->r_cmd;
 		adb_pk.p_n = 0;
 		if (ADB_ISTALK(r->r_cmd)) {
-			adb_st = S_TALK;
+			adb_lasttalk = r->r_cmd;
 			setsr(ACR_SRIN);
 			(void)VRD(V_SR);
-			setst(ST_EVEN);
+			adb_read(S_TALK, r->r_cmd);
 		} else if (ADB_ISLISTEN(r->r_cmd) && r->r_len > 0) {
 			adb_st = S_LISTEN;
 			adb_idx = 0;
@@ -312,17 +354,26 @@ adb_intr()
 	case S_TALK:
 	case S_AUTO:
 		b = VRD(V_SR);
+		if (adb_idx++ == 1 && low) {
+			adb_srq = 1;		/* SRQ; the byte is data */
+			low = 0;
+		}
+		if (adb_tmo) {
+			adb_end(-1);		/* byte 1 of a timeout: SRQ read */
+			return;
+		}
 		if (low) {
-			if (adb_pk.p_n == 0) {
-				/* no reply; unsolicited = SRQ from another device */
-				if (adb_st == S_AUTO)
-					adb_srq = 1;
+			if (adb_idx > 1) {
+				adb_end(adb_pk.p_n);
+				return;
+			}
+			/* no reply; after a lost command, don't look for SRQ */
+			if (adb_drop) {
 				adb_end(-1);
 				return;
 			}
-			if (adb_pk.p_n == 1)
-				adb_pk.p_data[adb_pk.p_n++] = b;
-			adb_end(adb_pk.p_n);
+			adb_tmo = 1;
+			toggle();
 			return;
 		}
 		adb_pk.p_data[adb_pk.p_n++] = b;
@@ -365,6 +416,10 @@ struct adbreq *r;
 {
 	register int i, j;
 
+	if (adb_retry == r) {
+		adb_retry = 0;
+		return;
+	}
 	for (i = adb_qh; i != adb_qt; i = (i + 1) & (NQ - 1))
 		if (adb_q[i] == r) {
 			for (j = i; ((j + 1) & (NQ - 1)) != adb_qt; j = (j + 1) & (NQ - 1))
@@ -391,6 +446,7 @@ adb_restart()
 	adb_cur = 0;
 	adb_scan = 0;
 	adb_srq = 0;
+	adb_drop = adb_ntry = 0;
 	adb_lastcmd = -1;
 	VWR(V_IFR, IFR_SR);
 	adb_next();
@@ -469,7 +525,8 @@ adb_tick()
 	if (!adb_ready)
 		return;
 	s = adb_spl();
-	if (adb_prog != adb_wprog || (adb_st == S_IDLE && adb_qh == adb_qt)) {
+	if (adb_prog != adb_wprog ||
+	    (adb_st == S_IDLE && adb_qh == adb_qt && !adb_retry)) {
 		adb_wprog = adb_prog;
 		adb_wticks = 0;
 	} else if (adb_st == S_IDLE) {
@@ -479,7 +536,12 @@ adb_tick()
 		}
 	} else if (++adb_wticks >= WDOG) {
 		adb_wticks = 0;
-		adb_restart();
+		if ((adb_st == S_TALK || adb_st == S_AUTO) && adb_pk.p_n > 0) {
+			/* no closing byte came: keep what was read */
+			adb_nwdog++;
+			adb_end(adb_pk.p_n);
+		} else
+			adb_restart();
 	}
 	adb_splx(s);
 	adb_soft();
@@ -595,9 +657,9 @@ adb_init()
 	for (a = 0; a < 16; a++)
 		adb_dev[a].d_orig = adb_dev[a].d_handler = 0;
 	adb_qh = adb_qt = adb_rh = adb_rt = 0;
-	adb_cur = 0;
-	adb_scan = adb_srq = 0;
-	adb_lastcmd = -1;
+	adb_cur = adb_retry = 0;
+	adb_scan = adb_srq = adb_drop = adb_ntry = 0;
+	adb_lastcmd = adb_lasttalk = -1;
 
 	VWR(V_IER, IFR_SR);			/* SR interrupt off: polled */
 	VWR(V_DDRB, (VRD(V_DDRB) | PB_ST) & ~PB_INT);

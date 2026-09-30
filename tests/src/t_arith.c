@@ -9,6 +9,7 @@
 #include <string.h>
 #include <math.h>
 #include <signal.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include <errno.h>
 #include "t.h"
@@ -97,6 +98,95 @@ long n;
 	return acc;
 }
 
+static volatile int nsig;
+
+/* no calls, so the compiler may keep acc in scratch registers */
+static double
+fp_spin(seed, n)
+double seed;
+long n;
+{
+	double acc = seed, k = seed / 7.0;
+
+	while (n-- > 0)
+		acc = acc * 0.999999 + k;
+	return acc;
+}
+
+/* a handler that uses the FP registers */
+static void
+onvt(sig)
+int sig;
+{
+	volatile double h = 1.0;
+	int i;
+
+	signal(SIGVTALRM, onvt);
+	for (i = 0; i < 50; i++)
+		h = h * 1.5 + 0.25 / (h + 3.0);
+	nsig++;
+}
+
+/* FP state must survive signal handlers that use FP, taken mid-loop */
+static void
+test_fpsig(present)
+long present;
+{
+	struct itimerval it;
+	volatile double r, e;
+	long t0;
+	int k, n;
+
+	signal(SIGVTALRM, onvt);
+	nsig = 0;
+	it.it_interval.tv_sec = it.it_value.tv_sec = 0;
+	it.it_interval.tv_usec = it.it_value.tv_usec = 20000;
+	setitimer(ITIMER_VIRTUAL, &it, (struct itimerval *)0);
+	t0 = t_now_ms();
+	for (r = 5.0, k = 0; k % 16 || (t_now_ms() - t0 < 3000 && nsig < 10); k++)
+		r = fp_spin(r, 20000L);
+	it.it_interval.tv_usec = it.it_value.tv_usec = 0;
+	setitimer(ITIMER_VIRTUAL, &it, (struct itimerval *)0);
+	signal(SIGVTALRM, SIG_DFL);
+	for (e = 5.0, n = 0; n < k; n++)
+		e = fp_spin(e, 20000L);
+	t_info("fp_signals", "%d handlers ran", nsig);
+	if (r == e && nsig > 0)
+		t_pass("fp_signal");
+	else if (present == 0)
+		t_skip("fp_signal", "%d handlers, result %s; kernel reports no FPU", nsig,
+		    r == e ? "kept" : "changed");
+	else
+		t_fail("fp_signal", "%d handlers, result %s", nsig, r == e ? "kept" : "changed");
+}
+
+/* awk does its arithmetic in double */
+static void
+test_awk(present)
+long present;
+{
+	char buf[64];
+	FILE *f;
+	int n;
+
+	if (access("/usr/bin/awk", 1) != 0) {
+		t_skip("fp_awk", "no /usr/bin/awk");
+		return;
+	}
+	f = popen("/usr/bin/awk 'BEGIN { for (i = 1; i <= 1000; i++) x += i * 0.5; "
+	    "printf \"%.2f %.4f\\n\", x, sqrt(2) }' 2>&1", "r");
+	n = f ? fread(buf, 1, sizeof buf - 1, f) : 0;
+	buf[n > 0 ? n : 0] = 0;
+	if (f)
+		pclose(f);
+	if (strcmp(buf, "250250.00 1.4142\n") == 0)
+		t_pass("fp_awk");
+	else if (present == 0)
+		t_skip("fp_awk", "output \"%s\"; kernel reports no FPU", buf);
+	else
+		t_fail("fp_awk", "output \"%s\"", buf);
+}
+
 static void
 test_fp()
 {
@@ -138,13 +228,15 @@ test_fp()
 		t_waitchild(pid, &st, 60);
 		t_waitchild(p2, &st2, 60);
 		{
-			double v[2], e1, e3;
+			/* stored, so each is rounded to double like v[] */
+			volatile double v[2], e1, e3, e5;
 			read(pp[0], (char *)&v[0], sizeof v[0]);
 			read(pp[0], (char *)&v[1], sizeof v[1]);
 			e1 = fp_loop(1.0, 200000L);
 			e3 = fp_loop(3.0, 200000L);
 			if ((v[0] == e1 && v[1] == e3) || (v[0] == e3 && v[1] == e1)) {
-				if (r1 == fp_loop(5.0, 200000L))
+				e5 = fp_loop(5.0, 200000L);
+				if (r1 == e5)
 					t_pass("fp_context_switch");
 				else
 					t_fail("fp_context_switch", "parent result changed");
@@ -156,6 +248,8 @@ test_fp()
 		close(pp[0]);
 		close(pp[1]);
 	}
+	test_fpsig(present);
+	test_awk(present);
 }
 
 int

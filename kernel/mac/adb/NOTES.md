@@ -10,7 +10,7 @@
   - Polled enumeration with collision resolution: `adb_init`, from `io_init`.
 - `adbkbd.c`: keyboard. Decodes talk R0. Has a raw consumer hook (A/UX shape) and the console path: US layout to ASCII, VT100 arrows, auto-repeat, and the Caps Lock LED through R2.
 - `adbms.c`: mouse. Decodes R0 into `adb_mouse_x/y/button` and has a consumer hook. No handler change and no extended protocol.
-- `test/`: host simulator of VIA1, the transceiver and devices, with checks of the bus layer, enumeration, SRQ handling and keyboard decoding (`sh test/run.sh`).
+- `test/`: host simulator of VIA1, the transceiver and devices, with checks of the bus layer, enumeration, SRQ handling and keyboard decoding (`sh test/run.sh`). The checks run twice: a transceiver that interrupts only for data or SRQ, and one that interrupts on every auto-poll and keeps a read reply pending (as QEMU does). Shorter checks cover PB3 held low after every command, and a transceiver without auto-poll that acts only on state edges (the MiSTer core).
 - `verify.sh`: static checks on the linked image.
 
 ## VIA1 use
@@ -26,7 +26,7 @@
 
 **Protocol**
 
-- Every command starts from IDLE. Order: SR to output, write the command, then ST = CMD.
+- A command follows a reply directly (EVEN/ODD to CMD). Only after a command without data (CMD to CMD) the bus shows IDLE for 150 µs first. Order: SR to output, write the command, then ST = CMD.
 - Talk: at the command's SR interrupt, switch SR to input and set EVEN. Then toggle EVEN/ODD once per byte.
 - Listen: write each data byte to SR, then toggle.
 - A transaction ends with the next command, or with IDLE. In IDLE the transceiver repeats the last talk by itself (auto-poll).
@@ -35,12 +35,12 @@
 
 | When | Meaning |
 |---|---|
-| After the command byte | another device asserts SRQ |
-| On data byte 0 | no reply. For an auto-poll this means SRQ |
-| On data byte 1 | end of reply; the byte is kept |
-| On data bytes 2–7 | end of reply; the byte is filler |
+| After the command byte | an auto-poll reply got in first; the command was not sent. Read the reply (as the last talk sent), then resend the command |
+| On data byte 0 | no reply. Read byte 1 too, for SRQ, then stop |
+| On data byte 1 | another device asserts SRQ; the byte is kept |
+| On data bytes 2–8 | end of reply; the byte is filler |
 
-At most 8 bytes are read.
+At most 8 bytes are read. After a dropped command, a timeout on byte 0 ends the read with no SRQ check. A command is resent at most 3 times; if PB3 is still low after the fourth send, the command counts as sent and PB3 as SRQ.
 
 **Interrupt path (`macintr.s` p1int)**
 
@@ -70,6 +70,7 @@ At most 8 bytes are read.
 - Watchdog:
   - A transaction that makes no progress for 6 ticks (100 ms) is abandoned and the bus restarted.
   - A request that has waited 2 ticks in IDLE behind a low PB3 is started anyway.
+  - A reply with data but no closing byte is delivered at the watchdog, not dropped.
 
 **Boot bounds**
 
@@ -91,7 +92,8 @@ At most 8 bytes are read.
 ## Auto-poll and SRQ
 
 - The auto-poll target is the keyboard (address 2). With no keyboard it is the first device found, else 2, so a keyboard plugged in later is still polled.
-- **SRQ:** the driver talks R0 to each device in turn (at most 16 steps) until the SRQ goes away. The device that answered becomes the auto-poll target.
+- **SRQ:** only PB3 low on data byte 1 starts a scan. The driver talks R0 to each device in turn (at most 16 steps) until the SRQ goes away. The device that answered becomes the auto-poll target.
+- **Idle cost:** a transceiver that interrupts on every auto-poll, timeouts included (QEMU's q800, every 20 ms), costs 3 SR interrupts per poll: command, byte 0, byte 1. Before, each timeout started a keyboard-and-mouse scan: 240 interrupts/s and 40 scans/s in QEMU, now 120 and 0.
 - Talk-R0 data is routed by the device's default address: 2 is the keyboard, 3 the mouse. Unknown addresses 2 and 3 are routed the same way.
 
 ## Keyboard → console
@@ -143,22 +145,22 @@ The shape matches A/UX 3.1's key/mouse layer, which `UI_DEVICES` hooks (derived 
 
 ## Sources
 
-- NetBSD mac68k `adb_direct.c`, `akbd.c`, `ams.c` (BSD) for the `ADB_HW_II` bit usage, the PB3 end rules and the enumeration outline.
+- NetBSD mac68k `adb_direct.c`, `akbd.c`, `ams.c` (BSD) for the `ADB_HW_II` bit usage, the IDLE hold and the enumeration outline.
+- Linux `drivers/macintosh/via-macii.c` (GPL-2) for the PB3 rules: dropped command, timeout, SRQ on byte 1, end of reply. QEMU 8.2's `hw/misc/mac_via.c` follows the same rules.
 - A/UX 3.1 `/unix`: `fdb_inthand`/`Xfdbint`/`via_fdb_start`/`fdb_init`, `key_intr`, `mouse_intr`, `UI_devices`, `UI_keyboard`, `ui_mouse`, `kmapData`.
 - The ADB specification and Inside Macintosh for key codes and register layouts. The keymap follows the public key-code chart and matches the unshifted and shifted tables of the A/UX kernel's US `KCHR` (`transData`).
 
 ## Open hardware questions
 
-1. **PB3 end-of-reply rule.**
-   - Does a 2-byte reply signal the end on byte 1 (NetBSD's reading) or on the filler byte 2? Both are handled.
-   - Does PB3 read low right after a command when another device has SRQ pending? A/UX `S0End` and NetBSD `POLLING` both treat it so.
-2. **Every command starting from IDLE.** A/UX does this. Whether the brief IDLE between back-to-back commands starts a colliding auto-poll would show as `adb_nwdog` counts.
+1. **PB3 end-of-reply rule.** The Linux rule is used: end on the filler byte, byte 1 low is SRQ. If hardware ends a reply on byte 1 instead (NetBSD's reading), the data still arrives, after a needless SRQ scan or, with no further interrupt, at the watchdog.
+2. **Dropped commands.** A/UX `S0End` and NetBSD `POLLING` read PB3 low after a command as SRQ; Linux as a pending auto-poll reply. The Linux reading is used; `adb_ndrop` counts them.
 3. **No delay before sampling PB3.** A/UX samples at once; NetBSD waits 150 µs. If replies come back truncated, add a short `adb_delay` in `adb_intr`.
 4. **LED bits in R2 byte 1** (bit 0 Num, 1 Caps, 2 Scroll, active low), and whether an Apple Extended Keyboard drives Caps itself.
 5. **io_init IPL and timing.** Enumeration is polled with the SR interrupt off. Interrupts are enabled at the end.
 6. **Counters** to read on hardware:
    - `adb_nintr`, `adb_nspur` (SR interrupts in IDLE with PB3 high)
-   - `adb_ntmo` (no-reply talks)
+   - `adb_ntmo` (no-reply talks, auto-polls excluded)
    - `adb_nsrq`
    - `adb_nwdog` (restarts)
+   - `adb_ndrop` (commands resent after an auto-poll reply)
    - `adb_nlost` (packet ring overflow)

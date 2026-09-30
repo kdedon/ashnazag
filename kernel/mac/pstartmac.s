@@ -301,6 +301,7 @@ Lvmok:
 	lsrl	&1,%d2
 	movel	%d2,%sp@-
 	jsr	mlsetup
+	jsr	mac_ramwin_check
 	| kvm_init set kas@(0x14) to the unused 030 root; hat_pteload walks
 	| kernel segments through it.  Point it at root040, which the MMU walks,
 	| before main()'s first hat_pteload (fork1 -> procdup -> segu_get).

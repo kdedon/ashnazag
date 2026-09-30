@@ -14,8 +14,9 @@
 
 extern long sys15(), sys0();
 extern long get_sr(), set_sr(), eor_sr(), sr_mem(), get_cacr(), set_cacr();
-extern long get_vbr(), usp_rt(), do_rte(), aline_do(), aline_n(), buserr_do(), buserr_st();
+extern long get_vbr(), usp_rt(), do_rte(), fp_state(), fp7_get(), aline_do(), aline_n(), buserr_do(), buserr_st();
 static void t_events(), t_files(), t_mouse();
+extern void fp7_set(), fsave_at(), frestore_at();
 extern void ipl7(), ipl0(), do_cpush(), do_reset(), do_reset7(), do_rte7(), aline_h(), buserr_h();
 extern char aline_at[];
 long errno, sysd1;
@@ -411,6 +412,31 @@ t_aline()
 	LOW(8) = 0;
 }
 
+/* exits with the fsave frame size, 255 if wrong */
+static void
+fpchild()
+{
+	long v = fp_state();
+
+	sys15(A_EXIT, v < 0 && v >= -100 ? -v : 255);
+}
+
+/* fp7 survives a switch between fsave and frestore; exits 0 if so */
+static void
+fpswitch()
+{
+	long f[26], pid;
+
+	fp7_set();
+	fsave_at(f);
+	pid = sys15(A_FORK);
+	if (pid == 0 || sysd1)
+		sys15(A_EXIT, 0);
+	sys15(A_WAITPID, pid, 0, 0);
+	frestore_at(f);
+	sys15(A_EXIT, fp7_get() == 7 ? 0 : 1);
+}
+
 static void
 t_priv()
 {
@@ -437,6 +463,15 @@ t_priv()
 	    do_rte(), get_sr());
 	do_cpush();
 	check("cpush", 1, "", 0, 0);
+	v = child(fpchild);
+	if ((v & 0x7f) == SIGILL)
+		info("fsave_sigill", v);	/* no FPU */
+	else
+		check("fsave_frestore", (v & 0xff) == 0 && ((v >> 8 & 0xff) == 4 ||
+		    (v >> 8 & 0xff) == 0x34 || (v >> 8 & 0xff) == 0x64), "status", v, 0);
+	v = child(fpswitch);
+	if ((v & 0x7f) != SIGILL)
+		check("fsave_switch_frestore", v == 0, "status", v, 0);
 	v = child(do_reset);
 	check("reset_sigill", (v & 0x7f) == SIGILL, "status", v, 0);
 	v = child(do_reset7);

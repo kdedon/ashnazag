@@ -61,6 +61,7 @@ static int in_flags;
 static unsigned char in_keys[16];	/* KeyMap order */
 static unsigned char in_raw[16];	/* ADB codes down */
 static int in_btn;
+static int in_btnw = -1;		/* in_btn as last written to the Mac */
 static int in_mh, in_mv;		/* Mouse, as last read or moved */
 static int in_dh, in_dv;		/* deltas not yet in MTemp */
 static short in_pin[4];			/* top, left, bottom, right */
@@ -74,7 +75,7 @@ static int cur_on;			/* cur_sv holds what is under it */
 static unsigned char cur_sv[16 * 16 * 4];
 
 long	uin_mouse;		/* v << 16 | h */
-long	uin_nev, uin_nget, uin_nkey, uin_nbtn, uin_ncur;
+long	uin_nev, uin_nget, uin_nkey, uin_nbtn, uin_ncur, uin_ndown;
 
 extern timestruc_t hrestime;
 extern int ui_scrgeom();
@@ -302,6 +303,7 @@ ui_inreset()
 	bzero((caddr_t)in_raw, sizeof in_raw);
 	cur_on = 0;
 	in_btn = 0;
+	in_btnw = -1;
 	in_dh = in_dv = 0;
 	in_down = -1;
 	in_sec = 0;
@@ -320,6 +322,23 @@ ui_inflags(f, on)
 	else
 		in_flags &= ~f;
 	DS_SPLX(s);
+}
+
+/*
+ * MBState and the ui page's copy of it, in process context.  Also written
+ * as events are taken: a mouseDown can wake the task before its tick, and
+ * Button() must already say down.
+ */
+static void
+ui_btnout(btn)
+	int btn;
+{
+	caddr_t up = ui.l_uiproc == u.u_procp ? ui.l_uip : 0;
+
+	in_btnw = btn;
+	(void)subyte((caddr_t)LM_MBSTATE, btn ? 0 : 0x80);
+	if (up)
+		(void)subyte(up + UP_BUTTON, btn ? 0 : 0x80);
 }
 
 static void
@@ -357,6 +376,8 @@ ui_getosevent(b)
 					uin_nkey++;
 				else if (e->what == 1 || e->what == 2)
 					uin_nbtn++;
+				if (e->what == 1)
+					uin_ndown++;
 				for (j = i; j > 0; j--)
 					ev_q[(ev_first + j) % NEV] = ev_q[(ev_first + j - 1) % NEV];
 				ev_first = (ev_first + 1) % NEV;
@@ -364,6 +385,8 @@ ui_getosevent(b)
 				uin_nget++;
 			}
 			DS_SPLX(s);
+			if (in_btn != in_btnw)
+				ui_btnout(in_btn);
 			return 0;
 		}
 		bcopy(b + 24, (caddr_t)ev_rect, sizeof ev_rect);
@@ -382,6 +405,8 @@ ui_getosevent(b)
 	n.mods = ui_mods();
 	ev_put(b + 4, &n);
 	DS_SPLX(s);
+	if (in_btn != in_btnw)
+		ui_btnout(in_btn);
 	return 0;
 }
 
@@ -807,11 +832,8 @@ ui_update(gp)
 		P32(b + 4, in_mv);
 		(void)copyout((caddr_t)b, up + UP_MX, 8);
 	}
-	if (f & IN_BTN) {
-		(void)subyte((caddr_t)LM_MBSTATE, btn ? 0 : 0x80);
-		if (up)
-			(void)subyte(up + UP_BUTTON, btn ? 0 : 0x80);
-	}
+	if ((f & IN_BTN) || btn != in_btnw)
+		ui_btnout(btn);
 	if (f & IN_KEYS)
 		(void)copyout((caddr_t)k, (caddr_t)LM_KEYMAP, 16);
 	if ((f & IN_CUR) && up && (moved || lm[2] || !lm[0]))

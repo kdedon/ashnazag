@@ -350,6 +350,72 @@ vrte(gp, pi)
 	return 1;		/* PC set */
 }
 
+extern int fpu_present;
+extern void fsave(), frestore();
+
+/* size of a 68040 FPU state frame from its header, 0 if not one */
+static int
+fplen(b)
+	u_char *b;
+{
+	if (b[0] == 0)
+		return 4;
+	if (b[0] == 0x41 && (b[1] == 0 || b[1] == 0x30 || b[1] == 0x60))
+		return 4 + b[1];
+	return 0;
+}
+
+/*
+ * fsave, frestore through the real unit, which holds the process's own
+ * state while it runs.  A fault undoes the fsave.
+ */
+static int
+fpstate(pi, op)
+	struct pi *pi;
+	int op;
+{
+	long f[26], a, imm;
+	int mode = (op >> 3) & 7, reg = op & 7, n, e;
+
+	if (!fpu_present)
+		return -1;
+	if (!(op & 0x40)) {
+		if (mode < 2 || mode == 3 || (mode == 7 && reg > 1))
+			return -1;
+		fsave((caddr_t)f);
+		if ((n = fplen((u_char *)f)) == 0)
+			e = -1;
+		else if (eaddr(pi, mode, reg, n, &a, &imm) <= 0)
+			e = -1;
+		else
+			e = copyout((caddr_t)f, (caddr_t)a, n) ? -2 : 0;
+		if (e)
+			frestore((caddr_t)f);
+		else if (n > 4) {
+			/* keep the unit live so a switch still saves fp0-fp7 */
+			f[0] = 0x41000000;
+			frestore((caddr_t)f);
+		}
+		return e;
+	}
+	if (mode < 2 || mode == 4 || (mode == 7 && reg > 3))
+		return -1;
+	if (mode == 3)
+		a = *areg(pi, reg);
+	else if (eaddr(pi, mode, reg, 4, &a, &imm) <= 0)
+		return -1;
+	if (copyin((caddr_t)a, (caddr_t)f, 4))
+		return -2;
+	if ((n = fplen((u_char *)f)) == 0)
+		return -1;
+	if (n > 4 && copyin((caddr_t)(a + 4), (caddr_t)(f + 1), n - 4))
+		return -2;
+	if (mode == 3)
+		*areg(pi, reg) += n;
+	frestore((caddr_t)f);
+	return 0;
+}
+
 /*
  * One privileged instruction.  0: emulated, PC past it; 1: PC set;
  * -1: not emulated; -2: operand fault.
@@ -436,8 +502,12 @@ priv1(gp, pi)
 	}
 	if ((op & 0xff00) == 0xf500)			/* pflush, ptest */
 		return 0;
+	if ((op & 0xff80) == 0xf300)			/* fsave, frestore */
+		return fpstate(pi, (int)op);
 	return -1;
 }
+
+static int nbadmsg;		/* NOTICE lines printed */
 
 /* vector 8 */
 int
@@ -466,6 +536,14 @@ guest_priv(gp, r, v)
 	}
 	bcopy(save, r, sizeof save);
 	guest_nprivbad++;
+	if (e == -1 && !(gp->gp_flags & GPF_PRIVBAD) && nbadmsg <= 10) {
+		gp->gp_flags |= GPF_PRIVBAD;
+		if (nbadmsg++ < 10)
+			printf("NOTICE: guest pid %d: privileged %x at %x not emulated\n",
+			    (int)curproc->p_pid, (int)fuword((caddr_t)pi.pc), (int)pi.pc);
+		else
+			printf("NOTICE: further unemulated instructions not reported\n");
+	}
 	if (e == -2) {
 		psignal(curproc, SIGSEGV);
 		trapret();
