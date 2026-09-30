@@ -27,6 +27,9 @@ if [ ! -f "$B/core/sbin/init" ]; then
 	(cd "$B/core" && cpio -idm --no-absolute-filenames --quiet < "$TAPE/02" 2>/dev/null) || true
 fi
 
+# the tape's groups plus display, the display devices' group
+{ grep -v '^display:' "$B/core/etc/group"; echo "display::25:"; } > "$B/group"
+
 python3 "$RD/mks5fs.py" -s "$RDKB" -i "$RDINODES" -b 1024 -t "$STAMP" \
 	-r "$RD" "$RD/root.manifest" "$B/root.img"
 python3 "$RD/s5check.py" "$B/root.img" -l > "$B/root.lst" || {

@@ -3,7 +3,8 @@
  * (shadowcsw/shadowbsw and the counts are sized from it); the rows of
  * Amiga hardware drivers are empty.  Row 42 (raw RAM disk) is filled by
  * mac_rd_config().  Row 18, the Amiga Ethernet's, is the SONIC, so the
- * stock /dev/aen0 (c 18 0) and network scripts reach it.
+ * stock /dev/aen0 (c 18 0) and network scripts reach it.  Rows 51-53
+ * are the display service: /dev/fbN, /dev/kbd, /dev/mouse.
  */
 
 #include "sys/types.h"
@@ -36,6 +37,9 @@ extern struct streamtab spinfo, clninfo, tcoinfo, tcooinfo, tclinfo;
 extern struct streamtab ipinfo, tcpinfo, udpinfo, ripinfo, icmpinfo;
 extern struct streamtab arpinfo, sadinfo;
 extern struct streamtab sninfo;
+extern int ds_fbopen(), ds_fbclose(), ds_fbread(), ds_fbioctl(), ds_fbmmap(),
+	ds_segmap(), ds_fbpoll();
+extern int ds_evopen(), ds_evclose(), ds_evread(), ds_evioctl(), ds_evpoll();
 
 #define B_NONE	{ ND, ND, ND, ND, ND, ND, ND, nullflag }
 #define C_NONE	{ ND, ND, ND, ND, ND, ND, ND, ND, ND, ND, notty, nostr, nullflag }
@@ -111,7 +115,13 @@ struct cdevsw cdevsw[70] = {
 	C_NONE,						/* 46 audio */
 	C_NONE, C_NONE, C_NONE,				/* 47-49 */
 	C_STR(&sadinfo, nullflag),			/* 50 sad */
-	C_NONE, C_NONE, C_NONE, C_NONE,			/* 51-54 */
+	{ ds_fbopen, ds_fbclose, ds_fbread, ND, ds_fbioctl,
+		ds_fbmmap, ds_segmap, ds_fbpoll, ND, ND, notty, nostr, nullflag }, /* 51 fb */
+	{ ds_evopen, ds_evclose, ds_evread, ND, ds_evioctl,
+		ND, ND, ds_evpoll, ND, ND, notty, nostr, nullflag },	/* 52 kbd */
+	{ ds_evopen, ds_evclose, ds_evread, ND, ds_evioctl,
+		ND, ND, ds_evpoll, ND, ND, notty, nostr, nullflag },	/* 53 mouse */
+	C_NONE,						/* 54 */
 	C_NONE, C_NONE, C_NONE, C_NONE, C_NONE,		/* 55-59 */
 	C_NONE, C_NONE, C_NONE, C_NONE, C_NONE,		/* 60-64 */
 	C_NONE, C_NONE, C_NONE, C_NONE, C_NONE,		/* 65-69 */

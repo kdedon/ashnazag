@@ -108,8 +108,22 @@ fb = ''.join(body(f) for f in ('fp_sense', 'fp_lowmem', 'fp_rom', 'fp_olddepth',
     'dr_find', 'dr_ptr', 'fbcons_auxinit', 'fbcons_biinit'))
 check('#-109051876' in body('fp_sense') and '0xf98' not in fb.lower(),
       'fbprobe touches only DAFB 0xF980001C, by a read')
-w = [l for l in dis.split('\n') if re.search(r'mov[a-z.]* [^,]*,(0xf98|-10905)', l)]
-check(not w, 'no store to 0xF98xxxxx anywhere (%d)' % len(w))
+# DAFB registers (0xF9800000-0xF9FFFFFF), by constant: the probe's range
+# check, sense read, 1-bpp CLUT reset and VBL mask; the display service's
+# CLUT and VBL
+dafb, cur = set(), None
+for l in dis.split('\n'):
+    m = re.match(r'[0-9a-f]+ <([^>]+)>:', l)
+    if m:
+        cur = m.group(1)
+        continue
+    v = [int(x) & 0xffffffff for x in re.findall(r'#(-?[0-9]+)', l)]
+    v += [int(x, 16) for x in re.findall(r'\b(f9[89a-f][0-9a-f]{5})\b', l.split('<')[0])]
+    if any(0xF9800000 <= x < 0xFA000000 for x in v):
+        dafb.add(cur)
+ok = {'fp_vramend', 'fp_sense', 'fp_clut1', 'fp_novbl', 'ds_clutload', 'ds_vblintr', 'ds_init'}
+check(dafb <= ok and {'fp_sense', 'fp_novbl'} <= dafb,
+      'DAFB registers named only by %s' % ' '.join(sorted(dafb)))
 sys.exit(bad)
 EOF
 

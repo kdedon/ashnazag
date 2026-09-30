@@ -198,6 +198,14 @@ int b;
 	}
 }
 
+/* the console path for one transition, for a consumer that routes keys */
+void
+adbkbd_cons(b)
+int b;
+{
+	conskey(b);
+}
+
 static void
 key(b, more)
 int b, more;
@@ -241,7 +249,7 @@ adbkbd_tick()
 {
 	char buf[4];
 
-	if (kb_rcode < 0 || adb_keyfn || --kb_rticks > 0)
+	if (kb_rcode < 0 || --kb_rticks > 0)
 		return;
 	kb_rticks = RPT_GAP;
 	if (keystr(kb_rcode, buf))

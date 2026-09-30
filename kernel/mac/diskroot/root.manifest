@@ -26,6 +26,14 @@ r /dev/res*
 # SCC printer port (the modem port is the console)
 c /dev/term/b	620 0 7 0 1
 
+# display service (group display, 25): frame buffer, keyboard, mouse
+c /dev/fb0	660 0 25 51 0
+h /dev/fb	/dev/fb0
+c /dev/kbd	660 0 25 52 0
+c /dev/mouse	660 0 25 53 0
+f /etc/group	444 0 3 build/group
+f /usr/bin/dstest 755 2 2 ../../build/mac/display/dstest
+
 # console: ldterm and ttcompat by autopush, Mac key bindings
 d /etc/ap	755 0 3
 f /etc/ap/chan.ap 644 0 3 etc/chan.ap

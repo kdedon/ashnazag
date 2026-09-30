@@ -40,6 +40,7 @@ x etc/profile | sed -e 's/TERM=amiga/TERM=vt100/' -e 's/^	if sioc$/	if false/' \
 	> "$B/profile"
 x usr/sbin/shutdown | sed -e 's,^if /usr/amiga/bin/sioc &&,if false \&\&,' > "$B/shutdown"
 x etc/screendefs | grep '^#' > "$B/screendefs"
+{ x etc/group | grep -v '^display:'; echo "display::25:"; } > "$B/group"
 x etc/vfstab | sed -e "s,^\(/dev/dsk/c0d0s1[	 ].*[	 ]/[	 ]*\)s5,\1$ROOTFS," > "$B/vfstab"
 grep -q "^/dev/dsk/c0d0s1.*$ROOTFS" "$B/vfstab" || { echo "[FAIL] tape vfstab changed"; exit 1; }
 # flush the file systems before uadmin halts

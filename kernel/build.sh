@@ -40,7 +40,8 @@ pass port
 IMG="$K/mac/ramdisk/build/root.img"
 : > "$LOG/root.log"
 if [ -f "${AMIX_TAPE:-/nonexistent}/02" ]; then
-	sh "$K/mac/ramdisk/mkroot.sh" > "$LOG/root.log" 2>&1 || fail root "mkroot.sh failed"
+	sh "$K/mac/display/build.sh" > "$LOG/root.log" 2>&1 || fail root "display build (dstest) failed"
+	sh "$K/mac/ramdisk/mkroot.sh" >> "$LOG/root.log" 2>&1 || fail root "mkroot.sh failed"
 fi
 if [ -f "$IMG" ]; then
 	python3 "$K/mac/ramdisk/s5check.py" "$IMG" >> "$LOG/root.log" 2>&1 ||

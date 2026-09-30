@@ -70,11 +70,23 @@ void	fbcons_putc();		/* (c): console tty output, VT100 subset */
 void	fbcons_write();		/* (buf, n): same, a block */
 int	fbcons_active();	/* 1 while the screen is the console */
 void	fbcons_unlock();	/* mac_stop: draw what an interrupted owner queued */
+int	fbcons_grab();		/* take the renderer to move the screen; 0 if busy */
+extern void (*fbcons_panicfn)();	/* called once, when a panic first draws */
 
 /* mode discovery (fbprobe.c) */
 int	fbcons_auxinit();	/* (info): aux_entry, A/UX low memory */
 int	fbcons_biinit();	/* (bootinfo): mac_shim_main, boot record */
 void	fbcons_report();	/* config(): what was found, on both consoles */
+
+/* the modes of the matched video sResource (declaration ROM) */
+struct fbpmode {
+	unsigned long	pm_id;		/* sResource mode id */
+	unsigned long	pm_off;		/* vpBaseOffset */
+	unsigned long	pm_row, pm_depth, pm_width, pm_height;
+};
+#define FBP_NMODE	8
+extern struct fbpmode fbp_mode[FBP_NMODE];
+extern int fbp_nmode, fbp_cur;	/* entries; the console's, -1 none */
 
 /*
  * Keyboard side.  The keyboard driver calls fbcons_input() with every

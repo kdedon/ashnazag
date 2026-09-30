@@ -120,6 +120,8 @@ struct fbprobe {
 };
 struct fbprobe fbprobe = { 0, 0, 0, 0, 0, 0, 0, { 0, 0 }, 0, -1, 0,
 	0, 0, 0, 0, 0, 0, 0, 0, 0 };
+struct fbpmode fbp_mode[FBP_NMODE] = { { 0 } };
+int fbp_nmode = 0, fbp_cur = -1;
 
 #define FP_NONE		0
 #define FP_BOOTINFO	1
@@ -305,6 +307,34 @@ unsigned long ml;
 	return v;
 }
 
+/* the modes of sResource list r; lo is the console's VPBlock */
+static void
+fp_modes(r, lo)
+unsigned long r, lo;
+{
+	register int j;
+	register unsigned long e, ml, v;
+	register struct fbpmode *p;
+
+	fbp_nmode = 0;
+	fbp_cur = -1;
+	for (j = 0, e = r; j < DR_MAXENT && dr_in(e, (unsigned long)4); j++, e += 4) {
+		if ((PEEKL(e) >> 24) == 0xFF || fbp_nmode == FBP_NMODE)
+			break;
+		if ((PEEKL(e) >> 24) < 0x80 || (ml = dr_ptr(e)) == 0 || (v = dr_vp(ml)) == 0)
+			continue;
+		if (v == lo)
+			fbp_cur = fbp_nmode;
+		p = &fbp_mode[fbp_nmode++];
+		p->pm_id = PEEKL(e) >> 24;
+		p->pm_off = PEEKL(v + VP_BASE);
+		p->pm_row = PEEKW(v + VP_ROW);
+		p->pm_depth = PEEKW(v + VP_PIXSIZE);
+		p->pm_width = PEEKW(v + VP_BOUNDS + 6);
+		p->pm_height = PEEKW(v + VP_BOUNDS + 4);
+	}
+}
+
 /*
  * A/UX Startup's 1-bpp mode from the ROM: see the head of the file.
  * Scores: 1 row and base fit, +2 depth = Monitors depth, +1 size = the
@@ -315,7 +345,7 @@ fp_rom(lm, mach, m)
 unsigned long lm, mach;
 register struct fbmode *m;
 {
-	unsigned long rb, sz, top, dir, r, e, t, ml, v, lo, dev, blo, bdev, id;
+	unsigned long rb, sz, top, dir, r, e, t, ml, v, lo, dev, blo, bdev, id, bsr;
 	register int i, j, sc, bsc, best;
 	unsigned long sw, sh;
 
@@ -338,7 +368,7 @@ register struct fbmode *m;
 		sh = fp_sensedim[fbprobe.fp_sense][1];
 	}
 	bsc = 0;
-	blo = bdev = 0;
+	blo = bdev = bsr = 0;
 	for (i = 0; i < DR_MAXENT && dr_in(dir, (unsigned long)4); i++, dir += 4) {
 		if ((id = PEEKL(dir) >> 24) == 0xFF)
 			break;
@@ -373,6 +403,7 @@ register struct fbmode *m;
 			continue;
 		if (best > bsc) {
 			bsc = best;
+			bsr = r;
 			blo = lo;
 			bdev = dev;
 			fbprobe.fp_rsrc = id;
@@ -385,6 +416,7 @@ register struct fbmode *m;
 	}
 	if (bsc == 0)
 		return 0;
+	fp_modes(bsr, blo);
 	fbprobe.fp_score = bsc;
 	m->fm_base = bdev + PEEKL(blo + VP_BASE);
 	m->fm_row = PEEKW(blo + VP_ROW);
@@ -492,6 +524,8 @@ unsigned long lm, mach;
 		return 1;
 	}
 
+	fbp_nmode = 0;
+	fbp_cur = -1;
 	m.fm_base = fbprobe.fp_scrnbase;
 	m.fm_row = fbprobe.fp_scrrow;
 	m.fm_depth = 1;

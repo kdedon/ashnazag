@@ -46,6 +46,7 @@ extern char *panicstr;
 struct fbcons fbcons = { 0 };
 struct fbvt fbvt_kern = { 0, 0, { 0 }, 0, { 0, 0 }, 0, 1 };
 struct fbvt fbvt_tty = { 0, 0, { 0 }, 0, { 0, 0 }, 0, 0 };
+void (*fbcons_panicfn)() = 0;
 
 #define FC	(&fbcons)
 #define PIX(x, y) ((VOL unsigned char *)(FC->fc_m.fm_base + \
@@ -655,7 +656,12 @@ fb_own(c, kern)
 int c, kern;
 {
 	register int s, next;
+	void (*f)();
 
+	if (kern && FB_PANIC() && (f = fbcons_panicfn) != 0) {
+		fbcons_panicfn = 0;
+		(*f)();
+	}
 	s = FB_IPLHI();
 	if (!FC->fc_busy || (kern && FB_PANIC())) {
 		/* a panic takes the screen: its owner will not come back */
@@ -801,6 +807,23 @@ fbcons_unlock()
 		return;
 	FC->fc_busy = 1;
 	fb_release();
+}
+
+/*
+ * Take the renderer for a caller that moves the screen (fc_m.fm_base);
+ * nested output queues until fbcons_unlock().
+ */
+int
+fbcons_grab()
+{
+	register int s, ok;
+
+	s = FB_IPLHI();
+	ok = FC->fc_on && !FC->fc_busy;
+	if (ok)
+		FC->fc_busy = 1;
+	FB_IPLX(s);
+	return ok;
 }
 
 /*

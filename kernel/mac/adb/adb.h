@@ -110,6 +110,7 @@ extern void (*adb_ttyin)();
 /* device decoders */
 void	adbkbd_input();		/* (addr, data, n) */
 void	adbkbd_tick();
+void	adbkbd_cons();		/* (b) console path, with repeat, for a consumer */
 void	adbkbd_setleds();	/* (mask) LED_* */
 void	adbms_input();		/* (addr, data, n) */
 #define LED_NUM		0x01

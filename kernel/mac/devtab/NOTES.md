@@ -30,7 +30,7 @@ as `coinfo` is. Reasons for overriding the tables rather than each driver with `
 
 ## Major table
 
-**cdevsw.** All other majors (7, 38, 39, 42–45, 47–49, 51–69) are empty in both the base and the
+**cdevsw.** All other majors (7, 38, 39, 42–45, 47–49, 54–69) are empty in both the base and the
 Mac table.
 
 | Major | Base driver | Fate | Why |
@@ -62,6 +62,7 @@ Mac table.
 | 42 | — | empty statically | `mac_rd_config()` installs the raw RAM disk at boot |
 | 46 | audio (`audioinfo`) | **empty** | Paula audio |
 | 50 | sad | kept | generic |
+| 51, 52, 53 | — | **new**: fb, kbd, mouse | display service (`display/NOTES.md`) |
 
 **bdevsw.** Majors 0–15 and 21–31 are empty.
 

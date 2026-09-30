@@ -21,7 +21,11 @@ BKILL = {16: 'fd', 17: 'hd'}
 CMAC = {0: 'coinfo'}
 BMAC = {20: 'ramopen'}
 # Rows the Mac gives a new driver: exactly these non-nodev entries.
-CNEW = {18: ['sninfo']}
+CNEW = {18: ['sninfo'],
+        51: ['ds_fbopen', 'ds_fbclose', 'ds_fbread', 'ds_fbioctl', 'ds_fbmmap',
+             'ds_segmap', 'ds_fbpoll'],
+        52: ['ds_evopen', 'ds_evclose', 'ds_evread', 'ds_evioctl', 'ds_evpoll'],
+        53: ['ds_evopen', 'ds_evclose', 'ds_evread', 'ds_evioctl', 'ds_evpoll']}
 CF = 'open close read write ioctl mmap segmap poll xpoll xhalt ttys str flag'.split()
 BF = 'open close strat print size xpoll xhalt flag'.split()
 

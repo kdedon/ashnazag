@@ -50,6 +50,13 @@ sh tests/run-qemu.sh        # test suite in QEMU q800
 Paths to your AMIX, A/UX and ROM files are set in the scripts; see `kernel/README.md`
 and `images/README.md`.
 
+## AI disclosure
+
+Most of the code and documentation here was written with AI assistance (Claude, by
+Anthropic), under the maintainer's direction. Every change is reviewed and run through
+the test suite before it is merged; hardware results are reported separately from
+emulator results.
+
 ## Licence
 
 GPL-2.0 (see `LICENSE`). Files derived from other projects keep their own notices.

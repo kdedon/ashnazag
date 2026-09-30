@@ -10,8 +10,8 @@
 #
 # Drivers: SCC tty (console), 53C96 SCSI (sd.h layer), RAM disk (root
 # image from ramdisk/build/root.img when present), SONIC Ethernet (DLPI,
-# cdevsw[18]).  devtab/ replaces the device switches and picks the disk
-# root.
+# cdevsw[18]), display service (cdevsw[51-53]).  devtab/ replaces the
+# device switches and picks the disk root.
 # Same mechanism as the port's variants: weaken the Amiga platform entry
 # points in the base, link the Mac objects over it, check that every
 # override bound to our object, validate, then link at 0x10000.
@@ -46,7 +46,7 @@ m68k-cbm-sysv4-gcc -m68040 -c "$MAC/boot/auxentry.s" -o "$W/auxentry.o"
 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68040 -c "$MAC/macconf.c" -o "$W/macconf.o"
 OBJS="$W/macentry.o $W/auxentry.o $W/macconf.o $W/macintr.o $W/pstartmac.o $W/$ADAPT.o"
 
-echo "[*] drivers: SCC tty, 53C96 SCSI, RAM disk, frame-buffer console, ADB, SONIC, RTC"
+echo "[*] drivers: SCC tty, 53C96 SCSI, RAM disk, frame-buffer console, ADB, SONIC, RTC, display"
 sh "$MAC/scc/build.sh" "$W/scc"
 sh "$MAC/scsi/build.sh" "$W"
 sh "$MAC/ramdisk/build.sh"
@@ -55,10 +55,12 @@ sh "$MAC/video/build.sh" "$W/video"
 ADB_FBCONS=1 sh "$MAC/adb/build.sh" "$W/adb"	# keyboard -> fbcons_input
 sh "$MAC/sonic/build.sh" "$W"
 sh "$MAC/rtc/build.sh" "$W/rtc"
+sh "$MAC/display/build.sh" "$W/display"
 RDB="$MAC/ramdisk/build"
 OBJS="$OBJS $W/scc/scc.o $W/scc/scccons.o $W/macscsi.o $RDB/rd.o $RDB/rdimage.o"
 OBJS="$OBJS $W/devtab/devtab.o $W/adb/adb.o $W/macsonic.o $W/rtc/rtc.o"
 OBJS="$OBJS $W/video/fbcons.o $W/video/fbprobe.o $W/video/fbfont.o $W/video/fbtty.o"
+OBJS="$OBJS $W/display/ds.o"
 
 echo "[*] loadable modules: loader, system calls 64..69, kernel symbol table"
 sh "$K/dlm/build.sh" -k "$W/dlm"

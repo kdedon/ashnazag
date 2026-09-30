@@ -48,6 +48,11 @@ c /dev/rawip	666 0 3 27 35
 c /dev/icmp	666 0 3 27 36
 c /dev/arp	660 0 3 27 37
 c /dev/loop	666 0 3 27 20
+# display service (group display, 25): frame buffer, keyboard, mouse
+c /dev/fb0	660 0 25 51 0
+h /dev/fb	/dev/fb0
+c /dev/kbd	660 0 25 52 0
+c /dev/mouse	660 0 25 53 0
 
 f /etc/inittab	644 0 3 etc/inittab
 f /etc/TIMEZONE	444 0 3 etc/TIMEZONE
@@ -55,7 +60,7 @@ f /etc/profile	644 0 3 etc/profile
 f /etc/ap/chan.ap 644 0 3 etc/chan.ap
 f /etc/ioctl.syscon 644 0 3 etc/ioctl.syscon
 f /etc/passwd	444 0 3 build/core/etc/passwd
-f /etc/group	444 0 3 build/core/etc/group
+f /etc/group	444 0 3 build/group
 e /etc/mnttab	444 0 3
 e /var/adm/utmp	644 0 2
 e /var/adm/utmpx 644 0 2
@@ -78,6 +83,7 @@ l /usr/bin/sh	/sbin/sh
 l /usr/bin/uname	/sbin/uname
 f /usr/bin/ls	555 2 2 build/core/usr/bin/ls
 f /usr/bin/cat	555 2 2 build/core/usr/bin/cat
+f /usr/bin/dstest 755 2 2 ../../build/mac/display/dstest
 f /usr/bin/echo	555 2 2 build/core/usr/bin/echo
 f /usr/bin/date	555 2 2 build/core/usr/bin/date
 f /usr/bin/ps	4555 0 3 build/core/usr/bin/ps

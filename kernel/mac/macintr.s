@@ -1,7 +1,8 @@
 | macintr.s -- Quadra autovector handlers (replace the Amiga p1int..p6int).
 |
 | Q800 levels: 1 VIA1 (tick = Timer 1, ADB = shift register),
-| 2 VIA2 (CB2 = 53C96 SCSI; CA1 = NuBus-slot lines, slot $9 = SONIC),
+| 2 VIA2 (CB2 = 53C96 SCSI; CA1 = NuBus-slot lines, slot $9 = SONIC,
+|   bit 6 = built-in video VBL),
 | 4 SCC (sccintr); 3, 5, 6 unused.
 | Entry and exit follow the stock handlers: save d0-d7/a0-a6, load
 | sup_cacr, leave through intret.  Handlers get a pcb pointer built from a
@@ -66,13 +67,32 @@ Lp2slot:
 	btst	&1,%d0			| CA1: a slot line fell
 	beq.w	Lp2other
 	moveb	&0x02,%a0@(0x1a00)	| ack the edge before reading the lines
-	moveb	%a0@(0x1e00),%d0	| port A, no handshake: slot lines, low = asserted
-	btst	&0,%d0			| slot $9: on-board SONIC
-	bne.w	Lp2noslot
-	jsr	snintr			| clears the chip, so its line rises again
+	moveb	%a0@(0x1e00),%d3	| port A, no handshake: slot lines, low = asserted
+	moveb	%d3,%d0
+	andib	&0x41,%d0
+	cmpib	&0x41,%d0
+	bne.w	Lp2serve
+	addql	&1,sn_nslot		| another slot (a card): not handled
 	jmp	intret
-Lp2noslot:
-	addql	&1,sn_nslot		| another slot (video VBL, a card): not handled
+| CA1 falls only when all lines were high: serve every line found low,
+| then read again until SONIC and VBL are both released (8 rounds).
+Lp2serve:
+	moveq	&7,%d2
+Lp2loop:
+	btst	&0,%d3			| slot $9: on-board SONIC
+	bne.w	Lp2vbl
+	jsr	snintr			| clears the chip, so its line rises again
+Lp2vbl:
+	btst	&6,%d3			| built-in video
+	bne.w	Lp2again
+	jsr	ds_vblintr		| clears DAFB's interrupt
+Lp2again:
+	moveal	&0x50f02000,%a0
+	moveb	%a0@(0x1e00),%d3
+	moveb	%d3,%d0
+	andib	&0x41,%d0
+	cmpib	&0x41,%d0
+	dbeq	%d2,Lp2loop
 	jmp	intret
 Lp2other:
 	andib	&0x7f,%d0

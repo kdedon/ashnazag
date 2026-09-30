@@ -394,6 +394,27 @@ unsigned long depth, w, h, base, row;
 	bad |= !ok;
 }
 
+/* the modes fbprobe recorded for the display service: n entries, the console's current */
+static void
+modes(name, n)
+char *name;
+int n;
+{
+	int i, ok;
+
+	ok = fbp_nmode == n && (n == 0 || (fbp_cur >= 0 && fbp_cur < n &&
+	    fbp_mode[fbp_cur].pm_depth == fbcons.fc_m.fm_depth &&
+	    fbp_mode[fbp_cur].pm_row == fbcons.fc_m.fm_row &&
+	    fbp_mode[fbp_cur].pm_width == fbcons.fc_m.fm_width &&
+	    fbp_mode[fbp_cur].pm_height == fbcons.fc_m.fm_height));
+	printf("%s modes: %-40s -> %d, current %d\n", ok ? "OK  " : "FAIL", name, fbp_nmode, fbp_cur);
+	for (i = 0; i < fbp_nmode; i++)
+		printf("      mode 0x%lx %lux%lu %lu bpp row %lu offset 0x%lx\n", fbp_mode[i].pm_id,
+		    fbp_mode[i].pm_width, fbp_mode[i].pm_height, fbp_mode[i].pm_depth,
+		    fbp_mode[i].pm_row, fbp_mode[i].pm_off);
+	bad |= !ok;
+}
+
 static void
 refused(name, info)
 char *name;
@@ -461,6 +482,7 @@ char *romfile;
 	pokew(pm + 32, 8);
 	probe("ROM: PixMap 8 bpp 640x480 row 1024", P_ROM, 1UL, 640UL, 480UL,
 	    0xF9000000UL, 1024UL, (int)info);
+	modes("ROM: PixMap 8 bpp 640x480 row 1024", 4);
 
 	/* base offset moves with the depth (row 832 modes) */
 	pokel(pm, 0x12345678);				/* heap overwritten */
@@ -492,6 +514,7 @@ char *romfile;
 	pokew(lm + 0x8AC, 100);
 	probe("ROM: no matching mode", P_ONE, 1UL, 640UL, 480UL,
 	    0xF9000000UL, 100UL, (int)info);
+	modes("ROM: no matching mode", 0);
 	pokew(lm + 0x106, 1024);
 
 	/* ROMBase not a ROM: not read past its header */
