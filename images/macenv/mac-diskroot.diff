@@ -1,0 +1,39 @@
+--- a/kernel/mac/diskroot/root.manifest
++++ b/kernel/mac/diskroot/root.manifest
+@@ -55,6 +55,36 @@
+ # date(1) runs setclk -s after stime(2); the kernel keeps the RTC
+ f /usr/amiga/bin/setclk 755 0 3 etc/setclk
+ 
++# A/UX Mac environment: guest modules registered at run level 2, the
++# File ID daemon, startmac, System and Finder in /mac/sys/Sys7
++d /usr/aux	755 0 3
++d /usr/aux/lib	755 0 3
++d /usr/aux/lib/mod.d 755 0 3
++f /usr/aux/lib/mod.d/guestcore 644 0 3 macpkg/mod.d/guestcore
++f /usr/aux/lib/mod.d/auxcore	644 0 3 macpkg/mod.d/auxcore
++f /usr/aux/lib/mod.d/auxexec	644 0 3 macpkg/mod.d/auxexec
++f /usr/aux/lib/mod.d/uinter	644 0 3 macpkg/mod.d/uinter
++f /usr/aux/lib/auxreg	755 0 3 macpkg/auxreg
++f /etc/rc2.d/S05aux	744 0 3 macpkg/S05aux
++c /dev/uinter0	660 0 25 54 0 	# major as in S05aux
++d /shlib	755 0 3
++f /shlib/libc1_s	755 0 3 macpkg/libc1_s
++f /shlib/libmac1_s	755 0 3 macpkg/libmac1_s
++d /etc/aux	755 0 3
++f /etc/aux/fidd	755 0 3 macpkg/fidd
++f /etc/aux/rom	444 0 3 macpkg/rom
++d /mac		755 0 3
++d /mac/bin	755 0 3
++f /mac/bin/startmac 755 0 3 macpkg/startmac
++d /mac/lib	755 0 3
++d /mac/lib/Patches 755 0 3
++f /mac/lib/Patches/Patch.067C 644 0 3 macpkg/Patch.067C
++d /mac/sys	755 0 3
++d /mac/sys/Sys7	755 0 3
++f /mac/sys/Sys7/System 644 0 3 macpkg/System
++f /mac/sys/Sys7/Finder 644 0 3 macpkg/Finder
++f /usr/bin/startmac 755 0 3 macpkg/startmac.sh
++
+ # no Amiga port monitors (screens, serial boards) or Ethernet board
+ f /etc/saf/_sactab 644 0 3 etc/_sactab
+ f /etc/inet/network-config 444 0 3 etc/network-config

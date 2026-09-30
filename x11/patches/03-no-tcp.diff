@@ -1,0 +1,11 @@
+--- a/programs/Xserver/os/access.c
++++ b/programs/Xserver/os/access.c
+@@ -69,7 +69,7 @@
+ #include <sys/ioctl.h>
+ #include <ctype.h>
+ 
+-#if defined(TCPCONN) || defined(STREAMSCONN) || defined(ISC)
++#if defined(TCPCONN) || defined(STREAMSCONN) || defined(ISC) || defined(UNIXCONN)
+ #include <netinet/in.h>
+ #endif /* TCPCONN || STREAMSCONN || ISC */
+ #ifdef DNETCONN

@@ -18,6 +18,8 @@ QEMU's `q800` machine with a real Quadra 800 ROM; hardware testing is in progres
 | `kernel/mac/` | Quadra 800 platform layer: boot, MMU map, SCC, 53C96 SCSI, DAFB console, ADB, SONIC, RTC, device tables, root selection, boot blocks |
 | `kernel/dlm/` | SVR4.2-style loadable kernel modules |
 | `kernel/guest/` | A/UX personality: trap gates, A/UX system calls, COFF and shared-library exec, Mac environment interface (screens, events, cursor, PRAM) |
+| `kernel/otbridge/` | Open Transport bridge: STREAMS module, virtual Ethernet stations on the SONIC, ASLM library builder, Mac `.ENET` driver |
+| `x11/` | X11R6.3 server for the Mac screen (build, patches, session scripts, image builder) |
 | `kernel/tools/`, `kernel/build.sh` | build: AMIX link kit relink, port build, Mac overlay, checks |
 | `kernel/port-local.diff` | two local changes to the 040/060 port |
 | `images/` | disk-image builders (A/UX Startup, direct boot, disk root) and QEMU scripts |
@@ -37,7 +39,7 @@ Nothing proprietary is in this repository. To build you supply:
 
 - [amix-040-060-port](https://github.com/asokero/amix-040-060-port): 68040/68060 support for AMIX
 - [gcc-cross-amix](https://github.com/isoriano1968/gcc-cross-amix): AMIX cross toolchain
-- [x11r6.3-amix](https://github.com/isoriano1968/x11r6.3-amix): X11R6.3 for AMIX (planned Mac backend)
+- [x11r6.3-amix](https://github.com/isoriano1968/x11r6.3-amix): X11R6.3 for AMIX, base of our Mac server
 - [amigaux.org](https://amigaux.org/): AMIX packages
 
 ## Build

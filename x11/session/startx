@@ -1,0 +1,73 @@
+#!/bin/sh
+# startx -- the X11R6.3 server on /dev/fb0 with the AMIX X11R4 clients.
+#
+#   startx [client-script] [-- server options]
+#
+# Runs $HOME/.xinitrc, else /usr/x11r6/lib/X11/xinit/xinitrc, against
+# display :0 and stops the server when that script ends.  Server output
+# goes to /tmp/Xamix.log.  The server does not listen on TCP; clients need
+# the cookie in $HOME/.Xauthority, made fresh at each start.
+R=/usr/x11r6
+PATH=$R/bin:/usr/X/bin:$PATH
+export PATH
+
+client=
+[ $# -gt 0 ] && [ "$1" != "--" ] && { client=$1; shift; }
+[ "$1" = "--" ] && shift
+[ -n "$client" ] || client=$HOME/.xinitrc
+[ -f "$client" ] || client=$R/lib/X11/xinit/xinitrc
+
+# 16 random bytes as 32 hex digits.  There is no random device: each 16-bit
+# word is the checksum of the clock, the process table and the file state.
+key=
+i=0
+while [ $i -lt 8 ]; do
+	i=`expr $i + 1`
+	w=`( echo $i $$; date; ps -ef; ls -l /tmp /dev ) 2>&1 | sum | sed 's/ .*//'`
+	j=0
+	while [ $j -lt 4 ]; do
+		d=`expr $w % 16 + 1`
+		w=`expr $w / 16`
+		key=`echo 0123456789abcdef | cut -c$d`$key
+		j=`expr $j + 1`
+	done
+done
+
+# a fresh MIT-MAGIC-COOKIE-1 for display :0 in the private $HOME/.Xauthority
+umask 077
+XAUTHORITY=${XAUTHORITY:-$HOME/.Xauthority}
+export XAUTHORITY
+host=`uname -n`
+[ `echo "$key" | wc -c` -eq 33 ] || { echo "startx: no cookie"; exit 1; }
+[ -f $XAUTHORITY ] || > $XAUTHORITY
+xauth -f $XAUTHORITY remove $host/unix:0 :0 2>/dev/null
+xauth -f $XAUTHORITY add $host/unix:0 MIT-MAGIC-COOKIE-1 $key &&
+xauth -f $XAUTHORITY add :0 MIT-MAGIC-COOKIE-1 $key ||
+	{ echo "startx: xauth failed"; exit 1; }
+
+# the log and pid files are root's: drop anything planted in /tmp
+rm -f /tmp/Xamix.log /tmp/Xamix.pid
+
+$R/bin/Xamix :0 -auth $XAUTHORITY -fp $R/lib/X11/fonts/misc/,$R/lib/X11/fonts/75dpi/ "$@" \
+	> /tmp/Xamix.log 2>&1 &
+server=$!
+echo $server > /tmp/Xamix.pid
+trap 'kill $server 2>/dev/null; exit 1' 1 2 15
+n=0
+until [ -r /tmp/.X11-unix/X0 ]; do
+	n=`expr $n + 1`
+	kill -0 $server 2>/dev/null || n=99
+	if [ $n -gt 60 ]; then
+		echo "startx: server did not start; see /tmp/Xamix.log"
+		kill $server 2>/dev/null
+		exit 1
+	fi
+	sleep 1
+done
+DISPLAY=:0
+export DISPLAY
+# client messages, including the broken-connection errors from clients
+# still open when the server stops, go to the session log, not the console
+sh $client > $HOME/.xsession-errors 2>&1
+kill $server 2>/dev/null
+wait

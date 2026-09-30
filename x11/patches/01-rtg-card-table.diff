@@ -1,0 +1,654 @@
+diff -urN xc/programs/Xserver/hw/amix/amixIo.c ../stage1/xc/programs/Xserver/hw/amix/amixIo.c
+--- a/programs/Xserver/hw/amix/amixIo.c	2026-09-29 21:18:21.984610243 -0500
++++ b/programs/Xserver/hw/amix/amixIo.c	2026-09-29 23:13:17.695307775 -0500
+@@ -349,6 +349,12 @@
+     extern long UseMask;
+ #endif
+ #endif /* TIGA */
++#ifdef RTG
++    int n;
++
++    if ((n = rtgProcessArgument(argc, argv, i)) > 0)
++	return n;
++#endif
+ 
+     if (strcmp (argv[i], "-ar1") == 0) {	/* -ar1 int */
+ 	if (++i >= argc) UseMsg ();
+@@ -516,6 +522,9 @@
+     ErrorF("-depth int             screen depth in planes.\n");
+     ErrorF("-mode WxH              RTG video mode (e.g. 800x600, 1024x768)\n");
+     ErrorF("-group int		   screen group\n");
++#ifdef RTG
++    rtgUseMsg();
++#endif
+ #ifdef TIGA
+     ErrorF("-res<#>                Use /dev/dmi<#> as display.\n");
+     ErrorF("-gfxmgr filename       Tiga graphics manager.\n");
+diff -urN xc/programs/Xserver/hw/amix/rtg/Imakefile ../stage1/xc/programs/Xserver/hw/amix/rtg/Imakefile
+--- a/programs/Xserver/hw/amix/rtg/Imakefile	2026-09-29 21:18:21.984610243 -0500
++++ b/programs/Xserver/hw/amix/rtg/Imakefile	2026-09-29 23:13:17.697307772 -0500
+@@ -6,7 +6,7 @@
+ 
+ SUBDIRS = zz9000
+ 
+-STD_DEFINES = ServerDefines -DRTG
++STD_DEFINES = ServerDefines -DRTG -DZZ9000
+ CDEBUGFLAGS = -g -O
+    INCLUDES = -I. -I.. -I../../../include -I$(XINCLUDESRC) -I../../../mi -I../../../mfb -I$(FONTINCSRC) -I/usr/amiga/include
+ 
+diff -urN xc/programs/Xserver/hw/amix/rtg/rtg.h ../stage1/xc/programs/Xserver/hw/amix/rtg/rtg.h
+--- a/programs/Xserver/hw/amix/rtg/rtg.h	2026-09-29 21:18:21.984610243 -0500
++++ b/programs/Xserver/hw/amix/rtg/rtg.h	2026-09-29 23:13:17.692307779 -0500
+@@ -57,11 +57,36 @@
+     (((struct _rtg_gc_priv *)(gc)->devPrivates[rtgGCPrivateIndex].ptr)->clip)
+ 
+ /*
++** Card backend.  rtgProbe() takes the first entry of rtgCards[] whose
++** probe succeeds (or the one named by -rtg).  A NULL openInput uses the
++** AMIX screen device for keyboard and mouse; closeInput undoes openInput.
++*/
++typedef struct _rtgCardRec {
++    char   *name;
++    Bool  (*probe)();           /* (index): present; set amixFbs[].bp size */
++    Bool  (*create)();          /* (pScreenInfo, index): formats, visuals */
++    Bool  (*initHW)();          /* (pRTG, index): map, fill geometry      */
++    void  (*closeHW)();         /* (pRTG, index)                          */
++    Bool  (*screenInit)();      /* (pScreen, pRTG, dpix, dpiy)            */
++    Bool  (*createDefColormap)(); /* (pScreen)                            */
++    Bool  (*saveScreen)();      /* (pScreen, on); NULL: none              */
++    void  (*openInput)();       /* (index)                                */
++    void  (*closeInput)();      /* (index)                                */
++    int   (*processArgument)(); /* (argc, argv, i): args used, 0 if none  */
++    void  (*useMsg)();
++} rtgCardRec, *rtgCardPtr;
++
++extern rtgCardPtr rtgCards[];
++extern rtgCardPtr rtgScreenCard[];
++
++/*
+ ** Entry points called from amixInit.c via amixFbData[].
+ */
+ #ifdef RTG
+ extern int rtgProbe();
+ extern int rtgCreate();
++extern int rtgProcessArgument();
++extern void rtgUseMsg();
+ #endif
+ 
+ #endif /* AMIX_RTG_H */
+diff -urN xc/programs/Xserver/hw/amix/rtg/rtgInit.c ../stage1/xc/programs/Xserver/hw/amix/rtg/rtgInit.c
+--- a/programs/Xserver/hw/amix/rtg/rtgInit.c	2026-09-29 21:18:21.984610243 -0500
++++ b/programs/Xserver/hw/amix/rtg/rtgInit.c	2026-09-29 23:13:17.692307779 -0500
+@@ -9,17 +9,15 @@
+ **       rtgProbe, rtgCreate,
+ **   #endif
+ **
+-** rtgProbe() checks that a supported RTG card is present and fills in
+-** amixFbs[].  Currently only ZZ9000 is supported; ZZ9000Probe() does
+-** the actual hardware detection.
++** rtgProbe() takes the first card of rtgCards[] that is present and
++** fills in amixFbs[].
+ **
+-** rtgCreate() registers pixmap formats for 16-bit TrueColor and queues
+-** the screen for AddScreen().
++** rtgCreate() lets the card register its pixmap formats and visuals and
++** queues the screen for AddScreen().
+ **
+ ** rtgScreenInit() is the AddScreen callback.  It allocates the
+-** rtgScreenRec, calls ZZ9000InitHW() to open the device and write the
+-** mode register sequence, then calls ZZ9000ScreenInit() to install the
+-** drawing function vector into the ScreenRec.
++** rtgScreenRec and calls the card to map the frame buffer and install
++** the drawing function vector into the ScreenRec.
+ */
+ 
+ #include "../amix.h"
+@@ -30,7 +28,6 @@
+ #include "mipointer.h"
+ #include "mi.h"
+ #include "rtg.h"
+-#include "zz9000/zz9000.h"
+ 
+ extern int  XmonitorResolution;
+ extern int  YmonitorResolution;
+@@ -41,9 +38,26 @@
+ extern void amixWakeupHandler();
+ extern Bool amixCursorInitialize();
+ 
+-/* forward - defined in ZZ9000/ZZ9000screen.c */
+-extern Bool ZZ9000ScreenInit();
+-extern Bool ZZ9000CreateDefColormap();
++#ifdef ZZ9000
++extern rtgCardRec ZZ9000Card;
++#endif
++#ifdef RTGFB
++extern rtgCardRec fbCard;
++#endif
++
++rtgCardPtr rtgCards[] = {
++#ifdef ZZ9000
++    &ZZ9000Card,
++#endif
++#ifdef RTGFB
++    &fbCard,
++#endif
++    (rtgCardPtr) 0
++};
++
++rtgCardPtr rtgScreenCard[MAXSCREENS];
++
++static char *rtgCardWanted;
+ 
+ /* mfb - needed to initialise depth-1 GC private storage */
+ extern Bool mfbAllocatePrivates();
+@@ -60,13 +74,6 @@
+ int rtgScreenIndex    = -1;
+ int rtgGCPrivateIndex = -1;
+ 
+-/* ------------------------------------------------------------------ */
+-/* TrueColor 16-bit visual for RGB565                                  */
+-
+-static VisualRec rtgVisual;     /* filled in rtgCreate() each generation */
+-static VisualID  rtgVID;
+-static DepthRec  rtgDepth;
+-
+ static unsigned long rtgGeneration = 0;
+ 
+ /* ------------------------------------------------------------------ */
+@@ -108,6 +115,7 @@
+ ScreenPtr pScreen;
+ {
+     rtgScreenPtr pRTG = GetRTGScreen(pScreen);
++    rtgCardPtr   card = rtgScreenCard[pScreen->myNum];
+     Bool         ret;
+     int          i = pScreen->myNum;
+ 
+@@ -115,7 +123,9 @@
+     ret = (*pScreen->CloseScreen)(index, pScreen);
+     (*pScreen->SaveScreen)(pScreen, SCREEN_SAVER_OFF);
+ 
+-    if (amixFbs[i].mapped && amixFbs[i].fd >= 0)
++    if (card->closeInput)
++        (*card->closeInput)(i);
++    else if (amixFbs[i].mapped && amixFbs[i].fd >= 0)
+     {
+         if (CloseScreen(amixFbs[i].fd))
+             ErrorF("rtgCloseScreen: CloseScreen(%d) failed\n", amixFbs[i].fd);
+@@ -123,7 +133,7 @@
+         amixFbs[i].mapped = FALSE;
+     }
+ 
+-    ZZ9000CloseHW(pRTG);
++    (*card->closeHW)(pRTG, i);
+     xfree((pointer) pRTG);
+ 
+     return ret;
+@@ -204,12 +214,24 @@
+     ErrorF("rtgOpenInput: input fd=%d group=%d\n", fd, amixFbs[index].group);
+ }
+ 
++static void
++rtgInput(index)
++int index;
++{
++    rtgCardPtr card = rtgScreenCard[index];
++
++    if (card->openInput)
++        (*card->openInput)(index);
++    else
++        rtgOpenInput(index);
++}
++
+ /*
+ ** rtgScreenInit - AddScreen callback, called once per screen by DIX.
+ **
+-** Allocates the rtgScreenRec, initialises hardware via ZZ9000InitHW(),
+-** installs the drawing function vector via ZZ9000ScreenInit(), then
+-** wires up CloseScreen, SaveScreen, block handlers and cursor.
++** Allocates the rtgScreenRec, lets the card map the frame buffer and
++** install the drawing function vector, then wires up CloseScreen,
++** SaveScreen, block handlers and cursor.
+ */
+ static Bool
+ rtgScreenInit(index, pScreen, argc, argv)
+@@ -219,8 +241,9 @@
+ char    **argv;
+ {
+     rtgScreenPtr pRTG;
++    rtgCardPtr   card = rtgScreenCard[index];
+ 
+-    ErrorF("rtgScreenInit: index=%d\n", index);
++    ErrorF("rtgScreenInit: index=%d card=%s\n", index, card->name);
+ 
+     pRTG = (rtgScreenPtr) xalloc(sizeof(rtgScreenRec));
+     if (!pRTG)
+@@ -232,16 +255,6 @@
+ 
+     pScreen->devPrivates[rtgScreenIndex].ptr = (pointer) pRTG;
+ 
+-    /* Screen geometry from selected mode */
+-    pRTG->width        = ZZ9000_selected_mode->w;
+-    pRTG->height       = ZZ9000_selected_mode->h;
+-    pRTG->pitch        = ZZ9000_selected_mode->w * 2;
+-    pRTG->bitsPerPixel = ZZ9000_BPP;
+-    pRTG->depth        = ZZ9000_DEPTH;
+-    pRTG->fbOffset     = ZZ9000_FB_OFFSET;
+-
+-    ErrorF("rtgScreenInit: geometry set, rtgGCPrivateIndex=%d\n", rtgGCPrivateIndex);
+-
+     /* mfb GC private storage - required so depth-1 GCs can be delegated to
+        mfbCreateGC (same pattern as cfb/cfbscrinit.c:mfbAllocatePrivates) */
+     if (!mfbAllocatePrivates(pScreen, (int *)NULL, (int *)NULL))
+@@ -259,39 +272,32 @@
+         return FALSE;
+     }
+ 
+-    ErrorF("rtgScreenInit: AllocateGCPrivate ok, calling ZZ9000InitHW\n");
+-
+-    /* Open /dev/zz9000, set mode, mmap framebuffer */
+-    if (!ZZ9000InitHW(pRTG))
++    /* open the device, set the mode, map the frame buffer, fill geometry */
++    if (!(*card->initHW)(pRTG, index))
+     {
+-        ErrorF("rtgScreenInit: ZZ9000InitHW failed\n");
++        ErrorF("rtgScreenInit: %s initHW failed\n", card->name);
+         xfree((pointer) pRTG);
+         return FALSE;
+     }
+ 
+-    ErrorF("rtgScreenInit: hw init done, calling ZZ9000ScreenInit\n");
+-
+     /*
+-    ** Install the ScreenRec function vector for ZZ9000.
+-    ** ZZ9000ScreenInit() also sets pScreen->numVisuals, visuals, depths,
+-    ** rootDepth, rootVisual, defColormap, blackPixel, whitePixel.
++    ** Install the ScreenRec function vector.  This also sets
++    ** pScreen->numVisuals, visuals, depths, rootDepth, rootVisual,
++    ** defColormap, blackPixel, whitePixel.
+     */
+-    if (!ZZ9000ScreenInit(pScreen, pRTG,
+-                          XmonitorResolution, YmonitorResolution,
+-                          &rtgVisual, &rtgDepth))
++    if (!(*card->screenInit)(pScreen, pRTG,
++                             XmonitorResolution, YmonitorResolution))
+     {
+-        ErrorF("rtgScreenInit: ZZ9000ScreenInit failed\n");
+-        ZZ9000CloseHW(pRTG);
++        ErrorF("rtgScreenInit: %s screenInit failed\n", card->name);
++        (*card->closeHW)(pRTG, index);
+         xfree((pointer) pRTG);
+         return FALSE;
+     }
+ 
+-    ErrorF("rtgScreenInit: screen init done, chaining CloseScreen\n");
+-
+     /* Chain CloseScreen and install RTG cleanup */
+     pRTG->CloseScreen   = pScreen->CloseScreen;
+     pScreen->CloseScreen = rtgCloseScreen;
+-    pScreen->SaveScreen  = rtgSaveScreen;
++    pScreen->SaveScreen  = card->saveScreen ? card->saveScreen : rtgSaveScreen;
+ 
+     /* rtgProbe() only opens the input device on the very first server
+     ** generation (amixDevsProbed in amixInit.c gates the whole probeProc
+@@ -299,31 +305,24 @@
+     ** reset.  Re-open it here whenever it isn't already mapped so input
+     ** keeps working past the first server reset. */
+     if (!amixFbs[index].mapped)
+-        rtgOpenInput(index);
++        rtgInput(index);
+ 
+-    /* Autorepeat handlers; use real amixWakeupHandler when input fd is open */
++    /* Autorepeat handlers; use real amixWakeupHandler when input is open */
+     pScreen->BlockHandler  = amixBlockHandler;
+     pScreen->WakeupHandler = amixFbs[index].mapped
+                              ? amixWakeupHandler : rtgWakeupHandler;
+     pScreen->blockData     = (pointer) NULL;
+     pScreen->wakeupData    = (pointer) NULL;
+ 
+-    ErrorF("rtgScreenInit: calling amixCursorInitialize\n");
+-
+-    /* Software cursor - ZZ9000 has no hardware sprite */
++    /* Software cursor */
+     if (!amixCursorInitialize(pScreen))
+-    {
+-        ErrorF("rtgScreenInit: amixCursorInitialize returned FALSE, using miDC\n");
+         miDCInitialize(pScreen, &amixPointerScreenFuncs);
+-    }
+-
+-    ErrorF("rtgScreenInit: cursor done, calling ZZ9000CreateDefColormap\n");
+ 
+-    (void) rtgSaveScreen(pScreen, SCREEN_SAVER_FORCER);
++    (void) (*pScreen->SaveScreen)(pScreen, SCREEN_SAVER_FORCER);
+ 
+-    if (!ZZ9000CreateDefColormap(pScreen))
++    if (!(*card->createDefColormap)(pScreen))
+     {
+-        ErrorF("rtgScreenInit: ZZ9000CreateDefColormap failed\n");
++        ErrorF("rtgScreenInit: %s createDefColormap failed\n", card->name);
+         return FALSE;
+     }
+ 
+@@ -336,23 +335,17 @@
+ /*
+ ** rtgProbe - probeProc entry in amixFbData[].
+ **
+-** Called by InitOutput() to verify an RTG card is accessible.
+-** Fills in the amixFbs[index] entry with geometry and opens the
+-** AMIX screen device for keyboard/mouse input.
+-**
+-** Input strategy - same as amixMonoProbe but without NewBitmap:
+-**   OpenScreen()     - allocate an AMIX screen context; returns event fd
+-**   DisplayScreen()  - make our context active; AMIX routes input here
+-**   SIOCSETINPUTMODE - request raw keycodes from the keyboard
+-**
+-** DisplayScreen does not affect ZZ9000 VRAM output (the card reads its
+-** own framebuffer directly).  It only tells the AMIX event system which
+-** screen context is "front" so keyboard and mouse events are delivered
+-** to our fd.  This is confirmed by Klaus Burkert's Xsvga which follows
+-** the same OpenScreen/DisplayScreen path for input while driving the
+-** SVGA card through a separate /dev/svga* device.
++** Called by InitOutput() to find an RTG card for screen index.  Takes the
++** first entry of rtgCards[] whose probe succeeds (only the one named by
++** -rtg, if given), records it in rtgScreenCard[] and opens its input.
++**
++** The AMIX screen device input (cards without openInput) follows the
++** amixMonoProbe path without NewBitmap: OpenScreen() allocates an AMIX
++** screen context and returns the event fd; SIOCACTIVATE makes it the
++** input target; SIOCSETINPUTMODE requests raw keycodes.  The card's
++** frame buffer is unaffected: it scans out its own memory.
+ **
+-** If OpenScreen fails the server starts without input (display-only).
++** If no input device opens the server starts display-only.
+ ** amixFbs[index].mapped = FALSE keeps amixFindInputScreen safe.
+ */
+ Bool
+@@ -363,23 +356,30 @@
+ int         argc;
+ char      **argv;
+ {
++    rtgCardPtr *cp;
++
+     ErrorF("rtgProbe: index=%d\n", index);
+ 
+-    if (!ZZ9000Probe())
++    for (cp = rtgCards; *cp; cp++)
+     {
+-        ErrorF("rtgProbe: RTG card not found at %s\n", ZZ9000_DEV);
++        if (rtgCardWanted && strcmp(rtgCardWanted, (*cp)->name) != 0)
++            continue;
++        if ((*(*cp)->probe)(index))
++            break;
++    }
++    if (!*cp)
++    {
++        ErrorF("rtgProbe: no RTG card found\n");
+         return FALSE;
+     }
++    rtgScreenCard[index] = *cp;
+ 
+-    /* Open the AMIX screen device for input events.  rtgScreenInit() also
+-    ** calls this on later server generations, since this probeProc itself
+-    ** only runs once per process (see rtgOpenInput's comment above). */
+-    rtgOpenInput(index);
+-
+-    amixFbs[index].bp.width  = ZZ9000_selected_mode->w;
+-    amixFbs[index].bp.height = ZZ9000_selected_mode->h;
++    /* rtgScreenInit() also opens the input on later server generations,
++    ** since this probeProc itself only runs once per process. */
++    rtgInput(index);
+ 
+-    ErrorF("rtgProbe: ok, width=%d height=%d\n", ZZ9000_selected_mode->w, ZZ9000_selected_mode->h);
++    ErrorF("rtgProbe: %s, width=%d height=%d\n", (*cp)->name,
++           amixFbs[index].bp.width, amixFbs[index].bp.height);
+     return TRUE;
+ }
+ 
+@@ -387,9 +387,9 @@
+ ** rtgCreate - createProc entry in amixFbData[].
+ **
+ ** Called by InitOutput() after a successful rtgProbe().  Allocates the
+-** per-generation screen and GC private indices, initialises the
+-** TrueColor VisualRec for RGB565, sets the 16-bit pixmap format, and
+-** registers the screen with the DIX layer via AddScreen().
++** per-generation screen and GC private indices, lets the card set its
++** pixmap formats and visuals, and registers the screen with the DIX
++** layer via AddScreen().
+ */
+ Bool
+ rtgCreate(pScreenInfo, argc, argv)
+@@ -397,12 +397,13 @@
+ int         argc;
+ char      **argv;
+ {
++    int index = pScreenInfo->numScreens;
++
+     ErrorF("rtgCreate: called, serverGeneration=%d\n", serverGeneration);
+ 
+     if (rtgGeneration != serverGeneration)
+     {
+         rtgScreenIndex = AllocateScreenPrivateIndex();
+-        ErrorF("rtgCreate: rtgScreenIndex=%d\n", rtgScreenIndex);
+         if (rtgScreenIndex < 0)
+         {
+             ErrorF("rtgCreate: AllocateScreenPrivateIndex failed\n");
+@@ -410,44 +411,55 @@
+         }
+ 
+         rtgGCPrivateIndex = AllocateGCPrivateIndex();
+-        ErrorF("rtgCreate: rtgGCPrivateIndex=%d\n", rtgGCPrivateIndex);
+         if (rtgGCPrivateIndex < 0)
+         {
+             ErrorF("rtgCreate: AllocateGCPrivateIndex failed\n");
+             return FALSE;
+         }
+ 
+-        /* TrueColor visual for 16-bit RGB565 */
+-        rtgVisual.vid            = FakeClientID(0);
+-        rtgVisual.class          = TrueColor;
+-        rtgVisual.bitsPerRGBValue = 8;
+-        rtgVisual.ColormapEntries = 64;   /* 2^6 - green channel dominates */
+-        rtgVisual.nplanes        = ZZ9000_DEPTH;
+-        rtgVisual.redMask        = ZZ9000_RED_MASK;
+-        rtgVisual.greenMask      = ZZ9000_GREEN_MASK;
+-        rtgVisual.blueMask       = ZZ9000_BLUE_MASK;
+-        rtgVisual.offsetRed      = ZZ9000_RED_SHIFT;
+-        rtgVisual.offsetGreen    = ZZ9000_GREEN_SHIFT;
+-        rtgVisual.offsetBlue     = ZZ9000_BLUE_SHIFT;
+-
+-        rtgVID             = rtgVisual.vid;
+-        rtgDepth.depth     = ZZ9000_DEPTH;
+-        rtgDepth.numVids   = 1;
+-        rtgDepth.vids      = &rtgVID;
+-
+         rtgGeneration = serverGeneration;
+     }
+ 
+-    pScreenInfo->numPixmapFormats = 2;
++    if (!(*rtgScreenCard[index]->create)(pScreenInfo, index))
++        return FALSE;
+ 
+-    pScreenInfo->formats[0].depth        = ZZ9000_DEPTH;
+-    pScreenInfo->formats[0].bitsPerPixel = ZZ9000_BPP;
+-    pScreenInfo->formats[0].scanlinePad  = BITMAP_SCANLINE_PAD;
++    return (AddScreen(rtgScreenInit, argc, argv) >= 0);
++}
+ 
+-    pScreenInfo->formats[1].depth        = 1;
+-    pScreenInfo->formats[1].bitsPerPixel = 1;
+-    pScreenInfo->formats[1].scanlinePad  = BITMAP_SCANLINE_PAD;
++/*
++** rtgProcessArgument - card options, from ddxProcessArgument().
++*/
++int
++rtgProcessArgument(argc, argv, i)
++int    argc;
++char **argv;
++int    i;
++{
++    rtgCardPtr *cp;
++    int         n;
+ 
+-    ErrorF("rtgCreate: calling AddScreen\n");
+-    return (AddScreen(rtgScreenInit, argc, argv) >= 0);
++    if (strcmp(argv[i], "-rtg") == 0 && i + 1 < argc)
++    {
++        rtgCardWanted = argv[i + 1];
++        return 2;
++    }
++    for (cp = rtgCards; *cp; cp++)
++        if ((*cp)->processArgument &&
++            (n = (*(*cp)->processArgument)(argc, argv, i)) > 0)
++            return n;
++    return 0;
++}
++
++void
++rtgUseMsg()
++{
++    rtgCardPtr *cp;
++
++    ErrorF("-rtg name              RTG card:");
++    for (cp = rtgCards; *cp; cp++)
++        ErrorF(" %s", (*cp)->name);
++    ErrorF("\n");
++    for (cp = rtgCards; *cp; cp++)
++        if ((*cp)->useMsg)
++            (*(*cp)->useMsg)();
+ }
+diff -urN xc/programs/Xserver/hw/amix/rtg/zz9000/Imakefile ../stage1/xc/programs/Xserver/hw/amix/rtg/zz9000/Imakefile
+--- a/programs/Xserver/hw/amix/rtg/zz9000/Imakefile	2026-09-29 21:18:21.984610243 -0500
++++ b/programs/Xserver/hw/amix/rtg/zz9000/Imakefile	2026-09-29 23:13:17.694307776 -0500
+@@ -1,8 +1,8 @@
+ #include <Server.tmpl>
+ 
+-SRCS = zz9000hw.c zz9000screen.c zz9000draw.c zz9000win.c zz9000cmap.c zz9000pix.c zz9000cursor.c
++SRCS = zz9000hw.c zz9000screen.c zz9000draw.c zz9000win.c zz9000cmap.c zz9000pix.c zz9000cursor.c zz9000card.c
+ 
+-OBJS = zz9000hw.o zz9000screen.o zz9000draw.o zz9000win.o zz9000cmap.o zz9000pix.o zz9000cursor.o
++OBJS = zz9000hw.o zz9000screen.o zz9000draw.o zz9000win.o zz9000cmap.o zz9000pix.o zz9000cursor.o zz9000card.o
+ 
+ STD_DEFINES = ServerDefines -DRTG -DZZ9000
+ CDEBUGFLAGS = -g -O
+diff -urN xc/programs/Xserver/hw/amix/rtg/zz9000/zz9000card.c ../stage1/xc/programs/Xserver/hw/amix/rtg/zz9000/zz9000card.c
+--- a/programs/Xserver/hw/amix/rtg/zz9000/zz9000card.c	1969-12-31 18:00:00.000000000 -0600
++++ b/programs/Xserver/hw/amix/rtg/zz9000/zz9000card.c	2026-09-29 23:13:17.694307776 -0500
+@@ -0,0 +1,119 @@
++/*
++** zz9000card.c - the ZZ9000 entry of the RTG card table.
++**
++** 16-bit TrueColor RGB565 with the AMIX screen device for input.
++*/
++
++#include "../../amix.h"
++#include "servermd.h"
++#include "resource.h"
++#include "zz9000.h"
++
++extern fbFd amixFbs[];
++
++/* TrueColor 16-bit visual for RGB565, filled in each generation */
++static VisualRec zzVisual;
++static VisualID  zzVID;
++static DepthRec  zzDepth;
++static unsigned long zzGeneration = 0;
++
++static Bool
++zzProbe(index)
++int index;
++{
++    if (!ZZ9000Probe())
++    {
++        ErrorF("rtgProbe: RTG card not found at %s\n", ZZ9000_DEV);
++        return FALSE;
++    }
++    amixFbs[index].bp.width  = ZZ9000_selected_mode->w;
++    amixFbs[index].bp.height = ZZ9000_selected_mode->h;
++    return TRUE;
++}
++
++static Bool
++zzCreate(pScreenInfo, index)
++ScreenInfo *pScreenInfo;
++int         index;
++{
++    if (zzGeneration != serverGeneration)
++    {
++        zzVisual.vid            = FakeClientID(0);
++        zzVisual.class          = TrueColor;
++        zzVisual.bitsPerRGBValue = 8;
++        zzVisual.ColormapEntries = 64;   /* 2^6 - green channel dominates */
++        zzVisual.nplanes        = ZZ9000_DEPTH;
++        zzVisual.redMask        = ZZ9000_RED_MASK;
++        zzVisual.greenMask      = ZZ9000_GREEN_MASK;
++        zzVisual.blueMask       = ZZ9000_BLUE_MASK;
++        zzVisual.offsetRed      = ZZ9000_RED_SHIFT;
++        zzVisual.offsetGreen    = ZZ9000_GREEN_SHIFT;
++        zzVisual.offsetBlue     = ZZ9000_BLUE_SHIFT;
++
++        zzVID             = zzVisual.vid;
++        zzDepth.depth     = ZZ9000_DEPTH;
++        zzDepth.numVids   = 1;
++        zzDepth.vids      = &zzVID;
++
++        zzGeneration = serverGeneration;
++    }
++
++    pScreenInfo->numPixmapFormats = 2;
++
++    pScreenInfo->formats[0].depth        = ZZ9000_DEPTH;
++    pScreenInfo->formats[0].bitsPerPixel = ZZ9000_BPP;
++    pScreenInfo->formats[0].scanlinePad  = BITMAP_SCANLINE_PAD;
++
++    pScreenInfo->formats[1].depth        = 1;
++    pScreenInfo->formats[1].bitsPerPixel = 1;
++    pScreenInfo->formats[1].scanlinePad  = BITMAP_SCANLINE_PAD;
++    return TRUE;
++}
++
++static Bool
++zzInitHW(pRTG, index)
++rtgScreenPtr pRTG;
++int          index;
++{
++    pRTG->width        = ZZ9000_selected_mode->w;
++    pRTG->height       = ZZ9000_selected_mode->h;
++    pRTG->pitch        = ZZ9000_selected_mode->w * 2;
++    pRTG->bitsPerPixel = ZZ9000_BPP;
++    pRTG->depth        = ZZ9000_DEPTH;
++    pRTG->fbOffset     = ZZ9000_FB_OFFSET;
++    return ZZ9000InitHW(pRTG);
++}
++
++static void
++zzCloseHW(pRTG, index)
++rtgScreenPtr pRTG;
++int          index;
++{
++    ZZ9000CloseHW(pRTG);
++}
++
++static Bool
++zzScreenInit(pScreen, pRTG, dpix, dpiy)
++ScreenPtr    pScreen;
++rtgScreenPtr pRTG;
++int          dpix, dpiy;
++{
++    return ZZ9000ScreenInit(pScreen, pRTG, dpix, dpiy, &zzVisual, &zzDepth);
++}
++
++extern Bool ZZ9000CreateDefColormap();
++
++rtgCardRec ZZ9000Card = {
++    "zz9000",
++    zzProbe,
++    zzCreate,
++    zzInitHW,
++    zzCloseHW,
++    zzScreenInit,
++    ZZ9000CreateDefColormap,
++    (Bool (*)()) 0,
++    (void (*)()) 0,
++    (void (*)()) 0,
++    (int (*)()) 0,
++    (void (*)()) 0,
++};

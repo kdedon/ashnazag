@@ -1,0 +1,50 @@
+XCOMM Cross build of the X server with the m68k-cbm-sysv4 toolchain.
+XCOMM Included at the start of site.def's AfterVendorCF half.
+
+#define CrossCompiling YES
+
+#undef CcCmd
+#define CcCmd @AMIXBIN@/m68k-cbm-sysv4-gcc
+#undef ServerCcCmd
+#define ServerCcCmd @AMIXBIN@/m68k-cbm-sysv4-gcc
+#undef DefaultCCOptions
+#define DefaultCCOptions -m68020 -I@SYSINC@
+#undef ArCmdBase
+#define ArCmdBase @ELFBIN@/m68k-elf-ar
+#undef AsCmd
+#define AsCmd @AMIXBIN@/m68k-cbm-sysv4-as
+#undef LdCmd
+#define LdCmd @AMIXBIN@/m68k-cbm-sysv4-ld
+#define RanlibCmd @ELFBIN@/m68k-elf-ranlib
+#define DoRanlibCmd NO
+#undef CppCmd
+#define CppCmd /usr/bin/cpp -traditional
+#undef PreProcessCmd
+#define PreProcessCmd /usr/bin/cpp -traditional
+#define DependCmd true
+
+#undef HasSharedLibraries
+#define HasSharedLibraries NO
+
+XCOMM Server only: no Xnest, Xprint, LBX, XIE, PEX, XKB
+#define XnestServer NO
+#define BuildServer YES
+#define BuildXprint NO
+#define BuildLBX NO
+#define BuildXIE NO
+#undef BuildPexExt
+#define BuildPexExt NO
+#undef BuildXKB
+#define BuildXKB NO
+#define UseRgbTxt YES
+
+#undef ServerExtraSysLibs
+#define ServerExtraSysLibs @SYSLIBS@
+#define XprtServer NO
+
+XCOMM No TCP transport: the server listens on the UNIX-domain socket only
+#undef ConnectionFlags
+#define ConnectionFlags -DUNIXCONN
+
+XCOMM Mac: only the fb card; an Amiga build sets this to YES for ZZ9000
+#define RtgZZ9000 NO
