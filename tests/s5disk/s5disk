@@ -1,0 +1,49 @@
+#!/sbin/sh
+# s5 on disk slices s4 (1 KB blocks) and s5 (2 KB): fill, change, unmount,
+# fsck -n, remount, compare, change again, fsck -n.
+PATH=/sbin:/usr/sbin:/usr/bin:/etc; export PATH
+pass=0 fail=0
+ok() { echo "PASS s5disk.$1"; pass=`expr $pass + 1`; }
+bad() { echo "FAIL s5disk.$1: $2"; fail=`expr $fail + 1`; }
+# fsck -n reports nothing but its phase lines and the totals
+fck() {
+	fsck -F s5 -n $R > /tmp/fsck.out 2>&1
+	egrep -v '^ *(\*\* |/dev/|File System:|[0-9]+ files [0-9]+ blocks [0-9]+ free *$)|^ *$' \
+		/tmp/fsck.out > /tmp/fsck.bad
+	if [ -s /tmp/fsck.bad ]; then
+		bad $1 "`head -2 /tmp/fsck.bad | tr '\012' ' '`"; cat /tmp/fsck.out
+	else ok $1; fi
+}
+snap() { (cd $M; ls -Ria | sed 's/^ *[0-9]* //'; ls -Rl | grep -v '^total' |
+	sed 's/  *[A-Z][a-z][a-z]  *[0-9]*  *[0-9:]* / /') > $1 2>&1; }
+t() {
+	S=$2 N=${1}k
+	R=/dev/rdsk/c0d0$S M=/mnt/$S
+	echo "== s5 $1 KB on c0d0$S"
+	mkfs -F s5 -b `expr $1 \* 1024` $R 49152:4096 2 32 > /dev/null 2>&1
+	mkdir -p $M
+	mount -F s5 /dev/dsk/c0d0$S $M || { bad $N.mount "mount failed"; return; }
+	cd /usr; find bin -print | cpio -pdm $M 2>/dev/null
+	sync
+	cd $M; mkdir d e
+	for f in `ls /usr/bin`; do echo $f > d/$f; done
+	rm bin/[a-k]* d/[m-z]*
+	for f in `ls d`; do mv d/$f e/$f.r; done
+	for f in `ls e | sed -n '1,40p'`; do mkdir d/$f; echo x > d/$f/y; done
+	rmdir d/a* 2>/dev/null; rm -r d/[c-f]*
+	cd /; snap /tmp/before.$1
+	sync; umount $M || bad $N.umount "umount failed"
+	fck $N.fsck1
+	mount -F s5 /dev/dsk/c0d0$S $M || { bad $N.remount "mount failed"; return; }
+	snap /tmp/after.$1
+	if cmp -s /tmp/before.$1 /tmp/after.$1; then ok $N.tree
+	else bad $N.tree "listing differs after remount"; diff /tmp/before.$1 /tmp/after.$1 | head -8; fi
+	cd $M/bin; x=`for f in *; do cmp -s $f /usr/bin/$f || echo $f; done`
+	[ -z "$x" ] && ok $N.data || bad $N.data "differ: `echo $x | cut -c1-60`"
+	cd $M; rm -r e bin/[l-r]*; mv d d2; mkdir d3; cp /etc/inittab d3/i
+	cd /; sync; umount $M || bad $N.umount2 "umount failed"
+	fck $N.fsck2
+}
+t 1 s4
+t 2 s5
+echo "S5DISK DONE pass=$pass fail=$fail"

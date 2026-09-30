@@ -1,0 +1,3 @@
+# Autopush: line discipline on the console (major 0, all minors).
+# major	minor	lastminor	modules
+    0	  -1	    0		ldterm ttcompat

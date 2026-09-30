@@ -1,0 +1,102 @@
+# Minimal AMIX root: init -> autopush (ldterm on the console) -> single-user
+# sh on the console.
+# SRC paths are relative to kernel/mac/ramdisk; build/core is tape segment 02.
+d /dev		755 0 3
+d /dev/dsk	755 0 3
+d /dev/rdsk	755 0 3
+d /dev/sad	755 0 3
+d /etc		755 0 3
+d /etc/ap	755 0 3
+d /sbin		755 2 2
+d /usr		755 0 3
+d /usr/bin	755 2 2
+d /usr/lib	755 2 2
+d /usr/lib/fs	755 2 2
+d /usr/lib/fs/proc 755 2 2
+d /var		755 0 3
+d /var/adm	775 4 4
+d /var/tmp	1777 2 2
+d /tmp		1777 0 3
+d /proc		555 0 0
+d /mnt		755 0 3
+l /bin		/usr/bin
+
+# console (major 0), its aliases, and the usual memory devices
+c /dev/console	620 0 7 0 0
+h /dev/syscon	/dev/console
+h /dev/systty	/dev/console
+c /dev/tty	666 0 3 2 0
+c /dev/mem	640 0 3 3 0
+c /dev/kmem	640 0 3 3 1
+c /dev/null	666 0 3 3 2
+c /dev/zero	666 0 3 3 3
+# RAM disk: block 20, raw 42; unit 1 is swap
+b /dev/dsk/rd0	600 0 3 20 0
+b /dev/dsk/rd1	600 0 3 20 1
+c /dev/rdsk/rd0	600 0 3 42 0
+c /dev/rdsk/rd1	600 0 3 42 1
+h /dev/swap	/dev/dsk/rd1
+# STREAMS administration (major 50): autopush puts ldterm on the console
+c /dev/sad/user	666 0 3 50 0
+c /dev/sad/admin 600 0 3 50 1
+# network: on-board Ethernet (major 18) and the inet drivers through clone (27)
+c /dev/aen0	600 0 3 18 0
+c /dev/ip	666 0 3 27 32
+c /dev/tcp	666 0 3 27 33
+c /dev/udp	666 0 3 27 34
+c /dev/rawip	666 0 3 27 35
+c /dev/icmp	666 0 3 27 36
+c /dev/arp	660 0 3 27 37
+c /dev/loop	666 0 3 27 20
+
+f /etc/inittab	644 0 3 etc/inittab
+f /etc/TIMEZONE	444 0 3 etc/TIMEZONE
+f /etc/profile	644 0 3 etc/profile
+f /etc/ap/chan.ap 644 0 3 etc/chan.ap
+f /etc/ioctl.syscon 644 0 3 etc/ioctl.syscon
+f /etc/passwd	444 0 3 build/core/etc/passwd
+f /etc/group	444 0 3 build/core/etc/group
+e /etc/mnttab	444 0 3
+e /var/adm/utmp	644 0 2
+e /var/adm/utmpx 644 0 2
+e /var/adm/wtmp	664 4 4
+e /var/adm/wtmpx 664 4 4
+
+f /usr/lib/libc.so.1	755 2 2 build/core/usr/lib/libc.so.1
+f /sbin/init	555 0 3 build/core/sbin/init
+f /sbin/autopush 555 0 3 build/core/sbin/autopush
+f /sbin/sh	555 2 0 build/core/sbin/sh
+h /etc/sulogin	/sbin/sh
+f /sbin/mount	555 2 2 build/core/sbin/mount
+f /sbin/umount	555 2 2 build/core/sbin/umount
+f /sbin/mknod	555 2 2 build/core/sbin/mknod
+f /sbin/sync	555 2 2 build/core/sbin/sync
+f /sbin/uadmin	555 0 3 build/core/sbin/uadmin
+f /sbin/uname	555 2 2 build/core/sbin/uname
+f /usr/lib/fs/proc/mount 555 2 2 build/core/usr/lib/fs/proc/mount
+l /usr/bin/sh	/sbin/sh
+l /usr/bin/uname	/sbin/uname
+f /usr/bin/ls	555 2 2 build/core/usr/bin/ls
+f /usr/bin/cat	555 2 2 build/core/usr/bin/cat
+f /usr/bin/echo	555 2 2 build/core/usr/bin/echo
+f /usr/bin/date	555 2 2 build/core/usr/bin/date
+f /usr/bin/ps	4555 0 3 build/core/usr/bin/ps
+f /usr/bin/pwd	555 2 2 build/core/usr/bin/pwd
+f /usr/bin/cp	555 2 2 build/core/usr/bin/cp
+f /usr/bin/rm	555 2 2 build/core/usr/bin/rm
+f /usr/bin/mkdir 555 2 2 build/core/usr/bin/mkdir
+f /usr/bin/ln	555 2 2 build/core/usr/bin/ln
+f /usr/bin/chmod 555 2 2 build/core/usr/bin/chmod
+f /usr/bin/stty	555 2 2 build/core/usr/bin/stty
+f /usr/bin/sleep 555 2 2 build/core/usr/bin/sleep
+f /usr/bin/od	555 2 2 build/core/usr/bin/od
+f /usr/bin/ed	555 2 2 build/core/usr/bin/ed
+f /usr/bin/env	555 2 2 build/core/usr/bin/env
+f /usr/bin/id	555 2 2 build/core/usr/bin/id
+f /usr/bin/wc	555 2 2 build/core/usr/bin/wc
+f /usr/bin/head	555 2 2 build/core/usr/bin/head
+f /usr/bin/tail	555 2 2 build/core/usr/bin/tail
+f /usr/bin/sed	555 2 2 build/core/usr/bin/sed
+f /usr/bin/true	555 2 2 build/core/usr/bin/true
+f /usr/bin/false 555 2 2 build/core/usr/bin/false
+f /usr/bin/kill	555 2 2 build/core/usr/bin/kill

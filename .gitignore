@@ -1,0 +1,10 @@
+build/
+out/
+__pycache__/
+*.o
+*.a
+*.img
+*.coff
+*.elf
+*.bin
+*.pyc

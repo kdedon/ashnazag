@@ -1,0 +1,126 @@
+/*
+ * guest_shim.c -- static part of guest-process support: the events
+ * stubs, the sendsig and valid_usr_range wrappers, the hook table and
+ * the C entry of the vector gates.
+ *
+ * A shim calls its hook only for a guest process (p_evpdp set), which
+ * holds the module that owns the hook, or for the process whose exec
+ * guest_loading names, which runs inside that module's exec call.
+ * Everything else takes the stock path.
+ *
+ * K&R C.
+ */
+
+#include "sys/types.h"
+#include "sys/param.h"
+#include "sys/sysmacros.h"
+#include "sys/immu.h"
+#include "sys/signal.h"
+#include "sys/fs/s5dir.h"
+#include "sys/psw.h"
+#include "sys/pcb.h"
+#include "sys/user.h"
+#include "sys/proc.h"
+#include "sys/syscall.h"
+#include "vm/seg.h"
+#include "vm/as.h"
+#include "sys/moddefs.h"
+#include "guest.h"
+
+extern struct proc *curproc;
+
+struct proc		*guest_loading;
+struct guest_profile	*guest_loadprof;
+
+int	(*guest_trap_hook)();
+void	(*guest_exec_hook)();
+int	(*guest_fork_hook)();
+void	(*guest_exit_hook)();
+int	(*guest_sendsig_hook)();
+int	(*guest_vur_hook)();
+
+struct hooksw hooksw[] = {
+	{ "guest_trap",		(char **)&guest_trap_hook,	0, 0 },
+	{ "guest_exec",		(char **)&guest_exec_hook,	0, 0 },
+	{ "guest_fork",		(char **)&guest_fork_hook,	0, 0 },
+	{ "guest_exit",		(char **)&guest_exit_hook,	0, 0 },
+	{ "guest_sendsig",	(char **)&guest_sendsig_hook,	0, 0 },
+	{ "guest_vur",		(char **)&guest_vur_hook,	0, 0 },
+	{ 0, 0, 0, 0 }
+};
+
+/* the vector gates read p_evpdp at this offset */
+extern char guest_evpdp_at_c8[(int)&((struct proc *)0)->p_evpdp == 0xc8 ? 1 : -1];
+
+/*
+ * procdup: ev_fork runs only when this says the parent is a guest.
+ * hrtsys asks too; it keeps its ENOPKG.
+ */
+int
+ev_config()
+{
+	return curproc && curproc->p_evpdp != 0 && u.u_syscall != SYS_hrtsys;
+}
+
+/* in the parent, before the child can run; nonzero fails the fork */
+int
+ev_fork(pp, cp)
+	struct proc *pp, *cp;
+{
+	cp->p_evpdp = 0;
+	if (pp->p_evpdp && guest_fork_hook)
+		return (*guest_fork_hook)(pp, cp);
+	return 0;
+}
+
+/* remove_proc, at the point of no return of every exec */
+void
+ev_exec(p)
+	struct proc *p;
+{
+	if ((p->p_evpdp || guest_loading == p) && guest_exec_hook)
+		(*guest_exec_hook)(p);
+}
+
+/* exit, with the address space still present */
+void
+ev_exit(p, stat)
+	struct proc *p;
+	int stat;
+{
+	if (p->p_evpdp && guest_exit_hook)
+		(*guest_exit_hook)(p, stat);
+}
+
+int
+sendsig(sig, sip, hdlr)
+	int sig;
+	char *sip;
+	int (*hdlr)();
+{
+	if (curproc->p_evpdp && guest_sendsig_hook)
+		return (*guest_sendsig_hook)(sig, sip, hdlr);
+	return __amix_sendsig(sig, sip, hdlr);
+}
+
+int
+valid_usr_range(a, len)
+	caddr_t a;
+	u_int len;
+{
+	struct proc *p = curproc;
+
+	if (p && p->p_evpdp && guest_vur_hook)
+		return (*guest_vur_hook)(a, len);
+	return __amix_valid_usr_range(a, len);
+}
+
+/* from the vector gates, guest processes only: 0 handled, else decline */
+int
+guest_trap(r)
+	char *r;
+{
+	if (guest_trap_hook)
+		return (*guest_trap_hook)(r);
+	return 1;
+}

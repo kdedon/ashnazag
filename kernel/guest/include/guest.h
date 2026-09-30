@@ -1,0 +1,124 @@
+/*
+ * guest.h -- 68k guest processes.
+ *
+ * A guest process is an SVR4 process whose p_evpdp points to a
+ * struct guest_proc.  Its profile (A/UX, TOS, Amiga) says what each
+ * exception vector does for it; the static vector gates call
+ * guest_trap for a guest process only.
+ *
+ *	vector gate --native--> stock handler
+ *	     | guest
+ *	guest_trap hook -> profile disposition -> gd_fn
+ *	                    (declined: stock handler, frame untouched)
+ *
+ * Needs <sys/types.h>, <sys/proc.h>.  K&R C.
+ */
+
+#ifndef _GUEST_H
+#define _GUEST_H
+
+#define	GUEST_NVEC	256
+
+/* dispositions */
+#define	GD_NATIVE	0	/* host kernel handler */
+#define	GD_REFLECT	1	/* CPU frame, continue at the guest vector */
+#define	GD_EMULATE	2	/* privileged / unimplemented instruction */
+#define	GD_SYSCALL	3	/* host call or the profile's translator */
+#define	GD_HOSTCALL	4	/* $7300/$7301, thunk stubs */
+#define	GD_FILTER	5	/* per function, while the vector is the sentinel */
+
+/* gd_flags */
+#define	GDF_USER	0x01	/* only from user mode */
+#define	GDF_SENTINEL	0x02	/* gd_arg: sentinel index */
+
+struct guest_regs;		/* the saved frame, see GR_* */
+
+struct guest_disp {
+	unsigned char	gd_kind;
+	unsigned char	gd_flags;
+	unsigned short	gd_arg;
+	int		(*gd_fn)();	/* (gp, regs, vec): 0 handled,
+					 * else the stock handler runs */
+};
+
+struct guest_profile {
+	char			*gpf_name;
+	struct modwrapper	*gpf_wrapper;	/* held per guest process */
+	int			gpf_privsz;	/* profile state per process */
+	struct guest_disp	gpf_disp[GUEST_NVEC];
+	int			(*gpf_exec)();	/* (gp): new image */
+	int			(*gpf_fork)();	/* (parent gp, child gp) */
+	void			(*gpf_exit)();	/* (gp) */
+	int			(*gpf_sendsig)(); /* (gp, sig, sip, hdlr) */
+	int			(*gpf_vur)();	/* (gp, addr, len) */
+	struct guest_profile	*gpf_next;
+};
+
+struct guest_ctr;
+
+struct guest_proc {
+	struct proc		*gp_proc;
+	struct guest_profile	*gp_prof;
+	struct guest_ctr	*gp_ctr;	/* container, 0 = none */
+	unsigned int		gp_flags;
+	unsigned int		gp_size;	/* bytes allocated */
+};
+#define	GUEST_PRIV(gp)	((char *)((gp) + 1))	/* profile state */
+#define	GUESTP(p)	((struct guest_proc *)(p)->p_evpdp)
+
+/*
+ * A container: one guest session's shared state (guest RAM, ROM copy,
+ * vCPU page, register pages, virtual interrupts).
+ */
+struct guest_ctr {
+	int			gc_ref;
+	int			gc_shmid;	/* guest RAM */
+	struct guest_romdesc	*gc_rom;
+	char			*gc_romcopy;
+	char			*gc_vcpu;	/* vCPU page, kernel alias */
+	struct guest_rpage	*gc_rpage;
+	int			gc_nrpage;
+	unsigned long		gc_caps;	/* GCAP_* */
+};
+
+#define	GCAP_SYSCALLS	0x01	/* native trap #0 allowed */
+#define	GCAP_RAWHW	0x02	/* passthrough grant */
+
+/* vCPU page (one locked page per container) */
+#define	VCPU_MAGIC	0x00	/* magic, version, profile id */
+#define	VCPU_VSR	0x08	/* vsr, vipl_pending_max, in_pv_region */
+#define	VCPU_VUSP	0x10	/* vusp, vssp, vvbr */
+#define	VCPU_TICKS	0x20	/* catch-up counters per timer channel */
+#define	VCPU_PEND	0x40	/* pending bitmap per level, vectors, pic state */
+#define	VCPU_INPUT	0x100	/* input event ring */
+#define	VCPU_ASYNC	0x800	/* async completion ring */
+
+/*
+ * The frame a gate saves: usp, d0-d7, a0-a6, then the CPU's
+ * exception frame.  Same layout as the stock trap path's pcb.
+ */
+#define	GR_USP(r)	(*(long *)((char *)(r) + 0))
+#define	GR_D(r, n)	(*(long *)((char *)(r) + 4 + 4 * (n)))
+#define	GR_A(r, n)	(*(long *)((char *)(r) + 36 + 4 * (n)))
+#define	GR_SR(r)	(*(unsigned short *)((char *)(r) + 64))
+#define	GR_PC(r)	(*(long *)((char *)(r) + 66))
+#define	GR_FV(r)	(*(unsigned short *)((char *)(r) + 70))
+#define	GR_VEC(r)	((GR_FV(r) & 0xfff) >> 2)
+
+/* static shims (always in the kernel) */
+extern struct proc *guest_loading;	/* exec that makes a guest */
+extern struct guest_profile *guest_loadprof;
+extern int (*guest_trap_hook)();	/* (regs) */
+extern void (*guest_exec_hook)();	/* (p) */
+extern int (*guest_fork_hook)();	/* (pp, cp) */
+extern void (*guest_exit_hook)();	/* (p, stat) */
+extern int (*guest_sendsig_hook)();	/* (sig, sip, hdlr) */
+extern int (*guest_vur_hook)();		/* (addr, len) */
+extern int __amix_sendsig();
+extern int __amix_valid_usr_range();
+
+/* guestcore */
+extern int guest_profile_add();		/* (pf) */
+extern void guest_profile_del();	/* (pf) */
+
+#endif	/* _GUEST_H */

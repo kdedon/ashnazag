@@ -1,0 +1,26 @@
+#!/sbin/sh
+# File-system round trip, run on the Quadra: make ufs on c0d0s5 and s5 on
+# c0d0s4 (24 MB each), copy /usr/bin, change and remove files, unmount,
+# fsck -n, remount, compare, fsck -n again.
+PATH=/sbin:/usr/sbin:/usr/bin:/etc; export PATH
+t() {
+	echo "== $1 on $2"
+	if [ $1 = ufs ]; then mkfs -F ufs /dev/rdsk/c0d0$2 49152 32 4
+	else mkfs -F s5 -b 1024 /dev/rdsk/c0d0$2 49152:4096 2 32; fi
+	mkdir -p /mnt/$1
+	mount -F $1 /dev/dsk/c0d0$2 /mnt/$1 || return
+	cd /usr; find bin -print | cpio -pdm /mnt/$1 2>&1 | tail -1
+	cd /mnt/$1; mkdir d1; echo hello > d1/f
+	for i in 1 2 3 4 5 6 7 8 9; do cp /etc/termcap d1/p$i; done
+	rm d1/p3 d1/p5 bin/v* bin/x*
+	cd /; sync; umount /mnt/$1
+	echo "-- fsck after umount"; fsck -F $1 -n /dev/rdsk/c0d0$2
+	mount -F $1 /dev/dsk/c0d0$2 /mnt/$1; cat /mnt/$1/d1/f; ls /mnt/$1/d1
+	cd /mnt/$1/bin; n=0; for f in *; do cmp -s $f /usr/bin/$f || echo "BAD $f"; done | head -5
+	echo "files: `ls | wc -l`"
+	cd /; umount /mnt/$1; echo "-- fsck again"; fsck -F $1 -n /dev/rdsk/c0d0$2
+}
+t ufs s5
+t s5 s4
+echo "-- root check"; fsck -n /dev/rdsk/c0d0s1
+echo FSTEST DONE

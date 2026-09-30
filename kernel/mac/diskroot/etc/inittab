@@ -1,0 +1,13 @@
+is:2:initdefault:
+ap::sysinit:/sbin/autopush -f /etc/ap/chan.ap
+si::sysinit:/etc/sysinit </dev/console >/dev/console 2>&1
+mt:23:bootwait:/sbin/brc </dev/console >/dev/console 2>&1
+p3:s1234:powerfail:/sbin/shutdown -y -i0 -g0 >/dev/console 2>&1
+s0:0:wait:/sbin/rc0 off >/dev/console 2>&1 </dev/console
+s1:1:wait:/sbin/rc1 >/dev/console 2>&1 </dev/console
+s2:23:wait:/sbin/rc2 >/dev/console 2>&1 </dev/console
+s3:3:wait:/sbin/rc3 >/dev/console 2>&1 </dev/console
+s5:5:wait:/sbin/rc0 firmware >/dev/console 2>&1 </dev/console
+s6:6:wait:/sbin/rc6 reboot >/dev/console 2>&1 </dev/console
+sac:234:respawn:/usr/lib/saf/sac -t 300
+co:234:respawn:/etc/getty console console

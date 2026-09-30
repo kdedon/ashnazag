@@ -1,0 +1,6 @@
+#!/sbin/sh
+# Setup before single-user mode: check and record the root, name the node.
+PATH=/sbin:/usr/sbin:/usr/bin; export PATH
+/sbin/bcheckrc
+uname -S `cat /etc/nodename`
+echo "Node: `uname -n`"

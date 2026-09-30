@@ -1,0 +1,60 @@
+# Disk root: AMIX core, bsd and terminfo, adapted to the Quadra.
+# Paths are relative to build/ (tape segments, patched copies) or to this
+# directory (etc/).  Later lines replace earlier ones.
+a build/tape/02
+a build/tape/03
+a build/tape/10
+
+# our kernel in place of the Amiga one; no devices whose majors the Quadra tables leave empty
+r /stand/*
+f /stand/unix	644 0 3 build/unix
+r /dev/scr
+r /dev/screen
+r /dev/term/*
+r /dev/dsk/fd*
+r /dev/rdsk/fd*
+r /dev/cage
+r /dev/clock
+r /dev/aen*
+r /dev/amiga
+r /dev/machid
+r /dev/noise
+r /dev/par
+r /dev/tiga*
+r /dev/res*
+
+# SCC printer port (the modem port is the console)
+c /dev/term/b	620 0 7 0 1
+
+# console: ldterm and ttcompat by autopush, Mac key bindings
+d /etc/ap	755 0 3
+f /etc/ap/chan.ap 644 0 3 etc/chan.ap
+f /etc/ioctl.syscon 644 0 3 etc/ioctl.syscon
+f /etc/inittab	644 0 3 etc/inittab
+f /etc/sysinit	744 0 3 etc/sysinit
+f /etc/TIMEZONE	444 0 3 etc/TIMEZONE
+f /etc/nodename	644 0 3 etc/nodename
+f /etc/vfstab	744 0 3 build/vfstab
+f /etc/profile	644 0 3 build/profile
+f /etc/screendefs 644 2 2 build/screendefs
+f /sbin/shutdown 755 0 3 build/shutdown
+h /usr/sbin/shutdown /sbin/shutdown
+f /sbin/rc0	744 0 3 build/rc0
+h /usr/sbin/rc0	/sbin/rc0
+f /sbin/rc6	744 0 3 build/rc6
+h /usr/sbin/rc6	/sbin/rc6
+f /usr/sbin/swap	2755 2 3 build/swap
+# date(1) runs setclk -s after stime(2); the kernel keeps the RTC
+f /usr/amiga/bin/setclk 755 0 3 etc/setclk
+
+# no Amiga port monitors (screens, serial boards) or Ethernet board
+f /etc/saf/_sactab 644 0 3 etc/_sactab
+f /etc/inet/network-config 444 0 3 etc/network-config
+r /etc/saf/screens
+r /etc/saf/serial
+r /etc/saf/xdm
+r /etc/saf/tcp
+r /etc/saf/inetd
+
+e /var/adm/utmp	644 0 2
+e /var/adm/utmpx 644 0 2
