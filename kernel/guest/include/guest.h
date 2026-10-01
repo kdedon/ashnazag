@@ -51,6 +51,7 @@ struct guest_profile {
 	void			(*gpf_exit)();	/* (gp) */
 	int			(*gpf_sendsig)(); /* (gp, sig, sip, hdlr) */
 	int			(*gpf_vur)();	/* (gp, addr, len) */
+	int			(*gpf_fsig)();	/* (p, gp): replaces the IPL hold */
 	struct guest_profile	*gpf_next;
 };
 
@@ -138,6 +139,8 @@ extern int (*guest_fsig_hook)();	/* (p) */
 extern int __amix_sendsig();
 extern int __amix_valid_usr_range();
 extern int __amix_fsig();
+extern long guest_nlinea;		/* A-line traps of guests */
+extern long guest_lineapc;		/* PC of the last one */
 
 /* guestcore */
 extern int guest_profile_add();		/* (pf) */
@@ -145,5 +148,10 @@ extern void guest_profile_del();	/* (pf) */
 extern int guest_aline();		/* disposition: A-line reflection */
 extern int guest_priv();		/* disposition: privilege emulation */
 extern int guest_fnote();		/* disposition: note an access fault */
+extern int guest_attach();		/* (pf): curproc becomes a guest */
+extern int guest_getsr();		/* (gp, regs): the SR the guest sees */
+extern void guest_setsr();		/* (gp, regs, sr): switches stacks */
+extern void guest_trapret();		/* reschedule, deliverable signals */
+extern int guest_reflect();		/* (gp, regs, pc, fv, x, n, ipl) */
 
 #endif	/* _GUEST_H */

@@ -107,7 +107,7 @@ txt = txt[txt.index('<guest_gate_10>:'):].split('<guest_gate_', 2)[1]
 check('btst #0,%a0@(15)' in txt and '<guest_linea>' in txt,
       'A-line gate: GPF_ALINE (gp_flags bit 0) selects guest_linea')
 la = sym['guest_linea'][0]
-txt = dis(la, 0xa0)
+txt = dis(la, 0xc0)
 ins = [l.split('\t')[2] for l in txt.splitlines() if l.count('\t') >= 2]
 check('rte' in ins and '<guest_gate_c>' in txt and '<u+0x374>' in txt,
       'guest_linea: returns by rte, falls back to guest_gate_c')

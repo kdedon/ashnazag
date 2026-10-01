@@ -81,6 +81,8 @@ guest_linea:
 	movew	&0x0028,%d0
 	movesw	%d0,%a0@(6)
 	clrl	u+0x374
+	addql	&1,guest_nlinea
+	movel	%sp@(18),guest_lineapc
 	movel	%a0,%usp
 	movel	%d1,%sp@(18)
 	andiw	&0x00ff,%sp@(16)

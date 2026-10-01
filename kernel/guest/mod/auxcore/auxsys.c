@@ -22,6 +22,7 @@ extern int preempt(), issig();
 extern void psig();
 extern char runrun;
 
+long aux_nsys, aux_lastsys;	/* Mac task's calls; the last: number << 16 | errno */
 int aux_trace = 0;	/* 1: every call, 2: results, 4: open paths, 8: failures, name changes */
 void (*aux_macdetach)() = 0;
 int (*aux_slotmgr)() = 0;
@@ -236,6 +237,10 @@ aux_systrap(gp, r, vec)
 			goto out;
 		}
 		e = EINTR;
+	}
+	if (ap->ap_mac) {
+		aux_nsys++;
+		aux_lastsys = (long)num << 16 | e;
 	}
 	if (e) {
 err:

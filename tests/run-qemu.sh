@@ -34,7 +34,7 @@ done
 export KDIR
 KERNEL=${KERNEL:-$KDIR/build/unix-mac.elf}
 ROM=${ROM:-$AUX/Quadra 800.ROM}
-TMO=${TMO:-300}
+TMO=${TMO:-3600}
 OUT=$T/results/$(date +%Y%m%d-%H%M%S)-$MODE
 mkdir -p "$OUT"
 

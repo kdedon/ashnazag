@@ -1,6 +1,6 @@
 --- a/kernel/mac/diskroot/root.manifest
 +++ b/kernel/mac/diskroot/root.manifest
-@@ -55,6 +55,36 @@
+@@ -55,6 +55,38 @@
  # date(1) runs setclk -s after stime(2); the kernel keeps the RTC
  f /usr/amiga/bin/setclk 755 0 3 etc/setclk
  
@@ -33,6 +33,8 @@
 +f /mac/sys/Sys7/System 644 0 3 macpkg/System
 +f /mac/sys/Sys7/Finder 644 0 3 macpkg/Finder
 +f /usr/bin/startmac 755 0 3 macpkg/startmac.sh
++f /usr/bin/macdiag 750 0 3 macpkg/macdiag
++c /dev/kmem	640 0 3 3 1	# macdiag relies on root-only kernel memory
 +
  # no Amiga port monitors (screens, serial boards) or Ethernet board
  f /etc/saf/_sactab 644 0 3 etc/_sactab

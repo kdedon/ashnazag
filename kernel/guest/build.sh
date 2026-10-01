@@ -21,7 +21,7 @@ DLM=$K/dlm
 PATH="$AUX/toolchain/linux/bin:$AUX/toolchain/bin:$PATH"
 export PATH
 NICE="nice -n 19"
-KCC="$NICE m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -Wall -I$DLM/include -I$G/include -I$G/mod/auxcore -I$K/mac/display"
+KCC="$NICE m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -Wall -I$DLM/include -I$G/include -I$G/mod/auxcore -I$K/mac/display -I$G/mod/tosguest"
 
 # kernel objects must compile without warnings beyond the AMIX headers' own
 kcc() {	# src obj
@@ -52,7 +52,7 @@ case "$1" in
 	$HCC -o "$O/tools/modfix" "$DLM/tools/modfix.c"
 	"$O/tools/mkksym" -x "$KERNEL" > "$O/exports"
 	rm -rf "$O/mod.d"
-	for m in guestcore auxcore auxexec uinter; do
+	for m in guestcore auxcore auxexec uinter tosguest; do
 		d=$O/src/$m
 		rm -rf "$d"; mkdir -p "$d"
 		objs=

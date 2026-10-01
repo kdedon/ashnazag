@@ -59,6 +59,16 @@ struct uirom {
 };
 
 extern struct uirom ui_rom;
+
+/* the last calls, always kept: 'Q' ioctls, 'S' Slot Manager selectors */
+struct uicall {
+	char		c_kind;
+	unsigned char	c_num;
+	short		c_res;
+	long		c_n;		/* repeats */
+};
+#define	UI_NCALL	16
+extern void ui_note();
 extern struct uilayer ui;
 extern int uinter_trace;
 extern int ui_slotmgr(), ui_screens(), ui_video();

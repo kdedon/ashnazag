@@ -792,6 +792,8 @@ ui_cursor(up, lm)
 	uin_ncur++;
 }
 
+long	ui_ntaken, ui_tickpc;	/* ticks taken; the PC each interrupted */
+
 /*
  * The task takes its tick: Ticks, Time, mouse, button and keys into
  * Mac memory, then the cursor.
@@ -806,6 +808,8 @@ ui_update(gp)
 
 	if (gp != ui.l_gp)
 		return;
+	ui_ntaken++;
+	ui_tickpc = GR_PC(u.u_ar0);
 	P32(b, lbolt);
 	(void)copyout((caddr_t)b, (caddr_t)LM_TICKS, 4);
 	if (hrestime.tv_sec != in_sec) {

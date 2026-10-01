@@ -37,6 +37,10 @@ nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -w -D__STDC__=0 -I"$AUX/kernel/dlm/in
 "$TC/bin/m68k-cbm-sysv4-ld" -o "$P/auxreg" "$SYS/usr/ccs/lib/crt1.o" \
 	"$SYS/usr/ccs/lib/crti.o" "$P/auxreg.o" "$P"/lm_*.o "$SYS/usr/lib/libc.so.1" \
 	"$SYS/usr/ccs/lib/crtn.o"
+nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -w -D__STDC__=0 -c "$D/macdiag.c" -o "$P/macdiag.o"
+"$TC/bin/m68k-cbm-sysv4-ld" -o "$P/macdiag" "$SYS/usr/ccs/lib/crt1.o" \
+	"$SYS/usr/ccs/lib/crti.o" "$P/macdiag.o" "$P"/lm_*.o "$SYS/usr/lib/libc.so.1" \
+	"$SYS/usr/ccs/lib/crtn.o"
 rm -rf "$P/guest" "$P"/*.o
 
 cp "$D/S05aux" "$D/startmac" "$P/"

@@ -36,6 +36,26 @@ static int uiflag[1] = { 0 };
 int	uinter_trace = 0;	/* 1: print each ioctl */
 char	uinter_pram[64] = "/etc/aux/pram";	/* XPRAM across sessions */
 static int ui_pramdirty;
+struct uicall ui_calls[UI_NCALL];
+long	ui_ncalls;		/* entries ever made */
+long	ui_nposted;		/* ticks posted */
+
+void
+ui_note(kind, num, res)
+	int kind, num, res;
+{
+	struct uicall *c = &ui_calls[(ui_ncalls - 1) & (UI_NCALL - 1)];
+
+	if (ui_ncalls && c->c_kind == kind && c->c_num == (num & 0xff) && c->c_res == res) {
+		c->c_n++;
+		return;
+	}
+	c = &ui_calls[ui_ncalls++ & (UI_NCALL - 1)];
+	c->c_kind = kind;
+	c->c_num = num;
+	c->c_res = res;
+	c->c_n = 1;
+}
 
 /*
  * XPRAM $08-$1F after a PRAM reset: the last four bytes of the system
@@ -70,6 +90,7 @@ uitick(arg)
 	if (ui.l_state != LS_INUSE || ui.l_proc == 0)
 		return;
 	ui_evtick();
+	ui_nposted++;
 	psignal(ui.l_proc, SIGIOT);
 	wakeup((caddr_t)&ui.l_tid);
 	if ((ui.l_tid = ttimeout(uitick, (caddr_t)0, 1L)) == -1)
@@ -531,6 +552,7 @@ uiioctl(dev, cmd, arg, mode, cr, rvp)
 	e = uisetup(gp, cmd, arg, b, rvp);
 	if (e == ENOTTY)
 		e = uimisc(gp, cmd, arg, b, rvp);
+	ui_note('Q', UIOC_NUM(cmd), -e);
 	if (uinter_trace && (cmd != ui_tcmd || e != ui_te || u.u_procp->p_pid != ui_tpid)) {
 		char t[8];
 

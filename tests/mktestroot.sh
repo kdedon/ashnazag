@@ -47,9 +47,13 @@ if [ -n "$NOAUX" ]; then
 else
 	KDIR=$KDIR sh "$T/aux/build.sh" "$KERNEL" "$AUXB"
 fi
+# t_tos's launcher, cartridge, drive C: and ROM (none without the ROM)
+TOSB=$B/tos
+KDIR=$KDIR sh "$T/tos/build.sh" "$TOSB"
 if [ -z "$TESTKB" ]; then
 	TESTKB=$((BASEKB + 128))
 	[ -d "$AUXB/root" ] && TESTKB=$((TESTKB + $(du -sk "$AUXB/root" | cut -f1)))
+	[ -d "$TOSB/root" ] && TESTKB=$((TESTKB + 1024 + $(du -sk "$TOSB/root" | cut -f1)))
 fi
 
 # /etc/group with the display devices' group
@@ -107,6 +111,17 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 		done
 		(cd "$AUXB/root" && find . -type f | sed 's#^\.##' | sort) | while read -r f; do
 			echo "f $f 755 0 3 $AUXB/root$f"
+		done
+	fi
+	if [ -d "$TOSB/root" ] && [ -f "$AUXB/mod.d/tosguest" ]; then
+		echo "c /dev/tos 660 0 25 56 0"
+		(cd "$TOSB/root" && find . -type d | sed 's#^\.##' | sort) | while read -r d; do
+			if [ -n "$d" ] && ! grep -q "^d $d[ 	]" "$M"; then
+				echo "d $d 755 0 3"
+			fi
+		done
+		(cd "$TOSB/root" && find . -type f | sed 's#^\.##' | sort) | while read -r f; do
+			echo "f $f 755 0 3 $TOSB/root$f"
 		done
 	fi
 	if [ -f "$B/otb/mod.d/otbridge" ]; then

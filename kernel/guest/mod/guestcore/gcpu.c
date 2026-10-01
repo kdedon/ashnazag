@@ -6,7 +6,8 @@
  *
  * The real SR of a guest keeps user mode, T1 and the condition codes;
  * S, M and the IPL live in gp_vsr.  With GPF_SPIN, S stays set and the
- * guest runs on one stack (the Mac profile).
+ * guest runs on one stack (the Mac profile); otherwise a change of S
+ * swaps A7 with gp_vusp, the inactive stack pointer.
  *
  * K&R C.
  */
@@ -35,6 +36,9 @@ extern char runrun;
 
 int	guest_npriv;			/* emulated instructions */
 int	guest_nprivbad;			/* refused ones */
+long	guest_npk[12];			/* emulated, by privkind() */
+long	guest_privop;			/* the last refused opcode */
+long	guest_nfault7, guest_f7pc, guest_f7ea;	/* faults sent to vector 2 */
 
 static int
 splhi_()
@@ -68,7 +72,14 @@ vsr_set(gp, r, v)
 	char *r;
 	int v;
 {
+	long t;
+
 	GR_SR(r) = (GR_SR(r) & ~SR_REAL) | (v & SR_REAL);
+	if (!(gp->gp_flags & GPF_SPIN) && ((v ^ gp->gp_vsr) & SR_S)) {
+		t = GR_USP(r);		/* the other stack becomes active */
+		GR_USP(r) = gp->gp_vusp;
+		gp->gp_vusp = t;
+	}
 	gp->gp_vsr = (v & SR_VIRT) | (gp->gp_flags & GPF_SPIN ? SR_S : 0);
 	if ((v & SR_IPL) == 0)
 		gp->gp_flags &= ~GPF_VPEND;	/* held signals go out on the way back */
@@ -87,6 +98,68 @@ trapret()
 			psig();
 }
 
+/* for profile modules */
+int
+guest_getsr(gp, r)
+	struct guest_proc *gp;
+	char *r;
+{
+	return vsr_get(gp, r);
+}
+
+void
+guest_setsr(gp, r, v)
+	struct guest_proc *gp;
+	char *r;
+	int v;
+{
+	vsr_set(gp, r, v);
+}
+
+void
+guest_trapret()
+{
+	trapret();
+}
+
+/*
+ * Exception entry through the guest's vector table: the frame (SR, PC,
+ * then fv and n - 2 bytes from x) on the supervisor stack, S set, T
+ * cleared, the IPL raised to ipl unless it is negative.  -1: the stack
+ * or the vector is not readable.
+ */
+int
+guest_reflect(gp, r, pc, fv, x, n, ipl)
+	struct guest_proc *gp;
+	char *r, *x;
+	long pc;
+	int fv, n, ipl;
+{
+	char f[64];
+	long h, sp;
+	int sr = vsr_get(gp, r), nsr;
+
+	if (n < 2 || n > sizeof f - 6)
+		return -1;
+	P16(f, sr);
+	P32(f + 2, pc);
+	P16(f + 6, fv);
+	if (n > 2)
+		bcopy(x, f + 8, n - 2);
+	nsr = (sr & ~0xc000) | SR_S;
+	if (ipl >= 0)
+		nsr = (nsr & ~SR_IPL) | ipl << 8;
+	sp = (sr & SR_S) || (gp->gp_flags & GPF_SPIN) ? GR_USP(r) : gp->gp_vusp;
+	sp -= 6 + n;
+	if (copyin((caddr_t)(gp->gp_vvbr + (fv & 0xfff)), (caddr_t)&h, 4) ||
+	    copyout(f, (caddr_t)sp, 6 + n))
+		return -1;
+	vsr_set(gp, r, nsr);
+	GR_USP(r) = sp;
+	GR_PC(r) = h;
+	return 0;
+}
+
 /*
  * Vector 10: the 8-byte format-0 frame at the user sp, then the guest's
  * handler at vVBR + $28.  The gate's fast path does the same.
@@ -102,6 +175,8 @@ guest_aline(gp, r, v)
 
 	if (!(gp->gp_flags & GPF_ALINE))
 		return 1;
+	guest_nlinea++;
+	guest_lineapc = GR_PC(r);
 	usp = GR_USP(r) - 8;
 	P16(f, GR_SR(r) | gp->gp_vsr);
 	P32(f + 2, GR_PC(r));
@@ -326,7 +401,7 @@ creg(gp, pi, c, vp, wr)
 	return 0;
 }
 
-/* rte: formats 0, 2, 3 and 9 from the user stack */
+/* rte: formats 0, 2, 3, 9, $A and $B; the new SR may switch stacks */
 static int
 vrte(gp, pi)
 	struct guest_proc *gp;
@@ -342,11 +417,13 @@ vrte(gp, pi)
 	case 0: n = 8; break;
 	case 2: case 3: n = 12; break;
 	case 9: n = 20; break;
+	case 0xa: n = 32; break;		/* 68030 bus faults: rerun */
+	case 0xb: n = 92; break;
 	default: return -1;
 	}
-	vsr_set(gp, r, (int)G16(b));
-	GR_PC(r) = G32(b + 2);
 	GR_USP(r) = usp + n;
+	GR_PC(r) = G32(b + 2);
+	vsr_set(gp, r, (int)G16(b));
 	return 1;		/* PC set */
 }
 
@@ -416,6 +493,32 @@ fpstate(pi, op)
 	return 0;
 }
 
+/* counter index: SR ops, rte, SR moves, usp, movec, moves, cache, MMU, fsave, frestore, other */
+static int
+privkind(op)
+	int op;
+{
+	if (op == 0x007c || op == 0x027c || op == 0x0a7c)
+		return 0;
+	if (op == 0x4e73)
+		return 1;
+	if ((op & 0xffc0) == 0x40c0)
+		return 2;
+	if ((op & 0xffc0) == 0x46c0)
+		return 3;
+	if ((op & 0xfff0) == 0x4e60)
+		return 4;
+	if ((op & 0xfffe) == 0x4e7a)
+		return 5;
+	if ((op & 0xff00) == 0x0e00)
+		return 6;
+	if ((op & 0xfe00) == 0xf400)
+		return 7 + ((op >> 8) & 1);
+	if ((op & 0xff80) == 0xf300)
+		return 9 + ((op >> 6) & 1);
+	return 11;
+}
+
 /*
  * One privileged instruction.  0: emulated, PC past it; 1: PC set;
  * -1: not emulated; -2: operand fault.
@@ -432,6 +535,7 @@ priv1(gp, pi)
 
 	if (iword(pi, &op))
 		return -2;
+	guest_npk[privkind((int)op)]++;
 	mode = (op >> 3) & 7;
 	reg = op & 7;
 	switch (op) {
@@ -536,6 +640,7 @@ guest_priv(gp, r, v)
 	}
 	bcopy(save, r, sizeof save);
 	guest_nprivbad++;
+	guest_privop = fuword((caddr_t)pi.pc) >> 16 & 0xffff;
 	if (e == -1 && !(gp->gp_flags & GPF_PRIVBAD) && nbadmsg <= 10) {
 		gp->gp_flags |= GPF_PRIVBAD;
 		if (nbadmsg++ < 10)
@@ -624,6 +729,9 @@ guest_fault(p, gp, n)
 	splx_(s);
 	if (sq)
 		kmem_free((caddr_t)sq, sizeof *sq);
+	guest_nfault7++;
+	guest_f7pc = GR_PC(r);
+	guest_f7ea = gp->gp_fea;
 	GR_USP(r) = usp;
 	GR_PC(r) = h;
 	GR_SR(r) &= 0x00ff;
@@ -640,6 +748,8 @@ guest_fsig1(p, gp)
 	k_sigset_t h;
 	int s, n;
 
+	if (gp->gp_prof->gpf_fsig)
+		return (*gp->gp_prof->gpf_fsig)(p, gp);
 	if (!(gp->gp_flags & GPF_PRIV) || (gp->gp_vsr & SR_IPL) == 0)
 		return __amix_fsig(p);
 	s = splhi_();

@@ -112,6 +112,13 @@ aux_sigcleanup(ap, r)
 	GR_SR(r) = G32(c + 16) & 0xc0ff;		/* user mode: CCR and trace */
 }
 
+/* signals the Mac task took; the last exception one: signal, vector, PC */
+long aux_nsig[32];
+long aux_xsig, aux_xvec, aux_xpc;
+
+#define	XSIGS	(sigmask(SIGILL) | sigmask(SIGTRAP) | sigmask(SIGEMT) | \
+		 sigmask(SIGFPE) | sigmask(SIGBUS) | sigmask(SIGSEGV))
+
 int
 aux_sendsig(gp, sig, sip, hdlr)
 	struct guest_proc *gp;
@@ -122,6 +129,14 @@ aux_sendsig(gp, sig, sip, hdlr)
 	char *r = (char *)u.u_ar0, b[16];
 	long usp = GR_USP(r) - 16;
 
+	if (AUXP(gp)->ap_mac) {
+		aux_nsig[sig & 31]++;
+		if (sigmask(sig) & XSIGS) {
+			aux_xsig = sig;
+			aux_xvec = GR_VEC(r);
+			aux_xpc = GR_PC(r);
+		}
+	}
 	if (sig == SIGIOT && AUXP(gp)->ap_mac && aux_uitick)
 		(*aux_uitick)(gp);
 	if (AUXP(gp)->ap_compat & COMPAT_BSDSIGNALS)

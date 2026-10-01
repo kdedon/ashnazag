@@ -13,6 +13,7 @@
 #   clicks N HOLD GAP   N left clicks, HOLD and GAP in ms
 #   shot NAME           screen dump -> display/NAME.ppm, .png; "W H"
 #   cmp A B             "same" or "diff N" (pixels)
+#   tos NAME            TOS screen: guest box, menu-bar white, desktop colour
 #   ref NAME SHOT DEPTH SEED K
 #                       render the dspat.h pattern (table rotated by K)
 #                       at SHOT's size, compare: "same" or "diff N"
@@ -105,6 +106,32 @@ def macscreen(w, h, px, x0=0, y0=0, x1=None, y1=None):
     n = max(1, (x1 - x0) * (y1 - y0))
     return 'checker %d white %d top %d' % (1000 * chk // n, 1000 * white // n,
                                            1000 * top // max(1, 19 * (x1 - x0)))
+
+
+def tosscreen(w, h, px):
+    # the guest area (pixels unlike the corner) and, per mille of it:
+    # white in its top 16 rows (menu bar), its most common colour below
+    # row 30 (desktop), and that colour
+    row = 3 * w
+    bg = px[0:3]
+    xs = [x for x in range(0, w, 4) if any(px[y * row + 3 * x:y * row + 3 * x + 3] != bg
+                                           for y in range(0, h, 4))]
+    ys = [y for y in range(0, h, 4) if any(px[y * row + 3 * x:y * row + 3 * x + 3] != bg
+                                           for x in range(0, w, 4))]
+    if not xs or not ys:
+        return 'box 0 0 0 0 menu 0 desk 0 000000'
+    x0, x1, y0, y1 = xs[0], xs[-1] + 4, ys[0], ys[-1] + 4
+    top = sum(1 for y in range(y0, min(y0 + 16, y1)) for x in range(x0, x1)
+              if px[y * row + 3 * x:y * row + 3 * x + 3] == b'\xff\xff\xff')
+    cnt = {}
+    for y in range(y0 + 30, y1, 2):
+        for x in range(x0, x1, 2):
+            c = px[y * row + 3 * x:y * row + 3 * x + 3]
+            cnt[c] = cnt.get(c, 0) + 1
+    c, n = max(cnt.items(), key=lambda kv: kv[1]) if cnt else (b'\0\0\0', 0)
+    return 'box %d %d %d %d menu %d desk %d %s' % (
+        x0, y0, x1 - x0, y1 - y0, 1000 * top // max(1, 16 * (x1 - x0)),
+        1000 * n // max(1, sum(cnt.values())), c.hex())
 
 
 def pattern(w, h, depth, seed, k):
@@ -219,6 +246,9 @@ def serve(q, cmd, a):
     if cmd == 'mac':
         w, h, px = readppm(os.path.join(D, os.path.basename(a[0]) + '.ppm'))
         return macscreen(w, h, px, *[int(v) for v in a[1:5]])
+    if cmd == 'tos':
+        w, h, px = readppm(os.path.join(D, os.path.basename(a[0]) + '.ppm'))
+        return tosscreen(w, h, px)
     if cmd == 'ref':
         name, shot = os.path.basename(a[0]), os.path.basename(a[1])
         depth, seed, k = int(a[2]), int(a[3]), int(a[4])

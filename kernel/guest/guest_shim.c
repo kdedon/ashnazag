@@ -39,6 +39,7 @@ void	(*guest_exit_hook)();
 int	(*guest_sendsig_hook)();
 int	(*guest_vur_hook)();
 int	(*guest_fsig_hook)();
+long	guest_nlinea, guest_lineapc;
 
 struct hooksw hooksw[] = {
 	{ "guest_trap",		(char **)&guest_trap_hook,	0, 0 },

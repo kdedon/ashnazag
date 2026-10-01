@@ -429,6 +429,7 @@ ui_slotmgr(sel, pb, resp)
 	if (copyin(pb, b, SP_LEN))
 		return EFAULT;
 	r = uv_slot(sel, b);
+	ui_note('S', sel, r);
 	if (uinter_trace) {
 		char t[8];
 
@@ -472,6 +473,7 @@ ui_screens(b)
 	}
 	if ((s = ds_newsess((long)u.u_cred->cr_uid, "mac", &e)) == 0)
 		goto out;
+	s->s_cache = FBC_CI;	/* the Mac never pushes the data cache after drawing */
 	ds_fbh[getminor(vp->v_rdev) - 1].h_sess = s;
 	e = VOP_MAP(vp, (off_t)0, p->p_as, &a, (u_int)fi->fi_size,
 	    PROT_READ | PROT_WRITE | PROT_USER, PROT_ALL, MAP_SHARED | MAP_FIXED, u.u_cred);

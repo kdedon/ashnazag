@@ -73,6 +73,17 @@ gc_free(p)
 	mod_rele(pf->gpf_wrapper);
 }
 
+/* a native process becomes a guest of pf (its launcher enters the ROM) */
+int
+guest_attach(pf)
+	struct guest_profile *pf;
+{
+	if (curproc->p_evpdp)
+		return EBUSY;
+	(void)gc_alloc(curproc, pf);
+	return 0;
+}
+
 /* every exec of a guest, and the exec that guest_loading names */
 static void
 gc_exec(p)
