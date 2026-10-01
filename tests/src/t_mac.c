@@ -24,7 +24,9 @@
  *
  * Built with SYS76 (t_mac76.c), the startmac run uses the Mac OS 7.6.1
  * System Folder /mac/sys/S761 as a Quadra 800 (box flag 29) and checks
- * 'boot' 3's second _AUXDispatch(36) (it makes /tmp/.mac/unix).
+ * 'boot' 3's second _AUXDispatch(36) (it makes /tmp/.mac/unix), the
+ * Finder desktop, SysVersion $0761, the About This Computer window,
+ * SimpleText opened from the desktop and quit, and the disk window.
  */
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -750,7 +752,10 @@ startmac()
 	printf("INFO mac.startmac_pid %d\n", (int)pid);
 	fflush(stdout);
 	relay(p[0], 90);
-#ifndef SYS76
+#ifdef SYS76
+	if (macid)
+		screen76();
+#else
 	if (macid)
 		screen();
 #endif
@@ -866,6 +871,186 @@ restart()
 	t_check("restart_console", waitfront(0L, 5), "front %ld", front());
 }
 
+#ifdef SYS76
+/* the model Patch.067C keeps for Gestalt 'mach' (its own + 6), read from the task */
+static long
+patchbox()
+{
+	char path[32];
+	long v = -1;
+	int fd;
+
+	sprintf(path, "/proc/%05d", (int)macpid);
+	if ((fd = open(path, O_RDONLY)) < 0)
+		return -1;
+	if (lseek(fd, 0x87cdcL, 0) == -1 || read(fd, (char *)&v, 4) != 4)
+		v = -1;
+	close(fd);
+	return v;
+}
+
+/* pixels changed between two dumps, -1 without an answer */
+static int
+shotdiff(a, b)
+char *a, *b;
+{
+	char req[64], *r;
+	int n = -1;
+
+	sprintf(req, "cmp %s %s", a, b);
+	if ((r = host(req)) != 0 && sscanf(r, "diff %d", &n) != 1)
+		n = strcmp(r, "same") == 0 ? 0 : -1;
+	return n;
+}
+
+/* the Mac still running: its ticks advance */
+static int
+alive76()
+{
+	unsigned char *lm;
+	long t0, t1;
+	int id;
+
+	id = shmget(TLOW, 0, 0);
+	lm = id < 0 ? 0 : (unsigned char *)shmat(id, (char *)0, SHM_RDONLY);
+	if (!lm || lm == (unsigned char *)-1)
+		return 0;
+	t0 = L32(0x16a);
+	pause_ms(500L);
+	t1 = L32(0x16a);
+	shmdt((char *)lm);
+	return kill(macpid, 0) == 0 && t1 - t0 >= 20;
+}
+
+/*
+ * A dump name taken until it differs from ref by lo to hi pixels or secs
+ * pass, then again once the screen has settled: the pixels changed.
+ */
+static int
+waitshot(name, ref, lo, hi, secs)
+char *name, *ref;
+int lo, hi, secs;
+{
+	char req[40];
+	int i, n;
+
+	sprintf(req, "shot %s", name);
+	for (i = 0; i < secs; i += 2) {
+		host(req);
+		n = shotdiff(ref, name);
+		if (n >= lo && n <= hi)
+			break;
+		pause_ms(2000L);
+	}
+	pause_ms(2000L);
+	host(req);
+	return shotdiff(ref, name);
+}
+
+/* About closed, SimpleText opened from the desktop and quit, the disk window */
+static void
+app76()
+{
+	char *r;
+	int n, chk = -1;
+
+	t_rearm(120);
+	host("key meta_l+w");
+	n = waitshot("mac76_closed", "mac76_desktop", 0, 1999, 20);
+	t_check("about_closed", n >= 0 && n < 2000, "%d pixels from the desktop", n);
+	/* typing selects the desktop icon by name; Command-O opens it */
+	t_rearm(120);
+	host("key s");
+	pause_ms(1000L);
+	host("key meta_l+o");
+	n = waitshot("mac76_simpletext", "mac76_closed", 100000, 1 << 30, 60);
+	/* its untitled window, white over the middle of the desktop */
+	if ((r = host("mac mac76_simpletext 200 150 600 450")) != 0)
+		sscanf(r, "checker %d", &chk);
+	t_check("simpletext_open", n >= 100000 && chk >= 0 && chk < 100,
+	    "%d pixels changed, checker %d per mille", n, chk);
+	t_check("simpletext_alive", alive76(), "");
+	t_rearm(120);
+	host("key meta_l+q");
+	n = waitshot("mac76_quit", "mac76_closed", 0, 1999, 40);
+	t_check("simpletext_quit", n >= 0 && n < 2000, "%d pixels from the desktop", n);
+	t_check("finder_alive", alive76(), "");
+	/* the startup disk's window: the File Manager lists the root */
+	t_rearm(120);
+	moveto(scrw - 40, 48);
+	host("click 2");
+	n = waitshot("mac76_disk", "mac76_quit", 20000, 1 << 30, 40);
+	t_check("disk_window", n >= 20000, "%d pixels changed", n);
+	t_rearm(120);
+	host("key meta_l+w");
+	n = waitshot("mac76_diskclosed", "mac76_quit", 0, 1999, 20);
+	t_check("disk_window_closed", n >= 0 && n < 2000, "%d pixels from the desktop", n);
+	/* the Special menu held open */
+	moveto(232, 9);
+	host("button 1");
+	pause_ms(800L);
+	host("shot mac76_special");
+	host("button 0");
+	pause_ms(1000L);
+	n = shotdiff("mac76_diskclosed", "mac76_special");
+	t_check("special_menu", n > 1000, "%d pixels changed", n);
+	t_check("finder_stays", alive76(), "");
+}
+
+/* the 7.6.1 Finder: its desktop, the System version, About This Computer */
+static void
+screen76()
+{
+	unsigned char *lm;
+	char *r;
+	int id, n, chk = 0, white = 0, top = 0, diff = 0;
+
+	hostopen();
+	if (hfd < 0) {
+		t_skip("mac_screen", "no host line");
+		return;
+	}
+	/* the menu bar white, the rest mostly the desktop pattern */
+	for (n = 0; n < 8; n++) {
+		t_rearm(120);
+		host("shot mac76_desktop");
+		r = host("mac mac76_desktop");
+		if (r)
+			sscanf(r, "checker %d white %d top %d", &chk, &white, &top);
+		if (chk >= 900 && top >= 900)
+			break;
+		pause_ms(10000L);
+	}
+	t_info("mac_screen_stats", "checker %d white %d top %d", chk, white, top);
+	t_check("finder_desktop", chk >= 900 && top >= 900, "checker %d, menu bar %d per mille",
+	    chk, top);
+	id = shmget(TLOW, 0, 0);
+	lm = id < 0 ? 0 : (unsigned char *)shmat(id, (char *)0, SHM_RDONLY);
+	if (lm && lm != (unsigned char *)-1) {
+		t_check("sysversion", (lm[0x15a] << 8 | lm[0x15b]) == 0x0761, "SysVersion %#x",
+		    lm[0x15a] << 8 | lm[0x15b]);
+		t_check("gestalt_mach", patchbox() == 29, "Patch.067C's model %ld (BoxFlag %d)",
+		    patchbox(), lm[0xcb3]);
+		shmdt((char *)lm);
+	}
+	/* About This Computer, the Apple menu's first item */
+	if (t_check("apple_menu", moveto(20, 9), "mouse %#lx", getsym("uin_mouse"))) {
+		host("button 1");
+		pause_ms(800L);
+		moveto(60, 29);
+		pause_ms(500L);
+		host("button 0");
+		pause_ms(5000L);
+		host("shot mac76_about");
+		if ((r = host("cmp mac76_desktop mac76_about")) != 0)
+			sscanf(r, "diff %d", &diff);
+		t_check("about_window", diff > 20000, "%d pixels changed", diff);
+		app76();
+	}
+	close(hfd);
+	hfd = -1;
+}
+#endif
 
 int
 main()
@@ -920,7 +1105,12 @@ main()
 		/* the module loaded, then a Quadra 800 (no ProductInfo of its own) */
 		e = open("/dev/uinter0", O_RDWR);
 		t_check("boxflag", setsym("uinter_boxflag", 29L) == 0, "no uinter_boxflag");
+		/* SimpleText on the desktop, for the Finder to open */
+		link(SYSDIR "/SimpleText", "/Desktop Folder/SimpleText");
+		link(SYSDIR "/%SimpleText", "/Desktop Folder/%SimpleText");
 		startmac();
+		unlink("/Desktop Folder/SimpleText");
+		unlink("/Desktop Folder/%SimpleText");
 		t_check("auxdispatch_36", stat("/tmp/.mac/unix", &sb) == 0,
 		    "no /tmp/.mac/unix from 'boot' 3's _AUXDispatch(36, 0)");
 		setsym("uinter_boxflag", -1L);

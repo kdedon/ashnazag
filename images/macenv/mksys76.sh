@@ -1,6 +1,7 @@
 #!/bin/sh
 # mksys76.sh -- a Mac OS 7.6.1 System Folder for A/UX from the CD image:
-# System, Finder and the base fonts as AppleDouble pairs (name, %name),
+# System, Finder, the base fonts and SimpleText as AppleDouble pairs
+# (name, %name),
 # the System's linked patches re-guarded for A/UX (auxguard.py).
 #
 #   sh images/macenv/mksys76.sh cd.iso outdir
@@ -34,4 +35,6 @@ get Finder "$OUT"
 for f in Chicago Geneva Monaco Courier Times; do
 	get "Fonts:$f" "$OUT/Fonts"
 done
+"$B/hcopy" -m ":Utilities:SimpleText" "$W/f.bin"
+python3 "$AUX/tools/macbin2ad.py" -n SimpleText "$W/f.bin" "$OUT"
 "$B/humount" > /dev/null

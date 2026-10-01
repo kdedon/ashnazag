@@ -10,7 +10,7 @@
 # Mac environment: startmac, libmac1_s, Patch.067C, the System file in
 # /mac/sys/Sys7 with the Finder, the ROM image at /etc/aux/rom, fidd at
 # /etc/aux/fidd; with the Mac OS 7.6.1 CD image, CD761, its System
-# Folder in /mac/sys/S761).
+# Folder with SimpleText in /mac/sys/S761).
 # AUXROOT names the A/UX root, AUXROM the Mac ROM image (default: the
 # Quadra 700 ROM beside the repository); both proprietary, never in the
 # repository.
