@@ -454,8 +454,11 @@ register struct dssess *s;
 	if (ds_front == s && ds_switch(ds_after(s)) != 0)
 		ds_pend = 0;			/* the tick retries */
 	for (i = 0; i < DS_NEVH; i++)
-		if (ds_evh[i].e_used && ds_evh[i].e_sess == s)
+		if (ds_evh[i].e_used && ds_evh[i].e_sess == s) {
 			ds_evh[i].e_sess = 0;
+			wakeup((caddr_t)&ds_evh[i]);
+			pollwakeup(&ds_evh[i].e_ph, POLLHUP);
+		}
 	wakeup((caddr_t)s->s_note);
 	pollwakeup(&s->s_ph, POLLIN | POLLHUP);
 	if (ds_front != s)

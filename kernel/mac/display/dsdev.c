@@ -68,6 +68,16 @@ dev_t dev;
 
 /* ------------------------------------------------------------ /dev/fb */
 
+/* by the calling process: fds are inherited and passed */
+int
+ds_owns(s)
+struct dssess *s;
+{
+	register struct cred *cr = curproc->p_cred;
+
+	return s->s_uid == cr->cr_uid || drv_priv(cr) == 0;
+}
+
 int
 ds_fbopen(devp, flag, otyp, cr)
 dev_t *devp;
@@ -125,6 +135,8 @@ struct cred *cr;
 
 	if (h == 0 || (s = h->h_sess) == 0)
 		return EINVAL;
+	if (!ds_owns(s))
+		return EACCES;
 	while (uio->uio_resid >= sizeof n) {
 		x = DS_SPL(DS_HI);
 		if (s->s_nget == s->s_nput) {
@@ -326,8 +338,9 @@ int *rvalp;
 
 	if (h == 0)
 		return ENXIO;
+	cr = curproc->p_cred;		/* the caller may hold an inherited fd */
 	s = h->h_sess;
-	if (s && s->s_dead)
+	if (s && (s->s_dead || !ds_owns(s)))
 		s = 0;
 	switch (cmd) {
 	case FBIOGINFO:
@@ -454,6 +467,7 @@ struct cred *cr;
 /*
  * One event to every input file of kind `mouse' bound to s.  A full
  * queue gets one IE_DROP and nothing more until the reader empties it.
+ * The console's keys go only to its tty.
  */
 void
 ds_evpost(s, mouse, type, code, value, sec, usec)
@@ -465,6 +479,8 @@ long value, sec, usec;
 	register struct inev *v;
 	register int i, x, n;
 
+	if (s == &ds_sess[0])
+		return;
 	x = DS_SPL(DS_HI);
 	if (s->s_kin)
 		(*s->s_kin)(s, type, code, value);
@@ -503,14 +519,16 @@ struct cred *cr;
 
 	if (e == 0)
 		return ENXIO;
-	if (uio->uio_resid < sizeof v)
+	if (uio->uio_resid < sizeof v || e->e_sess == 0)
 		return EINVAL;
+	if (!ds_owns(e->e_sess))
+		return EACCES;
 	while (uio->uio_resid >= sizeof v) {
 		x = DS_SPL(DS_HI);
 		if (e->e_get == e->e_put) {
 			e->e_drop = 0;
 			DS_SPLX(x);
-			if (got)
+			if (got || e->e_sess == 0)
 				break;
 			if (uio->uio_fmode & (FNDELAY | FNONBLOCK))
 				return EAGAIN;
@@ -543,6 +561,8 @@ struct pollhead **phpp;
 	*reventsp = 0;
 	if (e && e->e_get != e->e_put)
 		*reventsp = events & (POLLIN | POLLRDNORM);
+	else if (e && e->e_sess == 0)
+		*reventsp = POLLHUP;
 	if (*reventsp == 0 && !anyyet)
 		*phpp = e ? &e->e_ph : &ds_noph;
 	return 0;
@@ -585,6 +605,8 @@ int *rvalp;
 		if (vp == 0 || vp->v_type != VCHR || getmajor(vp->v_rdev) != DS_FBMAJ ||
 		    (h = ds_fbhandle(vp->v_rdev)) == 0 || h->h_sess == 0 || h->h_sess->s_dead)
 			return EINVAL;
+		if (!ds_owns(h->h_sess))
+			return EACCES;
 		x = DS_SPL(DS_HI);
 		e->e_sess = h->h_sess;
 		e->e_get = e->e_put = e->e_drop = 0;

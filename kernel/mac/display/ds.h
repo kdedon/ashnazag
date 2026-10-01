@@ -120,6 +120,7 @@ int	ds_segcount();		/* (s) */
 /* dsdev.c */
 void	ds_evpost();		/* (s, mouse, type, code, value, sec, usec) */
 int	ds_mayfront();		/* (cr) -> may bring a session to the front */
+int	ds_owns();		/* (s) -> the calling process may use s: owner or privileged */
 
 extern void wakeup(), bzero();
 extern int timeout(), sleep(), copyin(), copyout(), drv_priv(), printf();

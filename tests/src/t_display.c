@@ -718,6 +718,134 @@ t_perm(long ida)
 	t_check("perm_front_kept", front() == ida, "front %ld", front());
 }
 
+/* child status for a check: 0 passes */
+static void
+t_child(char *name, pid_t pid)
+{
+	int status = 0, ok;
+
+	ok = t_waitchild(pid, &status, 20) == pid;
+	t_check(name, ok && WIFEXITED(status) && WEXITSTATUS(status) == 0, "child exit %d",
+	    ok && WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+}
+
+/* input reaches only the owner's front session; another user's session is closed */
+static void
+t_inputsec(int fda, long ida)
+{
+	struct fbcmap cm;
+	unsigned short r[2], g[2], b[2];
+	struct inev v;
+	int go[2], rdy[2], kbd, fd, kb, ub, err;
+	pid_t pid;
+	long id;
+	char c;
+
+	if (hfd < 0) {
+		t_skip("inputsec", "no host");
+		return;
+	}
+	kbd = open("/dev/kbd", O_RDONLY);
+	if (kbd < 0 || ioctl(kbd, EVIOCBIND, fda) != 0 || pipe(go) < 0 || pipe(rdy) < 0) {
+		t_fail("inputsec", "%s", T_ERR);
+		return;
+	}
+	drain(kbd, 300);
+
+	/* group display with root's fd: its session can't be bound, mapped or used */
+	pid = fork();
+	if (pid == 0) {
+		setsid();
+		setgid(DISPGID);
+		setuid(NOBODY);
+		err = 0;
+		if ((fd = open("/dev/kbd", O_RDONLY)) < 0)
+			_exit(2);
+		if (ioctl(fd, EVIOCBIND, fda) == 0 || errno != EACCES)
+			err |= 4;
+		if (mmap(0, fi.fi_size, PROT_READ, MAP_SHARED, fda, 0) != (void *)-1 ||
+		    errno != EACCES)
+			err |= 8;
+		cm.cm_start = 0;
+		cm.cm_count = 2;
+		cm.cm_red = r;
+		cm.cm_green = g;
+		cm.cm_blue = b;
+		if (fi.fi_cmapsize >= 2 && ioctl(fda, FBIOGETCMAP, &cm) == 0)
+			err |= 16;
+		if (ioctl(fda, FBIOSWITCH, 0) == 0 || errno != EPERM)
+			err |= 64;
+		write(rdy[1], "r", 1);
+		if (nextev(fd, &v, 2000))
+			err |= 32;
+		_exit(err);
+	}
+	read(rdy[0], &c, 1);
+	host("key x");
+	t_child("bind_other_refused", pid);
+	t_check("root_reads_own", drain(kbd, 2000) == 2, "root's reader lost its keys");
+
+	/* group display: own session in the back, an unbound reader, console in front */
+	pid = fork();
+	if (pid == 0) {
+		setsid();
+		setgid(DISPGID);
+		setuid(NOBODY);
+		err = 0;
+		fd = fbopen();
+		if (fd < 0 || (id = acquire(fd, 0, "inputsec")) <= 0)
+			_exit(2);
+		kb = open("/dev/kbd", O_RDONLY | O_NONBLOCK);
+		ub = open("/dev/kbd", O_RDONLY | O_NONBLOCK);
+		if (kb < 0 || ub < 0 || ioctl(kb, EVIOCBIND, fd) != 0)
+			_exit(3);
+		write(rdy[1], "r", 1);
+		read(go[0], &c, 1);
+		if (read(kb, &v, sizeof v) >= 0 || errno != EAGAIN)
+			err |= 4;
+		if (read(ub, &v, sizeof v) >= 0 || errno != EINVAL)
+			err |= 8;
+		_exit(err);
+	}
+	read(rdy[0], &c, 1);
+	host("key y");
+	err = ioctl(fda, FBIOSWITCH, 0) == 0 && waitfront(0L, 5);
+	host("key shift");
+	err = err && ioctl(fda, FBIOSWITCH, ida) == 0 && front() == ida;
+	write(go[1], "g", 1);
+	t_child("background_unbound_nothing", pid);
+	t_check("console_round", err, "front %ld", front());
+	drain(kbd, 300);
+
+	/* group display at the console: its own front session reads */
+	pid = fork();
+	if (pid == 0) {
+		setgid(DISPGID);
+		setuid(NOBODY);
+		err = 0;
+		fd = fbopen();
+		kb = open("/dev/kbd", O_RDONLY);
+		if (fd < 0 || kb < 0 || (id = acquire(fd, 1, "inputsec")) <= 0 ||
+		    ioctl(kb, EVIOCBIND, fd) != 0)
+			_exit(2);
+		write(rdy[1], "r", 1);
+		if (!nextev(kb, &v, 3000) || v.ie_type != IE_KEY || v.ie_code != 0x06)
+			err |= 4;
+		if (ioctl(fd, FBIOSWITCH, ida) != 0)
+			err |= 8;
+		_exit(err);
+	}
+	read(rdy[0], &c, 1);
+	host("key z");
+	t_child("own_front_reads", pid);
+	t_check("own_front_back", waitfront(ida, 5) && drain(kbd, 300) == 0, "front %ld", front());
+	close(go[0]);
+	close(go[1]);
+	close(rdy[0]);
+	close(rdy[1]);
+	close(kbd);
+}
+
 /* dstest in front, kill -9: the console comes back with its text */
 static void
 t_kill()
@@ -789,6 +917,7 @@ main()
 	if (fba != 0 && fba != (unsigned char *)-1) {
 		t_input(fd, ida, fba);
 		t_perm(ida);
+		t_inputsec(fd, ida);
 		close(fd);
 		t_check("close_mapped_kept", front() == ida, "front %ld after close", front());
 		munmap(fba, fi.fi_size);

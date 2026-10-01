@@ -156,6 +156,8 @@ struct cred *cr;
 
 	if (s == 0 || s->s_dead)
 		return ENODEV;
+	if (!ds_owns(s))
+		return EACCES;
 	if ((flags & MAP_TYPE) != MAP_SHARED)
 		return EINVAL;
 	if (off < 0 || (off & DS_PGOFF) || rlen == 0 || rlen < len ||
