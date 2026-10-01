@@ -635,6 +635,87 @@ aux_setitimer(ap, a, rv, r)
 }
 
 /*
+ * alarm(n) on its own callout: the stock alarm counts whole seconds and
+ * fires up to a second early.  n * HZ + 1 ticks is never early.  Without
+ * a free callout the stock alarm gets n + 1 s: late, never early.
+ */
+static void
+alexpire(gp)
+	struct guest_proc *gp;
+{
+	psignal(gp->gp_proc, SIGALRM);
+	AUXP(gp)->ap_alid = 0;
+	aux_nit--;
+}
+
+/* stop ap's alarm at splhi; its whole seconds left, rounded up */
+static long
+alstop(ap)
+	struct aux_proc *ap;
+{
+	long left;
+
+	if (ap->ap_alid == 0)
+		return 0;
+	untimeout(ap->ap_alid);
+	ap->ap_alid = 0;
+	aux_nit--;
+	left = ap->ap_alexp - lbolt - 1;	/* less the tick added at arming */
+	return left <= 0 ? 1 : (left + HZ - 1) / HZ;
+}
+
+/* at exit, or at exec of a native image: the stock alarm takes the rest plus 1 s */
+void
+aux_alstop(ap, native)
+	struct aux_proc *ap;
+	int native;
+{
+	long a[1];
+	rval_t rv;
+	int s = splhi_();
+
+	a[0] = alstop(ap);
+	splx_(s);
+	if (native && a[0]) {
+		a[0]++;
+		(void)(*sysent[27].sy_call)(a, &rv);	/* mid-exec: keep u_syscall */
+	}
+}
+
+int
+aux_alarm(ap, a, rv, r)
+	struct aux_proc *ap;
+	long *a;
+	rval_t *rv;
+	char *r;
+{
+	u_long n = a[0];
+	long z[1], old;
+	int s, id;
+
+	z[0] = 0;
+	(void)aux_amix(27, z, rv);	/* a stock alarm from before the exec */
+	old = rv->r_val1;
+	s = splhi_();
+	z[0] = alstop(ap);
+	if (z[0] > old)
+		old = z[0];
+	if (n && n <= 0x7fffffff / HZ - 1 && aux_nit < v.v_call / 4 &&
+	    (id = ttimeout(alexpire, (caddr_t)GUESTP(u.u_procp), (long)n * HZ + 1)) != -1) {
+		aux_nit++;
+		ap->ap_alexp = lbolt + n * HZ + 1;
+		ap->ap_alid = id;
+	}
+	splx_(s);
+	if (n && ap->ap_alid == 0) {
+		z[0] = n < 0xffffffff ? n + 1 : n;
+		(void)aux_amix(27, z, rv);
+	}
+	rv->r_val1 = old;
+	return 0;
+}
+
+/*
  * setreuid(ruid, euid), setregid(rgid, egid): BSD rules, -1 keeps.  The
  * saved id follows the new effective one when the real id is given or
  * the effective one leaves it, so setreuid(r, r) drops privilege for good.

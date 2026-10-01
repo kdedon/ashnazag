@@ -192,18 +192,34 @@ sh kernel/mac/diskroot/pkg/mkpkgimage.sh -p DIR WORK [kernel.elf [out.img]]
 
 ## The Mac environment
 
-`q800-mac.img` is the X disk image plus A/UX 3.1's Mac environment (System 7 and the Finder). Log in as `root` and type:
+`q800-mac.img` is the X disk image plus A/UX 3.1's Mac environment as A/UX installs it: `/mac` (System Folder with its extensions, control panels and Apple menu items, CommandShell, TeachText, MacX, the Commando tools), the Finder's folders at `/` (Applications, Documentation, Shared Data) and `systemfolder`. Log in as `root` and type:
 
 ```sh
 startmac
 ```
 
-The Finder desktop appears in about two minutes.  Ctrl-Option-Command-0 shows the console, Ctrl-Option-Command-1 the Mac again.  Special > Logout quits back to the shell.  The kernel's `User BUS ERROR` notices while it starts are expected.
+The Finder desktop appears in about a minute; the image carries the Finder's desktop database, so there is no rebuild.  Ctrl-Option-Command-0 shows the console, Ctrl-Option-Command-1 the Mac again.  Special > Logout quits back to the shell.  Faults the Mac handles itself print nothing; `macdiag` counts them (`quiet`).
 
-The guest modules are registered at run level 2 (`/etc/rc2.d/S05aux`), which also starts the File ID daemon (`/etc/aux/fidd`).  root's System Folder is `/mac/sys/Sys7`, other users (group `display`) get a copy in `$HOME/System Folder`; the Mac's PRAM is kept in `/etc/aux/pram`.
+The guest modules are registered at run level 2 (`/etc/rc2.d/S05aux`), which also starts the File ID daemon (`/etc/aux/fidd`).  root's System Folder is `/mac/sys/System Folder`; other users (group `display`) get `$HOME/System Folder` from `systemfolder`, as on A/UX; the Mac's PRAM is kept in `/etc/aux/pram`.
 
-Rebuild (needs the A/UX root in `tests/aux/auxroot`, the Quadra 700 ROM beside the repository, and the inputs of `x11/mkimage.sh`; the image goes to `$X11W/q800-mac.img`, default `images/work/x11`):
+The Mac reports the model that fits the host and the ROM (a Quadra 800 on a Quadra 800) and gets a quarter of physical memory, 8 to 32 MB, as free swap allows.  `/etc/aux/macenv.conf` or the environment of `startmac` may set `TBMEMORY` (e.g. `16M`) and, for root, `MACMODEL` (a Gestalt machine ID, e.g. `22` for a Quadra 700).
+
+Rebuild (needs the A/UX root in `tests/aux/auxroot`, the Quadra 700 ROM beside the repository, and the inputs of `x11/mkimage.sh`; the image goes to `$X11W/q800-mac.img`, default `images/work/x11`).  The last step boots the image once in QEMU with the Quadra 800 ROM to make the desktop database (`mkdesktop.py`, a few minutes; `DESKTOP=0` skips it):
 
 ```sh
 sh images/macenv/mkmacimage.sh [kernel.elf [out.img]]
 ```
+
+## The TOS container
+
+The same image runs Atari TOS as an AMIX process. Log in as `root` and type:
+
+```sh
+starttos
+```
+
+EmuTOS 1.4 (GPL-2) starts in its own display session; the desktop appears in a few seconds. Ctrl-Option-Command plus a digit switches display sessions: 0 is the console, 1 the first session started. End EmuTOS from the console with `kill`. Drive C: is `/etc/tos/c.img`, a 1 MB FAT image (`-d FILE` for another).
+
+`starttos -rom FILE` runs your own TOS ROM image instead. The image never contains one.
+
+`/etc/rc2.d/S05aux` registers the `tosguest` module (`/dev/tos`, major 56, group `display`) with the A/UX modules. Rebuild with `images/macenv/mkmacimage.sh`; `images/tosenv/mktos.sh` makes the container's files.

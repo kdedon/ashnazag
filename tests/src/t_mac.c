@@ -21,6 +21,10 @@
  *     console back, -1 the Mac, and its exit the console.
  * Skips without guest support, without the uinter module or without
  * the A/UX and ROM files, which are local only.
+ *
+ * Built with SYS76 (t_mac76.c), the startmac run uses the Mac OS 7.6.1
+ * System Folder /mac/sys/S761 as a Quadra 800 (box flag 29) and checks
+ * 'boot' 3's second _AUXDispatch(36) (it makes /tmp/.mac/unix).
  */
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -50,10 +54,18 @@ extern int getksym();
 #define	LOGMAX	65536
 #define	TBUF	8192		/* AUX_TBUF */
 #define	PRAMF	"/etc/aux/pram"
+#define	OTHERUID "101"		/* restart's user, group display */
 
+#ifdef SYS76
+#define	SYSDIR	"/mac/sys/S761"
+#define	TBMEM	"TBMEMORY=16M"
+#else
+#define	SYSDIR	"/mac/sys/Sys7"
+#define	TBMEM	"TBMEMORY=8M"
+#endif
 static char *macenv[] = {
 	"PATH=/aux/bin:/usr/bin:/sbin", "HOME=/tmp", "TBVERBOSE=1", "TBWARN=1",
-	"TBSYSTEM=/mac/sys/Sys7", "TBMEMORY=8M", 0
+	"TBSYSTEM=" SYSDIR, TBMEM, 0
 };
 static char out[8192];
 static char klog[LOGMAX + 1];
@@ -351,9 +363,6 @@ int fd, secs;
 		pf.revents = 0;
 		if (macid == 0 && (macid = front()) > 0) {
 			mact = t_now_ms();
-			/* what follows would overrun the trace ring */
-			setsym("aux_trace", 0L);
-			setsym("uinter_trace", 0L);
 		}
 		else if (macid < 0)
 			macid = 0;
@@ -492,19 +501,32 @@ int h, v;
 	return 0;
 }
 
-/* n clicks held hold ms, gap ms apart: mouseDowns the Mac took */
+/*
+ * n clicks held hold ms, gap ms apart: mouseDowns the Mac took.  The
+ * event queue keeps 32 events and drops the oldest, as the Mac's, so
+ * the clicks go CHUNK at a time, each chunk taken before the next.
+ */
+#define	CHUNK	10
+
 static long
 clicks(n, hold, gap)
 int n, hold, gap;
 {
 	char r[40];
-	long d0 = getsym("uin_ndown");
-	int i;
+	long d0 = getsym("uin_ndown"), e0, g0;
+	int i, k, m;
 
-	sprintf(r, "clicks %d %d %d", n, hold, gap);
-	host(r);
-	for (i = 0; i < 20 && getsym("uin_ndown") - d0 < n; i++)
-		pause_ms(100L);
+	for (k = 0; k < n; k += m) {
+		m = n - k < CHUNK ? n - k : CHUNK;
+		e0 = getsym("uin_nev");
+		g0 = getsym("uin_nget");
+		sprintf(r, "clicks %d %d %d", m, hold, gap);
+		host(r);
+		/* until all are down or, after 1 s, all that came are taken */
+		for (i = 0; i < 200 && getsym("uin_ndown") - d0 < k + m &&
+		    (i < 10 || getsym("uin_nget") - g0 < getsym("uin_nev") - e0); i++)
+			pause_ms(100L);
+	}
 	return getsym("uin_ndown") - d0;
 }
 
@@ -546,7 +568,7 @@ desk()
 {
 	unsigned char *lm;
 	char *r;
-	long m0, m1, want, n, dbl = -1;
+	long m0, m1, want, n, dbl = -1, l0;
 	int id, w0 = 0, w1 = 0, chk = 0;
 
 	r = host("mac mac_after 220 120 580 230");
@@ -579,8 +601,10 @@ desk()
 	if (r)
 		sscanf(r, "checker %d", &w0);
 	t_check("disk_icon_reached", moveto(scrw - 40, 48), "mouse %#lx", getsym("uin_mouse"));
+	l0 = getsym("uin_nlost");
 	n = clicks(20, 30, 100);
-	t_check("clicks_fast", n == 20, "20 clicks held 30 ms: %ld mouseDowns", n);
+	t_check("clicks_fast", n == 20, "20 clicks held 30 ms: %ld mouseDowns, %ld events lost",
+	    n, getsym("uin_nlost") - l0);
 	/* the mouse reports every 20 ms: shorter clicks may not reach the kernel */
 	t_info("clicks_short", "20 clicks held 8 ms: %ld mouseDowns", clicks(20, 8, 60));
 	menus();
@@ -703,8 +727,10 @@ startmac()
 	pid_t pid;
 
 	t_rearm(240);
+	/* opens and commands from here on; the ring keeps the first 8 KB */
+	setsym("aux_tpos", 0L);
 	setsym("uinter_trace", 1L);
-	setsym("aux_trace", 4L);
+	setsym("aux_trace", 4L | 16L);
 	npriv0 = getsym("guest_npriv");
 	if (pipe(p) < 0)
 		return;
@@ -724,8 +750,10 @@ startmac()
 	printf("INFO mac.startmac_pid %d\n", (int)pid);
 	fflush(stdout);
 	relay(p[0], 90);
+#ifndef SYS76
 	if (macid)
 		screen();
+#endif
 	kill(-pid, SIGKILL);
 	close(p[0]);
 	st = 0;
@@ -744,6 +772,8 @@ startmac()
 	if (macid > 0)
 		t_check("console_after_exit", waitfront(0L, 5), "front %ld", front());
 	t_info("privileged_emulated", "%ld", npriv - npriv0);
+	/* killed: Mac RAM goes with it, or it blocks the next startmac */
+	t_check("mac_ram_freed", shmget(TLOW, 0, 0) < 0, "'tLOW' left after SIGKILL");
 	if ((id = shmget(TLOW, 0, 0)) >= 0)
 		shmctl(id, IPC_RMID, (struct shmid_ds *)0);
 	if (!t_check("trace", readtrace() == 0, "no kernel trace ring"))
@@ -766,8 +796,8 @@ startmac()
 	sprintf(pat, "%d open ", (int)pid);
 	for (s = q1 ? q1 : klog + klen; (s = strstr(s, pat)) != 0; s++) {
 		z = strchr(s + strlen(pat), ' ');
-		if (z && z - 6 >= s && strncmp(z - 6, "System", 6) == 0 && z[-7] == '/' &&
-		    atoi(z + 1) >= 0) {
+		if (z && z - 6 >= s && strncmp(z - 6, "System", 6) == 0 &&
+		    (z[-7] == '/' || (z[-7] == '%' && z[-8] == '/')) && atoi(z + 1) >= 0) {
 			o = s;
 			break;
 		}
@@ -777,7 +807,10 @@ startmac()
 		t_info("system_open", "%.*s", (int)(strchr(o, '\n') - o), o);
 }
 
-/* PRAM kept for the next session; startmac again: the desktop, no alert */
+/*
+ * PRAM kept for the next session; startmac again, as another user
+ * (group display) after the killed one: the desktop, no alert.
+ */
 static void
 restart()
 {
@@ -790,6 +823,8 @@ restart()
 	t_check("pram_saved", stat("/etc/aux/pram", &sb) == 0 && sb.st_size == 256,
 	    "/etc/aux/pram: %s", T_ERR);
 	t_rearm(240);
+	/* the user's System Folder and console, as after a login */
+	system("/usr/bin/chown -R " OTHERUID " " SYSDIR " /dev/console");
 	if (pipe(p) < 0)
 		return;
 	if ((pid = fork()) == 0) {
@@ -800,7 +835,8 @@ restart()
 		close(p[1]);
 		for (fd = 3; fd < 20; fd++)
 			close(fd);
-		execve(av[0], av, macenv);
+		if (setgid(25) == 0 && setuid(atoi(OTHERUID)) == 0)
+			execve(av[0], av, macenv);
 		_exit(127);
 	}
 	close(p[1]);
@@ -826,8 +862,10 @@ restart()
 		st = -1;
 	t_info("restart_quit_status", "%#x", st);
 	close(p[0]);
+	system("/usr/bin/chown -R 0 " SYSDIR " /dev/console");
 	t_check("restart_console", waitfront(0L, 5), "front %ld", front());
 }
+
 
 int
 main()
@@ -837,7 +875,11 @@ main()
 	struct stat sb;
 	int e, mj = UIMAJ;
 
+#ifdef SYS76
+	t_init("mac76", 330);
+#else
 	t_init("mac", 300);
+#endif
 	if (t_kmem("guest_loading") == -1) {
 		t_skip("all", "kernel has no guest support");
 		return t_done();
@@ -859,20 +901,36 @@ main()
 	if (!t_check("register_cdev", modadm(MOD_TY_CDEV, MOD_C_MREG, &reg) == 0,
 	    "modadm: %s", T_ERR))
 		return t_done();
+#ifndef SYS76
 	native();
 	if (stat("/aux/bin/macabi", &sb) == 0)
 		macabi();
 	else
 		t_skip("macabi", "no macabi on this root");
+#endif
 	if (stat("/mac/bin/startmac", &sb) < 0 || stat("/etc/aux/rom", &sb) < 0 ||
-	    stat("/mac/sys/Sys7/System", &sb) < 0)
+	    stat(SYSDIR "/System", &sb) < 0)
 		t_skip("startmac", "no startmac, ROM or System file on this root");
 	else {
 		fidd();
 		deskfolder();
+#ifdef SYS76
+		/* made by _AUXDispatch(36, 0); t_mac's run leaves one */
+		system("/usr/bin/rm -rf /tmp/.mac");
+		/* the module loaded, then a Quadra 800 (no ProductInfo of its own) */
+		e = open("/dev/uinter0", O_RDWR);
+		t_check("boxflag", setsym("uinter_boxflag", 29L) == 0, "no uinter_boxflag");
+		startmac();
+		t_check("auxdispatch_36", stat("/tmp/.mac/unix", &sb) == 0,
+		    "no /tmp/.mac/unix from 'boot' 3's _AUXDispatch(36, 0)");
+		setsym("uinter_boxflag", -1L);
+		if (e >= 0)
+			close(e);
+#else
 		startmac();
 		if (macid > 0)
 			restart();
+#endif
 		fiddlog();
 	}
 	return t_done();

@@ -4,7 +4,7 @@
  * The launcher maps ST-RAM at 0, the ROM and the cartridge image, then
  * TOSIOC_ENTER makes it the guest; it jumps to the ROM's reset code.
  * The display process of the container reads the video state with
- * TOSIOC_VIDEO and posts IKBD bytes with TOSIOC_INPUT.
+ * TOSIOC_VIDEO and posts keys and mouse motion with TOSIOC_INPUT.
  */
 
 #ifndef _TOSIO_H
@@ -35,6 +35,8 @@ struct tosowner {
 struct tosinput {
 	int		ti_n;
 	unsigned char	ti_b[60];	/* IKBD bytes */
+	short		ti_dx, ti_dy;	/* mouse motion since the last post */
+	short		ti_btn;		/* mouse buttons: 1 right, 2 left */
 };
 
 struct tosvideo {

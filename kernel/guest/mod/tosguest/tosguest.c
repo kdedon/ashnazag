@@ -472,7 +472,7 @@ tosioctl(dev, cmd, arg, mode, cr, rvp)
 			return EFAULT;
 		if (ti.ti_n < 0 || ti.ti_n > sizeof ti.ti_b)
 			return EINVAL;
-		tos_input(ti.ti_b, ti.ti_n);
+		tos_input(&ti);
 		return 0;
 	case TOSIOC_VIDEO:
 		tv = (struct tosvideo *)kmem_zalloc(sizeof *tv, KM_SLEEP);

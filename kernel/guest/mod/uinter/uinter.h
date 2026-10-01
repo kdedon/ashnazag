@@ -16,6 +16,8 @@
 #define	UI_LOWSIZE	0x3000		/* UI_COPY_OUT range */
 #define	UI_PRODSIZE	0x34		/* ProductInfo record */
 #define	UI_ROMBASE	0x40800000	/* where the Mac side maps the ROM */
+#define	UI_PMSTACK	0x3fff0000	/* Process Manager's own stack */
+#define	UI_PMSTKSZ	0x10000
 
 /* ioctl encoding (BSD) */
 #define	UIOC_NUM(c)	((c) & 0xff)
@@ -56,6 +58,7 @@ struct uirom {
 	long		r_prodoff;	/* ProductInfo in the image, -1 = none */
 	unsigned char	r_prod[UI_PRODSIZE];
 	unsigned char	*r_low;		/* kernel low memory, UI_LOWSIZE */
+	int		r_box;		/* box flag asked for, -1: pickbox */
 };
 
 extern struct uirom ui_rom;
@@ -80,8 +83,10 @@ extern int ui_getosevent(), ui_postevent(), ui_getkeys();
 #define	IN_CUR		2	/* UI_CURSOR */
 extern char uinter_rom[];
 extern int uinter_boxflag;
+extern char uinter_model[];
 extern int ui_romload();
-extern void ui_romfree();
+extern void ui_romfree(), ui_romrel();
+extern int ui_rombusy();
 extern int ui_rommap(), ui_romunmap();
 extern int valid_usr_range();
 

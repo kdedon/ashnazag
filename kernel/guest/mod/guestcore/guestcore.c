@@ -13,7 +13,7 @@
 
 #include "kinc.h"
 
-extern int guest_fsig();
+extern int guest_fsig(), guest_unote();
 
 static struct guest_profile *gc_profiles;
 static int gc_nproc;
@@ -92,8 +92,10 @@ gc_exec(p)
 	struct guest_profile *pf = guest_loading == p ? guest_loadprof : 0;
 	struct guest_proc *gp;
 
-	if (p->p_evpdp && GUESTP(p)->gp_prof != pf)
+	if (p->p_evpdp && GUESTP(p)->gp_prof != pf) {
+		GUESTP(p)->gp_flags |= GPF_EXEC;
 		gc_free(p);
+	}
 	if (pf) {
 		if (!p->p_evpdp)
 			(void)gc_alloc(p, pf);
@@ -194,6 +196,7 @@ struct mod_hook_data guestcore_hookdata[] = {
 	{ "guest_sendsig",	gc_sendsig },
 	{ "guest_vur",		gc_vur },
 	{ "guest_fsig",		guest_fsig },
+	{ "guest_unote",	guest_unote },
 	{ 0, 0 }
 };
 

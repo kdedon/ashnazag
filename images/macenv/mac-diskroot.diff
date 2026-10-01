@@ -4,8 +4,8 @@
  # date(1) runs setclk -s after stime(2); the kernel keeps the RTC
  f /usr/amiga/bin/setclk 755 0 3 etc/setclk
  
-+# A/UX Mac environment: guest modules registered at run level 2, the
-+# File ID daemon, startmac, System and Finder in /mac/sys/Sys7
++# A/UX Mac environment and TOS container: guest modules registered at run level 2, the
++# File ID daemon, startmac and A/UX's Mac files
 +d /usr/aux	755 0 3
 +d /usr/aux/lib	755 0 3
 +d /usr/aux/lib/mod.d 755 0 3
@@ -13,27 +13,27 @@
 +f /usr/aux/lib/mod.d/auxcore	644 0 3 macpkg/mod.d/auxcore
 +f /usr/aux/lib/mod.d/auxexec	644 0 3 macpkg/mod.d/auxexec
 +f /usr/aux/lib/mod.d/uinter	644 0 3 macpkg/mod.d/uinter
++f /usr/aux/lib/mod.d/tosguest 644 0 3 macpkg/mod.d/tosguest
 +f /usr/aux/lib/auxreg	755 0 3 macpkg/auxreg
 +f /etc/rc2.d/S05aux	744 0 3 macpkg/S05aux
 +c /dev/uinter0	660 0 25 54 0 	# major as in S05aux
++c /dev/tos	660 0 25 56 0
 +d /shlib	755 0 3
 +f /shlib/libc1_s	755 0 3 macpkg/libc1_s
 +f /shlib/libmac1_s	755 0 3 macpkg/libmac1_s
 +d /etc/aux	755 0 3
 +f /etc/aux/fidd	755 0 3 macpkg/fidd
 +f /etc/aux/rom	444 0 3 macpkg/rom
-+d /mac		755 0 3
-+d /mac/bin	755 0 3
-+f /mac/bin/startmac 755 0 3 macpkg/startmac
-+d /mac/lib	755 0 3
-+d /mac/lib/Patches 755 0 3
-+f /mac/lib/Patches/Patch.067C 644 0 3 macpkg/Patch.067C
-+d /mac/sys	755 0 3
-+d /mac/sys/Sys7	755 0 3
-+f /mac/sys/Sys7/System 644 0 3 macpkg/System
-+f /mac/sys/Sys7/Finder 644 0 3 macpkg/Finder
++# A/UX's Mac files: /mac, the Finder's folders at /, systemfolder
++a macpkg/mac.cpio
 +f /usr/bin/startmac 755 0 3 macpkg/startmac.sh
 +f /usr/bin/macdiag 750 0 3 macpkg/macdiag
++# TOS container: EmuTOS, the drive C: image and its cartridge
++d /etc/tos	755 0 3
++f /etc/tos/emutos.img 444 0 3 macpkg/tos/emutos.img
++f /etc/tos/tosml.img 444 0 3 macpkg/tos/tosml.img
++f /etc/tos/c.img 664 0 25 macpkg/tos/c.img
++f /usr/bin/starttos 755 0 3 macpkg/tos/starttos
 +c /dev/kmem	640 0 3 3 1	# macdiag relies on root-only kernel memory
 +
  # no Amiga port monitors (screens, serial boards) or Ethernet board

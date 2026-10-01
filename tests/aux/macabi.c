@@ -345,11 +345,14 @@ t_setup()
 	b[0] = 0xcb3;
 	b[1] = 1;
 	ioc(UI_COPY_OUT, b);
-	check("prodinfo", ioc(UI_GET_PRODINFO, pi) == 0 && pi[0x12] == *(unsigned char *)0xcb3 &&
+	/* a Quadra 800 (29) runs the Quadra 700 record */
+	check("prodinfo", ioc(UI_GET_PRODINFO, pi) == 0 &&
+	    (pi[0x12] == *(unsigned char *)0xcb3 ||
+	    (*(unsigned char *)0xcb3 == 29 && pi[0x12] == 16)) &&
 	    LOW(0xdd8) - ROM + 0x34 <= *(long *)(ROM + 0x40) &&
 	    *(unsigned char *)(LOW(0xdd8) + 0x12) == pi[0x12],
 	    "errno, id", errno, pi[0x12]);
-	info("boxflag", (long)pi[0x12]);
+	info("boxflag", (long)*(unsigned char *)0xcb3);
 	b[0] = (long)s;
 	b[1] = (4L << 16) | 0x10;
 	ioc(UI_READPRAM, b);

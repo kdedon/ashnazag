@@ -20,7 +20,7 @@ extern int aux_sigvec(), aux_sigblock(), aux_sigsetmask(), aux_sigpause();
 extern int aux_sigstack();
 extern int aux_read(), aux_select(), aux_waitpid(), aux_flock();
 extern int aux_statfs(), aux_fstatfs(), aux_truncate(), aux_ftruncate();
-extern int aux_utimes(), aux_getitimer(), aux_setitimer();
+extern int aux_utimes(), aux_getitimer(), aux_setitimer(), aux_alarm();
 extern int aux_setreuid(), aux_setregid(), aux_shmsys(), aux_sigpending();
 extern int aux_fidop(), aux_csop(), aux_setxinfo(), aux_fsetxinfo();
 
@@ -52,7 +52,7 @@ struct auxent auxcalls[] = {
 	{ 24, 0, S, 24, 0 },		/* getuid */
 	{ 25, 1, S, 25, 0 },		/* stime */
 	{ 26, 4, T, 0, 0 },		/* ptrace */
-	{ 27, 1, S, 27, 0 },		/* alarm */
+	{ 27, 1, S, 0, aux_alarm },
 	{ 29, 0, S, 29, 0 },		/* pause */
 	{ 30, 2, S, 30, 0 },		/* utime */
 	{ 33, 2, S, 33, 0 },		/* access */

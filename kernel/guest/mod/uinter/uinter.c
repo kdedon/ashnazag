@@ -29,6 +29,9 @@
 extern int nodev(), ttimeout(), untimeout();
 extern void (*aux_macdetach)(), (*aux_uitick)();
 extern struct shminfo shminfo;
+extern struct shmid_ds shmem[];
+extern int shmsys();
+extern char ui_shmdssz[sizeof (struct shmid_ds) == 112 ? 1 : -1];	/* the kernel's */
 
 struct uilayer ui;
 static int ui_nopen;
@@ -176,6 +179,33 @@ pramout()
 }
 
 /*
+ * Mac RAM (shm key 'tLOW') that p made goes away with its last
+ * attachment, so a killed startmac leaves nothing that blocks the
+ * next one.  A live session's other attachers keep it until they go.
+ */
+static void
+ui_rmram(p)
+	struct proc *p;
+{
+	struct { int op, id, cmd; caddr_t buf; } a;
+	struct shmid_ds *sp;
+	long rv[2];
+	int i;
+
+	for (i = 0; i < shminfo.shmmni; i++) {
+		sp = &shmem[i];
+		if (!(sp->shm_perm.mode & IPC_ALLOC) || sp->shm_perm.key != 0x744c4f57 ||
+		    sp->shm_cpid != p->p_pid)
+			continue;
+		a.op = 1;		/* shmctl */
+		a.id = sp->shm_perm.seq * shminfo.shmmni + i;
+		a.cmd = IPC_RMID;
+		a.buf = 0;
+		(void)shmsys(&a, rv);
+	}
+}
+
+/*
  * The task or the ui page's holder leaves (exit, exec): the ui page is
  * free; for the task, no more ticks or reflection and the layer is free
  * for the next startmac.  Its mappings go with the address space.
@@ -197,6 +227,7 @@ uidetach(gp)
 	gp->gp_flags &= ~(GPF_ALINE | GPF_PRIV | GPF_SPIN | GPF_VPEND | GPF_FAULT);
 	AUXP(gp)->ap_mac = 0;
 	pramout();
+	ui_rmram(gp->gp_proc);
 	ui.l_state = LS_EMPTY;
 	ui.l_proc = 0;
 	ui.l_gp = 0;
@@ -329,18 +360,22 @@ uisetup(gp, cmd, arg, b, rvp)
 	case 32:			/* UI_COPY_OUT {start, count} */
 		a = G32(b);
 		n = G32(b + 4);
-		if ((e = ui_romload()) != 0)
-			return e;
 		if (a < 0 || n < 0 || a > UI_LOWSIZE || n > UI_LOWSIZE - a)
 			return EINVAL;
-		return copyout((caddr_t)ui_rom.r_low + a, (caddr_t)a, n) ? EFAULT : 0;
+		if ((e = ui_romload()) != 0)
+			return e;
+		e = copyout((caddr_t)ui_rom.r_low + a, (caddr_t)a, n) ? EFAULT : 0;
+		ui_romrel();
+		return e;
 	case 67:			/* UI_GET_PRODINFO(ptr) */
 		if ((e = ui_romload()) != 0)
 			return e;
 		if (ui_rom.r_prodoff < 0)
-			return EINVAL;
-		return copyout((caddr_t)ui_rom.r_prod, (caddr_t)arg, UI_PRODSIZE) ?
-		    EFAULT : 0;
+			e = EINVAL;
+		else if (copyout((caddr_t)ui_rom.r_prod, (caddr_t)arg, UI_PRODSIZE))
+			e = EFAULT;
+		ui_romrel();
+		return e;
 	}
 	return ENOTTY;
 }
@@ -576,9 +611,9 @@ uiioctl(dev, cmd, arg, mode, cr, rvp)
 static int
 uinter_load()
 {
-	/* Mac RAM (tLOW) is up to 16 MB plus 4 MB */
-	if (shminfo.shmmax < 0x1400000)
-		shminfo.shmmax = 0x1400000;
+	/* Mac RAM (tLOW) is up to 32 MB plus 4 MB */
+	if (shminfo.shmmax < 0x2400000)
+		shminfo.shmmax = 0x2400000;
 	aux_macdetach = uidetach;
 	aux_uitick = ui_update;
 	aux_slotmgr = ui_slotmgr;
@@ -590,7 +625,7 @@ uinter_load()
 static int
 uinter_unload()
 {
-	if (ui.l_state != LS_EMPTY || ui_nopen)
+	if (ui.l_state != LS_EMPTY || ui_nopen || ui_rombusy())
 		return EBUSY;
 	aux_macdetach = 0;
 	aux_uitick = 0;

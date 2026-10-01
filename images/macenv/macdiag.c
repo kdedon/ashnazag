@@ -1,9 +1,9 @@
 /*
  * macdiag -- what the Mac task is doing, in one screen.
  *
- *	macdiag [-w]
+ *	macdiag [-w | -m]
  *
- * -w: again every 2 seconds.  Needs root (/dev/kmem, /proc).
+ * -w: again every 2 seconds.  -m: physical memory in MB.  Needs root (/dev/kmem, /proc).
  */
 #include <stdio.h>
 #include <string.h>
@@ -14,6 +14,7 @@
 #include <sys/types.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
+#include <sys/resource.h>
 #include <sys/signal.h>
 #include <sys/fault.h>
 #include <sys/syscall.h>
@@ -191,6 +192,10 @@ show()
 		    how ? "(stopped)" : "(asleep)", st.pr_flags & PR_ASLEEP ? "in call" : "");
 	else
 		printf("PC: /proc failed\n");
+	if (how >= 0)
+		for (i = 0; i < 16; i++)
+			printf("%c%ld %08lx%s", i < 8 ? 'd' : 'a', i & 7,
+			    (long)st.pr_reg[i], (i & 7) == 7 ? "\n" : " ");
 	for (i = 0; i < 9; i++)
 		g[i] = ui[0] == 2 ? kat(ui[2] + 4 * i) : 0;	/* LS_INUSE */
 	printf("vSR %04lx vVBR %08lx vCACR %08lx gflags %lx\n", g[5] >> 16 & 0xffff,
@@ -207,8 +212,12 @@ show()
 		}
 	printf("%s  last exc sig %ld vec %ld pc %08lx\n", k ? "" : " none",
 	    kl("aux_xsig"), kl("aux_xvec"), kl("aux_xpc"));
-	printf("vec2 fmt7 %ld last pc %08lx ea %08lx\n", kl("guest_nfault7"),
-	    kl("guest_f7pc"), kl("guest_f7ea"));
+	printf("vec2 fmt7 %ld last pc %08lx ea %08lx, quiet %ld\n", kl("guest_nfault7"),
+	    kl("guest_f7pc"), kl("guest_f7ea"), kl("guest_nunote"));
+	printf("ufault %ld pc %08lx fv %08lx ssw %08lx fa %08lx\n", kl("wbu_n"),
+	    kl("wbu_pc"), kl("wbu_fv"), kl("wbu_ssw"), kl("wbu_fa"));
+	printf("xpage %ld last fa %08lx refused %ld\n", kl("x40_ma_n"),
+	    kl("x40_ma_fa"), kl("x40_ma_fail_n"));
 	k = kl("guest_lineapc");
 	printf("A-line %ld last at %08lx, there now %04x\n", kl("guest_nlinea"),
 	    k, uword(fd, k));
@@ -258,15 +267,24 @@ main(argc, argv)
 	char **argv;
 {
 	int w = argc > 1 && strcmp(argv[1], "-w") == 0;
+	struct rlimit rl;
 
 	if (geteuid() != 0) {
 		fprintf(stderr, "macdiag: root only\n");
 		return 1;
 	}
 
+	/* room to attach Mac RAM */
+	rl.rlim_cur = rl.rlim_max = RLIM_INFINITY;
+	(void)setrlimit(RLIMIT_VMEM, &rl);
 	if ((kfd = open("/dev/kmem", O_RDONLY)) < 0) {
 		perror("macdiag: /dev/kmem");
 		return 1;
+	}
+	if (argc > 1 && strcmp(argv[1], "-m") == 0) {
+		/* physical memory, MB */
+		printf("%ld\n", kl("physmem") / (1024L * 1024 / sysconf(_SC_PAGESIZE)));
+		return 0;
 	}
 	for (;;) {
 		show();

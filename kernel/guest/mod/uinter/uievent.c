@@ -75,7 +75,7 @@ static int cur_on;			/* cur_sv holds what is under it */
 static unsigned char cur_sv[16 * 16 * 4];
 
 long	uin_mouse;		/* v << 16 | h */
-long	uin_nev, uin_nget, uin_nkey, uin_nbtn, uin_ncur, uin_ndown;
+long	uin_nev, uin_nget, uin_nkey, uin_nbtn, uin_ncur, uin_ndown, uin_nlost;
 
 extern timestruc_t hrestime;
 extern int ui_scrgeom();
@@ -128,6 +128,7 @@ ev_add(what, msg, when, where, mods)
 	if (ev_n == NEV) {
 		ev_first = (ev_first + 1) % NEV;
 		ev_n--;
+		uin_nlost++;
 	}
 	e = &ev_q[(ev_first + ev_n++) % NEV];
 	e->what = what;

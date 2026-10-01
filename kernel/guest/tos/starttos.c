@@ -1,11 +1,12 @@
 /*
  * starttos -- run Atari TOS as this process: EmuTOS, or the user's ROM image.
  *
- *	starttos [-rom file] [-c cartridge] [-d disk] [-m megabytes] [-M] [-v]
+ *	starttos [-rom file] [-c cartridge] [-d disk] [-u dir | -U] [-m megabytes] [-M] [-v]
  *
  * ST-RAM is a shared mapping at 0, the ROM a read-only copy at its own
  * base, the machine-layer cartridge at $FA0000 with drive C: (a FAT
- * image, 512-byte sectors).  A child process owns the display session:
+ * image, 512-byte sectors) and U: (a host directory, default "/", used
+ * with the caller's permissions).  A child process owns the display session:
  * it converts the TOS screen to the frame buffer and passes keyboard
  * and mouse to the IKBD.  The parent enters the ROM's reset code.
  */
@@ -21,6 +22,7 @@
 #include <errno.h>
 #include <signal.h>
 #include <poll.h>
+#include <time.h>
 #include "dsio.h"
 #include "tosio.h"
 
@@ -30,6 +32,7 @@
 static char *rom = "/etc/tos/emutos.img";	/* the free TOS; -rom for the user's */
 static char *cart = "/etc/tos/tosml.img";
 static char *disk = "/etc/tos/c.img";
+static char *udir = "/";
 static long ramsize = 4L << 20;
 static int mono, verbose;
 static int tfd;
@@ -151,6 +154,24 @@ drivec()
 	put32((unsigned long)CART + 0x40, (unsigned long)fd);
 }
 
+/* drive U:: its directory and the time zone into the cartridge */
+static void
+driveu()
+{
+	char path[1024];
+	time_t now = time((time_t *)0);
+	struct tm *tm = localtime(&now);
+
+	if (udir == 0)
+		return;
+	if (realpath(udir, path) == 0 || strlen(path) > 255) {
+		fprintf(stderr, "starttos: %s: no drive U:\n", udir);
+		return;
+	}
+	strcpy((char *)CART + 0x80, path);
+	put32((unsigned long)CART + 0x64, (unsigned long)-(tm->tm_isdst > 0 ? altzone : timezone));
+}
+
 static void
 nothing(sig)
 	int sig;
@@ -173,18 +194,20 @@ main(argc, argv)
 	for (c = 1; c < argc; c++)
 		if (strcmp(argv[c], "-rom") == 0)
 			argv[c] = "-r";
-		else if (argv[c][0] == '-' && strchr("rcdm", argv[c][1]) && argv[c][2] == 0)
+		else if (argv[c][0] == '-' && strchr("rcdmu", argv[c][1]) && argv[c][2] == 0)
 			c++;		/* skip the option's argument */
-	while ((c = getopt(argc, argv, "r:c:d:m:Mv")) != -1)
+	while ((c = getopt(argc, argv, "r:c:d:u:Um:Mv")) != -1)
 		switch (c) {
 		case 'r': rom = optarg; break;
 		case 'c': cart = optarg; break;
 		case 'd': disk = optarg; break;
+		case 'u': udir = optarg; break;
+		case 'U': udir = 0; break;
 		case 'm': ramsize = atol(optarg) << 20; break;
 		case 'M': mono = 1; break;
 		case 'v': verbose = 1; break;
 		default:
-			fprintf(stderr, "usage: starttos [-rom file] [-c cartridge] [-d disk] [-m MB] [-M] [-v]\n");
+			fprintf(stderr, "usage: starttos [-rom file] [-c cartridge] [-d disk] [-u dir | -U] [-m MB] [-M] [-v]\n");
 			return 2;
 		}
 	if (ramsize < (1L << 20) || ramsize > (14L << 20)) {
@@ -217,6 +240,7 @@ main(argc, argv)
 	region((unsigned long)CART, (unsigned long)CARTSZ, 0);
 	(void)readall(cart, (char *)CART, (long)CARTSZ);
 	drivec();
+	driveu();
 
 	/* warm-boot system variables: TOS skips memory sizing */
 	put32(0x420L, 0x752019f3L);		/* memvalid */

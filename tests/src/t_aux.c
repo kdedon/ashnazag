@@ -373,8 +373,8 @@ test_sleep()
 	t0 = t_now_ms();
 	st = run(argv, 20);
 	t = t_now_ms() - t0;
-	/* alarm counts whole seconds: sleep 1 takes 0 to 1 s */
-	t_check("sleep_1", st == 0 && t < 4000, "status %#x, %ld ms, output '%s'",
+	/* the A/UX alarm is never early: sleep 1 takes at least 1 s */
+	t_check("sleep_1", st == 0 && t >= 1000 && t < 4000, "status %#x, %ld ms, output '%s'",
 	    st, t, shown());
 }
 

@@ -202,12 +202,13 @@ In order:
 
 | Range | What | Created by |
 |---|---|---|
-| `0x0` .. memsize (+4 MB if memsize > 8 MB) | **Mac RAM**: shm key `'tLOW'` (`0x744c4f57`), mode `01600` on create (`0600` on attach). Attached with `shmat(id, 1, SHM_RND)` so it lands at 0. Retried in 1 MB steps down to 3 MB | `openSegments` / `shm_attach` |
+| `0x0` .. memsize (+4 MB if memsize > 8 MB) | **Mac RAM**: shm key `'tLOW'` (`0x744c4f57`), mode `01600` on create (`0600` on attach). Attached with `shmat(id, 1, SHM_RND)` so it lands at 0. Retried in 1 MB steps down to 3 MB, so SHMMAX and RLIMIT_VMEM silently cap it (`uinter` raises SHMMAX, the `startmac` wrapper the soft limit) | `openSegments` / `shm_attach` |
 | `0x0`–`0x3FFF` (inside tLOW) | low memory, vectors, trap tables (`$400` OS, `$E00` Toolbox) | filled with `0xFF`, then `doVariables` |
 | `0x3000`–`0x3FFF` | the **ui page**: the process's own tLOW page, locked and shared with the kernel by **Q7** (holds `struct ui_interface`) | `__tb_BuildMachine` |
 | `0x4000`–`0x8e53c` | `Patch.067C` text/data/bss at link addresses (inside tLOW) | `__tb_coff_load` |
 | above `0x8e53c` .. `MemTop` | System heap, application heap (set up by the patch's Memory Manager) | `InitMemMgr` |
 | `0x10000000`– | `startmac` text (`0x100001e8`), data, bss | exec |
+| `0x3FFF0000`–`0x3FFFFFFF` | the Process Manager's stack while it disposes of a process (System `scod` −16468 sets SP `0x3FFFFF00`, HeapEnd `0x3FFF0000` when SP is below `$1EF4`); zero-fill memory | `uinter` at Q5 |
 | `0x40800000` + ROM size | physical ROM mapped directly (default), or a private shm copy (`TBRAM`) | `getROMImage` (Q5) |
 | `0x47e00000`–`0x47ec4000` | `libmac1_s` text / data / bss | exec (shared lib) |
 | `0x47f00000`– | `libc1_s` | exec (shared lib) |

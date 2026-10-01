@@ -117,6 +117,7 @@ putrec(int fd, int type, long *ctl, int clen, char *data, long dlen)
 
 /* next record within secs: its primitive (0 for data), -1 on timeout */
 static int rtype, rflags, rclen;
+static long optlast;		/* optreq's last getrec */
 static long rdlen, *rctl;
 static char *rdata;
 
@@ -338,6 +339,7 @@ optreq(int fd, long flags, long *spec, int n)
 		if ((p = getrec(fd, 10)) == OT_OPTMGMT_ACK || p < 0 ||
 		    (p == OT_ERROR_ACK && rctl[1] == OT_OPTMGMT_REQ))
 			break;
+	optlast = p;
 	return p == OT_OPTMGMT_ACK;
 }
 
@@ -569,10 +571,13 @@ udp_tests(void)
 		t_skip("udp.unitdata", "no loopback on this root");
 	{
 		long spec[] = { OT_INET_UDP, OT_UDP_CHECKSUM, 1, OT_INET_TCP, OT_TCP_NODELAY, 1 };
-		long v;
-		t_check("udp.options", optreq(u1, OT_NEGOTIATE, spec, 2) &&
-		    optst(0, &v) == OT_SUCCESS && optst(1, &v) == OT_NOTSUPPORT,
-		    "status %lx %lx", optst(0, &v), optst(1, &v));
+		long v, s0, s1;
+		int ok = optreq(u1, OT_NEGOTIATE, spec, 2);
+
+		s0 = optst(0, &v);
+		s1 = optst(1, &v);
+		t_check("udp.options", ok && s0 == OT_SUCCESS && s1 == OT_NOTSUPPORT,
+		    "status %lx %lx, last %ld: %s", s0, s1, optlast, T_ERR);
 	}
 	close(u1);
 	close(u2);

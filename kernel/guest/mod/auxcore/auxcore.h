@@ -34,6 +34,8 @@ struct aux_proc {
 	long	ap_itexp;	/* its expiry, lbolt */
 	long	ap_itint;	/* its interval, ticks */
 	u_int	ap_mac;		/* APM_* */
+	int	ap_alid;	/* alarm callout, 0 = none */
+	long	ap_alexp;	/* its expiry, lbolt */
 };
 #define	APM_TASK	0x01	/* a task of the Mac environment's layer */
 #define	APM_UIP		0x02	/* holds the ui page */
@@ -82,6 +84,7 @@ extern int aux_oflags_in(), aux_oflags_out();
 /* auxmisc.c */
 extern caddr_t aux_gap();
 extern void aux_itstop();
+extern void aux_alstop();
 extern int aux_fcntl_lk(), aux_tiocpkt(), aux_waitcom();
 
 /* auxfid.c */

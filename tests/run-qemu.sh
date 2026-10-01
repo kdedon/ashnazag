@@ -15,6 +15,8 @@
 # Out: results/<time>-<mode>/ with serial.log, serial.ts (host time of each
 # line), screen.png, summary.txt.
 # Exit: 0 all PASS, 1 any FAIL, 2 timeout, panic or no TESTS DONE.
+# one QEMU at a time on this machine: wait for the lock
+[ -n "$AUX_QLOCK" ] || { mkdir -p "$(dirname "$0")/../images/work" 2>/dev/null; AUX_QLOCK=1 exec flock "$(cd "$(dirname "$0")/.." && pwd)/images/work/.qemu.lock" sh "$0" "$@"; }
 T=$(cd "$(dirname "$0")" && pwd)
 AUX=$(cd "$T/.." && pwd)
 Q=$AUX/toolchain/qemu

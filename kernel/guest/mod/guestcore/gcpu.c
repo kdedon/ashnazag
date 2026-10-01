@@ -39,6 +39,7 @@ int	guest_nprivbad;			/* refused ones */
 long	guest_npk[12];			/* emulated, by privkind() */
 long	guest_privop;			/* the last refused opcode */
 long	guest_nfault7, guest_f7pc, guest_f7ea;	/* faults sent to vector 2 */
+long	guest_nunote;			/* their notices left out */
 
 static int
 splhi_()
@@ -672,7 +673,7 @@ guest_fnote(gp, r, v)
 		gp->gp_fea = *(long *)(r + 72);
 		gp->gp_fssw = *(unsigned short *)(r + 76);
 		gp->gp_fpre = gp->gp_proc->p_sig & (sigmask(SIGBUS) | sigmask(SIGSEGV));
-		gp->gp_flags |= GPF_FAULT;
+		gp->gp_flags = (gp->gp_flags & ~GPF_UNOTE) | GPF_FAULT;
 	}
 	return 1;
 }
@@ -740,6 +741,27 @@ guest_fault(p, gp, n)
 	return 0;
 }
 
+/*
+ * The fatal-fault notice: 0 leaves it out when guest_fault will send
+ * this fault to the guest's vector 2.
+ */
+int
+guest_unote(p)
+	struct proc *p;
+{
+	struct guest_proc *gp = GUESTP(p);
+	char *r = (char *)u.u_ar0;
+	long h;
+
+	if (p != u.u_procp || !(gp->gp_flags & GPF_FAULT) || gp->gp_fpc != GR_PC(r) ||
+	    GR_VEC(r) != 2 || (GR_SR(r) & 0x2000) ||
+	    copyin((caddr_t)(gp->gp_vvbr + 8), (caddr_t)&h, 4) || h == 0 || (h & 1))
+		return 1;
+	gp->gp_flags |= GPF_UNOTE;
+	guest_nunote++;
+	return 0;
+}
+
 static int
 guest_fsig1(p, gp)
 	struct proc *p;
@@ -784,7 +806,12 @@ guest_fsig(p)
 		if (!sigismember(&n, SIGBUS) || guest_fault(p, gp, SIGBUS))
 			if (sigismember(&n, SIGSEGV))
 				(void)guest_fault(p, gp, SIGSEGV);
-		gp->gp_flags &= ~GPF_FAULT;
+		/* not reflected after all: the notice that was left out */
+		if ((gp->gp_flags & GPF_UNOTE) &&
+		    (p->p_sig & ~gp->gp_fpre & (sigmask(SIGBUS) | sigmask(SIGSEGV))))
+			printf("NOTICE: User BUS ERROR at %x, PC:%x PID:%d CMD:%s\n",
+			    (int)gp->gp_fea, (int)gp->gp_fpc, (int)p->p_pid, u.u_comm);
+		gp->gp_flags &= ~(GPF_FAULT | GPF_UNOTE);
 	}
 	return guest_fsig1(p, gp);
 }

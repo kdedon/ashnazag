@@ -262,12 +262,145 @@ procs(tag)
 		closedir(d);
 }
 
+#define	UDIR	"/tmp/tosu"
+
+static char *utree[] = {
+	"sub/new.txt", "sub/renamed.txt", "result.txt", "readme.txt", "hello.prg",
+	"Long Name File.txt", "gone.txt", "in", "abs", "out", "up", 0
+};
+
+static void
+wfile(p, s)
+	char *p, *s;
+{
+	int fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+
+	if (fd >= 0) {
+		write(fd, s, strlen(s));
+		close(fd);
+	}
+}
+
+/* two 201-character directories, a 250-character name and ok.txt in the inner one */
+static void
+deep(make)
+	int make;
+{
+	char d[1024], *e;
+
+	strcpy(d, UDIR "/d");
+	memset(d + strlen(d), 'x', 200);
+	e = d + strlen(UDIR) + 202;
+	strcpy(e, "/e");
+	memset(e + 2, 'x', 200);
+	e[202] = 0;
+	if (!make) {
+		strcpy(e + 202, "/ok.txt");
+		unlink(d);
+		e[202] = '/';
+		memset(e + 203, 'y', 250);
+		e[453] = 0;
+		unlink(d);
+		e[202] = 0;
+		rmdir(d);
+		*e = 0;
+		rmdir(d);
+		return;
+	}
+	*e = 0;
+	mkdir(d, 0755);
+	*e = '/';
+	mkdir(d, 0755);
+	strcpy(e + 202, "/ok.txt");
+	wfile(d, "ok\n");
+	e[202] = '/';
+	memset(e + 203, 'y', 250);
+	e[453] = 0;
+	wfile(d, "long\n");
+}
+
+/* U:'s directory: files, links inside and out, a program that exits with 42 */
+static void
+umake()
+{
+	static unsigned char hello[] = {
+		0x60, 0x1a, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+		0, 0, 0, 0, 0, 0,
+		0x3f, 0x3c, 0, 42, 0x3f, 0x3c, 0, 0x4c, 0x4e, 0x41,	/* Pterm(42) */
+		0, 0, 0, 0
+	};
+	char p[64];
+	int i, fd;
+
+	for (i = 0; utree[i]; i++) {
+		sprintf(p, "%s/%s", UDIR, utree[i]);
+		unlink(p);
+	}
+	rmdir(UDIR "/newdir");
+	deep(0);
+	rmdir(UDIR "/sub");
+	rmdir(UDIR);
+	mkdir(UDIR, 0755);
+	mkdir(UDIR "/sub", 0755);
+	wfile(UDIR "/readme.txt", "hello from unix\n");
+	wfile(UDIR "/Long Name File.txt", "long\n");
+	if ((fd = open(UDIR "/hello.prg", O_WRONLY | O_CREAT | O_TRUNC, 0755)) >= 0) {
+		write(fd, (char *)hello, sizeof hello);
+		close(fd);
+	}
+	symlink("sub", UDIR "/in");
+	symlink("/sub", UDIR "/abs");
+	symlink("/etc", UDIR "/out");
+	symlink("../..", UDIR "/up");
+	deep(1);
+}
+
+/* what the program in C:\AUTO found on U: */
+static void
+ucheck()
+{
+	static char *names[] = {
+		"drvmap", "list", "read", "long_name", "write", "rename", "delete", "mkdir",
+		"cwd", "attrib", "dfree", "pexec", "links_inside", "escape_dotdot",
+		"escape_link", "escape_uplink", "escape_cwd", "long_path", 0
+	};
+	char b[2048], n[40], why[40], *l;
+	int fd, i, ok, len = 0;
+
+	t_check(N("hostfs_drvbits"), (peek(0x4c2L, 4) & 0x100000L) != 0, "_drvbits %lx",
+	    peek(0x4c2L, 4));
+	if ((fd = open(UDIR "/result.txt", O_RDONLY)) >= 0) {
+		len = read(fd, b, sizeof b - 1);
+		close(fd);
+	}
+	b[len > 0 ? len : 0] = 0;
+	for (i = 0; names[i]; i++) {
+		sprintf(n, "PASS %s\r", names[i]);
+		ok = strstr(b, n) != 0;
+		sprintf(n, "FAIL %s ", names[i]);
+		if ((l = strstr(b, n)) != 0)
+			sscanf(l, "%*s %*s %39s", why);
+		else
+			strcpy(why, "no result");
+		sprintf(n, "hostfs_%s", names[i]);
+		t_check(N(n), ok, "%s", why);
+	}
+	len = 0;
+	if ((fd = open(UDIR "/sub/renamed.txt", O_RDONLY)) >= 0) {
+		len = read(fd, b, sizeof b - 1);
+		close(fd);
+	}
+	t_check(N("hostfs_unix_side"), len == 15 && strncmp(b, "written by tos\n", 15) == 0,
+	    "sub/renamed.txt: %d bytes", len);
+}
+
 static void
 start(rom)
 	char *rom;
 {
 	int p[2];
 
+	umake();
 	pipe(p);
 	if ((tpid = fork()) == 0) {
 		setpgrp();
@@ -275,9 +408,9 @@ start(rom)
 		dup2(p[1], 1);
 		dup2(p[1], 2);
 		if (rom)
-			execl("/tos/bin/starttos", "starttos", "-v", "-rom", rom, (char *)0);
+			execl("/tos/bin/starttos", "starttos", "-v", "-u", UDIR, "-rom", rom, (char *)0);
 		else
-			execl("/tos/bin/starttos", "starttos", "-v", (char *)0);
+			execl("/tos/bin/starttos", "starttos", "-v", "-u", UDIR, (char *)0);
 		_exit(127);
 	}
 	close(p[1]);
@@ -444,6 +577,44 @@ idle()
 		    (i1 - i0) * 1000 * 100 / (dt * hz));
 }
 
+/*
+ * A left click on empty desktop while the guest is stopped and the IKBD
+ * FIFO full: it still arrives.  Left, because TOS 3.06 keeps a right
+ * click nobody asked for and lets it eat the next left click.
+ */
+static void
+fullfifo()
+{
+	struct tosinput in;
+	unsigned long r0;
+	int i;
+
+	memset((char *)&in, 0, sizeof in);
+	host("move -400 0");
+	host("move 0 -300");
+	host("move 300 250");
+	nap(500);
+	ioctl(tfd, TOSIOC_STAT, &st);
+	r0 = st.ts_kbrd;
+	kill(tpid, SIGSTOP);
+	nap(300);
+	for (i = 0; i < sizeof in.ti_b; i++)
+		in.ti_b[i] = 0xb9;		/* Space released */
+	in.ti_n = sizeof in.ti_b;
+	for (i = 0; i < 5; i++)
+		ioctl(tfd, TOSIOC_INPUT, &in);
+	in.ti_n = 0;
+	in.ti_btn = 2;
+	ioctl(tfd, TOSIOC_INPUT, &in);
+	in.ti_btn = 0;
+	ioctl(tfd, TOSIOC_INPUT, &in);
+	kill(tpid, SIGCONT);
+	nap(2000);
+	ioctl(tfd, TOSIOC_STAT, &st);
+	t_check(N("click_full_fifo"), st.ts_kbrd - r0 == 256 + 6,
+	    "%lu IKBD bytes read, 262 expected", st.ts_kbrd - r0);
+}
+
 /* kbshift: bit 1 is the left Shift key */
 static void
 keys()
@@ -466,6 +637,136 @@ keys()
 	    "kbshift %lx, with Shift down %lx, up %lx", a, b, c);
 	ioctl(tfd, TOSIOC_STAT, &st);
 	t_check(N("ikbd_read"), st.ts_kbrd >= n0 + 2, "IKBD bytes read %lu -> %lu", n0, st.ts_kbrd);
+}
+
+/* guest memory [a, a+n) through /proc; 0 if unreadable */
+static int
+grab(b, a, n)
+	char *b;
+	long a, n;
+{
+	char path[32];
+	int fd, ok;
+
+	sprintf(path, "/proc/%05ld", (long)tpid);
+	if ((fd = open(path, O_RDONLY)) < 0)
+		return 0;
+	ok = lseek(fd, a, 0) == a && read(fd, b, n) == n;
+	close(fd);
+	return ok;
+}
+
+#define	W(b, i)	(((b)[i] & 0xff) << 8 | ((b)[(i) + 1] & 0xff))
+#define	GLO	0x800L
+#define	GLEN	0x80000L
+
+/* the word pair holding the pointer's x and y: x grows on a move right, y on one down */
+static long
+ptrvar()
+{
+	char *a, *b, *c;
+	long i, r = 0;
+
+	a = malloc(GLEN);
+	b = malloc(GLEN);
+	c = malloc(GLEN);
+	host("move -400 0");
+	host("move 0 -300");
+	host("move 40 40");
+	nap(500);
+	if (a && b && c && grab(a, GLO, GLEN)) {
+		host("move 20 0");
+		nap(500);
+		if (grab(b, GLO, GLEN)) {
+			host("move 0 20");
+			nap(500);
+			if (grab(c, GLO, GLEN))
+				for (i = 0; i + 4 <= GLEN && !r; i += 2)
+					if (W(b, i) > W(a, i) && W(b, i) < 1280 && W(c, i) == W(b, i) &&
+					    W(a, i + 2) == W(b, i + 2) && W(c, i + 2) > W(b, i + 2) &&
+					    W(c, i + 2) < 1024)
+						r = GLO + i;
+		}
+	}
+	free(a);
+	free(b);
+	free(c);
+	return r;
+}
+
+static long pvar;		/* the pointer's x, y words */
+
+/* continuous motion: pointer updates, settling time, kernel entries */
+static void
+glide()
+{
+	long a, t0, t, tl = 0, p, lp, p500 = -1, g0, g1, d0, d1;
+	unsigned long e0, e1, kb0, ki0, n = 0;
+
+	if ((a = pvar = ptrvar()) == 0) {
+		t_info(N("glide"), "pointer variable not found");
+		return;
+	}
+	lp = peek(a, 4);
+	cputimes(&g0, &d0);
+	e0 = entries();
+	kb0 = st.ts_kbrd;
+	ki0 = st.ts_ints[6];
+	host("glide 100 3 2 10");
+	t0 = t_now_ms();
+	while ((t = t_now_ms() - t0) < 3000) {
+		p = peek(a, 4);
+		if (p != lp) {
+			n++;
+			tl = t;
+			lp = p;
+		}
+		if (p500 < 0 && t >= 500)
+			p500 = p;
+		nap(1);
+	}
+	p = peek(a, 4);
+	e1 = entries();
+	cputimes(&g1, &d1);
+	t_info(N("glide"), "var %lx: %lu updates, last at %ld ms, at 500 ms (%ld,%ld) end (%ld,%ld);"
+	    " 3 s: entries %lu, acia ints %lu, bytes %lu, CPU ms guest %ld display %ld", a, n, tl,
+	    p500 >> 16, p500 & 0xffff, p >> 16, p & 0xffff, e1 - e0, st.ts_ints[6] - ki0,
+	    st.ts_kbrd - kb0, g1 - g0, d1 - d0);
+}
+
+/*
+ * Each button pressed and released: the line-A button word next to the
+ * pointer (x, y, hide count, buttons) reads 1 for left, 2 for right,
+ * then 0.  Last, because TOS 3.06 keeps an unclaimed right click.
+ */
+static void
+buttons()
+{
+	struct tosinput in;
+	long down[2], up[2];
+	int i;
+
+	if (pvar == 0) {
+		t_skip(N("buttons"), "pointer variable not found");
+		return;
+	}
+	host("move -400 0");
+	host("move 0 -300");
+	host("move 300 250");
+	nap(500);
+	memset((char *)&in, 0, sizeof in);
+	for (i = 0; i < 2; i++) {
+		in.ti_btn = i ? 1 : 2;		/* IKBD bits: 2 left, 1 right */
+		ioctl(tfd, TOSIOC_INPUT, &in);
+		nap(400);
+		down[i] = peek(pvar + 6, 2);
+		in.ti_btn = 0;
+		ioctl(tfd, TOSIOC_INPUT, &in);
+		nap(400);
+		up[i] = peek(pvar + 6, 2);
+	}
+	t_check(N("buttons"), down[0] == 1 && up[0] == 0 && down[1] == 2 && up[1] == 0,
+	    "left %ld/%ld, right %ld/%ld (down/up)", down[0], up[0], down[1], up[1]);
 }
 
 /* the pointer moves; on the Desk menu title the menu drops down */
@@ -572,6 +873,7 @@ run(rom)
 			t_check(N("hotkey_tos"), front() == sess, "front %ld, TOS %ld", front(), sess);
 		}
 		owner();
+		ucheck();
 		timers();
 		idle();
 		ioctl(tfd, TOSIOC_STAT, &st);
@@ -579,10 +881,13 @@ run(rom)
 		    st.ts_cache);
 		if (hfd >= 0) {
 			keys();
+			fullfifo();
 			if (rom)
 				pointer(35, 77);
 			else
 				pointer(35, 38);
+			glide();
+			buttons();
 			(void)desktop(S("end"), 1);
 		} else
 			t_skip(N("input"), "no host line");

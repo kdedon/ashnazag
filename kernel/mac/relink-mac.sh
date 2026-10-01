@@ -117,6 +117,12 @@ m68k-cbm-sysv4-gcc -m68040 -c "$MAC/fpu/chkfpu.s" -o "$W/chkfpu.o"
 OBJS="$OBJS $W/chkfpu.o"
 OVR="$OVR chk_fpu"
 
+# The fatal user-fault notice goes through the guest shim's filter.
+if m68k-linux-gnu-nm "$BASE" | grep -q ' T unt_latch$'; then
+	OVR="$OVR unt_latch"
+	ALIAS="$ALIAS unt_latch:T"
+fi
+
 # uiomove: the wrapper marks the segkmap pages it writes modified.
 OVR="$OVR uiomove"
 ALIAS="$ALIAS uiomove:T"

@@ -10,6 +10,7 @@
 #   down K, up K        one transition
 #   move DX DY          relative mouse motion
 #   button MASK         mouse buttons (1 = left)
+#   glide N DX DY MS    N moves of DX DY, MS ms apart, answered at once
 #   clicks N HOLD GAP   N left clicks, HOLD and GAP in ms
 #   shot NAME           screen dump -> display/NAME.ppm, .png; "W H"
 #   cmp A B             "same" or "diff N" (pixels)
@@ -18,7 +19,7 @@
 #                       render the dspat.h pattern (table rotated by K)
 #                       at SHOT's size, compare: "same" or "diff N"
 # Log: OUTDIR/display/hostio.log.  Ends when the guest side closes.
-import json, os, socket, struct, sys, time, zlib
+import json, os, socket, struct, sys, threading, time, zlib
 
 OUT = sys.argv[1]
 D = os.path.join(OUT, 'display')
@@ -199,6 +200,15 @@ def serve(q, cmd, a):
         q.hmp('mouse_move %d %d' % (int(a[0]), int(a[1])))
         time.sleep(0.3)
         return 'done'
+    if cmd == 'glide':
+        n, dx, dy, gap = int(a[0]), int(a[1]), int(a[2]), int(a[3]) / 1000.
+
+        def go():
+            for _ in range(n):
+                q.hmp('mouse_move %d %d' % (dx, dy))
+                time.sleep(gap)
+        threading.Thread(target=go).start()
+        return 'started'
     if cmd == 'button':
         q.hmp('mouse_button %d' % int(a[0]))
         time.sleep(0.3)

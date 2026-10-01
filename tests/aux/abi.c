@@ -1,6 +1,6 @@
 /*
  * abi.c -- A/UX system calls from a static A/UX program: BSD signals
- * (sigvec, sigstack, sigblock, sigpause, sigpending), itimers, select,
+ * (sigvec, sigstack, sigblock, sigpause, sigpending), alarm, itimers, select,
  * wait3/waitpid, flock and fcntl locks, statfs, truncate, utimes, shm,
  * setreuid, and TIOCPKT on a pty master passed as fd 3 (slave fd 4).
  * With argument "q1": raw disk and /proc transfers into quadrant 1.
@@ -22,6 +22,7 @@ char abi_id[8] = "aux-abi";	/* keeps .data non-empty */
 #define	A_UNLINK	10
 #define	A_LSEEK		19
 #define	A_GETPID	20
+#define	A_ALARM		27
 #define	A_PAUSE		29
 #define	A_KILL		37
 #define	A_PIPE		42
@@ -309,6 +310,68 @@ t_itimer()
 	check("itimer_off", o[0] == 0 && o[1] == 0 && o[2] == 0 && o[3] == 0 && alarms == t,
 	    "value, alarms after", o[3], alarms - t);
 	check("itimer_virtual", sys15(A_SETITIMER, 1, v, 0) == 0, "errno", errno, 0);
+}
+
+/* ---- alarm ---- */
+
+/* ms from alarm(1) to SIGALRM */
+static long
+alarm1()
+{
+	long old, t0;
+
+	alarms = 0;
+	old = sys15(A_SIGBLOCK, MASK(SIGALRM));
+	t0 = now_ms();
+	sys15(A_ALARM, 1);
+	while (!alarms && now_ms() - t0 < 5000)
+		sys15(A_SIGPAUSE, old);
+	sys15(A_SIGSETMASK, old);
+	return now_ms() - t0;
+}
+
+/* never early, also once children's itimers hold every timer callout */
+static void
+t_alarm()
+{
+	long sv[3], v[4], p[2], pid[100], n, k, t, st;
+	char c;
+	int full = 0;
+
+	sv[0] = (long)onalrm;
+	sv[1] = 0;
+	sv[2] = 0;
+	sys15(A_SIGVEC, SIGALRM, sv, 0);
+	t = alarm1();
+	check("alarm_1", alarms == 1 && t >= 1000 && t < 1500, "alarms, ms", alarms, t);
+	sys15(A_ALARM, 5);
+	t = sys15(A_ALARM, 0);
+	check("alarm_left", t == 5, "seconds", t, 0);
+	p[0] = sys0(A_PIPE);
+	p[1] = sysd1;
+	for (n = 0; n < 100 && !full; n++) {
+		if ((pid[n] = sys15(A_FORK)) == 0 || sysd1) {
+			v[0] = v[1] = v[3] = 0;
+			v[2] = 1000;
+			c = sys15(A_SETITIMER, 0, v, 0) == 0 ? 'y' : 'n';
+			sys15(A_WRITE, p[1], &c, 1);
+			for (;;)
+				sys15(A_PAUSE);
+		}
+		if (pid[n] < 0 || sys15(A_READ, p[0], &c, 1) != 1)
+			break;
+		full = c == 'n';
+	}
+	check("alarm_slots_full", full, "children", n, 0);
+	t = alarm1();
+	check("alarm_1_full", alarms == 1 && t >= 1000 && t < 2500, "alarms, ms", alarms, t);
+	for (k = 0; k < n; k++)
+		if (pid[k] > 0) {
+			sys15(A_KILL, pid[k], SIGKILL);
+			waitpid_(pid[k], &st, 0);
+		}
+	sys15(A_CLOSE, p[0]);
+	sys15(A_CLOSE, p[1]);
 }
 
 /* ---- select ---- */
@@ -689,6 +752,7 @@ main(argc, argv)
 	t_signals();
 	t_altgap();
 	t_itimer();
+	t_alarm();
 	t_select();
 	t_wait();
 	t_locks();

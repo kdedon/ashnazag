@@ -123,7 +123,7 @@ for i in range(16):
     p = L(hs + 16 * i + 4)
     ok = ok and byaddr.get(p) == names[-1] + '_hook' and L(p) == 0 and L(hs + 16 * i + 12) == 0
 check(ok and names == ['guest_trap', 'guest_exec', 'guest_fork', 'guest_exit',
-                       'guest_sendsig', 'guest_vur', 'guest_fsig'],
+                       'guest_sendsig', 'guest_vur', 'guest_fsig', 'guest_unote'],
       'hooksw: %s, pointers 0, no owner' % ' '.join(names))
 
 own = [s for s in ('ev_config', 'ev_fork', 'ev_exec', 'ev_exit', 'sendsig', 'valid_usr_range',

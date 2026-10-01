@@ -23,14 +23,15 @@ extern void psig();
 extern char runrun;
 
 long aux_nsys, aux_lastsys;	/* Mac task's calls; the last: number << 16 | errno */
-int aux_trace = 0;	/* 1: every call, 2: results, 4: open paths, 8: failures, name changes */
+int aux_trace = 0;	/* 1: every call, 2: results, 4: open paths, 8: failures, name changes,
+			   16: keep the first AUX_TBUF bytes */
 void (*aux_macdetach)() = 0;
 int (*aux_slotmgr)() = 0;
 void (*aux_uitick)() = 0;
 
 /*
  * Trace ring: "pid text value" lines, readable through /dev/kmem
- * (aux_tbuf, aux_tpos = bytes ever written).
+ * (aux_tbuf, aux_tpos = bytes written; with aux_trace 16 the lines that fit).
  */
 char aux_tbuf[AUX_TBUF] = { 0 };
 long aux_tpos = 0;
@@ -39,8 +40,11 @@ static void
 tput(s)
 	char *s;
 {
-	while (*s)
-		aux_tbuf[aux_tpos++ % AUX_TBUF] = *s++;
+	for (; *s; aux_tpos++)
+		if (aux_tpos < AUX_TBUF || !(aux_trace & 16))
+			aux_tbuf[aux_tpos % AUX_TBUF] = *s++;
+		else
+			s++;
 }
 
 static void
@@ -66,6 +70,7 @@ aux_tlog(pid, s, v)
 	char *s;
 	long v;
 {
+	long p0 = aux_tpos;
 	int sr;
 
 	__asm__ __volatile__("mov.w %%sr,%0" : "=d" (sr) : : "memory");
@@ -76,6 +81,8 @@ aux_tlog(pid, s, v)
 	tput(" ");
 	tdec(v);
 	tput("\n");
+	if ((aux_trace & 16) && aux_tpos > AUX_TBUF)
+		aux_tpos = p0;		/* a line that does not fit */
 	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (sr) : "memory");
 }
 
@@ -287,12 +294,13 @@ aux_pexec(gp)
 	return 0;
 }
 
-/* the child's ITIMER_REAL starts disarmed */
+/* the child's ITIMER_REAL and alarm start disarmed */
 static int
 aux_pfork(pg, cg)
 	struct guest_proc *pg, *cg;
 {
 	AUXP(cg)->ap_itid = 0;
+	AUXP(cg)->ap_alid = 0;
 	AUXP(cg)->ap_mac = 0;		/* the child is no task of the layer */
 	return 0;
 }
@@ -302,6 +310,7 @@ aux_pexit(gp)
 	struct guest_proc *gp;
 {
 	aux_itstop(AUXP(gp));
+	aux_alstop(AUXP(gp), gp->gp_flags & GPF_EXEC);
 	if (AUXP(gp)->ap_mac && aux_macdetach)
 		(*aux_macdetach)(gp);
 }
@@ -309,7 +318,9 @@ aux_pexit(gp)
 /*
  * User ranges: A/UX shared libraries and the Mac ROM live in quadrant
  * 1 (0x40000000-0x7fffffff), which the stock rule refuses.  A range
- * there must not wrap or leave the quadrant; others keep the stock rule.
+ * in quadrant 0 or 1 must not wrap or leave its quadrant, and may end
+ * at its last byte (the Mac's stack at 0x3fff0000), which the stock
+ * rule refuses too; others keep the stock rule.
  */
 static int
 aux_vur(gp, a, len)
@@ -319,9 +330,9 @@ aux_vur(gp, a, len)
 {
 	u_long s = (u_long)a, e = s + len - 1;
 
-	if ((s >> 30) != 1)
+	if ((s >> 30) > 1)
 		return __amix_valid_usr_range(a, len);
-	return len != 0 && e >= s && (e >> 30) == 1;
+	return len != 0 && e >= s && (e >> 30) == (s >> 30);
 }
 
 struct guest_profile aux_profile = { "aux" };

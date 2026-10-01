@@ -4,8 +4,10 @@
 #   sh images/macenv/mkmacimage.sh [kernel.elf [out.img]]
 #
 # AUXROOT (default: the path in tests/aux/auxroot) names the A/UX root,
-# AUXROM the Mac ROM image for startmac; both proprietary, copied into
-# the image only.  Other inputs as x11/mkimage.sh.
+# whose Mac files go in as A/UX installs them, AUXROM the Mac ROM image
+# for startmac; both proprietary, copied into the image only.  The
+# desktop database is made in QEMU (mkdesktop.py, the Quadra 800 ROM).
+# The TOS container (images/tosenv/mktos.sh) is built in.  Other inputs as x11/mkimage.sh.
 set -e
 umask 077
 
@@ -42,12 +44,36 @@ nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -w -D__STDC__=0 -c "$D/macdiag.c" -o 
 	"$SYS/usr/ccs/lib/crti.o" "$P/macdiag.o" "$P"/lm_*.o "$SYS/usr/lib/libc.so.1" \
 	"$SYS/usr/ccs/lib/crtn.o"
 rm -rf "$P/guest" "$P"/*.o
+sh "$AUX/images/tosenv/mktos.sh" "$P/tos" ||
+	{ echo "[FAIL] TOS container files"; exit 1; }
 
 cp "$D/S05aux" "$D/startmac" "$P/"
 mv "$P/startmac" "$P/startmac.sh"
-cp "$AUXROOT/mac/bin/startmac" "$AUXROOT/shlib/libc1_s" "$AUXROOT/shlib/libmac1_s" \
-	"$AUXROOT/etc/fidd" "$AUXROOT/mac/lib/Patches/Patch.067C" \
-	"$AUXROOT/mac/lib/SystemFiles/shared/Finder" "$AUXROOT/mac/sys/System Folder/System" "$P/"
+cp "$AUXROOT/shlib/libc1_s" "$AUXROOT/shlib/libmac1_s" "$AUXROOT/etc/fidd" "$P/"
 cp "$AUXROM" "$P/rom"
 
-MACPKG=$P sh "$AUX/x11/mkimage.sh" "$KERNEL" "$OUT"
+# A/UX's Mac files as A/UX installs them, less its per-directory File
+# Manager caches; owned by root, group sys
+M=$P/macroot
+mkdir -p "$M/usr/bin" "$M/usr/lib" "$M/.mac/localhost/Desktop Folder" "$M/.mac/localhost/Trash"
+(cd "$AUXROOT" && tar cf - mac " Applications" " Documentation" " Shared Data" \
+	" System Folder alias") | (cd "$M" && tar xf -)
+cp "$AUXROOT/usr/bin/systemfolder" "$M/usr/bin/"
+cp "$AUXROOT/usr/lib/updtsysfldr" "$M/usr/lib/"
+find "$M" -name '.fs_*' -o -name '%.fs_*' | while read f; do rm -f "$f"; done
+# its desktop database names files of the disk it came from
+rm -f "$M/mac/sys/System Folder/Desktop D"? "$M/mac/sys/System Folder/%Desktop D"?
+find "$M" -type d -exec chmod 755 {} +
+find "$M" -type f -perm -u+x -exec chmod 755 {} +
+find "$M" -type f ! -perm -u+x -exec chmod 644 {} +
+# /usr and its directories keep the manifest's owners
+(cd "$M" && find . -depth -print | grep -v -x -e ./usr -e ./usr/bin -e ./usr/lib |
+	cpio -o -H newc -R 0:3 --quiet) > "$P/mac.cpio"
+rm -rf "$M"
+
+# swap backs the Mac's memory (startmac's TBMEMORY, up to 32 MB)
+ROOTMB=${ROOTMB:-160} SWAPMB=${SWAPMB:-96} MACPKG=$P sh "$AUX/x11/mkimage.sh" "$KERNEL" "$OUT"
+# the Finder's desktop database, made once in QEMU (DESKTOP=0: on the
+# first startmac instead)
+[ "$DESKTOP" = 0 ] || python3 "$D/mkdesktop.py" "$OUT" ||
+	echo "[warn] no desktop database: the first startmac rebuilds it"

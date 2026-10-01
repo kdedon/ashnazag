@@ -2,6 +2,8 @@
 # Direct-boot the kernel ELF on QEMU q800 (no ROM), headless.
 # usage: run-direct.sh [OUTDIR] [QMP-STEP...]   (steps: see qmp.py)
 # Default steps: screendumps while booting, type "echo hello", registers.
+# one QEMU at a time on this machine: wait for the lock
+[ -n "$AUX_QLOCK" ] || { mkdir -p "$(dirname "$0")/../../images/work" 2>/dev/null; AUX_QLOCK=1 exec flock "$(cd "$(dirname "$0")/../.." && pwd)/images/work/.qemu.lock" sh "$0" "$@"; }
 HERE=$(cd "$(dirname "$0")" && pwd)
 AUX=$(cd "$HERE/../.." && pwd)
 Q=$AUX/toolchain/qemu

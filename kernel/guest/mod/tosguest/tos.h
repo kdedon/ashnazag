@@ -69,6 +69,12 @@ struct tosctr {
 	int		t_khead, t_kcount;
 	unsigned char	t_kcmd[8];	/* command being received */
 	int		t_kcmdn, t_kcmdlen;
+	int		t_mdx, t_mdy;	/* mouse motion not yet queued */
+	int		t_mbtn;
+	unsigned char	t_bq[8];	/* button changes waiting for FIFO room */
+	int		t_bqn;
+	int		t_qbtn;		/* buttons of the last packet queued */
+	int		t_bsent;	/* a button change went out this tick */
 
 	/* video: $FF8200-$FF82FF and the TT palette $FF8400-$FF85FF */
 	unsigned char	t_vid[0x100];

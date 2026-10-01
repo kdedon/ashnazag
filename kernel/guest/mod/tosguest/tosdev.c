@@ -973,12 +973,17 @@ mfp_tick(m)
 	}
 }
 
-/* each clock tick: both MFPs' timers, a lost ACIA edge */
+static void kmouse();
+
+/* each clock tick: both MFPs' timers, a lost ACIA edge, the next button change */
 void
 tos_timers()
 {
 	struct tosmfp *m = &tosc.t_mfp;
 
+	tosc.t_bsent = 0;
+	if (tosc.t_bqn)
+		kmouse();
 	mfp_tick(m);
 	mfp_tick(&tosc.t_mfp2);
 	if (tosc.t_kcount && (tosc.t_kctl & 0x80) &&
@@ -1083,16 +1088,68 @@ kpush(b)
 		mfp_irq(&t->t_mfp, CH_ACIA);
 }
 
-void
-tos_input(b, n)
-	unsigned char *b;
-	int n;
+/*
+ * Mouse packets.  Queued button changes go out at most one a clock
+ * tick, as soon as the FIFO has room, spaced as a keyboard would.
+ * Pending motion goes out once the guest has read everything before,
+ * so motion arriving meanwhile joins it.
+ */
+static void
+kmouse()
 {
-	int s = splhi_();
+	struct tosctr *t = &tosc;
+	int dx, dy, i, b;
 
-	tosc.t_st.ts_kbin += n;
+	while (t->t_kcount <= ACIA_FIFO - 3) {
+		b = t->t_bqn && !t->t_bsent;
+		if (!b && (t->t_kcount || (!t->t_mdx && !t->t_mdy)))
+			return;
+		if (b) {
+			t->t_qbtn = t->t_bq[0];
+			for (i = 1; i < t->t_bqn; i++)
+				t->t_bq[i - 1] = t->t_bq[i];
+			t->t_bqn--;
+			t->t_bsent = 1;
+		}
+		dx = t->t_mdx > 127 ? 127 : t->t_mdx < -128 ? -128 : t->t_mdx;
+		dy = t->t_mdy > 127 ? 127 : t->t_mdy < -128 ? -128 : t->t_mdy;
+		kpush(0xf8 | t->t_qbtn);
+		kpush(dx & 0xff);
+		kpush(dy & 0xff);
+		t->t_mdx -= dx;
+		t->t_mdy -= dy;
+		t->t_st.ts_kbin += 3;
+	}
+}
+
+/* motion a stalled guest gets at once: a screen's width */
+static int
+clip(v)
+	int v;
+{
+	return v > 1280 ? 1280 : v < -1280 ? -1280 : v;
+}
+
+void
+tos_input(ti)
+	struct tosinput *ti;
+{
+	struct tosctr *t = &tosc;
+	unsigned char *b = ti->ti_b;
+	int n = ti->ti_n, s = splhi_();
+
+	t->t_st.ts_kbin += n;
 	while (n-- > 0)
 		kpush((int)*b++);
+	t->t_mdx = clip(t->t_mdx + ti->ti_dx);
+	t->t_mdy = clip(t->t_mdy + ti->ti_dy);
+	if ((ti->ti_btn & 3) != t->t_mbtn) {
+		t->t_mbtn = ti->ti_btn & 3;
+		if (t->t_bqn == sizeof t->t_bq)
+			t->t_bqn--;		/* full: the newest state replaces the last */
+		t->t_bq[t->t_bqn++] = t->t_mbtn;
+	}
+	kmouse();
 	splx_(s);
 	tos_kick(1);
 }
@@ -1431,6 +1488,13 @@ iorb(a, vp)
 			t->t_khead = (t->t_khead + 1) % ACIA_FIFO;
 			t->t_kcount--;
 			t->t_st.ts_kbrd++;
+			if (t->t_kcount == 0 || t->t_bqn)
+				kmouse();
+			/* the next byte is a new edge; none left, no request */
+			if (t->t_kcount && (t->t_kctl & 0x80))
+				mfp_irq(&t->t_mfp, CH_ACIA);
+			else
+				t->t_mfp.m_ipr &= ~(1 << CH_ACIA);
 		}
 		v = t->t_kdata;
 	} else if (o == 0xfffc04)

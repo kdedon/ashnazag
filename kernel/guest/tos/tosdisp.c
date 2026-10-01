@@ -54,13 +54,21 @@ struct geom {
 };
 
 static struct tosinput in;
+static int mbtn, mdx, mdy;
 
+/* keys, motion and buttons to the kernel, which makes the mouse packets */
 static void
 flush()
 {
-	if (in.ti_n > 0)
-		ioctl(tfd, TOSIOC_INPUT, &in);
+	if (in.ti_n == 0 && mdx == 0 && mdy == 0 && in.ti_btn == mbtn)
+		return;
+	in.ti_dx = mdx > 32767 ? 32767 : mdx < -32767 ? -32767 : mdx;
+	in.ti_dy = mdy > 32767 ? 32767 : mdy < -32767 ? -32767 : mdy;
+	in.ti_btn = mbtn;
+	ioctl(tfd, TOSIOC_INPUT, &in);
 	in.ti_n = 0;
+	mdx -= in.ti_dx;
+	mdy -= in.ti_dy;
 }
 
 static void
@@ -72,30 +80,12 @@ put(b)
 	in.ti_b[in.ti_n++] = b;
 }
 
-static int mbtn, mdx, mdy;
-
-static void
-mouse()
-{
-	int dx, dy;
-
-	do {
-		dx = mdx > 127 ? 127 : mdx < -128 ? -128 : mdx;
-		dy = mdy > 127 ? 127 : mdy < -128 ? -128 : mdy;
-		put(0xf8 | mbtn);
-		put(dx & 0xff);
-		put(dy & 0xff);
-		mdx -= dx;
-		mdy -= dy;
-	} while (mdx || mdy);
-}
-
 static void
 events(fd)
 	int fd;
 {
 	struct inev ev[32];
-	int n, i, k, moved = 0;
+	int n, i, k, press = 0;
 
 	if ((n = read(fd, (char *)ev, sizeof ev)) <= 0)
 		return;
@@ -115,21 +105,18 @@ events(fd)
 				mdx += ev[i].ie_value;
 			else
 				mdy += ev[i].ie_value;
-			moved = 1;
 			break;
 		case IE_BTN:
 			k = ev[i].ie_code == 1 ? 2 : 1;
 			mbtn = ev[i].ie_value ? mbtn | k : mbtn & ~k;
-			moved = 1;
+			press = 1;
 			break;
-		case IE_SYN:
-			if (moved)
-				mouse();
-			moved = 0;
+		case IE_SYN:		/* each button change is a packet of its own */
+			if (press)
+				flush();
+			press = 0;
 			break;
 		}
-	if (moved)
-		mouse();
 	flush();
 }
 
@@ -215,6 +202,18 @@ chunky(src, g)
 		}
 }
 
+/* 1 if n bytes (a multiple of 16) match, compared four longs at a time */
+static int
+same(a, b, n)
+	unsigned long *a, *b;
+	int n;
+{
+	for (n >>= 4; n > 0; n--)
+		if (*a++ != *b++ || *a++ != *b++ || *a++ != *b++ || *a++ != *b++)
+			return 0;
+	return 1;
+}
+
 /* redraw the rows that changed (all when full) */
 static void
 refresh(tv, g, full)
@@ -234,7 +233,7 @@ refresh(tv, g, full)
 	if (tv->tv_base >= ramsize || g->rowb * g->h > ramsize - tv->tv_base)
 		return;				/* screen outside ST-RAM */
 	for (y = 0; y < g->h; y += g->step, src += g->rowb * g->step, sh += g->rowb * g->step) {
-		if (!full && memcmp(src, sh, g->rowb) == 0)
+		if (!full && same((unsigned long *)src, (unsigned long *)sh, g->rowb))
 			continue;
 		memcpy(sh, src, g->rowb);
 		chunky(src, g);

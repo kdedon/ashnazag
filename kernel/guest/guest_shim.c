@@ -1,7 +1,8 @@
 /*
  * guest_shim.c -- static part of guest-process support: the events
- * stubs, the sendsig, valid_usr_range and fsig wrappers, the hook
- * table and the C entry of the vector gates.
+ * stubs, the sendsig, valid_usr_range and fsig wrappers, the fatal
+ * user-fault notice filter, the hook table and the C entry of the
+ * vector gates.
  *
  * A shim calls its hook only for a guest process (p_evpdp set), which
  * holds the module that owns the hook, or for the process whose exec
@@ -39,6 +40,7 @@ void	(*guest_exit_hook)();
 int	(*guest_sendsig_hook)();
 int	(*guest_vur_hook)();
 int	(*guest_fsig_hook)();
+int	(*guest_unote_hook)();
 long	guest_nlinea, guest_lineapc;
 
 struct hooksw hooksw[] = {
@@ -49,6 +51,7 @@ struct hooksw hooksw[] = {
 	{ "guest_sendsig",	(char **)&guest_sendsig_hook,	0, 0 },
 	{ "guest_vur",		(char **)&guest_vur_hook,	0, 0 },
 	{ "guest_fsig",		(char **)&guest_fsig_hook,	0, 0 },
+	{ "guest_unote",	(char **)&guest_unote_hook,	0, 0 },
 	{ 0, 0, 0, 0 }
 };
 
@@ -131,6 +134,29 @@ fsig(p)
 	if (p->p_evpdp && guest_fsig_hook)
 		return (*guest_fsig_hook)(p);
 	return __amix_fsig(p);
+}
+
+/*
+ * The "User BUS ERROR" notice of a fatal user fault.  A guest whose
+ * own vector takes the fault does not die of it: no notice.
+ */
+#pragma weak __amix_unt_latch
+extern void __amix_unt_latch(), cmn_err();
+
+void
+unt_latch(l, f, a, b, c, d, e)
+	int l;
+	char *f;
+	long a, b, c, d, e;
+{
+	struct proc *p = curproc;
+
+	if (p && p->p_evpdp && guest_unote_hook && (*guest_unote_hook)(p) == 0)
+		return;
+	if (__amix_unt_latch)
+		__amix_unt_latch(l, f, a, b, c, d, e);
+	else
+		cmn_err(l, f, a, b, c, d, e);
 }
 
 /* from the vector gates, guest processes only: 0 handled, else decline */

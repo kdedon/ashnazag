@@ -9,7 +9,8 @@
 # outdir/root/<path> (shared libraries, terminfo, termcap; for t_mac the
 # Mac environment: startmac, libmac1_s, Patch.067C, the System file in
 # /mac/sys/Sys7 with the Finder, the ROM image at /etc/aux/rom, fidd at
-# /etc/aux/fidd).
+# /etc/aux/fidd; with the Mac OS 7.6.1 CD image, CD761, its System
+# Folder in /mac/sys/S761).
 # AUXROOT names the A/UX root, AUXROM the Mac ROM image (default: the
 # Quadra 700 ROM beside the repository); both proprietary, never in the
 # repository.
@@ -60,6 +61,10 @@ if [ -f "$OUT/mod.d/uinter" ] && [ -f "$AUXROOT/mac/bin/startmac" ] && [ -f "$SY
 	cp "$AUXROM" "$OUT/root/etc/aux/rom"
 	# the File ID daemon, which the Mac side needs to create folders
 	cp "$AUXROOT/etc/fidd" "$OUT/root/etc/aux/fidd"
+	# Mac OS 7.6.1 from its CD, when present
+	CD761=${CD761:-$AUX/media/Mac OS 7.6.1.iso}
+	[ ! -f "$CD761" ] ||
+		sh "$AUX/images/macenv/mksys76.sh" "$CD761" "$OUT/root/mac/sys/S761"
 fi
 
 TC=$AUX/toolchain/amix

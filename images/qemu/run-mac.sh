@@ -6,6 +6,8 @@
 # --tmo: hard timeout in seconds.
 # Default steps: a screendump every 5 s for 200 s.  GDB=1 adds a gdbstub
 # socket OUT/gdb.sock, QEXTRA adds QEMU options.  TMO: hard timeout (260 s).
+# one QEMU at a time on this machine: wait for the lock
+[ -n "$AUX_QLOCK" ] || { mkdir -p "$(dirname "$0")/../../images/work" 2>/dev/null; AUX_QLOCK=1 exec flock "$(cd "$(dirname "$0")/../.." && pwd)/images/work/.qemu.lock" sh "$0" "$@"; }
 HERE=$(cd "$(dirname "$0")" && pwd)
 AUX=$(cd "$HERE/../.." && pwd)
 Q=$AUX/toolchain/qemu
