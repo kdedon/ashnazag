@@ -37,6 +37,7 @@ ln -s "$X11W/pkg" "$R/x11pkg"
 if [ -n "$MACPKG" ]; then
 	ln -s "$MACPKG" "$R/macpkg"
 	(cd "$R" && patch -s -p4 < "$AUX/images/macenv/mac-diskroot.diff")
+	[ -f "$MACPKG/rom" ] || sed -i '\|^f /etc/aux/rom	|d' "$R/root.manifest"
 fi
 : "${AMIX_TAPE:?AMIX_TAPE: tape segments 13 and 14}"
 AMIX_TAPE=$AMIX_TAPE ROOTMB=${ROOTMB:-96} nice -n 19 sh "$R/mkdiskimage.sh" "$KERNEL" "$OUT"

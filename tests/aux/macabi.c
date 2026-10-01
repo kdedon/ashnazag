@@ -26,9 +26,11 @@ char macabi_id[8] = "macabi";
 
 #define	A_EXIT		1
 #define	A_FORK		2
+#define	A_READ		3
 #define	A_WRITE		4
 #define	A_OPEN		5
 #define	A_CLOSE		6
+#define	A_LSEEK		19
 #define	A_GETPID	20
 #define	A_KILL		37
 #define	A_SHMSYS	52
@@ -91,6 +93,7 @@ char macabi_id[8] = "macabi";
 #define	B32(p)		((long)B16(p) << 16 | B16((p) + 2))
 
 static char obuf[160];
+static unsigned long hwsym;	/* the kernel's ui_hwrom, 0: unknown */
 static int ufd;
 
 static void
@@ -198,6 +201,45 @@ child(f)
 	if (pid > 0 && sys15(A_WAITPID, pid, 0, 0) == pid)
 		st = sysd1;
 	return st;
+}
+
+static int same();
+
+/* n bytes of kernel memory at a through /dev/kmem */
+static int
+kmem(a, b, n)
+	unsigned long a;
+	char *b;
+	long n;
+{
+	long fd = sys15(A_OPEN, "/dev/kmem", 0), ok;
+
+	ok = fd >= 0 && sys15(A_LSEEK, fd, a, 0) == a && sys15(A_READ, fd, b, n) == n;
+	if (fd >= 0)
+		sys15(A_CLOSE, fd);
+	return ok;
+}
+
+/*
+ * The task's ROM against the host's: the address in the kernel long at
+ * hw, 0 with the ROM image file.
+ */
+static void
+romhost(hw)
+	unsigned long hw;
+{
+	static char b[4096];
+	unsigned long a = 0;
+	long n = *(long *)(ROM + 0x40), off;
+	int ok;
+
+	if (!kmem(hw, (char *)&a, 4L) || a == 0) {
+		info("rom_file", a);
+		return;
+	}
+	for (ok = 1, off = 0; ok && off < n; off += sizeof b)
+		ok = kmem(a + off, b, (long)sizeof b) && same(b, (char *)ROM + off, (int)sizeof b);
+	check("rom_host", ok, "differs at", off - sizeof b, a);
 }
 
 static void
@@ -328,6 +370,8 @@ t_setup()
 	    *(long *)(ROM + 0x40) >= 0x80000, "version, size",
 	    *(unsigned short *)(ROM + 8), *(long *)(ROM + 0x40));
 	check("rom_twice", ioc(UI_ROM, ROM) == -1 && errno == EINVAL, "errno", errno, 0);
+	if (hwsym)
+		romhost(hwsym);
 	v = child(romwrite);
 	check("rom_private", v == 0 && *(unsigned short *)(ROM + 8) >= 0x67c,
 	    "status, version", v, *(unsigned short *)(ROM + 8));
@@ -798,6 +842,11 @@ main(argc, argv)
 	int argc;
 	char **argv;
 {
+	char *s;
+
+	if (argc > 1)
+		for (s = argv[1]; *s; s++)
+			hwsym = hwsym << 4 | (*s <= '9' ? *s - '0' : *s - 'a' + 10);
 	t_setup();
 	t_aline();
 	t_priv();

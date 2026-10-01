@@ -654,6 +654,14 @@ struct iomap mac_iomap[] = {
 	{ 0, 0, 0, 0 },
 };
 
+/* ROMBase's kernel address for n bytes of ROM, 0 if not mapped */
+unsigned long
+mac_romva(n)
+unsigned long n;
+{
+	return mac_rombase == 0x40800000 && n <= 0x100000 ? 0x52800000 : 0;
+}
+
 /* 9 page tables of 64 entries, 256-byte aligned */
 unsigned long mac_iopt[10 * 64] = { 1 };
 

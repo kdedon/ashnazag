@@ -59,7 +59,7 @@ int index;
     strcpy(a.fa_name, "X");
     if (ioctl(d->fd, FBIOACQUIRE, &a) < 0)
     {
-	/* only root or the front session's owner may take the screen */
+	/* not at the console: the screen stays with its session */
 	a.fa_flags = 0;
 	if (errno != EPERM || ioctl(d->fd, FBIOACQUIRE, &a) < 0)
 	{

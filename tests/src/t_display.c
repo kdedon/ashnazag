@@ -634,7 +634,7 @@ t_input(int fda, long ida, unsigned char *fba)
 	close(ms);
 }
 
-/* as uid nobody: without group display no access; with it, no switch */
+/* as uid nobody: without group display no access; with it, front only from the console */
 static void
 t_perm(long ida)
 {
@@ -655,8 +655,10 @@ t_perm(long ida)
 	}
 	t_check("perm_other", t_waitchild(pid, &status, 10) == pid && WIFEXITED(status) &&
 	    WEXITSTATUS(status) == 0, "status 0x%x", status);
+	/* group display, not at the console: no front, no switch */
 	pid = fork();
 	if (pid == 0) {
+		setsid();
 		setgid(DISPGID);
 		setuid(NOBODY);
 		fd = open("/dev/fb0", O_RDWR);
@@ -673,6 +675,44 @@ t_perm(long ida)
 		_exit(0);
 	}
 	t_check("perm_display_group", t_waitchild(pid, &status, 10) == pid &&
+	    WIFEXITED(status) && WEXITSTATUS(status) == 0, "child exit %d",
+	    WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+	/* group display on the console: front and switch, then back to A */
+	pid = fork();
+	if (pid == 0) {
+		setgid(DISPGID);
+		setuid(NOBODY);
+		if ((fd = open("/dev/tty", O_RDWR)) < 0)
+			_exit(2);
+		close(fd);
+		fd = open("/dev/fb0", O_RDWR);
+		if (fd < 0)
+			_exit(3);
+		if ((id = acquire(fd, 1, "console")) <= 0 || front() != id)
+			_exit(4);
+		if (ioctl(fd, FBIOSWITCH, 0) != 0 || front() != 0)
+			_exit(5);
+		if (ioctl(fd, FBIOSWITCH, ida) != 0 || front() != ida)
+			_exit(6);
+		_exit(0);
+	}
+	t_check("perm_console_user", t_waitchild(pid, &status, 10) == pid &&
+	    WIFEXITED(status) && WEXITSTATUS(status) == 0, "child exit %d",
+	    WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+	/* root without a controlling terminal */
+	pid = fork();
+	if (pid == 0) {
+		setsid();
+		fd = open("/dev/fb0", O_RDWR);
+		if (fd < 0)
+			_exit(2);
+		if ((id = acquire(fd, 1, "root")) <= 0 || front() != id)
+			_exit(3);
+		if (ioctl(fd, FBIOSWITCH, ida) != 0 || front() != ida)
+			_exit(4);
+		_exit(0);
+	}
+	t_check("perm_root_noctty", t_waitchild(pid, &status, 10) == pid &&
 	    WIFEXITED(status) && WEXITSTATUS(status) == 0, "child exit %d",
 	    WIFEXITED(status) ? WEXITSTATUS(status) : -1);
 	t_check("perm_front_kept", front() == ida, "front %ld", front());

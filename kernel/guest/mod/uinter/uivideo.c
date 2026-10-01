@@ -450,7 +450,7 @@ ui_slotmgr(sel, pb, resp)
 /*
  * UI_PHYS_SCREENS for the task: a display session in front, its frame
  * buffer mapped at the slot base, the table's first entry.  No display:
- * no screens.
+ * no screens.  EPERM if the caller may not take the front.
  */
 int
 ui_screens(b)
@@ -465,6 +465,8 @@ ui_screens(b)
 
 	if (uv.v_on)
 		return EINVAL;
+	if (!ds_mayfront(u.u_cred))
+		return EPERM;
 	/* through the file system, as open and mmap would: the mapping holds the file */
 	vp = makespecvp(makedevice(DS_FBMAJ, 0), VCHR);
 	if (VOP_OPEN(&vp, FREAD | FWRITE, u.u_cred) != 0) {

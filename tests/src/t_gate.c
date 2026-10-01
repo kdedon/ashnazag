@@ -13,7 +13,7 @@
 #include <unistd.h>
 #include "t.h"
 
-#define	CALLS	100000
+#define	CALLS	1000000	/* about 100 clock ticks per round: one tick is 1% */
 #define	ROUNDS	5
 
 static int

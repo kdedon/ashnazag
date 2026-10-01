@@ -15,6 +15,11 @@
 #include "sys/uio.h"
 #include "sys/file.h"
 #include "sys/vnode.h"
+#include "sys/proc.h"
+#include "sys/disp.h"
+#include "sys/session.h"
+#include "sys/conf.h"
+#include "sys/stream.h"
 #include "fbcons.h"
 #include "adb.h"
 #include "ds.h"
@@ -22,6 +27,7 @@
 extern struct fbpmode fbp_mode[];
 extern int fbp_nmode, fbp_cur;
 extern int getf();
+extern struct streamtab coinfo;
 
 struct dsfbh ds_fbh[DS_NFBH];
 struct dsevh ds_evh[DS_NEVH];
@@ -179,12 +185,24 @@ int prot;
 	return s->s_pfn[off >> DS_PGSHIFT];
 }
 
-static int
-ds_mayswitch(cr)
+/*
+ * May cr bring a session to the front: privileged, the owner of the
+ * front session, or the person at the machine (controlling terminal
+ * the console, whose output is the screen).
+ */
+int
+ds_mayfront(cr)
 struct cred *cr;
 {
-	return drv_priv(cr) == 0 ||
-	    (ds_front != &ds_sess[0] && ds_front->s_uid == cr->cr_uid);
+	dev_t d;
+
+	if (drv_priv(cr) == 0)
+		return 1;
+	if (ds_front != &ds_sess[0] && ds_front->s_uid == cr->cr_uid)
+		return 1;
+	d = cttydev(curproc);
+	return d != NODEV && getmajor(d) < cdevcnt &&
+	    cdevsw[getmajor(d)].d_str == &coinfo && getminor(d) == 0;
 }
 
 static int
@@ -280,7 +298,7 @@ struct cred *cr;
 		return EINVAL;
 	if (h->h_sess)
 		return EBUSY;
-	if ((a.fa_flags & FBA_FRONT) && !ds_mayswitch(cr))
+	if ((a.fa_flags & FBA_FRONT) && !ds_mayfront(cr))
 		return EPERM;
 	a.fa_name[sizeof a.fa_name - 1] = 0;
 	if ((s = ds_newsess((long)cr->cr_uid, a.fa_name, &err)) == 0)
@@ -337,7 +355,7 @@ int *rvalp;
 	case FBIOSWITCH:
 		if ((t = ds_byid((long)arg)) == 0)
 			return EINVAL;
-		if (!ds_mayswitch(cr))
+		if (!ds_mayfront(cr))
 			return EPERM;
 		return ds_switch(t);
 	case FBIOGSTATE:

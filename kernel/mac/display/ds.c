@@ -416,7 +416,7 @@ register struct dssess *s;
 	s->s_used = 0;
 }
 
-/* next live user session after s by creation order, else the console */
+/* next live session of s's owner after s by creation order, else the console */
 static struct dssess *
 ds_after(s)
 struct dssess *s;
@@ -426,7 +426,7 @@ struct dssess *s;
 
 	for (i = 1; i <= DS_NSESS; i++) {
 		t = &ds_sess[i];
-		if (!t->s_used || t->s_dead || t == s)
+		if (!t->s_used || t->s_dead || t == s || t->s_uid != s->s_uid)
 			continue;
 		if (t->s_id > s->s_id && (n == 0 || t->s_id < n->s_id))
 			n = t;

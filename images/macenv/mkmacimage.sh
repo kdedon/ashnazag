@@ -4,8 +4,9 @@
 #   sh images/macenv/mkmacimage.sh [kernel.elf [out.img]]
 #
 # AUXROOT (default: the path in tests/aux/auxroot) names the A/UX root,
-# whose Mac files go in as A/UX installs them, AUXROM the Mac ROM image
-# for startmac; both proprietary, copied into the image only.  The
+# whose Mac files go in as A/UX installs them; proprietary, copied into
+# the image only.  A Mac uses its own ROM; AUXROM, if set, names a ROM
+# image installed as /etc/aux/rom for hosts without one.  The
 # desktop database is made in QEMU (mkdesktop.py, the Quadra 800 ROM).
 # The TOS container (images/tosenv/mktos.sh) is built in.  Other inputs as x11/mkimage.sh.
 set -e
@@ -20,7 +21,6 @@ OUT=${2:-$X11W/q800-mac.img}
 P=${MACW:-$X11W/macpkg}
 case $P in ""|/|"$HOME"|"$AUX") echo "[FAIL] MACW=$P"; exit 1 ;; esac
 [ -n "$AUXROOT" ] || AUXROOT=$(cat "$AUX/tests/aux/auxroot")
-AUXROM=${AUXROM:-$AUX/420DBFF3 - Quadra 700&900 & PB140&170.ROM}
 TC=$AUX/toolchain/amix
 SYS=$TC/m68k-cbm-sysv4/sysroot
 
@@ -50,7 +50,7 @@ sh "$AUX/images/tosenv/mktos.sh" "$P/tos" ||
 cp "$D/S05aux" "$D/startmac" "$P/"
 mv "$P/startmac" "$P/startmac.sh"
 cp "$AUXROOT/shlib/libc1_s" "$AUXROOT/shlib/libmac1_s" "$AUXROOT/etc/fidd" "$P/"
-cp "$AUXROM" "$P/rom"
+[ -z "$AUXROM" ] || cp "$AUXROM" "$P/rom"
 
 # A/UX's Mac files as A/UX installs them, less its per-directory File
 # Manager caches; owned by root, group sys

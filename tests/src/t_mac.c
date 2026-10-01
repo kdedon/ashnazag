@@ -269,14 +269,20 @@ native()
 static void
 macabi()
 {
-	static char *av[] = { "/aux/bin/macabi", 0 };
-	char sub[100], *l, *e, *why, pram[256];
+	static char *av[] = { "/aux/bin/macabi", 0, 0 };
+	char sub[100], *l, *e, *why, pram[256], hw[16];
+	unsigned long a = 0, info;
 	int p[2], st, n, got = 0, done = 0, fd;
 	struct pollfd pf;
 	long t0 = t_now_ms();
 	pid_t pid;
 
 	t_rearm(90);
+	/* where uinter keeps the host ROM's address, for macabi to compare */
+	if (getksym("ui_hwrom", &a, &info) == 0) {
+		sprintf(hw, "%lx", a);
+		av[1] = hw;
+	}
 	/* a PRAM file for the session to load: marked, 24-bit addressing asked */
 	memset(pram, 0, sizeof pram);
 	memcpy(pram + 0xfc, "PRAM", 4);
@@ -833,7 +839,7 @@ restart()
 	if (pipe(p) < 0)
 		return;
 	if ((pid = fork()) == 0) {
-		setpgrp();
+		setpgid(0, 0);	/* its own group, the console still its terminal */
 		dup2(p[1], 1);
 		dup2(p[1], 2);
 		close(p[0]);
