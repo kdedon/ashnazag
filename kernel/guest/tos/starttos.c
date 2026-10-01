@@ -237,8 +237,9 @@ main(argc, argv)
 	memcpy((char *)base, rbuf, n);
 	if (mprotect((caddr_t)base, (n + 0xfff) & ~0xfffL, PROT_READ | PROT_EXEC) < 0)
 		die("mprotect");
-	region((unsigned long)CART, (unsigned long)CARTSZ, 0);
-	(void)readall(cart, (char *)CART, (long)CARTSZ);
+	/* shared: the display process posts input in its last page */
+	region((unsigned long)CART, (unsigned long)CARTSZ, 1);
+	(void)readall(cart, (char *)CART, TOSPV - CART);
 	drivec();
 	driveu();
 

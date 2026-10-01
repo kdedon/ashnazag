@@ -21,6 +21,7 @@ extern int fpu_present;
 extern void dlm_cacheflush();
 extern long lbolt;
 extern struct modwrapper tosguest_wrapper;
+extern struct proc *prfind();
 
 struct tosctr tosc;
 int	tos_trace = 0;		/* 1: console lines for bus errors and odd accesses */
@@ -73,7 +74,7 @@ tos_kick(rr)
 	struct tosctr *t = &tosc;
 	int l;
 
-	if (t->t_state != 1 || (l = tos_level()) == 0)
+	if (t->t_state != 1 || t->t_paused || (l = tos_level()) == 0)
 		return;
 	psignal(t->t_proc, TOS_SIG);
 	if (l > vipl(t->t_gp)) {
@@ -118,12 +119,21 @@ tos_fsig(p, gp)
 	s = splhi_();
 	h = p->p_hold;
 	sigdelset(&p->p_hold, TOS_SIG);
-	if (tosc.t_gp != gp || tos_level() <= vipl(gp))
+	if (tosc.t_gp != gp || (!tosc.t_paused && tos_level() <= vipl(gp)))
 		sigaddset(&p->p_hold, TOS_SIG);
 	n = __amix_fsig(p);
 	p->p_hold = h;
 	splx_(s);
 	return n;
+}
+
+/* the process that paused the guest still runs */
+static int
+tos_pauser()
+{
+	struct proc *p = prfind(tosc.t_ppid);
+
+	return p && p == tosc.t_pproc && p->p_stat != SZOMB;
 }
 
 /* the carrier: one interrupt frame through the guest's vector table */
@@ -135,13 +145,25 @@ tos_sendsig(gp, sig, sip, hdlr)
 	int (*hdlr)();
 {
 	char *r = (char *)u.u_ar0;
-	int s, l, vec;
+	int s, l, vec, id;
 
 	if (sig != TOS_SIG)
 		return __amix_sendsig(sig, sip, hdlr);
 	if (tosc.t_gp != gp)
 		return 1;
 	s = splhi_();
+	while (tosc.t_paused && tosc.t_gp == gp) {
+		if (!tos_pauser()) {
+			tosc.t_paused = 0;
+			break;
+		}
+		id = ttimeout(wakeup, (caddr_t)&tosc.t_paused, (long)HZ);
+		l = sleep((caddr_t)&tosc.t_paused, (PZERO + 1) | PCATCH);
+		if (id != -1)
+			untimeout(id);
+		if (l)
+			break;
+	}
 	l = tos_level();
 	if (l <= vipl(gp)) {
 		splx_(s);
@@ -488,6 +510,18 @@ tosioctl(dev, cmd, arg, mode, cr, rvp)
 		e = copyout((caddr_t)tv, arg, sizeof *tv) ? EFAULT : 0;
 		kmem_free((caddr_t)tv, sizeof *tv);
 		return e;
+	case TOSIOC_PAUSE:
+		s = splhi_();
+		t->t_paused = arg != 0;
+		t->t_ppid = curproc->p_pid;
+		t->t_pproc = curproc;
+		if (t->t_paused)
+			psignal(t->t_proc, TOS_SIG);
+		else
+			wakeup((caddr_t)&t->t_paused);
+		splx_(s);
+		tos_kick(1);
+		return 0;
 	case TOSIOC_STAT:
 		return copyout((caddr_t)&t->t_st, arg, sizeof t->t_st) ? EFAULT : 0;
 	}

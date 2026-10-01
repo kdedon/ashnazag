@@ -212,6 +212,29 @@ peek(a, n)
 	return v;
 }
 
+/* a guest long through /proc; 0 if not written */
+static int
+poke(a, v)
+	long a, v;
+{
+	char path[32];
+	unsigned char b[4];
+	int fd, ok;
+
+	sprintf(path, "/proc/%05ld", (long)tpid);
+	if ((fd = open(path, O_RDWR)) < 0)
+		return 0;
+	b[0] = v >> 24;
+	b[1] = v >> 16;
+	b[2] = v >> 8;
+	b[3] = v;
+	ok = lseek(fd, a, 0) == a && write(fd, (char *)b, 4) == 4;
+	close(fd);
+	return ok;
+}
+
+#define	PVF(f)	(TOSPV + (long)&((struct tospv *)0)->f)
+
 static struct tosstat st;
 
 static void
@@ -439,6 +462,41 @@ desktop(name, info)
 	return w >= 600 && h >= 380 && menu >= 500 && desk >= 500;
 }
 
+/*
+ * In the background TOS sleeps and gets no input; a key held when it
+ * left is released for it.
+ */
+static void
+background()
+{
+	long kbs = peek(0xe00024L, 4), h0, h1, sh;
+	unsigned long v0, v1, k0;
+
+	host("down shift");
+	nap(300);
+	host("key ctrl+alt+meta_l+0");
+	nap(1000);
+	t_check(N("hotkey_console"), front() == 0, "front %ld", front());
+	host("up shift");
+	ioctl(tfd, TOSIOC_STAT, &st);
+	v0 = st.ts_vbl;
+	k0 = st.ts_kbin;
+	h0 = peek(PVF(pv_head), 4);
+	host("move 30 30");
+	nap(1000);
+	ioctl(tfd, TOSIOC_STAT, &st);
+	v1 = st.ts_vbl;
+	h1 = peek(PVF(pv_head), 4);
+	t_check(N("background_sleeps"), v1 - v0 <= 2, "%lu VBLs in 1 s", v1 - v0);
+	t_check(N("background_no_input"), h1 == h0 && st.ts_kbin == k0,
+	    "events %ld -> %ld, IKBD bytes %lu -> %lu", h0, h1, k0, st.ts_kbin);
+	host("key ctrl+alt+meta_l+1");
+	nap(1000);
+	t_check(N("hotkey_tos"), front() == sess, "front %ld, TOS %ld", front(), sess);
+	sh = kbs > 0 && kbs < 0x100000 ? peek(kbs, 1) : 0;
+	t_check(N("held_key_released"), sh >= 0 && !(sh & 3), "kbshift %lx", sh);
+}
+
 /* one container: its owner is shown, a second ENTER is refused */
 static void
 owner()
@@ -619,13 +677,15 @@ fullfifo()
 static void
 keys()
 {
-	long kbs = peek(0xe00024L, 4), a, b, c;
-	unsigned long n0 = st.ts_kbrd;
+	long kbs = peek(0xe00024L, 4), a, b, c, k0 = peek(PVF(pv_nkey), 4);
+	unsigned long n0;
 
 	if (kbs <= 0 || kbs >= 0x100000) {
 		t_skip(N("kbshift"), "no kbshift address in the ROM header");
 		return;
 	}
+	ioctl(tfd, TOSIOC_STAT, &st);
+	n0 = st.ts_kbrd;
 	a = peek(kbs, 1);
 	host("down shift");
 	nap(500);
@@ -636,7 +696,94 @@ keys()
 	t_check(N("kbshift"), a >= 0 && !(a & 2) && (b & 2) && !(c & 2),
 	    "kbshift %lx, with Shift down %lx, up %lx", a, b, c);
 	ioctl(tfd, TOSIOC_STAT, &st);
-	t_check(N("ikbd_read"), st.ts_kbrd >= n0 + 2, "IKBD bytes read %lu -> %lu", n0, st.ts_kbrd);
+	if (k0 >= 0 && (peek(PVF(pv_on), 4) & PV_KEYS))
+		t_check(N("keys_direct"), peek(PVF(pv_nkey), 4) >= k0 + 2 && st.ts_kbrd == n0,
+		    "keys to kbdvec %ld -> %ld, IKBD bytes %lu -> %lu", k0, peek(PVF(pv_nkey), 4),
+		    n0, st.ts_kbrd);
+	else
+		t_check(N("ikbd_read"), st.ts_kbrd >= n0 + 2, "IKBD bytes read %lu -> %lu", n0,
+		    st.ts_kbrd);
+}
+
+/* on: $118 to a stub chaining to TOS's handler, so input takes the IKBD */
+static int
+ikbdonly(on)
+	int on;
+{
+	static long v;
+	int ok;
+
+	if (on) {
+		v = peek(0x118L, 4);
+		ok = poke(0x3f0L, 0x4ef90000L | (v >> 16 & 0xffff)) &&
+		    poke(0x3f4L, v << 16) && poke(0x118L, 0x3f0L);
+	} else
+		ok = poke(0x118L, v);
+	nap(300);
+	return ok;
+}
+
+/*
+ * Input straight to TOS's handlers: motion reaches mousevec with no
+ * IKBD byte.  With the ACIA vector taken (a stub that chains to TOS)
+ * the IKBD carries it, and the direct path returns with the vector.
+ */
+static void
+direct()
+{
+	long on = peek(PVF(pv_on), 4), p0 = peek(PVF(pv_npkt), 4), p1, on1, vs;
+	unsigned long b0;
+
+	ioctl(tfd, TOSIOC_STAT, &st);
+	t_info(N("pv_on"), "%ld head %ld tail %ld xy %lx cxy %lx btn %ld kbin %lu", on,
+	    peek(PVF(pv_head), 4), peek(PVF(pv_tail), 4), peek(PVF(pv_xy), 4),
+	    peek(PVF(pv_cxy), 4), peek(PVF(pv_btn), 4), st.ts_kbin);
+	if (!t_check(N("mouse_direct_on"), on >= 0 && (on & PV_MOUSE), "pv_on %ld", on))
+		return;
+	ioctl(tfd, TOSIOC_STAT, &st);
+	b0 = st.ts_kbrd;
+	host("move 20 10");
+	nap(500);
+	ioctl(tfd, TOSIOC_STAT, &st);
+	p1 = peek(PVF(pv_npkt), 4);
+	t_check(N("mouse_direct"), p1 > p0 && st.ts_kbrd == b0,
+	    "mousevec packets %ld -> %ld, IKBD bytes %lu -> %lu", p0, p1, b0, st.ts_kbrd);
+	if (!ikbdonly(1)) {
+		t_check(N("fallback"), 0, "guest memory not writable: %s", T_ERR);
+		return;
+	}
+	nap(300);
+	on1 = peek(PVF(pv_on), 4);
+	ioctl(tfd, TOSIOC_STAT, &st);
+	b0 = st.ts_kbrd;
+	p0 = peek(PVF(pv_npkt), 4);
+	host("move -20 -10");
+	nap(500);
+	ioctl(tfd, TOSIOC_STAT, &st);
+	p1 = peek(PVF(pv_npkt), 4);
+	t_check(N("fallback"), on1 == 0 && st.ts_kbrd >= b0 + 3 && p1 == p0,
+	    "pv_on %ld, IKBD bytes %lu -> %lu, mousevec packets %ld -> %ld", on1, b0,
+	    st.ts_kbrd, p0, p1);
+	ikbdonly(0);
+	t_check(N("fallback_back"), peek(PVF(pv_on), 4) == on, "pv_on %ld", peek(PVF(pv_on), 4));
+	/* with the VBL queue off the IKBD carries the motion */
+	vs = peek(0x452L, 4);
+	if (vs < 0 || !poke(0x452L, vs & 0xffff))
+		return;
+	nap(500);
+	ioctl(tfd, TOSIOC_STAT, &st);
+	b0 = st.ts_kbrd;
+	host("move 20 10");
+	nap(500);
+	ioctl(tfd, TOSIOC_STAT, &st);
+	poke(0x452L, (vs & 0xffff0000L) | (peek(0x454L, 2) & 0xffff));
+	t_check(N("novbl"), st.ts_kbrd >= b0 + 3, "IKBD bytes %lu -> %lu", b0, st.ts_kbrd);
+	nap(300);
+	p0 = peek(PVF(pv_npkt), 4);
+	host("move -20 -10");
+	nap(500);
+	p1 = peek(PVF(pv_npkt), 4);
+	t_check(N("novbl_back"), p1 > p0, "mousevec packets %ld -> %ld", p0, p1);
 }
 
 /* guest memory [a, a+n) through /proc; 0 if unreadable */
@@ -698,13 +845,14 @@ static long pvar;		/* the pointer's x, y words */
 
 /* continuous motion: pointer updates, settling time, kernel entries */
 static void
-glide()
+glide(name)
+	char *name;
 {
 	long a, t0, t, tl = 0, p, lp, p500 = -1, g0, g1, d0, d1;
 	unsigned long e0, e1, kb0, ki0, n = 0;
 
 	if ((a = pvar = ptrvar()) == 0) {
-		t_info(N("glide"), "pointer variable not found");
+		t_info(N(name), "pointer variable not found");
 		return;
 	}
 	lp = peek(a, 4);
@@ -728,10 +876,37 @@ glide()
 	p = peek(a, 4);
 	e1 = entries();
 	cputimes(&g1, &d1);
-	t_info(N("glide"), "var %lx: %lu updates, last at %ld ms, at 500 ms (%ld,%ld) end (%ld,%ld);"
+	t_info(N(name), "var %lx: %lu updates, last at %ld ms, at 500 ms (%ld,%ld) end (%ld,%ld);"
 	    " 3 s: entries %lu, acia ints %lu, bytes %lu, CPU ms guest %ld display %ld", a, n, tl,
 	    p500 >> 16, p500 & 0xffff, p >> 16, p & 0xffff, e1 - e0, st.ts_ints[6] - ki0,
 	    st.ts_kbrd - kb0, g1 - g0, d1 - d0);
+}
+
+/* ms from a host move to a new pointer position, 10 moves */
+static void
+latency(name)
+	char *name;
+{
+	long t0, d, sum = 0, max = 0, p;
+	int i, n = 0;
+
+	if (pvar == 0)
+		return;
+	for (i = 0; i < 10; i++) {
+		p = peek(pvar, 4);
+		t0 = t_now_ms();
+		host(i & 1 ? "move -6 -4" : "move 6 4");
+		while ((d = t_now_ms() - t0) < 1000 && peek(pvar, 4) == p)
+			nap(1);
+		if (d < 1000) {
+			n++;
+			sum += d;
+			max = d > max ? d : max;
+		}
+		nap(100);
+	}
+	t_info(N(name), "%d of 10 moves seen, mean %ld ms, max %ld ms (host request included)",
+	    n, n ? sum / n : 0, max);
 }
 
 /*
@@ -865,12 +1040,7 @@ run(rom)
 	if (tpid) {
 		t_check(N("desktop"), up, "no desktop on screen after %ld s", (t_now_ms() - t0) / 1000);
 		if (hfd >= 0) {
-			host("key ctrl+alt+meta_l+0");
-			nap(1000);
-			t_check(N("hotkey_console"), front() == 0, "front %ld", front());
-			host("key ctrl+alt+meta_l+1");
-			nap(1000);
-			t_check(N("hotkey_tos"), front() == sess, "front %ld, TOS %ld", front(), sess);
+			background();
 		}
 		owner();
 		ucheck();
@@ -881,12 +1051,19 @@ run(rom)
 		    st.ts_cache);
 		if (hfd >= 0) {
 			keys();
+			direct();
 			fullfifo();
 			if (rom)
 				pointer(35, 77);
 			else
 				pointer(35, 38);
-			glide();
+			glide("glide");
+			latency("latency");
+			if (ikbdonly(1)) {
+				glide("glide_ikbd");
+				latency("latency_ikbd");
+				ikbdonly(0);
+			}
 			buttons();
 			(void)desktop(S("end"), 1);
 		} else

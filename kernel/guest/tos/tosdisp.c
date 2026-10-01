@@ -20,6 +20,7 @@
 #include "tosio.h"
 
 #define	REFRESH	40		/* ms between screen updates */
+#define	STALE	250		/* ms without a VBL: input takes the IKBD */
 
 /* ADB key code -> IKBD scan code (US layout), 0 none */
 static unsigned char adb2ikbd[128] = {
@@ -54,17 +55,25 @@ struct geom {
 };
 
 static struct tosinput in;
-static int mbtn, mdx, mdy;
+static int mbtn, kbtn, mdx, mdy;
+static volatile struct tospv *pv = (struct tospv *)TOSPV;
+static unsigned short px, py;		/* motion posted to the cartridge */
+static unsigned char kdown[128];	/* scan codes held */
+static int hidden;			/* in the background: input is dropped */
+static int pvs;				/* PV_* in use */
+static unsigned long lvbl;		/* the cartridge's VBL count */
+static long lvt;			/* when it last changed */
+static long now();
 
 /* keys, motion and buttons to the kernel, which makes the mouse packets */
 static void
 flush()
 {
-	if (in.ti_n == 0 && mdx == 0 && mdy == 0 && in.ti_btn == mbtn)
+	if (in.ti_n == 0 && mdx == 0 && mdy == 0 && in.ti_btn == kbtn)
 		return;
 	in.ti_dx = mdx > 32767 ? 32767 : mdx < -32767 ? -32767 : mdx;
 	in.ti_dy = mdy > 32767 ? 32767 : mdy < -32767 ? -32767 : mdy;
-	in.ti_btn = mbtn;
+	in.ti_btn = kbtn;
 	ioctl(tfd, TOSIOC_INPUT, &in);
 	in.ti_n = 0;
 	mdx -= in.ti_dx;
@@ -80,41 +89,148 @@ put(b)
 	in.ti_b[in.ti_n++] = b;
 }
 
+/* an event for the cartridge, after the motion before it; 0 if its queue is full */
+static int
+post(ev)
+	int ev;
+{
+	unsigned long h = pv->pv_head;
+
+	pv->pv_xy = (unsigned long)px << 16 | py;
+	if (h - pv->pv_tail >= PV_NEV)
+		return 0;
+	pv->pv_ev[h % PV_NEV].e_ev = ev;
+	pv->pv_ev[h % PV_NEV].e_xy = pv->pv_xy;
+	pv->pv_head = h + 1;
+	return 1;
+}
+
+/* when the cartridge's VBL routine last ran, to a poll period */
+static void
+pvbeat()
+{
+	if (pv->pv_vbl != lvbl) {
+		lvbl = pv->pv_vbl;
+		lvt = now();
+	}
+}
+
+/*
+ * The paths the cartridge takes now: none while its VBL routine does
+ * not run.  Events it has not taken when a path closes go by the IKBD,
+ * key releases only; buttons are resent on either path when it changes.
+ */
+static void
+pvpoll()
+{
+	unsigned long h, t;
+	int on, e;
+
+	pvbeat();
+	on = now() - lvt < STALE ? pv->pv_on & (PV_MOUSE | PV_KEYS) : 0;
+	if (pvs & ~on) {
+		h = pv->pv_head;
+		t = pv->pv_tail;
+		if (h - t > PV_NEV)
+			t = h - PV_NEV;
+		pv->pv_drop = h;
+		for (; t != h; t++)
+			if (pvs & ~on & PV_KEYS && (e = pv->pv_ev[t % PV_NEV].e_ev) >> 8 == PE_KEY &&
+			    (e & 0x80))
+				put(e & 0xff);
+		if (pvs & ~on & PV_MOUSE)
+			kbtn = mbtn;
+	}
+	if (on & ~pvs & PV_MOUSE)
+		post(PE_BTN << 8 | mbtn);
+	pvs = on;
+}
+
+static void
+key(k)
+	int k;
+{
+	kdown[k & 0x7f] = !(k & 0x80);
+	if (!(pvs & PV_KEYS) || !post(PE_KEY << 8 | k))
+		put(k);
+}
+
+/* each button change is a packet of its own */
+static void
+button()
+{
+	if (!(pvs & PV_MOUSE) || !post(PE_BTN << 8 | mbtn)) {
+		kbtn = mbtn;
+		flush();
+	}
+}
+
+static void
+motion(axis, v)
+	int axis;
+	long v;
+{
+	if (!(pvs & PV_MOUSE)) {
+		if (axis == IE_RELX)
+			mdx += v;
+		else
+			mdy += v;
+		return;
+	}
+	if (axis == IE_RELX)
+		px += v;
+	else
+		py += v;
+	pv->pv_xy = (unsigned long)px << 16 | py;
+}
+
+/* to the background: TOS sees every key and button released, then sleeps */
+static void
+hide()
+{
+	int k;
+
+	pvpoll();
+	for (k = 1; k < 128; k++)
+		if (kdown[k])
+			key(k | 0x80);
+	if (mbtn) {
+		mbtn = 0;
+		button();
+	}
+	mdx = mdy = 0;
+	flush();
+	ioctl(tfd, TOSIOC_PAUSE, 1);
+}
+
 static void
 events(fd)
 	int fd;
 {
 	struct inev ev[32];
-	int n, i, k, press = 0;
+	int n, i, k;
 
-	if ((n = read(fd, (char *)ev, sizeof ev)) <= 0)
+	if ((n = read(fd, (char *)ev, sizeof ev)) <= 0 || hidden)
 		return;
+	pvpoll();
 	for (i = 0; i < n / (int)sizeof ev[0]; i++)
 		switch (ev[i].ie_type) {
 		case IE_KEY:
 			if (ev[i].ie_code >= 128 || (k = adb2ikbd[ev[i].ie_code]) == 0)
 				break;
 			if (ev[i].ie_code == 0x39) {	/* caps lock latches: each change toggles */
-				put(k);
-				put(k | 0x80);
+				key(k);
+				key(k | 0x80);
 			} else
-				put(ev[i].ie_value ? k : k | 0x80);
+				key(ev[i].ie_value ? k : k | 0x80);
 			break;
 		case IE_REL:
-			if (ev[i].ie_code == IE_RELX)
-				mdx += ev[i].ie_value;
-			else
-				mdy += ev[i].ie_value;
+			motion(ev[i].ie_code, ev[i].ie_value);
 			break;
 		case IE_BTN:
 			k = ev[i].ie_code == 1 ? 2 : 1;
 			mbtn = ev[i].ie_value ? mbtn | k : mbtn & ~k;
-			press = 1;
-			break;
-		case IE_SYN:		/* each button change is a packet of its own */
-			if (press)
-				flush();
-			press = 0;
+			button();
 			break;
 		}
 	flush();
@@ -273,7 +389,8 @@ disp(fd, verbose, ram)
 	struct fbacq acq;
 	struct tosvideo tv, last;
 	struct geom g;
-	struct pollfd p[2];
+	struct pollfd p[3];
+	struct fbnote fn;
 	int i, k, kfd, mfd, have = 0;
 	long t = -REFRESH;
 
@@ -316,17 +433,35 @@ disp(fd, verbose, ram)
 		ioctl(mfd, EVIOCBIND, fbfd);
 	p[0].fd = kfd;
 	p[1].fd = mfd;
-	p[0].events = p[1].events = POLLIN;
+	p[2].fd = fbfd;
+	p[0].events = p[1].events = p[2].events = POLLIN;
 	for (;;) {
-		if (poll(p, 2L, REFRESH / 2) > 0)
+		if (poll(p, 3L, hidden ? 1000 : REFRESH / 2) > 0) {
 			for (i = 0; i < 2; i++)
 				if (p[i].revents & POLLIN)
 					events(p[i].fd);
-		if (now() - t < REFRESH)
+			if ((p[2].revents & POLLIN) && read(fbfd, (char *)&fn, sizeof fn) == sizeof fn) {
+				if (fn.fn_type == FBN_HIDDEN && !hidden)
+					hide();
+				else if (fn.fn_type == FBN_SHOWN && hidden) {
+					ioctl(tfd, TOSIOC_PAUSE, 0);
+					lvt = now();	/* its VBLs resume */
+				}
+				hidden = fn.fn_type == FBN_HIDDEN ? 1 : fn.fn_type == FBN_SHOWN ? 0 : hidden;
+				have = have && !hidden;
+			}
+		}
+		if (getppid() == 1)
+			return;
+		pvbeat();
+		if (hidden || now() - t < REFRESH)
 			continue;
 		t = now();
-		if (getppid() == 1 || ioctl(tfd, TOSIOC_VIDEO, &tv) < 0)
+		if (ioctl(tfd, TOSIOC_VIDEO, &tv) < 0) {
+			if (errno == ENXIO)	/* the guest has not started yet */
+				continue;
 			return;
+		}
 		if (!geom(&tv, &g))
 			continue;
 		k = !have || tv.tv_base != last.tv_base || tv.tv_ttmode != last.tv_ttmode;

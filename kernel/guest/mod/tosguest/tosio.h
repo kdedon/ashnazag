@@ -19,6 +19,7 @@
 #define	TOSIOC_VIDEO	TOSIOC(3)	/* out struct tosvideo */
 #define	TOSIOC_STAT	TOSIOC(4)	/* out struct tosstat */
 #define	TOSIOC_OWNER	TOSIOC(5)	/* out struct tosowner: who runs the container */
+#define	TOSIOC_PAUSE	TOSIOC(6)	/* value: 1 the guest sleeps, 0 it runs */
 
 struct tosenter {
 	unsigned long	te_ramsize;	/* ST-RAM at 0 */
@@ -69,5 +70,38 @@ struct tosstat {
 	unsigned long	ts_cache;	/* cache instructions and CACR writes */
 	unsigned long	ts_slept;	/* clock ticks asleep in stop */
 };
+
+/*
+ * Input the cartridge hands straight to TOS's own handlers each VBL:
+ * the last page of the cartridge, shared by the guest and the display
+ * process.  pv_on says which events the guest takes here; the rest go
+ * through the IKBD (TOSIOC_INPUT).
+ */
+#define	TOSPV		0xfbf000L
+#define	PV_NEV		256
+
+struct tospv {
+	unsigned long	pv_on;		/* guest: PV_* */
+	unsigned long	pv_head;	/* events posted */
+	unsigned long	pv_tail;	/* events taken */
+	unsigned long	pv_xy;		/* motion posted: x << 16 | y, 16-bit sums */
+	unsigned long	pv_cxy;		/* motion taken */
+	unsigned long	pv_btn;		/* buttons sent */
+	unsigned long	pv_npkt;	/* mouse packets to mousevec */
+	unsigned long	pv_nkey;	/* keys to kbdvec */
+	struct {
+		unsigned short	e_ev;	/* PE_* << 8 | IKBD code */
+		unsigned short	e_pad;
+		unsigned long	e_xy;	/* pv_xy when posted */
+	}		pv_ev[PV_NEV];
+	unsigned long	pv_vbl;		/* guest: VBLs run */
+	unsigned long	pv_drop;	/* events before this went by the IKBD */
+};
+
+#define	PV_MOUSE	1
+#define	PV_KEYS		2
+
+#define	PE_KEY		1		/* scan code, $80 on release */
+#define	PE_BTN		2		/* buttons: 1 right, 2 left */
 
 #endif	/* _TOSIO_H */

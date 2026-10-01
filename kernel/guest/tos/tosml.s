@@ -2,7 +2,9 @@
 | at $FA0000 whose init runs before the disk boot.  It serves drive C:
 | from a disk image through the BIOS hard-disk vectors, reading and
 | writing the image with host system calls (trap #0), and drive U:
-| from a host directory (hostfs.c).
+| from a host directory (hostfs.c).  Each VBL it hands the mouse and
+| keyboard events the display process posts in its last page straight
+| to TOS's handlers.
 |
 |   m68k-elf-as -m68040 tosml.s; ld -Ttext=0xfa0000; objcopy -O binary
 
@@ -33,6 +35,7 @@ p_tz:	.long	0			| seconds east of UTC
 p_root:	.space	256			| directory of drive U:, empty for none
 
 init:
+	jsr	pvinit
 	tst.b	p_root
 	beq.s	2f
 	jsr	hinit
@@ -60,6 +63,195 @@ init:
 	move.b	#2,0x37(a0)		| p_defdrv: AUTO from C:
 1:	rts
 run:	rts
+
+| input posted by the display process (struct tospv)
+	.set	PV, 0xfbf000
+	.set	pv_on, 0
+	.set	pv_head, 4
+	.set	pv_tail, 8
+	.set	pv_xy, 12
+	.set	pv_cxy, 16
+	.set	pv_btn, 20
+	.set	pv_npkt, 24
+	.set	pv_nkey, 28
+	.set	pv_ev, 32
+	.set	PV_NEV, 256
+	.set	pv_vbl, pv_ev+PV_NEV*8
+	.set	pv_drop, pv_vbl+4
+
+kbv:	.long	0			| Kbdvbase()
+kio:	.long	0			| the keyboard's Iorec
+ikv:	.long	0			| $118 and ikbdsys as TOS set them
+iks:	.long	0
+pvk:	.long	0			| PV_KEYS when TOS has kbdvec
+pkt:	.byte	0, 0, 0, 0		| relative mouse packet
+
+| the last free VBL queue slot runs pv: GEM takes the first for its cursor
+pvinit:	move.w	#34,-(sp)		| Kbdvbase
+	trap	#14
+	addq.l	#2,sp
+	move.l	d0,kbv
+	move.l	d0,a0
+	move.l	32(a0),iks
+	move.l	0x118,ikv
+	move.w	#1,-(sp)		| Iorec(1)
+	move.w	#14,-(sp)
+	trap	#14
+	addq.l	#4,sp
+	move.l	d0,kio
+	move.l	0x4f2,a0		| _sysbase
+	move.l	8(a0),a0		| os_beg
+	cmp.w	#0x0200,2(a0)		| TOS 2 and later: kbdvec before the vectors
+	bcs.s	1f
+	move.l	#2,pvk
+1:	move.w	0x454,d0		| nvbls
+	move.l	0x456,a0		| _vblqueue
+	lea	(a0,d0.w*4),a0
+	bra.s	3f
+2:	tst.l	-(a0)
+	bne.s	3f
+	move.l	#pv,(a0)
+	rts
+3:	dbra	d0,2b
+	rts
+
+| each VBL: while TOS owns the IKBD vectors, events reach its handlers
+| here; when a program takes them, the IKBD carries everything
+pv:	movem.l	d0-d7/a0-a6,-(sp)
+	lea	PV,a5
+	move.l	kbv,a4
+	addq.l	#1,pv_vbl(a5)
+	move.l	pv_tail(a5),d2
+	move.l	pv_drop(a5),d0
+	sub.l	d2,d0
+	ble.s	0f
+	move.l	pv_head(a5),d1
+	sub.l	d2,d1
+	cmp.l	d1,d0
+	bhi.s	0f
+	add.l	d0,pv_tail(a5)		| sent by the IKBD instead
+0:	moveq	#0,d7
+	move.l	0x118,d0
+	cmp.l	ikv,d0
+	bne.s	1f
+	move.l	32(a4),d0
+	cmp.l	iks,d0
+	bne.s	1f
+	moveq	#1,d7
+	or.l	pvk,d7
+1:	move.l	d7,pv_on(a5)
+	move.l	pv_tail(a5),d6
+	move.l	pv_xy(a5),d5
+	cmp.l	pv_head(a5),d6
+	bne.s	2f
+	cmp.l	pv_cxy(a5),d5
+	beq	9f
+2:	tst.l	d7
+	bne.s	3f
+	move.l	pv_head(a5),pv_tail(a5)	| the IKBD's now: drop these
+	move.l	d5,pv_cxy(a5)
+	bra.s	9f
+3:	move.w	sr,-(sp)		| as from the IKBD interrupt
+	move.w	(sp),d0
+	and.w	#0xf8ff,d0
+	or.w	#0x0600,d0
+	move.w	d0,sr
+4:	cmp.l	pv_head(a5),d6
+	beq.s	8f
+	move.l	#PV_NEV-1,d0
+	and.l	d6,d0
+	lsl.l	#3,d0
+	lea	pv_ev(a5,d0.l),a3
+	move.l	4(a3),d0
+	bsr	mot
+	move.w	(a3),d0
+	cmp.w	#0x0200,d0
+	bcc.s	5f
+	btst	#1,d7			| a key
+	beq.s	6f
+	and.l	#0xff,d0
+	move.l	kio,a0
+	move.l	-4(a4),a1		| kbdvec
+	movem.l	d5-d7/a3-a5,-(sp)
+	jsr	(a1)
+	movem.l	(sp)+,d5-d7/a3-a5
+	addq.l	#1,pv_nkey(a5)
+	bra.s	6f
+5:	and.l	#3,d0			| buttons
+	move.l	d0,pv_btn(a5)
+	move.l	d0,d4
+	moveq	#0,d1
+	moveq	#0,d2
+	bsr	pkt3
+6:	addq.l	#1,d6
+	move.l	d6,pv_tail(a5)
+	bra.s	4b
+8:	move.l	pv_xy(a5),d0		| motion posted meanwhile too
+	bsr	mot
+	move.w	(sp)+,sr
+9:	movem.l	(sp)+,d0-d7/a0-a6
+	rts
+
+| motion up to d0 (x << 16 | y), at most a screen's width, in packets
+mot:	move.l	pv_cxy(a5),d1
+	move.l	d0,pv_cxy(a5)
+	move.w	d0,d3
+	sub.w	d1,d3
+	ext.l	d3
+	swap	d0
+	swap	d1
+	sub.w	d1,d0
+	ext.l	d0
+	move.l	#1280,d4
+	bsr.s	clip
+	exg	d0,d3
+	bsr.s	clip
+	exg	d0,d3			| d0 dx, d3 dy
+1:	move.l	d0,d1
+	or.l	d3,d1
+	beq.s	2f
+	moveq	#127,d4
+	move.l	d0,-(sp)
+	bsr.s	clip
+	move.l	d0,d1
+	move.l	d3,d0
+	bsr.s	clip
+	move.l	d0,d2
+	move.l	(sp)+,d0
+	sub.l	d1,d0
+	sub.l	d2,d3
+	move.l	pv_btn(a5),d4
+	movem.l	d0/d3,-(sp)
+	bsr	pkt3
+	movem.l	(sp)+,d0/d3
+	bra.s	1b
+2:	rts
+
+| d0 within -d4..d4
+clip:	cmp.l	d4,d0
+	ble.s	1f
+	move.l	d4,d0
+1:	neg.l	d4
+	cmp.l	d4,d0
+	bge.s	2f
+	move.l	d4,d0
+2:	neg.l	d4
+	rts
+
+| a relative packet to mousevec: buttons d4, dx d1, dy d2
+pkt3:	lea	pkt,a0
+	or.b	#0xf8,d4
+	move.b	d4,(a0)
+	move.b	d1,1(a0)
+	move.b	d2,2(a0)
+	movem.l	d0-d7/a2-a6,-(sp)
+	move.l	a0,-(sp)
+	move.l	16(a4),a1		| mousevec
+	jsr	(a1)
+	addq.l	#4,sp
+	movem.l	(sp)+,d0-d7/a2-a6
+	addq.l	#1,pv_npkt(a5)
+	rts
 
 | GEMDOS: calls for U: to gemdos(args, &result), others to TOS
 	.long	0x58425241		| XBRA

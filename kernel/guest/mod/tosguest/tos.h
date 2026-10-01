@@ -62,6 +62,9 @@ struct tosctr {
 	struct tosmfp	t_mfp2;		/* TT MFP: timers polled, no interrupts */
 	int		t_vblpend;
 	int		t_sleeping;	/* in stop, waiting for an interrupt */
+	int		t_paused;	/* in the background: sleeps, no interrupts */
+	pid_t		t_ppid;		/* who paused it */
+	struct proc	*t_pproc;
 
 	/* IKBD ACIA */
 	unsigned char	t_kctl, t_kdata;
