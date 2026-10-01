@@ -1,16 +1,21 @@
 #!/bin/sh
 # mktos.sh -- the TOS container's files for the disk image: starttos,
-# EmuTOS, the machine-layer cartridge and a drive C: image.
+# maketos, tosdrive, EmuTOS, the machine-layer cartridge, the C: folder
+# template /tos/sys, guest's copy of it and the system apps (drive G:).
 #
 #   sh images/tosenv/mktos.sh outdir
 #
-# Out: outdir/{starttos,emutos.img,tosml.img,c.img}.  EMUTOS names the
-# EmuTOS 512 KB release zip, EMUTOSLANG its image (us).
+# Out: outdir/{starttos,maketos,tosdrive,emutos.img,tosml.img} and
+# outdir/{sys,guest,games}.cpio, rooted at /.  EMUTOS names the EmuTOS
+# 512 KB release zip, EMUTOSLANG its image (us).  TOSAPPS names the
+# unpacked apps of APPS.md (default ref/tosapps); without them the
+# image has none.
 set -e
 D=$(cd "$(dirname "$0")" && pwd)
 AUX=$(cd "$D/../.." && pwd)
 G=$AUX/kernel/guest
 EMUTOS=${EMUTOS:-$AUX/ref/emutos-release/emutos-512k-1.4.zip}
+TOSAPPS=${TOSAPPS:-$AUX/ref/tosapps}
 TC=$AUX/toolchain/amix
 SYS=$TC/m68k-cbm-sysv4/sysroot
 BIN=$AUX/toolchain/bin
@@ -40,26 +45,32 @@ nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -m68020 -Wall -Wno-implicit -fno-buil
 end=$("$BIN/m68k-elf-nm" "$O/tosml.elf" | awk '$3 == "_end" { print $1 }')
 [ $((0x$end)) -le $((0xfa0000 + 0x20000)) ] || { echo "[FAIL] cartridge ends at $end" >&2; exit 1; }
 "$BIN/m68k-elf-objcopy" -O binary "$O/tosml.elf" "$OUT/tosml.img"
-MKFS=$(command -v mkfs.fat || echo /usr/sbin/mkfs.fat)
-"$MKFS" -C -F 12 -s 2 -S 512 -n TOSC "$OUT/c.img" 2048 > /dev/null
-# README.TXT in the root, cluster 2
-python3 - "$OUT/c.img" "$D/c-readme.txt" <<'PY'
-import struct, sys
-f = open(sys.argv[1], 'r+b')
-b = f.read(512)
-bps, spc, res, nfat, root = struct.unpack_from('<HBHBH', b, 11)
-fsz = struct.unpack_from('<H', b, 22)[0]
-rootsec = res + nfat * fsz
-data = rootsec + root * 32 // bps
-text = open(sys.argv[2], 'rb').read().replace(b'\n', b'\r\n')
-assert len(text) <= spc * bps
-for k in range(nfat):			# FAT12 entry 2: end of chain
-    f.seek((res + k * fsz) * bps + 3)
-    f.write(bytes([0xff, 0x0f]))
-f.seek(rootsec * bps + 32)		# after the volume label
-f.write(b'README  TXT' + bytes([0x20]) + bytes(14) + struct.pack('<HI', 2, len(text)))
-f.seek(data * bps)
-f.write(text)
-PY
+cp "$D/maketos" "$D/tosdrive" "$OUT/"
+# /tos/sys: README.TXT, AUTO, the user's apps (C:\APPS), G: in the drive table
+T=$O/root
+mkdir -p "$T/tos/sys/AUTO" "$T/tos/sys/APPS" "$T/usr/games/tos"
+sed 's/$/\r/' "$D/c-readme.txt" > "$T/tos/sys/README.TXT"
+printf '# drive letter, host directory, ro: read-only\nG /usr/games/tos ro\n' > "$T/tos/sys/drives"
+if [ -d "$TOSAPPS/qed/qed" ]; then
+	mkdir -p "$T/tos/sys/APPS/QED"
+	(cd "$TOSAPPS/qed/qed" && cp -r qed.app qed.rsc icons.rsc qed.cfg readme.txt syntax kurzel \
+		"$T/tos/sys/APPS/QED/")
+else
+	echo "[warn] no $TOSAPPS/qed: no C:\\APPS\\QED"
+fi
+if [ -d "$TOSAPPS/baller" ]; then
+	mkdir -p "$T/usr/games/tos/BALLER"
+	cp "$TOSAPPS"/baller/BALLER.* "$T/usr/games/tos/BALLER/"
+else
+	echo "[warn] no $TOSAPPS/baller: drive G: empty"
+fi
+# guest's TOS folder, as maketos makes it
+mkdir -p "$T/home/guest"
+(cd "$T/tos/sys" && find . | grep -v -x ./drives | cpio -pdm --quiet "$T/home/guest/TOS")
+find "$T" -type d -exec chmod 755 {} +
+find "$T" -type f -exec chmod 644 {} +
+(cd "$T" && find tos | cpio -o -H newc -R 0:3 --quiet) > "$OUT/sys.cpio"
+(cd "$T" && find usr/games | cpio -o -H newc -R 0:3 --quiet) > "$OUT/games.cpio"
+(cd "$T" && find home/guest/TOS | cpio -o -H newc -R 100:1 --quiet) > "$OUT/guest.cpio"
 rm -rf "$O"
-echo "[ok] starttos, EmuTOS, cartridge, drive C:"
+echo "[ok] starttos, EmuTOS, cartridge, /tos/sys, apps"

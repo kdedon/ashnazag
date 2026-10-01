@@ -47,7 +47,7 @@ if [ -n "$NOAUX" ]; then
 else
 	KDIR=$KDIR sh "$T/aux/build.sh" "$KERNEL" "$AUXB"
 fi
-# t_tos's launcher, cartridge, drive C: and ROM (none without the ROM)
+# t_tos's launcher, cartridge, C: folder and ROM (none without the ROM)
 TOSB=$B/tos
 KDIR=$KDIR sh "$T/tos/build.sh" "$TOSB"
 if [ -z "$TESTKB" ]; then

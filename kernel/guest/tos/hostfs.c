@@ -1,7 +1,7 @@
 /*
- * hostfs.c -- drive U:: GEMDOS file calls served from a Unix directory
- * with host system calls, so the user's own permissions apply.  Other
- * drives go to TOS.
+ * hostfs.c -- drives served from Unix directories (C:, U:, others the
+ * launcher names): GEMDOS file calls made with host system calls, so
+ * the user's own permissions apply.  Other drives go to TOS.
  *
  * Unix names that fit 8.3 in one case show uppercased; others get a
  * short name from a hash ("Makefile" -> "MAK~3F2A"), found again by
@@ -18,7 +18,7 @@
 #include <fcntl.h>
 #include <utime.h>
 
-#define	UDRV	20			/* U: */
+#define	NDRV	19			/* drives served: C: to U: */
 #define	HBASE	0x400			/* our handles: HBASE + descriptor */
 #define	NH	32
 #define	NS	8			/* searches in progress */
@@ -46,17 +46,24 @@ extern long sys_rename();
 /* GEMDOS, through the vector */
 extern long Pexec(), Mfree();
 
-extern char p_root[];			/* set by the launcher */
+extern char p_dtab[];			/* set by the launcher: letter, flags, path; ... 0 */
 extern long p_tz;			/* seconds east of UTC */
 
+struct drive {
+	char	*root;
+	int	ro;
+	char	cwd[PLEN];		/* below the root, '/'-separated */
+};
+
 struct handle {
-	int	fd;			/* -1: free */
+	int	fd;			/* 0: free, else descriptor + 1 */
+	int	d;
 	char	rel[PLEN];		/* for Fdatime */
 };
 
 struct search {
 	char	*dta;			/* 0: free */
-	int	fd, n;
+	int	fd, n, d;
 	long	age;
 	char	rel[PLEN];
 	char	pat[14];
@@ -68,8 +75,10 @@ struct search {
 static struct handle hd[NH];
 static struct search sr[NS];
 static long age;
-static char cwd[PLEN];			/* below the root, '/'-separated */
-static int usel;			/* a program made U: its default drive */
+static struct drive dv[NDRV];
+static char dmap[32];			/* drive number -> dv index + 1 */
+static struct drive *cur;		/* the drive of the call being served */
+static char *root;			/* its root */
 static char hp[2 * PLEN];		/* host path of the last resolve */
 static char rel[PLEN];
 static char pend[2 * PLEN];
@@ -158,7 +167,14 @@ run()
 	return **(char ***)(os + 0x28);
 }
 
-#define	Dgetdrv()	(run()[0x37])
+/* the default drive; -1 while the basepage is not a real one (early boot) */
+static int
+Dgetdrv()
+{
+	char *bp = run();
+
+	return bp && bp < *(char **)0x42e ? bp[0x37] : -1;
+}
 #define	Fgetdta()	(*(char **)(run() + 0x20))
 
 /* a host call's result: 0, or a GEMDOS error */
@@ -244,11 +260,11 @@ host(r, name)
 	char *d = hp;
 
 	/* too long: an empty path, which the host call then refuses */
-	if (slen(p_root) + slen(r) + (name ? slen(name) : 0) + 3 > sizeof hp) {
+	if (slen(root) + slen(r) + (name ? slen(name) : 0) + 3 > sizeof hp) {
 		hp[0] = 0;
 		return hp;
 	}
-	scpy(d, p_root);
+	scpy(d, root);
 	d += slen(d);
 	if (d[-1] != '/')
 		*d++ = '/';
@@ -358,7 +374,7 @@ walk(n, last, nf)
 		else {
 			if (push(rel, c) < 0)
 				return -1;
-			if (!(p_root[0] == '/' && p_root[1] == 0) && !(last && nf && *e == 0) &&
+			if (!(root[0] == '/' && root[1] == 0) && !(last && nf && *e == 0) &&
 			    (k = sys_readlink(host(rel, (char *)0), lk, (long)PLEN - 1)) > 0) {
 				if (++links > 8 || k + slen(e) + 2 > sizeof pend)
 					return -1;
@@ -377,11 +393,19 @@ walk(n, last, nf)
 	return 0;
 }
 
-/*
- * Drive of a TOS path, the path after it.  The default drive is read
- * from the basepage only once U: has been selected: before that it can
- * only be another drive, and during boot the basepage may be a stub.
- */
+/* select drive d if served here (cur, root); 1 if so */
+static int
+sel(d)
+	int d;
+{
+	if (d < 0 || d >= 32 || !dmap[d])
+		return 0;
+	cur = dv + dmap[d] - 1;
+	root = cur->root;
+	return 1;
+}
+
+/* drive of a TOS path, the path after it */
 static int
 drive(p, rest)
 	char *p, **rest;
@@ -391,7 +415,7 @@ drive(p, rest)
 		return up(p[0]) - 'A';
 	}
 	*rest = p;
-	return usel ? Dgetdrv() : -1;
+	return Dgetdrv();
 }
 
 /*
@@ -409,7 +433,7 @@ resolve(t, nf)
 	if (*t == '\\' || *t == '/')
 		rel[0] = 0;
 	else
-		scpy(rel, cwd);
+		scpy(rel, cur->cwd);
 	for (;;) {
 		while (*t == '\\' || *t == '/')
 			t++;
@@ -502,7 +526,7 @@ attrs(name)
 
 	if (isdir())
 		a |= FA_DIR;
-	else if (sys_access(hp, 2L) < 0)
+	else if (cur->ro || sys_access(hp, 2L) < 0)
 		a |= FA_RDONLY;
 	if (name[0] == '.' && name[1] && !(name[1] == '.' && name[2] == 0))
 		a |= FA_HIDDEN;
@@ -568,6 +592,8 @@ next(s)
 	int a;
 	long sz;
 
+	cur = dv + s->d;
+	root = cur->root;
 	for (;;) {
 		if (s->pos >= s->len) {
 			s->len = sys_getdents(s->fd, s->buf, (long)sizeof s->buf);
@@ -647,6 +673,7 @@ fsfirst(t, attr)
 	if ((s->fd = sys_open(hp, O_RDONLY, 0)) < 0)
 		return err((long)s->fd);
 	scpy(s->rel, rel);
+	s->d = cur - dv;
 	scpy(s->pat, b[0] ? b : "*.*");
 	s->attr = attr;
 	s->root = rel[0] == 0;
@@ -707,6 +734,7 @@ fopen(t, mode, create, attr)
 	if (fd < 0)
 		return err(fd);
 	h->fd = fd + 1;
+	h->d = cur - dv;
 	scpy(h->rel, rel);
 	return HBASE + (h - hd);
 }
@@ -726,7 +754,10 @@ datime(h, w, set)
 		dostime(st.st_mtime, w);
 		return 0;
 	}
+	if (dv[h->d].ro)
+		return E_ACCDN;
 	u.actime = u.modtime = unixtime(w);
+	root = dv[h->d].root;
 	r = sys_utime(host(h->rel, (char *)0), &u);
 	return r < 0 ? err(r) : 0;
 }
@@ -756,7 +787,7 @@ static long
 dgetpath(b)
 	char *b;
 {
-	char *c = cwd, *e, *b0 = b;
+	char *c = cur->cwd, *e, *b0 = b;
 	int n;
 
 	*b = 0;
@@ -786,7 +817,7 @@ dfree(b)
 	unsigned long cl, fr, tot;
 	long r;
 
-	if ((r = sys_statvfs(p_root, &v)) < 0)
+	if ((r = sys_statvfs(root, &v)) < 0)
 		return err(r);
 	cl = v.f_frsize >= 512 ? v.f_frsize / 512 : 1;
 	fr = v.f_bavail;
@@ -887,7 +918,7 @@ static int
 drv(d)
 	int d;
 {
-	return d ? d - 1 : usel ? Dgetdrv() : -1;
+	return d ? d - 1 : Dgetdrv();
 }
 
 /* a GEMDOS call; 1 if served here, its result in *ret */
@@ -902,10 +933,6 @@ gemdos(a, ret)
 	long r;
 
 	switch (fn) {
-	case 0x0e:
-		if (a[1] == UDRV)
-			usel = 1;
-		return 0;
 	case 0x3e: case 0x3f: case 0x40: case 0x42: case 0x57:
 		r = (fn == 0x42 || fn == 0x57 ? a[3] : a[1]) - HBASE;
 		if (r < 0 || r >= NH || !hd[r].fd)
@@ -934,12 +961,12 @@ gemdos(a, ret)
 		*ret = r;
 		return 1;
 	case 0x36:
-		if (drv(a[3]) != UDRV)
+		if (!sel(drv(a[3])))
 			return 0;
 		*ret = dfree((char *)L(a + 1));
 		return 1;
 	case 0x47:
-		if (drv(a[3]) != UDRV)
+		if (!sel(drv(a[3])))
 			return 0;
 		*ret = dgetpath((char *)L(a + 1));
 		return 1;
@@ -957,10 +984,12 @@ gemdos(a, ret)
 			return 0;
 		d1 = drive(t, &t);
 		d2 = drive(t2, &t2);
-		if (d1 != UDRV && d2 != UDRV)
+		if (!sel(d2) && !sel(d1))
 			return 0;
 		if (d1 != d2)
 			*ret = E_NSAME;
+		else if (cur->ro)
+			*ret = E_ACCDN;
 		else if ((r = resolve(t, 1)) != 0)
 			*ret = r < 0 ? r : E_FILNF;
 		else if (rel[0] == 0)
@@ -977,8 +1006,13 @@ gemdos(a, ret)
 	default:
 		return 0;
 	}
-	if (!t || drive(t, &t) != UDRV)
+	if (!t || !sel(drive(t, &t)))
 		return 0;
+	if (cur->ro && (fn == 0x39 || fn == 0x3a || fn == 0x3c || fn == 0x41 ||
+	    (fn == 0x3d && (a[3] & 3)) || (fn == 0x43 && a[3]))) {
+		*ret = E_ACCDN;
+		return 1;
+	}
 	switch (fn) {
 	case 0x39:
 		r = resolve(t, 0);
@@ -990,7 +1024,7 @@ gemdos(a, ret)
 	case 0x3b:
 		r = resolve(t, 0) || _xstat(2, hp, &st) < 0 || !isdir() ? E_PTHNF : 0;
 		if (r == 0)
-			scpy(cwd, rel);
+			scpy(cur->cwd, rel);
 		break;
 	case 0x3c:
 		r = fopen(t, 2, 1, a[3]);
@@ -1023,11 +1057,13 @@ gemdos(a, ret)
 	return 1;
 }
 
-/* at reset: what a previous run left open */
-void
+/* at reset: what a previous run left open; the drives, as a Drvmap mask */
+long
 hinit()
 {
-	int i;
+	char *p;
+	long m = 0;
+	int i, d;
 
 	for (i = 0; i < NH; i++)
 		if (hd[i].fd)
@@ -1039,6 +1075,18 @@ hinit()
 		((char *)hd)[i] = 0;
 	for (i = 0; i < sizeof sr; i++)
 		((char *)sr)[i] = 0;
-	cwd[0] = 0;
-	usel = 0;
+	for (i = 0; i < sizeof dmap; i++)
+		dmap[i] = 0;
+	for (i = 0, p = p_dtab; *p && i < NDRV; i++) {
+		d = up(*p) - 'A';
+		dv[i].ro = p[1] & 1;
+		dv[i].root = p += 2;
+		dv[i].cwd[0] = 0;
+		p += slen(p) + 1;
+		if (d >= 0 && d < 26) {
+			dmap[d] = i + 1;
+			m |= 1L << d;
+		}
+	}
+	return m;
 }

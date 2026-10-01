@@ -1,6 +1,6 @@
 --- a/kernel/mac/diskroot/root.manifest
 +++ b/kernel/mac/diskroot/root.manifest
-@@ -66,3 +66,58 @@
+@@ -66,3 +66,57 @@
  
  e /var/adm/utmp	644 0 2
  e /var/adm/utmpx 644 0 2
@@ -20,7 +20,6 @@
 +f /usr/x11r6/bin/Xamix 755 0 3 x11pkg/bin/Xamix
 +l /usr/x11r6/bin/X Xamix
 +f /usr/x11r6/bin/startx 755 0 3 x11pkg/lib/startx
-+l /usr/bin/startx /usr/x11r6/bin/startx
 +d /usr/x11r6/lib 755 0 3
 +d /usr/x11r6/lib/X11 755 0 3
 +f /usr/x11r6/lib/X11/rgb.txt 444 0 3 x11pkg/lib/rgb.txt

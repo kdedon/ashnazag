@@ -1,12 +1,12 @@
 #!/bin/sh
-# build.sh -- t_tos's inputs: starttos, the machine-layer cartridge, a
-# 2 MB FAT drive C: with C:\AUTO\UTEST.PRG (checks drive U:), EmuTOS and
-# the user's TOS ROM image.
+# build.sh -- t_tos's inputs: starttos, the machine-layer cartridge, the
+# system C: folder with C:\AUTO\UTEST.PRG (checks the host drives),
+# EmuTOS and the user's TOS ROM image.
 #
 #   sh tests/tos/build.sh outdir
 #
-# Out: outdir/root/tos/bin/starttos, outdir/root/etc/tos/{emutos.img,rom,
-# tosml.img,c.img}.
+# Out: outdir/root/tos/bin/starttos, outdir/root/tos/sys/, outdir/root/etc/tos/
+# {emutos.img,rom,tosml.img}.
 # EMUTOS names the EmuTOS 512 KB release zip (default: ref/emutos-release),
 # EMUTOSLANG its image (us).  TOSROM names the user's ROM: an image, or a
 # zip holding one (default: the TOS 3.06 zip beside the repository);
@@ -63,48 +63,9 @@ end=$("$BIN/m68k-elf-nm" "$O/u0.elf" | awk '$3 == "_end" { print $1 }')
 python3 "$T/tos/elf2prg.py" "$O/u0.bin" "$O/u0x10000.bin" \
 	$((0x$end - $(wc -c < "$O/u0.bin"))) "$O/utest.prg"
 "$BIN/m68k-elf-objcopy" -O binary "$O/tosml.elf" "$R/etc/tos/tosml.img"
-MKFS=$(command -v mkfs.fat || echo /usr/sbin/mkfs.fat)
-"$MKFS" -C -F 12 -s 2 -S 512 -n TOSC "$R/etc/tos/c.img" 2048 > /dev/null
-# README.TXT in cluster 2, AUTO in 3, AUTO\UTEST.PRG from 4 on
-python3 - "$R/etc/tos/c.img" "$O/utest.prg" <<'PY'
-import struct, sys
-f = open(sys.argv[1], 'r+b')
-prg = open(sys.argv[2], 'rb').read()
-b = f.read(512)
-bps, spc, res, nfat, root = struct.unpack_from('<HBHBH', b, 11)
-fsz = struct.unpack_from('<H', b, 22)[0]
-rootsec = res + nfat * fsz
-data = rootsec + root * 32 // bps
-text = b'Drive C: of the TOS container.\r\n'
-csz = bps * b[13]
-n = (len(prg) + csz - 1) // csz
-f.seek(res * bps)
-fat = bytearray(f.read(fsz * bps))
-def link(c, v):
-    o = c * 3 // 2
-    if c & 1:
-        fat[o] = fat[o] & 0x0f | (v << 4) & 0xf0
-        fat[o + 1] = v >> 4
-    else:
-        fat[o] = v & 0xff
-        fat[o + 1] = fat[o + 1] & 0xf0 | v >> 8
-link(2, 0xfff)
-link(3, 0xfff)
-for c in range(4, 4 + n):
-    link(c, c + 1 if c < 3 + n else 0xfff)
-for k in range(nfat):
-    f.seek((res + k * fsz) * bps)
-    f.write(fat)
-def ent(name, attr, clus, size):
-    return name + bytes([attr]) + bytes(14) + struct.pack('<HI', clus, size)
-f.seek(rootsec * bps + 32)		# after the volume label
-f.write(ent(b'README  TXT', 0x20, 2, len(text)) + ent(b'AUTO       ', 0x10, 3, 0))
-f.seek(data * bps)
-f.write(text)
-f.seek((data + b[13]) * bps)
-f.write(ent(b'.          ', 0x10, 3, 0) + ent(b'..         ', 0x10, 0, 0) +
-        ent(b'UTEST   PRG', 0x20, 4, len(prg)))
-f.seek((data + 2 * b[13]) * bps)
-f.write(prg)
-PY
-echo "[ok] starttos, cartridge, drive C:, $(ls "$R/etc/tos" | grep -c 'rom\|emutos') ROM images"
+# the system C: folder: C:\AUTO\UTEST.PRG, G: in its drive table
+mkdir -p "$R/tos/sys/AUTO"
+cp "$O/utest.prg" "$R/tos/sys/AUTO/UTEST.PRG"
+printf 'Drive C: of the TOS container.\r\n' > "$R/tos/sys/README.TXT"
+printf '# system drives\nG /tmp/tosg ro\n' > "$R/tos/sys/drives"
+echo "[ok] starttos, cartridge, C: folder, $(ls "$R/etc/tos" | grep -c 'rom\|emutos') ROM images"

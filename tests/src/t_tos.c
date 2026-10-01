@@ -286,6 +286,8 @@ procs(tag)
 }
 
 #define	UDIR	"/tmp/tosu"
+#define	CDIR	"/tmp/tosc"		/* EmuTOS's C:; TOS 3.06 boots from /tos/sys */
+#define	GDIR	"/tmp/tosg"
 
 static char *utree[] = {
 	"sub/new.txt", "sub/renamed.txt", "result.txt", "readme.txt", "hello.prg",
@@ -378,6 +380,48 @@ umake()
 	deep(1);
 }
 
+/* a copy of a file, 0 on success */
+static int
+fcopy(from, to)
+	char *from, *to;
+{
+	char b[4096];
+	int i, o, n = -1;
+
+	if ((i = open(from, O_RDONLY)) < 0)
+		return -1;
+	if ((o = open(to, O_WRONLY | O_CREAT | O_TRUNC, 0644)) >= 0) {
+		while ((n = read(i, b, sizeof b)) > 0)
+			if (write(o, b, n) != n) {
+				n = -1;
+				break;
+			}
+		close(o);
+	}
+	close(i);
+	return n;
+}
+
+/* C:: AUTO\UTEST.PRG, H: in the user's drive table; G: and I: on one directory */
+static void
+cmake()
+{
+	unlink(CDIR "/AUTO/UTEST.PRG");
+	rmdir(CDIR "/AUTO");
+	unlink(CDIR "/drives");
+	unlink(CDIR "/ctest.txt");
+	rmdir(CDIR);
+	mkdir(CDIR, 0755);
+	mkdir(CDIR "/AUTO", 0755);
+	fcopy("/tos/sys/AUTO/UTEST.PRG", CDIR "/AUTO/UTEST.PRG");
+	wfile(CDIR "/drives", "# user drives\nH " UDIR "/sub\n");
+	unlink(GDIR "/w.txt");
+	unlink(GDIR "/readme.txt");
+	rmdir(GDIR);
+	mkdir(GDIR, 0755);
+	wfile(GDIR "/readme.txt", "drive\n");
+}
+
 /* what the program in C:\AUTO found on U: */
 static void
 ucheck()
@@ -385,9 +429,10 @@ ucheck()
 	static char *names[] = {
 		"drvmap", "list", "read", "long_name", "write", "rename", "delete", "mkdir",
 		"cwd", "attrib", "dfree", "pexec", "links_inside", "escape_dotdot",
-		"escape_link", "escape_uplink", "escape_cwd", "long_path", 0
+		"escape_link", "escape_uplink", "escape_cwd", "long_path", "c_auto", "drive_g",
+		"drive_cwd", "c_rw", "drive_d", "drive_h", 0
 	};
-	char b[2048], n[40], why[40], *l;
+	char b[2048], n[40], why[40], *l, *nm;
 	int fd, i, ok, len = 0;
 
 	t_check(N("hostfs_drvbits"), (peek(0x4c2L, 4) & 0x100000L) != 0, "_drvbits %lx",
@@ -398,14 +443,22 @@ ucheck()
 	}
 	b[len > 0 ? len : 0] = 0;
 	for (i = 0; names[i]; i++) {
-		sprintf(n, "PASS %s\r", names[i]);
+		/* TOS 3.06's C: is the read-only system folder, without the user's drives */
+		nm = names[i];
+		if (strcmp(pf, "tos306") == 0) {
+			if (strcmp(nm, "drive_d") == 0 || strcmp(nm, "drive_h") == 0)
+				continue;
+			if (strcmp(nm, "c_rw") == 0)
+				nm = "c_ro";
+		}
+		sprintf(n, "PASS %s\r", nm);
 		ok = strstr(b, n) != 0;
-		sprintf(n, "FAIL %s ", names[i]);
+		sprintf(n, "FAIL %s ", nm);
 		if ((l = strstr(b, n)) != 0)
 			sscanf(l, "%*s %*s %39s", why);
 		else
 			strcpy(why, "no result");
-		sprintf(n, "hostfs_%s", names[i]);
+		sprintf(n, "hostfs_%s", nm);
 		t_check(N(n), ok, "%s", why);
 	}
 	len = 0;
@@ -415,6 +468,14 @@ ucheck()
 	}
 	t_check(N("hostfs_unix_side"), len == 15 && strncmp(b, "written by tos\n", 15) == 0,
 	    "sub/renamed.txt: %d bytes", len);
+	if (strcmp(pf, "emutos") == 0) {
+		len = 0;
+		if ((fd = open(CDIR "/ctest.txt", O_RDONLY)) >= 0) {
+			len = read(fd, b, sizeof b - 1);
+			close(fd);
+		}
+		t_check(N("hostfs_c_unix_side"), len == 15, "ctest.txt: %d bytes", len);
+	}
 }
 
 static void
@@ -424,16 +485,20 @@ start(rom)
 	int p[2];
 
 	umake();
+	cmake();
 	pipe(p);
 	if ((tpid = fork()) == 0) {
 		setpgrp();
 		close(p[0]);
 		dup2(p[1], 1);
 		dup2(p[1], 2);
-		if (rom)
+		if (rom) {
+			/* no ~/TOS: C: is /tos/sys, read-only */
+			putenv("HOME=" GDIR);
 			execl("/tos/bin/starttos", "starttos", "-v", "-u", UDIR, "-rom", rom, (char *)0);
-		else
-			execl("/tos/bin/starttos", "starttos", "-v", "-u", UDIR, (char *)0);
+		} else
+			execl("/tos/bin/starttos", "starttos", "-v", "-u", UDIR, "-C", CDIR,
+			    "-D", "I=" GDIR, (char *)0);
 		_exit(127);
 	}
 	close(p[1]);

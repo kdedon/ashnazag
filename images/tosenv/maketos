@@ -1,0 +1,24 @@
+#!/bin/sh
+# maketos -- make ~/TOS, your own TOS boot drive C:, from /tos/sys.
+#
+#	maketos [-f]
+#
+# -f copies the template over an existing ~/TOS, keeping your other files.
+SYS=/tos/sys
+[ -n "$HOME" ] || { echo "maketos: no HOME" >&2; exit 1; }
+T=$HOME/TOS
+case $1 in
+-f)	;;
+"")	if [ -d "$T" ]; then
+		echo "maketos: $T exists; maketos -f copies the template over it" >&2
+		exit 1
+	fi ;;
+*)	echo "usage: maketos [-f]" >&2
+	exit 2 ;;
+esac
+[ -d "$SYS" ] || { echo "maketos: no $SYS" >&2; exit 1; }
+mkdir -p "$T" || exit 1
+# the system's drive table stays the system's: ~/TOS/drives adds to it
+cd "$SYS" && find . -print | grep -v '^\./drives$' | cpio -pdmu "$T" 2>/dev/null ||
+	{ echo "maketos: copy to $T failed" >&2; exit 1; }
+echo "maketos: $T is drive C: in starttos"

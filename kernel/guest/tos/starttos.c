@@ -1,12 +1,15 @@
 /*
  * starttos -- run Atari TOS as this process: EmuTOS, or the user's ROM image.
  *
- *	starttos [-rom file] [-c cartridge] [-d disk] [-u dir | -U] [-m megabytes] [-M] [-v]
+ *	starttos [-rom file] [-c cartridge] [-C dir | -d disk] [-D L=dir] [-u dir | -U]
+ *		[-m megabytes] [-M] [-v]
  *
  * ST-RAM is a shared mapping at 0, the ROM a read-only copy at its own
- * base, the machine-layer cartridge at $FA0000 with drive C: (a FAT
- * image, 512-byte sectors) and U: (a host directory, default "/", used
- * with the caller's permissions).  A child process owns the display session:
+ * base, the machine-layer cartridge at $FA0000.  Drives are host
+ * directories used with the caller's permissions: C:, the boot drive,
+ * is ~/TOS (else /tos/sys, read-only), U: is "/", others come from
+ * /tos/sys/drives, ~/TOS/drives and -D.  -d makes C: a FAT image
+ * (512-byte sectors) instead.  A child process owns the display session:
  * it converts the TOS screen to the frame buffer and passes keyboard
  * and mouse to the IKBD.  The parent enters the ROM's reset code.
  */
@@ -23,6 +26,7 @@
 #include <signal.h>
 #include <poll.h>
 #include <time.h>
+#include <pwd.h>
 #include "dsio.h"
 #include "tosio.h"
 
@@ -31,8 +35,12 @@
 
 static char *rom = "/etc/tos/emutos.img";	/* the free TOS; -rom for the user's */
 static char *cart = "/etc/tos/tosml.img";
-static char *disk = "/etc/tos/c.img";
+static char *disk;
+static char *cdir;
 static char *udir = "/";
+static char *xdrv[26];			/* -D */
+static char *tab[26];			/* drive -> host directory */
+static char tro[26];			/* read-only */
 static long ramsize = 4L << 20;
 static int mono, verbose;
 static int tfd;
@@ -154,21 +162,91 @@ drivec()
 	put32((unsigned long)CART + 0x40, (unsigned long)fd);
 }
 
-/* drive U:: its directory and the time zone into the cartridge */
+#define	SYSDIR	"/tos/sys"
+
+/* LETTER PATH [ro] lines of file f into the table, letters D to T */
 static void
-driveu()
+drvtab(f)
+	char *f;
 {
-	char path[1024];
+	char l[1100], p[1024], lt[4], o[8];
+	FILE *fp = fopen(f, "r");
+	int n, d;
+
+	if (fp == 0)
+		return;
+	while (fgets(l, sizeof l, fp)) {
+		if (l[0] == '#' || (n = sscanf(l, " %1s %1023s %7s", lt, p, o)) < 2)
+			continue;
+		d = lt[0] & ~040;
+		if (d < 'D' || d > 'T') {
+			fprintf(stderr, "starttos: %s: drive %c: not D: to T:\n", f, lt[0]);
+			continue;
+		}
+		tab[d - 'A'] = strdup(p);
+		tro[d - 'A'] = n == 3 && strcmp(o, "ro") == 0;
+	}
+	fclose(fp);
+}
+
+/* the drive table and the time zone into the cartridge */
+static void
+drives()
+{
+	char path[1024], home[1024], *h, *p = (char *)CART + 0x80, *e = p + 0x1000 - 1;
+	struct passwd *pw;
+	struct stat sb;
 	time_t now = time((time_t *)0);
 	struct tm *tm = localtime(&now);
+	int d, n;
 
-	if (udir == 0)
-		return;
-	if (realpath(udir, path) == 0 || strlen(path) > 255) {
-		fprintf(stderr, "starttos: %s: no drive U:\n", udir);
-		return;
+	h = getenv("HOME");
+	if ((h == 0 || *h == 0) && (pw = getpwuid(getuid())) != 0)
+		h = pw->pw_dir;
+	sprintf(home, "%.1000s/TOS", h ? h : "/");
+	if (disk == 0 && cdir == 0) {
+		if (stat(home, &sb) == 0 && (sb.st_mode & S_IFMT) == S_IFDIR)
+			cdir = home;
+		else {
+			fprintf(stderr, "starttos: no %s: drive C: is %s, read-only; run maketos for your own\n",
+			    home, SYSDIR);
+			cdir = SYSDIR;
+			tro[2] = 1;
+		}
 	}
-	strcpy((char *)CART + 0x80, path);
+	tab[2] = cdir;
+	drvtab(SYSDIR "/drives");
+	if (cdir) {
+		sprintf(path, "%.1000s/drives", cdir);
+		if (strcmp(cdir, SYSDIR) != 0)
+			drvtab(path);
+	}
+	for (d = 0; d < 26; d++)
+		if (xdrv[d]) {
+			tab[d] = xdrv[d];
+			tro[d] = 0;
+		}
+	tab[20] = udir;
+	for (d = 0; d < 26; d++) {
+		if (tab[d] == 0)
+			continue;
+		if (realpath(tab[d], path) == 0 || stat(path, &sb) < 0 ||
+		    (sb.st_mode & S_IFMT) != S_IFDIR) {
+			fprintf(stderr, "starttos: %s: no drive %c:\n", tab[d], 'A' + d);
+			continue;
+		}
+		if ((n = strlen(path)) > 255 || p + n + 3 > e) {
+			fprintf(stderr, "starttos: %s: path too long for drive %c:\n", path, 'A' + d);
+			continue;
+		}
+		*p++ = 'A' + d;
+		*p++ = tro[d];
+		strcpy(p, path);
+		p += n + 1;
+		if (verbose)
+			fprintf(stderr, "starttos: %c: %s%s\n", 'A' + d, path, tro[d] ? " (read-only)" : "");
+	}
+	*p = 0;
 	put32((unsigned long)CART + 0x64, (unsigned long)-(tm->tm_isdst > 0 ? altzone : timezone));
 }
 
@@ -194,20 +272,29 @@ main(argc, argv)
 	for (c = 1; c < argc; c++)
 		if (strcmp(argv[c], "-rom") == 0)
 			argv[c] = "-r";
-		else if (argv[c][0] == '-' && strchr("rcdmu", argv[c][1]) && argv[c][2] == 0)
+		else if (argv[c][0] == '-' && strchr("rcCdDmu", argv[c][1]) && argv[c][2] == 0)
 			c++;		/* skip the option's argument */
-	while ((c = getopt(argc, argv, "r:c:d:u:Um:Mv")) != -1)
+	while ((c = getopt(argc, argv, "r:c:C:d:D:u:Um:Mv")) != -1)
 		switch (c) {
 		case 'r': rom = optarg; break;
 		case 'c': cart = optarg; break;
-		case 'd': disk = optarg; break;
+		case 'C': cdir = optarg; disk = 0; break;
+		case 'd': disk = optarg; cdir = 0; break;
+		case 'D':
+			c = optarg[0] & ~040;
+			if (c < 'D' || c > 'T' || optarg[1] != '=') {
+				fprintf(stderr, "starttos: -D L=dir, L from D to T\n");
+				return 2;
+			}
+			xdrv[c - 'A'] = optarg + 2;
+			break;
 		case 'u': udir = optarg; break;
 		case 'U': udir = 0; break;
 		case 'm': ramsize = atol(optarg) << 20; break;
 		case 'M': mono = 1; break;
 		case 'v': verbose = 1; break;
 		default:
-			fprintf(stderr, "usage: starttos [-rom file] [-c cartridge] [-d disk] [-u dir | -U] [-m MB] [-M] [-v]\n");
+			fprintf(stderr, "usage: starttos [-rom file] [-c cartridge] [-C dir | -d disk] [-D L=dir] [-u dir | -U] [-m MB] [-M] [-v]\n");
 			return 2;
 		}
 	if (ramsize < (1L << 20) || ramsize > (14L << 20)) {
@@ -240,8 +327,9 @@ main(argc, argv)
 	/* shared: the display process posts input in its last page */
 	region((unsigned long)CART, (unsigned long)CARTSZ, 1);
 	(void)readall(cart, (char *)CART, TOSPV - CART);
-	drivec();
-	driveu();
+	if (disk)
+		drivec();
+	drives();
 
 	/* warm-boot system variables: TOS skips memory sizing */
 	put32(0x420L, 0x752019f3L);		/* memvalid */

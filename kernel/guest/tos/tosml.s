@@ -1,8 +1,8 @@
 | tosml.s -- the container's machine layer: an application cartridge
-| at $FA0000 whose init runs before the disk boot.  It serves drive C:
-| from a disk image through the BIOS hard-disk vectors, reading and
-| writing the image with host system calls (trap #0), and drive U:
-| from a host directory (hostfs.c).  Each VBL it hands the mouse and
+| at $FA0000 whose init runs before the disk boot.  It serves drives
+| from host directories (hostfs.c), C: the boot drive among them, or
+| C: from a disk image through the BIOS hard-disk vectors, reading and
+| writing the image with host system calls (trap #0).  Each VBL it hands the mouse and
 | keyboard events the display process posts in its last page straight
 | to TOS's handlers.
 |
@@ -29,19 +29,21 @@ old_rw:	.long	0
 old_mc:	.long	0
 
 	.org	0x64
-	.globl	p_tz, p_root
+	.globl	p_tz, p_dtab
 p_tz:	.long	0			| seconds east of UTC
 	.org	0x80
-p_root:	.space	256			| directory of drive U:, empty for none
+p_dtab:	.space	0x1000			| host drives: letter, flags, path; ... 0
 
 init:
 	jsr	pvinit
-	tst.b	p_root
-	beq.s	2f
 	jsr	hinit
+	tst.l	d0
+	beq.s	2f
+	or.l	d0,0x4c2		| _drvbits
 	move.l	0x84,old_gd		| GEMDOS
 	move.l	#gd,0x84
-	or.l	#0x100000,0x4c2		| _drvbits: U:
+	btst	#2,d0
+	bne.s	3f			| C: a host directory
 2:	tst.l	p_fd
 	bmi.s	1f
 	move.l	0x472,old_bpb		| hdv_bpb
@@ -51,7 +53,7 @@ init:
 	move.l	0x47e,old_mc		| hdv_mediach
 	move.l	#mc,0x47e
 	or.l	#4,0x4c2		| _drvbits: C:
-	move.w	#2,0x446		| _bootdev
+3:	move.w	#2,0x446		| _bootdev
 	move.l	0x4f2,a0		| _sysbase
 	move.l	8(a0),a0		| os_beg
 	move.l	0x28(a0),a0		| os_run
@@ -265,20 +267,34 @@ gd:	movem.l	d1-d7/a0-a6,-(sp)
 1:	btst	#5,56(sp)
 	bne.s	2f
 	move.l	usp,a0
-2:	clr.l	-(sp)
+2:	move.l	sp,a1			| on a stack of our own: a caller in
+	cmp.l	#hstk,sp		| supervisor mode may have little room
+	bls.s	3f
+	cmp.l	#hstke,sp
+	bls.s	4f			| a nested call: already on it
+3:	lea	hstke,sp
+4:	move.l	a1,-(sp)
+	clr.l	-(sp)
 	pea	(sp)
 	move.l	a0,-(sp)
 	jsr	gemdos
 	addq.l	#8,sp
+	move.l	(sp)+,d1		| the result
+	move.l	(sp)+,sp
 	tst.l	d0
-	beq.s	3f
-	move.l	(sp)+,d0
+	beq.s	5f
+	move.l	d1,d0
 	movem.l	(sp)+,d1-d7/a0-a6
 	rte
-3:	addq.l	#4,sp
-	movem.l	(sp)+,d1-d7/a0-a6
+5:	movem.l	(sp)+,d1-d7/a0-a6
 	move.l	old_gd,-(sp)
 	rts
+
+	.bss
+	.balign	4
+hstk:	.space	8192
+hstke:
+	.text
 
 | GEMDOS from C: arguments as longs
 	.globl	Pexec, Mfree

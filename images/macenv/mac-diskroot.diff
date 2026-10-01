@@ -1,6 +1,6 @@
 --- a/kernel/mac/diskroot/root.manifest
 +++ b/kernel/mac/diskroot/root.manifest
-@@ -55,6 +55,38 @@
+@@ -55,6 +55,43 @@
  # date(1) runs setclk -s after stime(2); the kernel keeps the RTC
  f /usr/amiga/bin/setclk 755 0 3 etc/setclk
  
@@ -28,14 +28,30 @@
 +a macpkg/mac.cpio
 +f /usr/bin/startmac 755 0 3 macpkg/startmac.sh
 +f /usr/bin/macdiag 750 0 3 macpkg/macdiag
-+# TOS container: EmuTOS, the drive C: image and its cartridge
++# TOS container: EmuTOS, its cartridge, the C: folder template /tos/sys,
++# guest's ~/TOS and the system's apps (drive G:)
 +d /etc/tos	755 0 3
 +f /etc/tos/emutos.img 444 0 3 macpkg/tos/emutos.img
 +f /etc/tos/tosml.img 444 0 3 macpkg/tos/tosml.img
-+f /etc/tos/c.img 664 0 25 macpkg/tos/c.img
 +f /usr/bin/starttos 755 0 3 macpkg/tos/starttos
++f /usr/bin/maketos 755 0 3 macpkg/tos/maketos
++f /usr/bin/tosdrive 755 0 3 macpkg/tos/tosdrive
++a macpkg/tos/sys.cpio
++a macpkg/tos/games.cpio
++a macpkg/tos/guest.cpio
 +c /dev/kmem	640 0 3 3 1	# macdiag relies on root-only kernel memory
 +
  # no Amiga port monitors (screens, serial boards) or Ethernet board
  f /etc/saf/_sactab 644 0 3 etc/_sactab
  f /etc/inet/network-config 444 0 3 etc/network-config
+--- a/kernel/mac/diskroot/mkdiskroot.sh
++++ b/kernel/mac/diskroot/mkdiskroot.sh
+@@ -40,7 +40,7 @@
+ 	> "$B/profile"
+ x usr/sbin/shutdown | sed -e 's,^if /usr/amiga/bin/sioc &&,if false \&\&,' > "$B/shutdown"
+ x etc/screendefs | grep '^#' > "$B/screendefs"
+-{ x etc/group | grep -v '^display:'; echo "display::25:"; } > "$B/group"
++{ x etc/group | grep -v '^display:'; echo "display::25:guest"; } > "$B/group"
+ x etc/vfstab | sed -e "s,^\(/dev/dsk/c0d0s1[	 ].*[	 ]/[	 ]*\)s5,\1$ROOTFS," > "$B/vfstab"
+ grep -q "^/dev/dsk/c0d0s1.*$ROOTFS" "$B/vfstab" || { echo "[FAIL] tape vfstab changed"; exit 1; }
+ # flush the file systems before uadmin halts

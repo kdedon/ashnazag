@@ -212,13 +212,15 @@ sh images/macenv/mkmacimage.sh [kernel.elf [out.img]]
 
 ## The TOS container
 
-The same image runs Atari TOS as an AMIX process. Log in as `root` and type:
+The same image runs Atari TOS as an AMIX process. Log in as `guest` (or `root`) and type:
 
 ```sh
 starttos
 ```
 
-EmuTOS 1.4 (GPL-2) starts in its own display session; the desktop appears in a few seconds. Ctrl-Option-Command plus a digit switches display sessions: 0 is the console, 1 the first session started. End EmuTOS from the console with `kill`. Drive C: is `/etc/tos/c.img`, a 1 MB FAT image (`-d FILE` for another).
+EmuTOS 1.4 (GPL-2) starts in its own display session; the desktop appears in a few seconds. Ctrl-Option-Command plus a digit switches display sessions: 0 is the console, 1 the first session started. End EmuTOS from the console with `kill`.
+
+Drive C: is your folder `~/TOS` (AUTO, accessories, the saved desktop); `maketos` makes it from `/tos/sys`, and guest already has one. Without it C: is `/tos/sys`, read-only. G: holds the system's games (`/usr/games/tos`), U: the Unix tree; files are reached with your own permissions. `/tos/sys/drives` and `~/TOS/drives` name more drives (`G /usr/games/tos ro`), `tosdrive` edits yours, `starttos -D H=dir` adds one for a run, `-C dir` picks another C: folder, `-d FILE` a FAT image as C:. The sample apps are in `images/tosenv/APPS.md`.
 
 `starttos -rom FILE` runs your own TOS ROM image instead. The image never contains one.
 

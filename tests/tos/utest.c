@@ -1,7 +1,8 @@
 /*
- * utest.c -- drive U: from inside TOS, run from C:\AUTO.  Each check
- * becomes "PASS name" or "FAIL name value" in U:\RESULT.TXT, which
- * t_tos reads on the host.  Expects the tree t_tos makes.
+ * utest.c -- the host drives from inside TOS, run from C:\AUTO.  Each
+ * check becomes "PASS name" or "FAIL name value" in U:\RESULT.TXT,
+ * which t_tos reads on the host.  Expects the trees t_tos makes: U:,
+ * G: read-only and I: on one directory, H: on U:\SUB.
  */
 
 extern long trap1(), trap13();
@@ -258,6 +259,47 @@ main()
 			found |= same(dta + 30, "OK.TXT");
 	}
 	check("long_path", found && r == -49 && slurp("U:\\README.TXT") == 16, r);
+
+	/* C:: writable, or the read-only system folder */
+	check("c_auto", Fsfirst("C:\\AUTO\\UTEST.PRG", 0) == 0, 0L);
+	h = Fcreate("C:\\CTEST.TXT", 0);
+	if (h >= 0) {
+		r = Fwrite((int)h, (long)sizeof wr - 1, wr);
+		Fclose((int)h);
+		check("c_rw", r == sizeof wr - 1 && slurp("C:\\CTEST.TXT") == r, r);
+	} else
+		check("c_ro", h == -36 && Fdelete("C:\\AUTO\\UTEST.PRG") == -36 &&
+		    Dcreate("C:\\NEW") == -36 && Fopen("C:\\AUTO\\UTEST.PRG", 2) == -36, h);
+
+	/* G: read-only, I: the same directory writable */
+	r = slurp("G:\\README.TXT");
+	check("drive_g", (Drvmap() & 1L << 6) && r == 6 && same(buf, "drive\n") &&
+	    Fcreate("G:\\W.TXT", 0) == -36, r);
+	if (Drvmap() & 1L << 8) {
+		h = Fcreate("I:\\W.TXT", 0);
+		if (h >= 0)
+			Fclose((int)h);
+		r = Fsfirst("G:\\W.TXT", 0);
+		check("drive_d", h >= 0 && r == 0 && Fdelete("I:\\W.TXT") == 0, h);
+	}
+	if (Drvmap() & 1L << 7)
+		check("drive_h", slurp("H:\\RENAMED.TXT") == sizeof wr - 1, 0L);
+
+	/* each drive its own current directory */
+	d = Dgetdrv();
+	Dsetdrv(20);
+	r = Dsetpath("\\SUB");
+	h = Dsetpath("C:\\AUTO");
+	Dgetpath(buf, 3);
+	found = same(buf, "\\AUTO");
+	Dgetpath(buf, 21);
+	found += same(buf, "\\SUB");
+	found += slurp("U:RENAMED.TXT") == sizeof wr - 1;
+	found += Fsfirst("C:UTEST.PRG", 0) == 0;
+	Dsetpath("C:\\");
+	Dsetpath("\\");
+	Dsetdrv(d);
+	check("drive_cwd", r == 0 && h == 0 && found == 4, (long)found);
 
 	h = Fcreate("U:\\RESULT.TXT", 0);
 	if (h >= 0) {
