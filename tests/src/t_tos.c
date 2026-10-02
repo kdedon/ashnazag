@@ -287,6 +287,10 @@ procs(tag)
 
 #define	UDIR	"/tmp/tosu"
 #define	CDIR	"/tmp/tosc"		/* EmuTOS's C:; TOS 3.06 boots from /tos/sys */
+#define	FVDIDIR	"/tos/fvdi"		/* fVDI's files for C: */
+
+static int fvdi;			/* C: holds fVDI */
+static char *fvdifiles[] = { "FVDI.SYS", "ASHFB.SYS", "AUTO/FVDI.PRG" };
 #define	GDIR	"/tmp/tosg"
 
 static char *utree[] = {
@@ -406,7 +410,14 @@ fcopy(from, to)
 static void
 cmake()
 {
+	char a[64], b[64];
+	int i;
+
 	unlink(CDIR "/AUTO/UTEST.PRG");
+	for (i = 0; i < 3; i++) {
+		sprintf(b, "%s/%s", CDIR, fvdifiles[i]);
+		unlink(b);
+	}
 	rmdir(CDIR "/AUTO");
 	unlink(CDIR "/drives");
 	unlink(CDIR "/ctest.txt");
@@ -414,6 +425,11 @@ cmake()
 	mkdir(CDIR, 0755);
 	mkdir(CDIR "/AUTO", 0755);
 	fcopy("/tos/sys/AUTO/UTEST.PRG", CDIR "/AUTO/UTEST.PRG");
+	for (i = 0; fvdi && i < 3; i++) {
+		sprintf(a, "%s/%s", FVDIDIR, fvdifiles[i]);
+		sprintf(b, "%s/%s", CDIR, fvdifiles[i]);
+		fcopy(a, b);
+	}
 	wfile(CDIR "/drives", "# user drives\nH " UDIR "/sub\n");
 	unlink(GDIR "/w.txt");
 	unlink(GDIR "/readme.txt");
@@ -492,7 +508,10 @@ start(rom)
 		close(p[0]);
 		dup2(p[1], 1);
 		dup2(p[1], 2);
-		if (rom) {
+		if (rom && fvdi)
+			execl("/tos/bin/starttos", "starttos", "-v", "-u", UDIR, "-C", CDIR,
+			    "-rom", rom, (char *)0);
+		else if (rom) {
 			/* no ~/TOS: C: is /tos/sys, read-only */
 			putenv("HOME=" GDIR);
 			execl("/tos/bin/starttos", "starttos", "-v", "-u", UDIR, "-rom", rom, (char *)0);
@@ -560,6 +579,71 @@ background()
 	t_check(N("hotkey_tos"), front() == sess, "front %ld, TOS %ld", front(), sess);
 	sh = kbs > 0 && kbs < 0x100000 ? peek(kbs, 1) : 0;
 	t_check(N("held_key_released"), sh >= 0 && !(sh & 3), "kbshift %lx", sh);
+}
+
+/* fVDI's cookie in the guest's jar: 1 when its driver owns the screen */
+static int
+fvdion()
+{
+	long jar = peek(0x5a0L, 4), v;
+	int i;
+
+	for (i = 0; jar > 0 && i < 64; i++, jar += 8)
+		if ((v = peek(jar, 4)) == 0 || v == -1)
+			break;
+		else if (v == 0x41736846L)
+			return peek(peek(jar + 4, 4) + 4, 4) == 1;
+	return 0;
+}
+
+static int
+diff(a, b)
+	char *a, *b;
+{
+	char *r = cmp2(a, b);
+	int n = -1;
+
+	if (r && strcmp(r, "same") == 0)
+		n = 0;
+	else if (r)
+		sscanf(r, "diff %d", &n);
+	return n;
+}
+
+/* GEM through fVDI: a drive window opens and closes, the screen survives a switch */
+static void
+fvdichecks()
+{
+	long t0;
+	int n;
+
+	t_check(N("fvdi_on"), fvdion(), "no fVDI driver cookie");
+	shot(S("f0"));
+	t0 = t_now_ms();
+	host("key alt+c");
+	nap(3000);
+	shot(S("f1"));
+	n = diff(S("f0"), S("f1"));
+	t_check(N("window_open"), n > 2000, "diff %d", n);
+	t_info(N("window_open_ms"), "%ld (with a 3 s wait)", t_now_ms() - t0);
+	if (strcmp(pf, "tos306_fvdi") == 0) {
+		host("move -1000 0");
+		host("move 0 -800");
+		host("move 8 121");
+		host("click 1");
+	} else
+		host("key ctrl+u");
+	nap(3000);
+	shot(S("f2"));
+	n = diff(S("f0"), S("f2"));
+	t_check(N("window_close"), n >= 0 && n < 400, "diff %d", n);
+	host("key ctrl+alt+meta_l+0");
+	nap(1000);
+	host("key ctrl+alt+meta_l+1");
+	nap(1500);
+	shot(S("f3"));
+	n = diff(S("f2"), S("f3"));
+	t_check(N("switch_keeps_screen"), n == 0, "diff %d", n);
 }
 
 /* one container: its owner is shown, a second ENTER is refused */
@@ -667,6 +751,69 @@ cputimes(g, d)
 	}
 	if (dp)
 		closedir(dp);
+}
+
+/* ms from t0 until two screen dumps in a row match, -1 if they never do */
+static long
+settle(t0, tag)
+	long t0;
+	char *tag;
+{
+	char a[48], b[48];
+	long t = 0;
+	int i;
+
+	sprintf(a, "%s_s0", N(tag));
+	shot(a);
+	for (i = 1; i < 30; i++) {
+		sprintf(b, "%s_s%d", N(tag), i & 1);
+		shot(b);
+		if (diff(a, b) == 0)
+			return t;
+		t = t_now_ms() - t0;
+		strcpy(a, b);
+	}
+	return -1;
+}
+
+/* drive C:'s window: open, drag by the title bar, close; time to a still screen and CPU */
+static void
+perf(tx, ty, cdx)
+	int tx, ty;		/* a point on the window's title bar */
+	int cdx;		/* its close box from there, 0: close with ^U */
+{
+	char req[40];
+	long t0, s, g0, g1, d0, d1;
+
+	cputimes(&g0, &d0);
+	t0 = t_now_ms();
+	host("key alt+c");
+	s = settle(t0, "p_open");
+	cputimes(&g1, &d1);
+	t_info(N("perf_open"), "%ld ms, CPU ms guest %ld display %ld", s, g1 - g0, d1 - d0);
+	host("move -1000 0");
+	host("move 0 -800");
+	sprintf(req, "move %d %d", tx, ty);
+	host(req);
+	host("button 1");
+	cputimes(&g0, &d0);
+	t0 = t_now_ms();
+	host("glide 60 2 2 20");
+	nap(1500);
+	host("button 0");
+	s = settle(t0, "p_drag");
+	cputimes(&g1, &d1);
+	t_info(N("perf_drag"), "%ld ms, CPU ms guest %ld display %ld", s, g1 - g0, d1 - d0);
+	if (cdx) {
+		sprintf(req, "move %d 0", cdx);
+		host(req);
+	}
+	cputimes(&g0, &d0);
+	t0 = t_now_ms();
+	host(cdx ? "click 1" : "key ctrl+u");
+	s = settle(t0, "p_close");
+	cputimes(&g1, &d1);
+	t_info(N("perf_close"), "%ld ms, CPU ms guest %ld display %ld", s, g1 - g0, d1 - d0);
 }
 
 /* the idle desktop: kernel entries a second, and the CPU left to others */
@@ -1107,9 +1254,13 @@ run(rom)
 		if (hfd >= 0) {
 			background();
 		}
-		owner();
-		ucheck();
-		timers();
+		if (fvdi)
+			fvdichecks();
+		else {
+			owner();
+			ucheck();
+			timers();
+		}
 		idle();
 		ioctl(tfd, TOSIOC_STAT, &st);
 		t_check(N("cache_ops"), st.ts_cache > 0, "%lu cache instructions and CACR writes",
@@ -1118,10 +1269,10 @@ run(rom)
 			keys();
 			direct();
 			fullfifo();
-			if (rom)
-				pointer(35, 77);
+			if (fvdi)
+				pointer(35, rom ? 88 : 40);
 			else
-				pointer(35, 38);
+				pointer(35, rom ? 77 : 38);
 			glide("glide");
 			latency("latency");
 			if (ikbdonly(1)) {
@@ -1131,6 +1282,10 @@ run(rom)
 			}
 			buttons();
 			(void)desktop(S("end"), 1);
+			if (fvdi)
+				perf(300, rom ? 121 : 110, rom ? -292 : 0);
+			else
+				perf(220, rom ? 60 : 106, rom ? -210 : 0);
 		} else
 			t_skip(N("input"), "no host line");
 		stat1(N("final"));
@@ -1194,5 +1349,16 @@ main()
 		run(USERROM);
 	else
 		t_skip("tos306", "no user TOS ROM on this root");
+	fvdi = 1;
+	if (stat(FVDIDIR "/FVDI.SYS", &sb) < 0 || hfd < 0)
+		t_skip("fvdi", "no fVDI build or no host line");
+	else {
+		pf = "emutos_fvdi";
+		if (stat(EMUTOS, &sb) == 0)
+			run((char *)0);
+		pf = "tos306_fvdi";
+		if (stat(USERROM, &sb) == 0)
+			run(USERROM);
+	}
 	return t_done();
 }

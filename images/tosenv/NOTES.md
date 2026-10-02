@@ -8,3 +8,5 @@ Apply from the repository root: `patch -p1 < images/tosenv/tos-image.diff` (live
 - `images/README.md`: "The TOS container" section.
 
 Verified on a rebuilt image (kernel of 21:55): `starttos` reaches the EmuTOS desktop (drive C icon) in QEMU q800, `startmac` reaches the Finder. Image deleted. A user ROM is never included.
+
+fVDI (`kernel/guest-tos/fvdi`): `mktos.sh` builds it into `/tos/sys` (so `maketos` and guest's `~/TOS` get it) and its source into `/tos/src/fvdi`; on a build failure it warns and the image has none. To boot without it, rename `C:\AUTO\FVDI.PRG` (e.g. `FVDI.PRX`). `maketos -f` copies `FVDI.PRG` back. Programs that write the ST screen without changing its address or mode (VT52 text, Line-A) are hidden while fVDI runs.

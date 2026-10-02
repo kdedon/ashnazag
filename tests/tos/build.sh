@@ -5,8 +5,8 @@
 #
 #   sh tests/tos/build.sh outdir
 #
-# Out: outdir/root/tos/bin/starttos, outdir/root/tos/sys/, outdir/root/etc/tos/
-# {emutos.img,rom,tosml.img}.
+# Out: outdir/root/tos/bin/starttos, outdir/root/tos/{sys,fvdi}/,
+# outdir/root/etc/tos/{emutos.img,rom,tosml.img}.
 # EMUTOS names the EmuTOS 512 KB release zip (default: ref/emutos-release),
 # EMUTOSLANG its image (us).  TOSROM names the user's ROM: an image, or a
 # zip holding one (default: the TOS 3.06 zip beside the repository);
@@ -68,4 +68,13 @@ mkdir -p "$R/tos/sys/AUTO"
 cp "$O/utest.prg" "$R/tos/sys/AUTO/UTEST.PRG"
 printf 'Drive C: of the TOS container.\r\n' > "$R/tos/sys/README.TXT"
 printf '# system drives\nG /tmp/tosg ro\n' > "$R/tos/sys/drives"
+# fVDI's files for C: (FVDI.SYS, ASHFB.SYS, AUTO\FVDI.PRG): GEM on the frame buffer
+if AUX=$AUX sh "$G/tos/fvdi/build.sh" "$O/fvdi" > "$O/fvdi.log" 2>&1; then
+	mkdir -p "$R/tos/fvdi/AUTO"
+	cp "$O/fvdi/fvdi.sys" "$R/tos/fvdi/FVDI.SYS"
+	cp "$O/fvdi/ashfb.sys" "$R/tos/fvdi/ASHFB.SYS"
+	cp "$O/fvdi/fvdi.prg" "$R/tos/fvdi/AUTO/FVDI.PRG"
+else
+	echo "[skip] fVDI: $(tail -1 "$O/fvdi.log")"
+fi
 echo "[ok] starttos, cartridge, C: folder, $(ls "$R/etc/tos" | grep -c 'rom\|emutos') ROM images"

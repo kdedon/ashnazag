@@ -7,7 +7,8 @@
 #
 # Out: outdir/{starttos,maketos,tosdrive,emutos.img,tosml.img} and
 # outdir/{sys,guest,games}.cpio, rooted at /.  EMUTOS names the EmuTOS
-# 512 KB release zip, EMUTOSLANG its image (us).  TOSAPPS names the
+# 512 KB release zip, EMUTOSLANG its image (us); FVDI the fVDI tree
+# (kernel/guest/tos/fvdi/build.sh).  TOSAPPS names the
 # unpacked apps of APPS.md (default ref/tosapps); without them the
 # image has none.
 set -e
@@ -63,6 +64,18 @@ if [ -d "$TOSAPPS/baller" ]; then
 	cp "$TOSAPPS"/baller/BALLER.* "$T/usr/games/tos/BALLER/"
 else
 	echo "[warn] no $TOSAPPS/baller: drive G: empty"
+fi
+# fVDI: GEM drawn into the session's frame buffer; its source beside it (GPL)
+if AUX=$AUX sh "$G/tos/fvdi/build.sh" "$O/fvdi" > "$O/fvdi.log" 2>&1; then
+	cp "$O/fvdi/fvdi.sys" "$T/tos/sys/FVDI.SYS"
+	cp "$O/fvdi/ashfb.sys" "$T/tos/sys/ASHFB.SYS"
+	cp "$O/fvdi/fvdi.prg" "$T/tos/sys/AUTO/FVDI.PRG"
+	mkdir -p "$T/tos/src/fvdi/ashfb"
+	tar -C "$(dirname "${FVDI:-$AUX/ref/fvdi}")" --exclude=.git -czf "$T/tos/src/fvdi/fvdi.tar.gz" \
+		"$(basename "${FVDI:-$AUX/ref/fvdi}")"
+	cp -r "$G/tos/fvdi/." "$G/tos/tosfb.h" "$T/tos/src/fvdi/ashfb/"
+else
+	echo "[warn] fVDI: $(tail -1 "$O/fvdi.log"); GEM uses the ROM's VDI"
 fi
 # guest's TOS folder, as maketos makes it
 mkdir -p "$T/home/guest"

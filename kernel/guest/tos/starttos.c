@@ -29,6 +29,8 @@
 #include <pwd.h>
 #include "dsio.h"
 #include "tosio.h"
+#include "tosfb.h"
+#include <stropts.h>
 
 #define	CART	0xfa0000
 #define	CARTSZ	0x20000
@@ -44,6 +46,7 @@ static char tro[26];			/* read-only */
 static long ramsize = 4L << 20;
 static int mono, verbose;
 static int tfd;
+extern int fbpipe;
 
 extern void disp();
 
@@ -250,6 +253,38 @@ drives()
 	put32((unsigned long)CART + 0x64, (unsigned long)-(tm->tm_isdst > 0 ? altzone : timezone));
 }
 
+/* the session's frame buffer, from the display process, into the guest */
+static void
+fbmap(fd)
+	int fd;
+{
+	struct strrecvfd rf;
+	struct fbinfo fi;
+	unsigned char *p = (unsigned char *)TFB_CART;
+	unsigned long a;
+
+	if (ioctl(fd, I_RECVFD, &rf) < 0) {
+		close(fd);
+		return;
+	}
+	close(fd);
+	if (ioctl(rf.fd, FBIOGINFO, &fi) == 0 && fi.fi_depth == 8 &&
+	    fi.fi_width < 0x10000 && fi.fi_height < 0x10000) {
+		ioctl(rf.fd, FBIOCACHE, FBC_WT);	/* NuBus refuses; it stays inhibited */
+		a = (unsigned long)mmap((caddr_t)0x1000000, fi.fi_size, PROT_READ | PROT_WRITE,
+		    MAP_SHARED, rf.fd, 0);
+		if (a != (unsigned long)-1 && a >= 0x1000000 && a + fi.fi_size <= 0xf0000000) {
+			put32((unsigned long)p, a + fi.fi_offset);
+			p[4] = fi.fi_width >> 8; p[5] = fi.fi_width;
+			p[6] = fi.fi_height >> 8; p[7] = fi.fi_height;
+			put32((unsigned long)p + 8, fi.fi_rowbytes);
+			p[12] = 0; p[13] = 8;
+		} else if (a != (unsigned long)-1)
+			munmap((caddr_t)a, fi.fi_size);
+	}
+	close(rf.fd);
+}
+
 static void
 nothing(sig)
 	int sig;
@@ -266,7 +301,7 @@ main(argc, argv)
 	struct tosowner to;
 	struct sigaction sa;
 	unsigned long base, pc, n;
-	int c;
+	int c, pfd[2];
 	pid_t pid;
 
 	for (c = 1; c < argc; c++)
@@ -341,12 +376,18 @@ main(argc, argv)
 	put32(0x5a8L, 0x1357bd13L);		/* ramvalid */
 	put32(0x4baL, 16000L);			/* _hz_200: disks had 80 s to spin up */
 
+	if (pipe(pfd) < 0)
+		die("pipe");
 	if ((pid = fork()) < 0)
 		die("fork");
 	if (pid == 0) {
+		close(pfd[0]);
+		fbpipe = pfd[1];
 		disp(tfd, verbose, (unsigned long)ramsize);
 		_exit(0);
 	}
+	close(pfd[1]);
+	fbmap(pfd[0]);
 	memset((char *)&sa, 0, sizeof sa);
 	sa.sa_handler = nothing;
 	sa.sa_flags = SA_NODEFER;

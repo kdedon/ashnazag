@@ -31,6 +31,7 @@ old_mc:	.long	0
 	.org	0x64
 	.globl	p_tz, p_dtab
 p_tz:	.long	0			| seconds east of UTC
+p_fb:	.space	16			| the frame buffer (tosfb.h), zero for none
 	.org	0x80
 p_dtab:	.space	0x1000			| host drives: letter, flags, path; ... 0
 

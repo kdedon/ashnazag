@@ -18,6 +18,8 @@
 #include <sys/time.h>
 #include "dsio.h"
 #include "tosio.h"
+#include "tosfb.h"
+#include <stropts.h>
 
 #define	REFRESH	40		/* ms between screen updates */
 #define	STALE	250		/* ms without a VBL: input takes the IKBD */
@@ -54,6 +56,7 @@ struct geom {
 	int	w, h, planes, rowb, sx, sy, step;
 };
 
+int fbpipe = -1;		/* the launcher gets the session through it */
 static struct tosinput in;
 static int mbtn, kbtn, mdx, mdy;
 static volatile struct tospv *pv = (struct tospv *)TOSPV;
@@ -368,6 +371,68 @@ refresh(tv, g, full)
 	}
 }
 
+/*
+ * Does the fVDI driver own the screen: its cookie is set and the ST
+ * screen is still the one it took over.  Its palette goes to the CLUT.
+ */
+static int
+fvdi(tv)
+	struct tosvideo *tv;
+{
+	static unsigned long seq, base;
+	static unsigned short stm, ttm;
+	static struct tfbshare *last;
+	static int stale;
+	static unsigned short r[256], gr[256], b[256];
+	struct fbcmap cm;
+	struct tfbshare *fs = 0;
+	unsigned long jar = *(unsigned long *)0x5a0, *c, v;
+	int i;
+
+	if (jar & 1 || jar < 0x600 || jar >= ramsize - 8)
+		return 0;
+	for (c = (unsigned long *)jar, i = 0; (unsigned long)c < ramsize - 8 && c[0] && i < 256;
+	    c += 2, i++)
+		if (c[0] == TFB_COOKIE) {
+			v = c[1];
+			if (!(v & 1) && v >= 0x600 && v < ramsize - sizeof *fs)
+				fs = (struct tfbshare *)v;
+			break;
+		}
+	if (fs == 0 || fs->fs_magic != TFB_MAGIC || !fs->fs_on) {
+		last = 0;
+		return 0;
+	}
+	if (fs != last) {
+		last = fs;
+		base = tv->tv_base;
+		stm = tv->tv_stmode;
+		ttm = tv->tv_ttmode;
+		stale = 1;
+	}
+	/* a program set its own screen: show that */
+	if (tv->tv_base != base || tv->tv_stmode != stm || tv->tv_ttmode != ttm) {
+		stale = 1;
+		return 0;
+	}
+	if (stale || fs->fs_seq != seq) {
+		stale = 0;
+		seq = fs->fs_seq;
+		for (i = 0; i < 256; i++) {
+			r[i] = fs->fs_pal[i][0];
+			gr[i] = fs->fs_pal[i][1];
+			b[i] = fs->fs_pal[i][2];
+		}
+		cm.cm_start = 0;
+		cm.cm_count = fi.fi_cmapsize < 256 ? fi.fi_cmapsize : 256;
+		cm.cm_red = r;
+		cm.cm_green = gr;
+		cm.cm_blue = b;
+		ioctl(fbfd, FBIOPUTCMAP, &cm);
+	}
+	return 1;
+}
+
 /* ms since the first call */
 static long
 now()
@@ -423,6 +488,10 @@ disp(fd, verbose, ram)
 		perror("starttos: mmap /dev/fb0");
 		return;
 	}
+	if (fbpipe >= 0) {
+		ioctl(fbpipe, I_SENDFD, fbfd);
+		close(fbpipe);
+	}
 	shadow = (unsigned char *)malloc(160L * 960);
 	memset(fb + fi.fi_offset, 0, fi.fi_rowbytes * fi.fi_height);
 	kfd = open("/dev/kbd", O_RDONLY);
@@ -462,8 +531,10 @@ disp(fd, verbose, ram)
 				continue;
 			return;
 		}
-		if (!geom(&tv, &g))
+		if (fvdi(&tv) || !geom(&tv, &g)) {
+			have = 0;
 			continue;
+		}
 		k = !have || tv.tv_base != last.tv_base || tv.tv_ttmode != last.tv_ttmode;
 		if (k && verbose)
 			fprintf(stderr, "starttos: screen mode %x at %lx\n", tv.tv_ttmode, tv.tv_base);
