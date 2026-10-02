@@ -10,7 +10,8 @@
 # Mac environment: startmac, libmac1_s, Patch.067C, the System file in
 # /mac/sys/Sys7 with the Finder, the ROM image at /etc/aux/rom, fidd at
 # /etc/aux/fidd; with the Mac OS 7.6.1 CD image, CD761, its System
-# Folder with SimpleText in /mac/sys/S761).
+# Folder with SimpleText in /mac/sys/S761; with the Mac OS 8.1 CD image,
+# CD81, likewise in /mac/sys/S81).
 # AUXROOT names the A/UX root, AUXROM the Mac ROM image (default: the
 # Quadra 700 ROM beside the repository); both proprietary, never in the
 # repository.
@@ -65,6 +66,9 @@ if [ -f "$OUT/mod.d/uinter" ] && [ -f "$AUXROOT/mac/bin/startmac" ] && [ -f "$SY
 	CD761=${CD761:-$AUX/media/Mac OS 7.6.1.iso}
 	[ ! -f "$CD761" ] ||
 		sh "$AUX/images/macenv/mksys76.sh" "$CD761" "$OUT/root/mac/sys/S761"
+	CD81=${CD81:-$AUX/media/MacOS8_1.iso}
+	[ ! -f "$CD81" ] ||
+		sh "$AUX/images/macenv/mksys81.sh" "$CD81" "$OUT/root/mac/sys/S81"
 fi
 
 TC=$AUX/toolchain/amix

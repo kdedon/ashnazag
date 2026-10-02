@@ -446,7 +446,8 @@ ucheck()
 		"drvmap", "list", "read", "long_name", "write", "rename", "delete", "mkdir",
 		"cwd", "attrib", "dfree", "pexec", "links_inside", "escape_dotdot",
 		"escape_link", "escape_uplink", "escape_cwd", "long_path", "c_auto", "drive_g",
-		"drive_cwd", "c_rw", "drive_d", "drive_h", 0
+		"drive_cwd", "c_rw", "drive_d", "drive_h", "irq_rte", "irq_movesr", "irq_mask",
+		"irq_nest", 0
 	};
 	char b[2048], n[40], why[40], *l, *nm;
 	int fd, i, ok, len = 0;
@@ -683,10 +684,15 @@ static unsigned long
 entries()
 {
 	unsigned long n;
+	long f;
 	int i;
 
 	ioctl(tfd, TOSIOC_STAT, &st);
 	n = st.ts_io + st.ts_priv + st.ts_mmu + st.ts_sys + st.ts_vbl;
+	if ((f = t_kmem("guest_nftrap")) > 0)		/* the gates' fast paths */
+		n += f;
+	if ((f = t_kmem("guest_nfpriv")) > 0)
+		n += f;
 	for (i = 0; i < 64; i++)
 		n += st.ts_refl[i];
 	for (i = 0; i < 16; i++)

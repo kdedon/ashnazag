@@ -505,7 +505,8 @@ disp(fd, verbose, ram)
 	p[2].fd = fbfd;
 	p[0].events = p[1].events = p[2].events = POLLIN;
 	for (;;) {
-		if (poll(p, 3L, hidden ? 1000 : REFRESH / 2) > 0) {
+		i = t + REFRESH - now();
+		if (poll(p, 3L, hidden ? 1000 : i > 0 ? i : 0) > 0) {
 			for (i = 0; i < 2; i++)
 				if (p[i].revents & POLLIN)
 					events(p[i].fd);
@@ -525,7 +526,8 @@ disp(fd, verbose, ram)
 		pvbeat();
 		if (hidden || now() - t < REFRESH)
 			continue;
-		t = now();
+		/* a fixed cadence: the clock moves in ticks, not ms */
+		t = now() - t < 2 * REFRESH ? t + REFRESH : now();
 		if (ioctl(tfd, TOSIOC_VIDEO, &tv) < 0) {
 			if (errno == ENXIO)	/* the guest has not started yet */
 				continue;

@@ -9,7 +9,9 @@
 #   guest_gate_N: native process -> jmp T; guest -> jmp guest_gate_c
 # and guest_chain[N] = T for the gate's decline path.  Fault vectors
 # first send supervisor-mode exceptions to T.  The A-line gate (10)
-# sends a guest with GPF_ALINE to guest_linea, the fast reflection.
+# sends a guest with GPF_ALINE to guest_linea, the fast reflection;
+# gate 8 one with GPF_PRIV to guest_fpriv, the trap gates (but trap #0)
+# one with GPF_FTRAP (trap #13: GPF_FTRAP13) to guest_ftrap.
 # out.lst records "N T"
 # for patch_vec.py.  Vector 42 (trap #10, the same system-call path as
 # trap #0) stays ungated as the reference for the gate-cost test.
@@ -24,6 +26,9 @@ R_68K_32 = 1
 P_EVPDP = 0xc8
 GP_FLAGS_LSB = 15	# gp_flags, big-endian long at 12: GPF_ALINE is bit 0 here
 ALINE = 10
+PRIV = 8
+GPF_PRIV_BIT = 1	# in the byte at 15
+GPF_FTRAP_BIT = 0	# in the byte at 14; GPF_FTRAP13 is bit 1
 
 e = Elf(sys.argv[1])
 base = e.syms[e.sym('M68Kvec')]['value']
@@ -64,6 +69,17 @@ for v in GATED:
               '\tbtst\t&0,%%a0@(%d)' % GP_FLAGS_LSB,
               '\tmoveal\t%sp@+,%a0',
               '\tbnew\tguest_linea']
+    if v == PRIV or (v in TRAPS and v != 32):
+        if v == PRIV:
+            off, bit, tgt_ = GP_FLAGS_LSB, GPF_PRIV_BIT, 'guest_fpriv'
+        else:
+            off, bit, tgt_ = GP_FLAGS_LSB - 1, GPF_FTRAP_BIT + (v == 45), 'guest_ftrap'
+        s += ['\tmovel\t%a0,%sp@-',
+              '\tmoveal\tcurproc,%a0',
+              '\tmoveal\t%%a0@(%#x),%%a0' % P_EVPDP,
+              '\tbtst\t&%d,%%a0@(%d)' % (bit, off),
+              '\tmoveal\t%sp@+,%a0',
+              '\tbnew\t%s' % tgt_]
     s += ['\tjmp\tguest_gate_c']
 s += ['', '\t.data', '\t.globl\tguest_chain', 'guest_chain:']
 for v in range(256):

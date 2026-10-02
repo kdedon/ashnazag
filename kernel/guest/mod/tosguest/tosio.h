@@ -69,6 +69,7 @@ struct tosstat {
 	unsigned long	ts_stop;	/* stop instructions (the guest idles) */
 	unsigned long	ts_cache;	/* cache instructions and CACR writes */
 	unsigned long	ts_slept;	/* clock ticks asleep in stop */
+	unsigned long	ts_idle;	/* input polls slept on */
 };
 
 /*

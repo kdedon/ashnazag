@@ -55,8 +55,9 @@ end=$("$BIN/m68k-elf-nm" "$O/tosml.elf" | awk '$3 == "_end" { print $1 }')
 # UTEST.PRG: linked at 0 and 0x10000, the difference gives the relocations
 $XCC -c "$T/tos/utest.c" -o "$O/utest.o"
 "$BIN/m68k-elf-as" -m68040 --register-prefix-optional -o "$O/gem.o" "$T/tos/gem.s"
+"$BIN/m68k-elf-as" -m68040 --register-prefix-optional -o "$O/irq.o" "$T/tos/irq.s"
 for base in 0 0x10000; do
-	"$BIN/m68k-elf-ld" --no-warn-rwx-segments -N -Ttext=$base -o "$O/u$base.elf" "$O/gem.o" "$O/utest.o"
+	"$BIN/m68k-elf-ld" --no-warn-rwx-segments -N -Ttext=$base -o "$O/u$base.elf" "$O/gem.o" "$O/utest.o" "$O/irq.o"
 	"$BIN/m68k-elf-objcopy" -O binary "$O/u$base.elf" "$O/u$base.bin"
 done
 end=$("$BIN/m68k-elf-nm" "$O/u0.elf" | awk '$3 == "_end" { print $1 }')

@@ -42,6 +42,7 @@ int	(*guest_vur_hook)();
 int	(*guest_fsig_hook)();
 int	(*guest_unote_hook)();
 long	guest_nlinea, guest_lineapc;
+long	guest_nftrap, guest_nfpriv;	/* taken by the gates' fast paths */
 
 struct hooksw hooksw[] = {
 	{ "guest_trap",		(char **)&guest_trap_hook,	0, 0 },
@@ -55,13 +56,15 @@ struct hooksw hooksw[] = {
 	{ 0, 0, 0, 0 }
 };
 
-/* the vector gates read p_evpdp, p_sig, p_hold and gp_flags, gp_vsr, gp_vvbr at these offsets */
+/* the vector gates read p_evpdp, p_sig, p_hold and gp_flags, gp_vsr, gp_vpend, gp_vusp, gp_vvbr at these offsets */
 extern char guest_evpdp_at_c8[(int)&((struct proc *)0)->p_evpdp == 0xc8 ? 1 : -1];
 extern char guest_sig_at_9c[(int)&((struct proc *)0)->p_sig == 0x9c &&
     (int)&((struct proc *)0)->p_hold == 0xa4 ? 1 : -1];
 extern char guest_vcpu_at[(int)&((struct guest_proc *)0)->gp_flags == 12 &&
     (int)&((struct guest_proc *)0)->gp_vsr == 20 &&
-    (int)&((struct guest_proc *)0)->gp_vvbr == 28 ? 1 : -1];
+    (int)&((struct guest_proc *)0)->gp_vvbr == 28 &&
+    (int)&((struct guest_proc *)0)->gp_vpend == 22 &&
+    (int)&((struct guest_proc *)0)->gp_vusp == 24 ? 1 : -1];
 
 /*
  * procdup: ev_fork runs only when this says the parent is a guest.

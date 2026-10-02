@@ -16,7 +16,7 @@
 #include "tos.h"
 
 extern int nodev(), ttimeout(), untimeout();
-extern char runrun;
+extern int runrun;
 extern int fpu_present;
 extern void dlm_cacheflush();
 extern long lbolt;
@@ -64,8 +64,9 @@ vipl(gp)
 }
 
 /*
- * Something may want the guest: post the carrier.  rr: also reschedule
- * at once when the guest can take it now.
+ * Something may want the guest.  A masked request waits for the IPL to
+ * drop (gp_vpend sends that through the trap tail); a sleeping guest is
+ * woken; a running one gets the carrier.  rr: also reschedule at once.
  */
 void
 tos_kick(rr)
@@ -74,13 +75,17 @@ tos_kick(rr)
 	struct tosctr *t = &tosc;
 	int l;
 
-	if (t->t_state != 1 || t->t_paused || (l = tos_level()) == 0)
+	if (t->t_state != 1 || t->t_paused)
 		return;
-	psignal(t->t_proc, TOS_SIG);
-	if (l > vipl(t->t_gp)) {
-		if (t->t_sleeping)
-			wakeup((caddr_t)&t->t_sleeping);
-		else if (rr)
+	l = tos_level();
+	t->t_gp->gp_vpend = l << 8;
+	if (l <= vipl(t->t_gp))
+		return;
+	if (t->t_sleeping)
+		wakeup((caddr_t)&t->t_sleeping);
+	else {
+		psignal(t->t_proc, TOS_SIG);
+		if (rr)
 			runrun = 1;
 	}
 }
@@ -106,6 +111,52 @@ tos_stop_insn(gp)
 }
 
 /* ---- delivery ---- */
+
+/*
+ * Every interrupt the IPL lets through, each frame on top of the last
+ * as the CPU takes them; then the carrier is no longer needed.
+ */
+static void
+tos_intr(gp, r)
+	struct guest_proc *gp;
+	char *r;
+{
+	struct tosctr *t = &tosc;
+	int s, l, vec;
+
+	if (t->t_gp != gp)
+		return;
+	s = splhi_();
+	while (!t->t_paused && (l = tos_level()) > vipl(gp)) {
+		if (l == 6)
+			vec = mfp_ack();
+		else {
+			t->t_vblpend = 0;
+			t->t_st.ts_vbl++;
+			vec = 28;
+		}
+		splx_(s);
+		if (guest_reflect(gp, r, GR_PC(r), vec << 2, (char *)0, 2, l) < 0) {
+			s = splhi_();
+			if (l == 6)
+				mfp_unack(vec);		/* still pending for a debugger */
+			else
+				t->t_vblpend = 1;
+			splx_(s);
+			printf("tos: interrupt with no guest stack, pc %x\n", (int)GR_PC(r));
+			psignal(curproc, SIGSEGV);
+			return;
+		}
+		if (GR_FV(r) >> 12)
+			u.u_sigflag |= USTKCLEAR;
+		s = splhi_();
+	}
+	l = tos_level();
+	gp->gp_vpend = l << 8;
+	if (!t->t_paused && l <= vipl(gp))
+		sigdelset(&gp->gp_proc->p_sig, TOS_SIG);
+	splx_(s);
+}
 
 /* the carrier waits while the guest's IPL masks every request */
 static int
@@ -145,7 +196,7 @@ tos_sendsig(gp, sig, sip, hdlr)
 	int (*hdlr)();
 {
 	char *r = (char *)u.u_ar0;
-	int s, l, vec, id;
+	int s, l, id;
 
 	if (sig != TOS_SIG)
 		return __amix_sendsig(sig, sip, hdlr);
@@ -164,33 +215,8 @@ tos_sendsig(gp, sig, sip, hdlr)
 		if (l)
 			break;
 	}
-	l = tos_level();
-	if (l <= vipl(gp)) {
-		splx_(s);
-		return 1;
-	}
-	if (l == 6)
-		vec = mfp_ack();
-	else {
-		tosc.t_vblpend = 0;
-		tosc.t_st.ts_vbl++;
-		vec = 28;
-	}
 	splx_(s);
-	if (guest_reflect(gp, r, GR_PC(r), vec << 2, (char *)0, 2, l) < 0) {
-		s = splhi_();
-		if (l == 6)
-			mfp_unack(vec);		/* still pending for a debugger */
-		else
-			tosc.t_vblpend = 1;
-		splx_(s);
-		printf("tos: interrupt with no guest stack, pc %x\n", (int)GR_PC(r));
-		psignal(curproc, SIGSEGV);
-		return 1;
-	}
-	if (GR_FV(r) >> 12)
-		u.u_sigflag |= USTKCLEAR;
-	tos_kick(0);
+	tos_intr(gp, r);
 	return 1;
 }
 
@@ -444,8 +470,9 @@ enter(arg, cr)
 		return e;
 	}
 	gp = GUESTP(curproc);
-	gp->gp_flags |= GPF_PRIV;
+	gp->gp_flags |= GPF_PRIV | GPF_FTRAP;
 	gp->gp_vsr = 0x2700;
+	gp->gp_vpend = 0;
 	gp->gp_vusp = gp->gp_vvbr = gp->gp_vcacr = 0;
 	bzero((caddr_t)&t->t_proc, sizeof *t - ((caddr_t)&t->t_proc - (caddr_t)t));
 	t->t_proc = curproc;
@@ -542,6 +569,7 @@ tosguest_load()
 	tos_profile.gpf_fork = tos_pfork;
 	tos_profile.gpf_sendsig = tos_sendsig;
 	tos_profile.gpf_fsig = tos_fsig;
+	tos_profile.gpf_intr = tos_intr;
 	for (v = 2; v < 48; v++) {
 		if (v > 11 && v < 32)
 			continue;

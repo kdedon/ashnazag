@@ -19,7 +19,7 @@
 extern void dlm_cacheflush();
 extern int preempt(), issig();
 extern void psig();
-extern char runrun;
+extern int runrun;
 
 #define	SR_REAL		0x80ff		/* T1 and CCR */
 #define	SR_VIRT		0x3700		/* S, M, IPL */
@@ -91,7 +91,10 @@ static void
 trapret()
 {
 	struct proc *p = u.u_procp;
+	struct guest_proc *gp = GUESTP(p);
 
+	if (gp && gp->gp_prof->gpf_intr)
+		(*gp->gp_prof->gpf_intr)(gp, (char *)u.u_ar0);
 	if (runrun)
 		preempt();
 	if (p->p_cursig || p->p_sig || (p->p_flag & SPRSTOP))

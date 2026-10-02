@@ -5,7 +5,7 @@
  * G: read-only and I: on one directory, H: on U:\SUB.
  */
 
-extern long trap1(), trap13();
+extern long trap1(), trap13(), irqtest();
 
 static short w[8];
 static int nw;
@@ -300,6 +300,11 @@ main()
 	Dsetpath("\\");
 	Dsetdrv(d);
 	check("drive_cwd", r == 0 && h == 0 && found == 4, (long)found);
+
+	check("irq_rte", (r = irqtest(1)) == 0, r);
+	check("irq_movesr", (r = irqtest(2)) == 0, r);
+	check("irq_mask", (r = irqtest(3)) == 0, r);
+	check("irq_nest", (r = irqtest(4)) == 0, r);
 
 	h = Fcreate("U:\\RESULT.TXT", 0);
 	if (h >= 0) {

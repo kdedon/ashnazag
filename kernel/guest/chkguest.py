@@ -106,6 +106,17 @@ txt = dis(sym['guest_gate_10'][0], 0x60)
 txt = txt[txt.index('<guest_gate_10>:'):].split('<guest_gate_', 2)[1]
 check('btst #0,%a0@(15)' in txt and '<guest_linea>' in txt,
       'A-line gate: GPF_ALINE (gp_flags bit 0) selects guest_linea')
+for v, bit, off, f in ((8, 1, 15, 'guest_fpriv'), (33, 0, 14, 'guest_ftrap'),
+                       (45, 1, 14, 'guest_ftrap')):
+    txt = dis(sym['guest_gate_%d' % v][0], 0x60)
+    txt = txt[txt.index('<guest_gate_%d>:' % v):].split('<guest_gate_', 2)[1]
+    check('btst #%d,%%a0@(%d)' % (bit, off) in txt and '<%s>' % f in txt,
+          'gate %d: gp_flags bit %d at %d selects %s' % (v, bit, off, f))
+for f in ('guest_fpriv', 'guest_ftrap'):
+    txt = dis(sym[f][0], 0x200)
+    ins = [l.split('\t')[2] for l in txt.splitlines() if l.count('\t') >= 2]
+    check('rte' in ins and '<guest_gate_c>' in txt and '<u+0x374>' in txt,
+          '%s: returns by rte, falls back to guest_gate_c' % f)
 la = sym['guest_linea'][0]
 txt = dis(la, 0xc0)
 ins = [l.split('\t')[2] for l in txt.splitlines() if l.count('\t') >= 2]

@@ -27,6 +27,7 @@
  * 'boot' 3's second _AUXDispatch(36) (it makes /tmp/.mac/unix), the
  * Finder desktop, SysVersion $0761, the About This Computer window,
  * SimpleText opened from the desktop and quit, and the disk window.
+ * Built with SYS81 (t_mac81.c), the same with Mac OS 8.1 (/mac/sys/S81).
  */
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -58,12 +59,24 @@ extern int getksym();
 #define	PRAMF	"/etc/aux/pram"
 #define	OTHERUID "101"		/* restart's user, group display */
 
+#ifdef SYS81
+#define	SYS76
+#define	SYSDIR	"/mac/sys/S81"
+#define	SYSVER	0x0810
+#define	TNAME	"mac81"
+#define	SHOT	"mac81_"
+#define	TBMEM	"TBMEMORY=16M"
+#else
 #ifdef SYS76
 #define	SYSDIR	"/mac/sys/S761"
+#define	SYSVER	0x0761
+#define	TNAME	"mac76"
+#define	SHOT	"mac76_"
 #define	TBMEM	"TBMEMORY=16M"
 #else
 #define	SYSDIR	"/mac/sys/Sys7"
 #define	TBMEM	"TBMEMORY=8M"
+#endif
 #endif
 static char *macenv[] = {
 	"PATH=/aux/bin:/usr/bin:/sbin", "HOME=/tmp", "TBVERBOSE=1", "TBWARN=1",
@@ -962,43 +975,43 @@ app76()
 
 	t_rearm(120);
 	host("key meta_l+w");
-	n = waitshot("mac76_closed", "mac76_desktop", 0, 1999, 20);
+	n = waitshot(SHOT "closed", SHOT "desktop", 0, 1999, 20);
 	t_check("about_closed", n >= 0 && n < 2000, "%d pixels from the desktop", n);
 	/* typing selects the desktop icon by name; Command-O opens it */
 	t_rearm(120);
 	host("key s");
 	pause_ms(1000L);
 	host("key meta_l+o");
-	n = waitshot("mac76_simpletext", "mac76_closed", 100000, 1 << 30, 60);
+	n = waitshot(SHOT "simpletext", SHOT "closed", 100000, 1 << 30, 60);
 	/* its untitled window, white over the middle of the desktop */
-	if ((r = host("mac mac76_simpletext 200 150 600 450")) != 0)
+	if ((r = host("mac " SHOT "simpletext 200 150 600 450")) != 0)
 		sscanf(r, "checker %d", &chk);
 	t_check("simpletext_open", n >= 100000 && chk >= 0 && chk < 100,
 	    "%d pixels changed, checker %d per mille", n, chk);
 	t_check("simpletext_alive", alive76(), "");
 	t_rearm(120);
 	host("key meta_l+q");
-	n = waitshot("mac76_quit", "mac76_closed", 0, 1999, 40);
+	n = waitshot(SHOT "quit", SHOT "closed", 0, 1999, 40);
 	t_check("simpletext_quit", n >= 0 && n < 2000, "%d pixels from the desktop", n);
 	t_check("finder_alive", alive76(), "");
 	/* the startup disk's window: the File Manager lists the root */
 	t_rearm(120);
 	moveto(scrw - 40, 48);
 	host("click 2");
-	n = waitshot("mac76_disk", "mac76_quit", 20000, 1 << 30, 40);
+	n = waitshot(SHOT "disk", SHOT "quit", 20000, 1 << 30, 40);
 	t_check("disk_window", n >= 20000, "%d pixels changed", n);
 	t_rearm(120);
 	host("key meta_l+w");
-	n = waitshot("mac76_diskclosed", "mac76_quit", 0, 1999, 20);
+	n = waitshot(SHOT "diskclosed", SHOT "quit", 0, 1999, 20);
 	t_check("disk_window_closed", n >= 0 && n < 2000, "%d pixels from the desktop", n);
 	/* the Special menu held open */
 	moveto(232, 9);
 	host("button 1");
 	pause_ms(800L);
-	host("shot mac76_special");
+	host("shot " SHOT "special");
 	host("button 0");
 	pause_ms(1000L);
-	n = shotdiff("mac76_diskclosed", "mac76_special");
+	n = shotdiff(SHOT "diskclosed", SHOT "special");
 	t_check("special_menu", n > 1000, "%d pixels changed", n);
 	t_check("finder_stays", alive76(), "");
 }
@@ -1019,8 +1032,8 @@ screen76()
 	/* the menu bar white, the rest mostly the desktop pattern */
 	for (n = 0; n < 8; n++) {
 		t_rearm(120);
-		host("shot mac76_desktop");
-		r = host("mac mac76_desktop");
+		host("shot " SHOT "desktop");
+		r = host("mac " SHOT "desktop");
 		if (r)
 			sscanf(r, "checker %d white %d top %d", &chk, &white, &top);
 		if (chk >= 900 && top >= 900)
@@ -1033,7 +1046,7 @@ screen76()
 	id = shmget(TLOW, 0, 0);
 	lm = id < 0 ? 0 : (unsigned char *)shmat(id, (char *)0, SHM_RDONLY);
 	if (lm && lm != (unsigned char *)-1) {
-		t_check("sysversion", (lm[0x15a] << 8 | lm[0x15b]) == 0x0761, "SysVersion %#x",
+		t_check("sysversion", (lm[0x15a] << 8 | lm[0x15b]) == SYSVER, "SysVersion %#x",
 		    lm[0x15a] << 8 | lm[0x15b]);
 		t_check("gestalt_mach", patchbox() == 29, "Patch.067C's model %ld (BoxFlag %d)",
 		    patchbox(), lm[0xcb3]);
@@ -1047,8 +1060,8 @@ screen76()
 		pause_ms(500L);
 		host("button 0");
 		pause_ms(5000L);
-		host("shot mac76_about");
-		if ((r = host("cmp mac76_desktop mac76_about")) != 0)
+		host("shot " SHOT "about");
+		if ((r = host("cmp " SHOT "desktop " SHOT "about")) != 0)
 			sscanf(r, "diff %d", &diff);
 		t_check("about_window", diff > 20000, "%d pixels changed", diff);
 		app76();
@@ -1067,7 +1080,7 @@ main()
 	int e, mj = UIMAJ;
 
 #ifdef SYS76
-	t_init("mac76", 330);
+	t_init(TNAME, 330);
 #else
 	t_init("mac", 300);
 #endif

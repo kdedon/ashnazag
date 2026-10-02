@@ -20,7 +20,7 @@
 extern int nosys();
 extern int preempt(), issig();
 extern void psig();
-extern char runrun;
+extern int runrun;
 
 long aux_nsys, aux_lastsys;	/* Mac task's calls; the last: number << 16 | errno */
 int aux_trace = 0;	/* 1: every call, 2: results, 4: open paths, 8: failures, name changes,
