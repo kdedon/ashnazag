@@ -1,7 +1,7 @@
 #!/sbin/sh
 # startmac -- the Mac environment, as on A/UX: root's System Folder is
 # /mac/sys/System Folder, other users get $HOME/System Folder from
-# systemfolder.
+# makemac.
 #
 # /etc/aux/macenv.conf (shell syntax) or the environment may set
 #   TBMEMORY  Mac memory, e.g. 32M; default a quarter of physical
@@ -29,7 +29,7 @@ uid=0\(*)
 *)
 	[ -z "$MACMODEL" ] || echo "startmac: only root sets MACMODEL" >&2
 	S="$HOME/System Folder"
-	[ -f "$S/System" ] || systemfolder > /dev/null && [ -f "$S/System" ] ||
+	[ -f "$S/System" ] || makemac -f > /dev/null && [ -f "$S/System" ] ||
 		{ echo "startmac: cannot make $S" >&2; exit 1; } ;;
 esac
 if [ -z "$TBMEMORY" ]; then

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # mkdesktop.py -- the Finder's desktop database on a Mac disk image: boot
 # it in QEMU (q800, 128 MB), run startmac as root until the Finder has
-# rebuilt the desktop of /, stop it, halt.  The image is changed in place.
+# rebuilt the desktop of /, stop it, copy the database to guest's System
+# Folder, halt.  The image is changed in place.
 #
 #   python3 images/macenv/mkdesktop.py IMG [ROM]
 #
@@ -33,7 +34,13 @@ if [ -n "$s" ] && [ "$s" = "$o" ]; then n=`expr $n + 1`; else n=0; fi
 o=$s
 [ $n -ge 3 ] && break
 done
-kill $p; sleep 5; rm -f /tmp/mkdt; sync; echo DESKTOP-$n-DONE
+kill $p; sleep 5
+G="/home/guest/System Folder"
+for f in "Desktop DB" "Desktop DF" "%Desktop DB" "%Desktop DF"; do
+[ ! -d "$G" ] || [ ! -f "$S/$f" ] || cp "$S/$f" "$G/" || n=0
+done
+[ ! -d "$G" ] || { chown 100 "$G"/*Desktop?D?; chgrp 1 "$G"/*Desktop?D?; }
+rm -f /tmp/mkdt; sync; echo DESKTOP-$n-DONE
 E
 sh /tmp/mkdt
 """

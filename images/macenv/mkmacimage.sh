@@ -21,6 +21,8 @@ OUT=${2:-$X11W/q800-mac.img}
 P=${MACW:-$X11W/macpkg}
 case $P in ""|/|"$HOME"|"$AUX") echo "[FAIL] MACW=$P"; exit 1 ;; esac
 [ -n "$AUXROOT" ] || AUXROOT=$(cat "$AUX/tests/aux/auxroot")
+CD761=${CD761:-$AUX/media/Mac OS 7.6.1.iso}
+[ -f "$CD761" ] || { echo "[FAIL] no Mac OS 7.6.1 CD: $CD761"; exit 1; }
 TC=$AUX/toolchain/amix
 SYS=$TC/m68k-cbm-sysv4/sysroot
 
@@ -47,7 +49,7 @@ rm -rf "$P/guest" "$P"/*.o
 sh "$AUX/images/tosenv/mktos.sh" "$P/tos" ||
 	{ echo "[FAIL] TOS container files"; exit 1; }
 
-cp "$D/S05aux" "$D/startmac" "$P/"
+cp "$D/S05aux" "$D/startmac" "$D/makemac" "$P/"
 mv "$P/startmac" "$P/startmac.sh"
 cp "$AUXROOT/shlib/libc1_s" "$AUXROOT/shlib/libmac1_s" "$AUXROOT/etc/fidd" "$P/"
 [ -z "$AUXROM" ] || cp "$AUXROM" "$P/rom"
@@ -61,14 +63,19 @@ mkdir -p "$M/usr/bin" "$M/usr/lib" "$M/.mac/localhost/Desktop Folder" "$M/.mac/l
 cp "$AUXROOT/usr/bin/systemfolder" "$M/usr/bin/"
 cp "$AUXROOT/usr/lib/updtsysfldr" "$M/usr/lib/"
 find "$M" -name '.fs_*' -o -name '%.fs_*' | while read f; do rm -f "$f"; done
-# its desktop database names files of the disk it came from
-rm -f "$M/mac/sys/System Folder/Desktop D"? "$M/mac/sys/System Folder/%Desktop D"?
+# Mac OS 7.6.1 in place of A/UX's System 7.0.1
+rm -rf "$M/mac/sys/System Folder"
+sh "$D/mksys76.sh" "$CD761" "$M/mac/sys/System Folder"
 find "$M" -type d -exec chmod 755 {} +
 find "$M" -type f -perm -u+x -exec chmod 755 {} +
 find "$M" -type f ! -perm -u+x -exec chmod 644 {} +
 # /usr and its directories keep the manifest's owners
 (cd "$M" && find . -depth -print | grep -v -x -e ./usr -e ./usr/bin -e ./usr/lib |
 	cpio -o -H newc -R 0:3 --quiet) > "$P/mac.cpio"
+# guest's System Folder, as makemac makes it
+mkdir -p "$M/home/guest"
+mv "$M/mac/sys/System Folder" "$M/home/guest/"
+(cd "$M" && find "home/guest/System Folder" | cpio -o -H newc -R 100:1 --quiet) > "$P/macguest.cpio"
 rm -rf "$M"
 
 # swap backs the Mac's memory (startmac's TBMEMORY, up to 32 MB)

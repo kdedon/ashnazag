@@ -1,0 +1,26 @@
+#!/bin/sh
+# makemac -- make ~/System Folder, your own Mac System Folder, from
+# /mac/sys/System Folder.
+#
+#	makemac [-f]
+#
+# -f copies the template over an existing ~/System Folder, keeping your
+# other files.
+SYS="/mac/sys/System Folder"
+[ -n "$HOME" ] || { echo "makemac: no HOME" >&2; exit 1; }
+T="$HOME/System Folder"
+case $1 in
+-f)	;;
+"")	if [ -d "$T" ]; then
+		echo "makemac: $T exists; makemac -f copies the template over it" >&2
+		exit 1
+	fi ;;
+*)	echo "usage: makemac [-f]" >&2
+	exit 2 ;;
+esac
+[ -d "$SYS" ] || { echo "makemac: no $SYS" >&2; exit 1; }
+[ -d "$T" ] || mkdir -p "$T" || exit 1
+# AppleDouble headers (%name) go with their files
+cd "$SYS" && find . -print | cpio -pdmu "$T" 2>/dev/null ||
+	{ echo "makemac: copy to $T failed" >&2; exit 1; }
+echo "makemac: $T is your System Folder in startmac"

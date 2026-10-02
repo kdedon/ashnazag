@@ -17,7 +17,7 @@ case $1 in
 	exit 2 ;;
 esac
 [ -d "$SYS" ] || { echo "maketos: no $SYS" >&2; exit 1; }
-mkdir -p "$T" || exit 1
+[ -d "$T" ] || mkdir -p "$T" || exit 1
 # the system's drive table stays the system's: ~/TOS/drives adds to it
 cd "$SYS" && find . -print | grep -v '^\./drives$' | cpio -pdmu "$T" 2>/dev/null ||
 	{ echo "maketos: copy to $T failed" >&2; exit 1; }

@@ -192,7 +192,7 @@ sh kernel/mac/diskroot/pkg/mkpkgimage.sh -p DIR WORK [kernel.elf [out.img]]
 
 ## The Mac environment
 
-`q800-mac.img` is the X disk image plus A/UX 3.1's Mac environment as A/UX installs it: `/mac` (System Folder with its extensions, control panels and Apple menu items, CommandShell, TeachText, MacX, the Commando tools), the Finder's folders at `/` (Applications, Documentation, Shared Data) and `systemfolder`. Log in as `root` and type:
+`q800-mac.img` is the X disk image plus A/UX 3.1's Mac environment as A/UX installs it, with Mac OS 7.6.1 from its CD (`media/Mac OS 7.6.1.iso`, `CD761`) as the System Folder: `/mac` (CommandShell, TeachText, MacX, the Commando tools), the Finder's folders at `/` (Applications, Documentation, Shared Data) and `systemfolder`. Log in as `root` and type:
 
 ```sh
 startmac
@@ -200,7 +200,7 @@ startmac
 
 The Finder desktop appears in about a minute; the image carries the Finder's desktop database, so there is no rebuild.  Ctrl-Option-Command-0 shows the console, Ctrl-Option-Command-1 the Mac again.  Special > Logout quits back to the shell.  Faults the Mac handles itself print nothing; `macdiag` counts them (`quiet`).
 
-The guest modules are registered at run level 2 (`/etc/rc2.d/S05aux`), which also starts the File ID daemon (`/etc/aux/fidd`).  root's System Folder is `/mac/sys/System Folder`; other users (group `display`) get `$HOME/System Folder` from `systemfolder`, as on A/UX; the Mac's PRAM is kept in `/etc/aux/pram`.
+The guest modules are registered at run level 2 (`/etc/rc2.d/S05aux`), which also starts the File ID daemon (`/etc/aux/fidd`).  root's System Folder is `/mac/sys/System Folder`; other users (group `display`) get `$HOME/System Folder` from `makemac` (`-f` copies the template over an existing one), and guest already has one; the Mac's PRAM is kept in `/etc/aux/pram`.
 
 The Mac reports the model that fits the host and the ROM (a Quadra 800 on a Quadra 800) and gets a quarter of physical memory, 8 to 32 MB, as free swap allows.  `/etc/aux/macenv.conf` or the environment of `startmac` may set `TBMEMORY` (e.g. `16M`) and, for root, `MACMODEL` (a Gestalt machine ID, e.g. `22` for a Quadra 700).
 

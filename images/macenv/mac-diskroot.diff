@@ -1,6 +1,6 @@
 --- a/kernel/mac/diskroot/root.manifest
 +++ b/kernel/mac/diskroot/root.manifest
-@@ -55,6 +55,43 @@
+@@ -55,6 +55,46 @@
  # date(1) runs setclk -s after stime(2); the kernel keeps the RTC
  f /usr/amiga/bin/setclk 755 0 3 etc/setclk
  
@@ -27,6 +27,9 @@
 +# A/UX's Mac files: /mac, the Finder's folders at /, systemfolder
 +a macpkg/mac.cpio
 +f /usr/bin/startmac 755 0 3 macpkg/startmac.sh
++f /usr/bin/makemac 755 0 3 macpkg/makemac
++# guest's ~/System Folder, as makemac makes it
++a macpkg/macguest.cpio
 +f /usr/bin/macdiag 750 0 3 macpkg/macdiag
 +# TOS container: EmuTOS, its cartridge, the C: folder template /tos/sys,
 +# guest's ~/TOS and the system's apps (drive G:)
