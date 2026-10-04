@@ -1,0 +1,21 @@
+--- a/src/control.c
++++ b/src/control.c
+@@ -22,6 +22,7 @@
+ #include <sys/time.h>
+ #endif
+ #include <unistd.h>
++#include <errno.h>
+ #include <ctype.h>
+ #include <assert.h>
+ 
+@@ -465,7 +466,9 @@
+ 		/* assume whole command can be read in one go */
+ 		bytes = read(ControlFifo, buffer, sizeof(buffer)-1);
+ 		if (bytes < 0) {
+-			perror("command FIFO read error");
++			/* a writer holds the fifo open but has not written yet */
++			if (errno != EAGAIN)
++				perror("command FIFO read error");
+ 			return false;
+ 		}
+ 		if (bytes == 0) {

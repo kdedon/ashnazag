@@ -1,0 +1,42 @@
+# Additions to root.manifest, appended by mkpkgimage.sh.  @X@: its build
+# directory; @P@: this directory; @NET07@: tape segment 07 files; @AUXROOT@: the A/UX root.
+
+# Ethernet (the Quadra's SONIC, AMIX's aen interface) and segment 07's tools
+c /dev/aen0	600 0 3 18 0
+f /usr/sbin/ping	4555 0 3 @NET07@/usr/sbin/ping
+f /usr/sbin/route	555 2 2 @NET07@/usr/sbin/route
+f /usr/sbin/arp		2555 2 3 @NET07@/usr/sbin/arp
+f /usr/bin/netstat	4555 0 3 @NET07@/usr/bin/netstat
+f /etc/inet/network-config 444 0 3 @X@/network-config
+f /etc/inet/hosts	444 0 3 @X@/hosts
+
+# A/UX programs: guest modules, registered at run level 2
+d /usr/aux	755 0 3
+d /usr/aux/bin	755 2 2
+d /usr/aux/lib	755 2 2
+d /usr/aux/lib/mod.d 755 0 3
+f /usr/aux/lib/mod.d/guestcore 644 0 3 @X@/guest/mod.d/guestcore
+f /usr/aux/lib/mod.d/auxcore	644 0 3 @X@/guest/mod.d/auxcore
+f /usr/aux/lib/mod.d/auxexec	644 0 3 @X@/guest/mod.d/auxexec
+f /usr/aux/lib/auxreg	755 0 3 @X@/auxreg
+f /etc/rc2.d/S05aux	744 0 3 @P@/etc/S05aux
+d /shlib	755 0 3
+f /shlib/libc_s		755 2 2 @AUXROOT@/shlib/libc_s
+f /shlib/libc1_s	755 2 2 @AUXROOT@/shlib/libc1_s
+f /shlib/libmac_s	755 2 2 @AUXROOT@/shlib/libmac_s
+f /shlib/libmac1_s	755 2 2 @AUXROOT@/shlib/libmac1_s
+f /shlib/libuucp_s	755 2 2 @AUXROOT@/shlib/libuucp_s
+f /shlib/libX11_s	755 2 2 @AUXROOT@/shlib/libX11_s
+f /usr/aux/bin/ls	755 2 2 @AUXROOT@/bin/ls
+f /usr/aux/bin/more	755 2 2 @AUXROOT@/bin/more
+f /usr/aux/bin/sh	755 2 2 @AUXROOT@/bin/sh
+f /usr/aux/bin/sleep	755 2 2 @AUXROOT@/bin/sleep
+f /usr/aux/bin/vi	755 2 2 @AUXROOT@/usr/bin/vi
+f /usr/aux/lib/terminfo/v/vt100 644 2 2 @AUXROOT@/usr/lib/terminfo/v/vt100
+f /usr/aux/etc/termcap	644 2 2 @AUXROOT@/etc/termcap
+
+# add-on package directories owned as the packages declare them, so the
+# stock pkgadd sees no attribute change to confirm
+d /opt		755 0 3
+d /usr/local	755 0 3
+d /usr/local/bin 755 0 3

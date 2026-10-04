@@ -1,0 +1,19 @@
+#!/bin/sh
+# makeamiga [-f] copies the system template into your Amiga home.
+SYS=/amiga/sys
+[ -n "$HOME" ] || { echo "makeamiga: no HOME" >&2; exit 1; }
+T=$HOME/Amiga
+[ "$#" -le 1 ] || { echo 'usage: makeamiga [-f]' >&2; exit 2; }
+case ${1-} in
+-f) ;;
+"") if [ -e "$T" ]; then
+        echo "makeamiga: $T exists; makeamiga -f refreshes template files" >&2
+        exit 1
+     fi ;;
+*) echo 'usage: makeamiga [-f]' >&2; exit 2 ;;
+esac
+[ -d "$SYS" ] || { echo "makeamiga: no $SYS" >&2; exit 1; }
+[ -d "$T" ] || mkdir -p "$T" || exit 1
+cd "$SYS" && find . -print | cpio -pdmu "$T" 2>/dev/null ||
+    { echo "makeamiga: copy to $T failed" >&2; exit 1; }
+echo "makeamiga: $T is SYS: in startmig"

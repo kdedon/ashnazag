@@ -1,0 +1,155 @@
+# ADB on the Quadra 800
+
+## Files
+
+- `adb.c`: bus layer for the VIA1 shift-register transceiver.
+  - Per-byte state machine: `adb_intr`, IPL 4.
+  - Request queue and packet ring.
+  - SRQ scan and auto-poll target.
+  - Watchdog: `adb_tick`.
+  - Polled enumeration with collision resolution: `adb_init`, from `io_init`.
+- `adbkbd.c`: keyboard. Decodes talk R0. Has a raw consumer hook (A/UX shape) and the console path: US layout to ASCII, VT100 arrows, auto-repeat, and the Caps Lock LED through R2.
+- `adbms.c`: mouse. Decodes R0 into `adb_mouse_x/y/button` and has a consumer hook. No handler change and no extended protocol.
+- `test/`: host simulator of VIA1, the transceiver and devices, with checks of the bus layer, enumeration, SRQ handling and keyboard decoding (`sh test/run.sh`). The checks run twice: a transceiver that interrupts only for data or SRQ, and one that interrupts on every auto-poll and keeps a read reply pending (as QEMU does). Shorter checks cover PB3 held low after every command, and a transceiver without auto-poll that acts only on state edges (the MiSTer core).
+- `verify.sh`: static checks on the linked image.
+
+## VIA1 use
+
+| Resource | Use |
+|---|---|
+| PB3 (input) | /INT from the transceiver. Sampled at each SR interrupt; meaning below |
+| PB4, PB5 (outputs) | ST0, ST1: 00 CMD, 01 EVEN, 10 ODD, 11 IDLE |
+| SR | command and data bytes |
+| ACR bits 4–2 | 111 = shift out, 011 = shift in, both on the external clock (CB1 from the transceiver) |
+| IFR/IER bit 2 | SR interrupt; `adb_intr` acknowledges it with IFR = 0x04 |
+| DDRB | bits 4, 5 outputs, bit 3 input. PB0–2 (RTC) and PB6/7 are left alone |
+
+**Protocol**
+
+- A command follows a reply directly (EVEN/ODD to CMD). Only after a command without data (CMD to CMD) the bus shows IDLE for 150 µs first. Order: SR to output, write the command, then ST = CMD.
+- Talk: at the command's SR interrupt, switch SR to input and set EVEN. Then toggle EVEN/ODD once per byte.
+- Listen: write each data byte to SR, then toggle.
+- A transaction ends with the next command, or with IDLE. In IDLE the transceiver repeats the last talk by itself (auto-poll).
+
+**PB3 low at an SR interrupt means:**
+
+| When | Meaning |
+|---|---|
+| After the command byte | an auto-poll reply got in first; the command was not sent. Read the reply (as the last talk sent), then resend the command |
+| On data byte 0 | no reply. Read byte 1 too, for SRQ, then stop |
+| On data byte 1 | another device asserts SRQ; the byte is kept |
+| On data bytes 2–8 | end of reply; the byte is filler |
+
+At most 8 bytes are read. After a dropped command, a timeout on byte 0 ends the read with no SRQ check. A command is resent at most 3 times; if PB3 is still low after the fourth send, the command counts as sent and PB3 as SRQ.
+
+**Interrupt path (`macintr.s` p1int)**
+
+- The SR bit is served before T1.
+- `adb_intr` runs at IPL 4, so a level-4 SCC interrupt cannot delay a state change.
+- `adb_soft` then runs at IPL 1. It calls completions and decoders, and so the keyboard input path.
+- A tick pending at the same time re-enters p1int, because VIA /IRQ is a level signal.
+- The tick path calls `adb_tick` at IPL 2, before `clock_int`, for the watchdog and key repeat.
+
+## Timing (ADB specification)
+
+| Item | Value |
+|---|---|
+| Bit cell | 100 µs |
+| Attention | 800 µs |
+| Sync | 65 µs |
+| Stop-to-start (Tlt) | 140–260 µs |
+| SRQ | 300 µs low in the stop bit of a command addressed to another device |
+| Reset | 3 ms low |
+| A talk with a 2-byte reply | about 3 ms |
+
+**Delays and bounds**
+
+- Delays count VIA reads. Each read takes at least 1 µs (E-clock synchronised), so waits are never shorter than stated.
+- After reset: 5 ms. After an address move: 1 ms.
+- Each polled operation has a budget of 30 000 VIA reads (≥ 30 ms).
+- Watchdog:
+  - A transaction that makes no progress for 6 ticks (100 ms) is abandoned and the bus restarted.
+  - A request that has waited 2 ticks in IDLE behind a low PB3 is started anyway.
+  - A reply with data but no closing byte is delivered at the watchdog, not dropped.
+
+**Boot bounds**
+
+- If the reset and two of the first talks get no SR interrupt at all, the driver prints `adb: transceiver not responding, ADB disabled` and returns. Worst case is about 0.1–0.2 s.
+- With a working bus, enumeration is 15 talk R3, then 5 operations per device per pass (2 passes).
+- All waits are bounded; ADB failures never panic.
+
+## Enumeration and collisions
+
+1. Reset, then talk R3 at addresses 1–15. The table is indexed by current address and records the default address (the device class) and the handler.
+2. For each occupied address *a*, move a device to the highest free address *f*:
+   - talk R3 *a*
+   - listen R3 *a* with `{0x60|f, 0xFE}`. Only a device that saw no collision on the last talk R3 moves.
+   - talk R3 *f*
+3. If *a* still answers, the moved device stays at *f* and the loop continues.
+4. Otherwise the moved device was alone, and it is moved back.
+5. Two passes, at most 4 moves per address per pass.
+
+## Auto-poll and SRQ
+
+- The auto-poll target is the keyboard (address 2). With no keyboard it is the first device found, else 2, so a keyboard plugged in later is still polled.
+- **SRQ:** only PB3 low on data byte 1 starts a scan. The driver talks R0 to each device in turn (at most 16 steps) until the SRQ goes away. The device that answered becomes the auto-poll target.
+- **Idle cost:** a transceiver that interrupts on every auto-poll, timeouts included (QEMU's q800, every 20 ms), costs 3 SR interrupts per poll: command, byte 0, byte 1. Before, each timeout started a keyboard-and-mouse scan: 240 interrupts/s and 40 scans/s in QEMU, now 120 and 0.
+- Talk-R0 data is routed by the device's default address: 2 is the keyboard, 3 the mouse. Unknown addresses 2 and 3 are routed the same way.
+
+## Keyboard → console
+
+- Bytes go to `adb_ttyin`, one at a time.
+- When some Mac source defines `fbcons_input()`, `build.sh` compiles with `-DADB_FBCONS` and `adb_ttyin = fbcons_input`, the video console's input hook: bytes go up the console tty (major 0). `fbcons.h` allows any IPL.
+  - The check is whether a line starting with `fbcons_input(` appears in `mac/*.c` or `mac/*/*.c`. `ADB_FBCONS=1` or `ADB_FBCONS=0` overrides it.
+- With no definition, `adb_ttyin = 0` and keystrokes are dropped (there is no screen console then either).
+- `verify.sh` reports which case was linked.
+- The keyboard feeds the existing console tty rather than its own STREAMS tty: console selection is by `coinfo` (cdevsw[0] and `oncons`), a second tty driver would duplicate termios handling and need its own major, and the translation layer stays reusable for other console drivers.
+
+**Map**
+
+- US ANSI, by raw ADB key code:
+  - Shift, Control, Caps Lock (latching: down while locked).
+  - Return and keypad Enter give CR. Delete gives BS (0x08). Esc, Tab.
+  - Arrows give `ESC [ A/B/C/D`. Forward Delete gives DEL.
+  - Keypad digits and operators.
+  - Right-hand modifier codes 0x7B–0x7D (handler 3).
+- Command combinations, Option and function keys produce nothing.
+- Control: `@`–`~` becomes `& 0x1F`; space and 2 give NUL, 6 gives RS, `-` and `/` give US.
+- **Auto-repeat:** first repeat after 30 ticks, then every 3 ticks.
+
+**Console tty modes.** The AMIX default `VERASE` is `#` (`CERASE`) and `VINTR` is DEL. The Mac Delete key sends BS, as the Mac KCHR does. The root image's `/etc/ioctl.syscon`, which `init` applies to the console, sets erase ^H, kill ^U, intr ^C and `ECHOE` (`ramdisk/NOTES.md`).
+
+## Raw event interface (for uinter)
+
+The interface for the Mac environment's input layer:
+
+- **Here:**
+  - `adb_keyhook(fn)` and `adb_mousehook(fn)` return the previous hook. They use the same call shapes.
+  - A key consumer takes the keyboard away from the console, as with A/UX's ownership. Hook 0 gives it back.
+  - State is kept in `adb_keydown[16]` (key-down bitmap, for `UI_GETKEYS`), `adb_key_r0`, `adb_mouse_x/y/button`.
+- **Open:**
+  - `KEY_OP_*` / `MOUSE_OP_*` beyond the hook.
+  - Register-2 raw delivery (`KC_RAW2`).
+  - Extended mouse (handler 4) and the 200 cpi handler 2.
+  - Keyboard handler 3.
+
+## Sources
+
+- NetBSD mac68k `adb_direct.c`, `akbd.c`, `ams.c` (BSD) for the `ADB_HW_II` bit usage, the IDLE hold and the enumeration outline.
+- Linux `drivers/macintosh/via-macii.c` (GPL-2) for the PB3 rules: dropped command, timeout, SRQ on byte 1, end of reply. QEMU 8.2's `hw/misc/mac_via.c` follows the same rules.
+- The ADB specification and Inside Macintosh for key codes and register layouts. The keymap follows the public key-code chart.
+
+## Open hardware questions
+
+1. **PB3 end-of-reply rule.** The Linux rule is used: end on the filler byte, byte 1 low is SRQ. If hardware ends a reply on byte 1 instead (NetBSD's reading), the data still arrives, after a needless SRQ scan or, with no further interrupt, at the watchdog.
+2. **Dropped commands.** NetBSD `POLLING` read PB3 low after a command as SRQ; Linux as a pending auto-poll reply. The Linux reading is used; `adb_ndrop` counts them.
+3. **No delay before sampling PB3.** NetBSD waits 150 µs. If replies come back truncated, add a short `adb_delay` in `adb_intr`.
+4. **LED bits in R2 byte 1** (bit 0 Num, 1 Caps, 2 Scroll, active low), and whether an Apple Extended Keyboard drives Caps itself.
+5. **io_init IPL and timing.** Enumeration is polled with the SR interrupt off. Interrupts are enabled at the end.
+6. **Counters** to read on hardware:
+   - `adb_nintr`, `adb_nspur` (SR interrupts in IDLE with PB3 high)
+   - `adb_ntmo` (no-reply talks, auto-polls excluded)
+   - `adb_nsrq`
+   - `adb_nwdog` (restarts)
+   - `adb_ndrop` (commands resent after an auto-poll reply)
+   - `adb_nlost` (packet ring overflow)

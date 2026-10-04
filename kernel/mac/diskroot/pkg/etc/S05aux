@@ -1,0 +1,5 @@
+# A/UX programs: module path and the auxexec loader.
+case $1 in
+'start')
+	/usr/aux/lib/auxreg /usr/aux/lib/mod.d ;;
+esac

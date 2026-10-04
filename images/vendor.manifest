@@ -1,0 +1,11 @@
+# Third-party sources fetched at build time (images/fetch.sh), cached in
+# toolchain/dl/vendor, never committed.
+# name|kind|url|pin (sha256 for tar, commit for git)|licence
+manx|git|https://github.com/slaapliedje/manx|271e2ad660e17d9690d781f022269292e8afa8c0|GPL-2.0
+xview|tar|https://www.ibiblio.org/pub/Linux/libs/X/xview/xview-3.2p1.4.src.tar.gz|fcc88f884a6cb05789ed800edea24d9c4cf1f60cb7d61f3ce7f10de677ef9e8d|Sun XView notice (free use, copy, modify); olvwm: own notice
+xview-sp1|git|https://github.com/slaapliedje/atari-sysv-sp1|dff3982db969274de5b10f36ec32c13644d421e5|GPL-2.0
+teradesk|git|https://github.com/freemint/teradesk|8035b6e157bd34cb2bd72a26473990c7711501de|GPL-2.0
+mint-binutils|tar|https://ppa.launchpadcontent.net/vriviere/ppa/ubuntu/pool/main/b/binutils-m68k-atari-mint/binutils-m68k-atari-mint_2.30-mint-20180703-2ppa20240511101559~noble_amd64.deb|1a61ddf9ff5d41b1b5b3d60822a4797915827614b57ea68fa9c34d48f8155ceb|GPL-3.0
+mint-gcc|tar|https://ppa.launchpadcontent.net/vriviere/ppa/ubuntu/pool/main/g/gcc-m68k-atari-mint/gcc-m68k-atari-mint_4.6.4-mint-20251014-1ppa20251013221905~noble_amd64.deb|e326cbc1d6d69047033dc8b03920ce016d9a4b4ae7b508c4418e5dec0e86ff7f|GPL-3.0, libgcc with runtime exception
+mint-mintlib|tar|https://ppa.launchpadcontent.net/vriviere/ppa/ubuntu/pool/main/m/mintlib-m68k-atari-mint/mintlib-m68k-atari-mint_0.60.1.Git-20220821-1ppa20240524094504~noble_all.deb|4365d740c7ad0277b50bf223970816ce9ea5c5d6b3883673117fe801a69dce6c|LGPL-2.1 and others
+mint-gemlib|tar|https://ppa.launchpadcontent.net/vriviere/ppa/ubuntu/pool/main/g/gemlib-m68k-atari-mint/gemlib-m68k-atari-mint_0.44.0-Git-20230112-1ppa20240524094547~noble_all.deb|a95595f95bfad30ca91424a129bf5903fa0804bad08e3076c907d85078712bcc|LGPL-2.1

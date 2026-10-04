@@ -1,0 +1,8 @@
+#!/sbin/sh
+# Setup before single-user mode: set the clock, check and record the root,
+# name the node.
+PATH=/sbin:/usr/sbin:/usr/bin; export PATH
+/usr/amiga/bin/setclk
+/sbin/bcheckrc
+uname -S `cat /etc/nodename`
+echo "Node: `uname -n`"

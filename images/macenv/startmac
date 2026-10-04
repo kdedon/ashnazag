@@ -1,0 +1,81 @@
+#!/sbin/sh
+# startmac -- the Mac environment, as on A/UX: root's System Folder is
+# /mac/sys/System Folder, other users get $HOME/System Folder from
+# makemac; both are copies of /mac/lib/System Folder, refreshed when it
+# changes.
+#
+# /etc/aux/macenv.conf (shell syntax) or the environment may set
+#   TBMEMORY  Mac memory, e.g. 32M; default a quarter of physical
+#             memory, 8 to 32 MB, as free swap allows
+#   MACMODEL  Gestalt machine ID the Mac reports, e.g. 35 Quadra 800
+#             (root only); unset picks one from the host and the ROM
+# The environment wins.
+PATH=/usr/bin:/sbin:/usr/sbin
+umask 022
+m=$MACMODEL t=$TBMEMORY
+[ -r /etc/aux/macenv.conf ] && . /etc/aux/macenv.conf
+MACMODEL=${m:-$MACMODEL} TBMEMORY=${t:-$TBMEMORY}
+ps -e | grep -s ' fidd$' > /dev/null || /etc/aux/fidd < /dev/null
+case `id` in
+uid=0\(*)
+	H=/mac/sys
+	# uinter reads the model from /etc/aux/model
+	if [ "$MACMODEL" != "`cat /etc/aux/model 2> /dev/null`" ]; then
+		if [ -n "$MACMODEL" ]; then
+			echo "$MACMODEL" > /etc/aux/model
+		else
+			rm -f /etc/aux/model
+		fi
+	fi ;;
+*)
+	[ -z "$MACMODEL" ] || echo "startmac: only root sets MACMODEL" >&2
+	H=$HOME ;;
+esac
+S="$H/System Folder"
+# a new or outdated copy of the template
+[ -f "$S/System" ] && cmp -s "/mac/lib/System Folder/.stamp" "$S/.stamp" || {
+	[ ! -f "$S/System" ] || echo "startmac: updating $S"
+	HOME=$H makemac -f > /dev/null && [ -f "$S/System" ] ||
+		{ echo "startmac: cannot make $S" >&2; exit 1; }
+}
+macscrn "$S/%System" 2> /dev/null
+if [ -z "$TBMEMORY" ]; then
+	# swap backs Mac memory; startmac takes less when it runs short
+	p=`cat /etc/aux/memsize 2> /dev/null`
+	a=`swap -s 2> /dev/null | nawk '/^total:/ { print int($(NF - 2) / 2048) - 8 }'`
+	m=`expr "${p:-32}" / 4`
+	[ $m -le 32 ] || m=32
+	[ $m -le "${a:-32}" ] || m=${a:-32}
+	[ $m -ge 8 ] || m=8
+	TBMEMORY=${m}M
+fi
+# Mac RAM counts against the soft memory limit: raise it to cover
+# TBMEMORY and 16 MB more, as far as the hard limit allows
+k=`echo "$TBMEMORY" | nawk '{ n = $0 + 0
+	if ($0 ~ /[Mm]$/) n *= 1024; else if ($0 !~ /[Kk]$/) n = int(n / 1024)
+	print n + 16384 }'`
+h=`ulimit -H -v`
+if [ "$h" != unlimited ] && [ "$h" -lt "$k" ]; then
+	m=`expr \( $h - 16384 \) / 1024`
+	echo "startmac: TBMEMORY=$TBMEMORY needs a memory limit of ${k}K, the hard limit is ${h}K: ${m}M" >&2
+	[ $m -ge 3 ] || exit 1
+	TBMEMORY=${m}M k=$h
+fi
+v=`ulimit -v`
+[ "$v" = unlimited ] || [ "$v" -ge "$k" ] || ulimit -v $k
+TBSYSTEM=${TBSYSTEM:-$S}
+export TBSYSTEM TBMEMORY
+[ -t 0 ] || exec /mac/bin/startmac "$@"
+# the Mac has the keyboard: no echo, and what the tty got meanwhile is
+# dropped, not run by the shell afterwards
+t=`stty -g`
+# a signal from the keyboard is the Mac's; the tty comes back either way
+trap : 2 3
+trap 'stty $t; exit 1' 1 15
+stty -echo
+/mac/bin/startmac "$@"
+r=$?
+stty -icanon min 0 time 0
+cat > /dev/null
+stty $t
+exit $r

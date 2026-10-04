@@ -1,0 +1,13 @@
+#include <Server.tmpl>
+
+SRCS = fbcard.c
+
+OBJS = fbcard.o
+
+STD_DEFINES = ServerDefines -DRTG -DRTGFB
+   INCLUDES = -I. -I.. -I../.. -I../../../../include -I$(XINCLUDESRC) -I../../../../mi -I../../../../mfb -I../../../../cfb -I$(FONTINCSRC) -I/usr/amiga/include
+
+NormalLibraryObjectRule()
+NormalLibraryTarget(rtgfb, $(OBJS))
+
+DependTarget()

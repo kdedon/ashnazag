@@ -1,0 +1,3 @@
+is:s:initdefault:
+ap::sysinit:/sbin/autopush -f /etc/ap/chan.ap
+tt::sysinit:/tests/runall </dev/console >/dev/console 2>&1
