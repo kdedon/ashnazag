@@ -8,3 +8,24 @@ __pycache__/
 *.elf
 *.bin
 *.pyc
+# your media and everything tools/setup.sh fetches or builds
+/toolchain/*
+!/toolchain/build-qemu.sh
+!/toolchain/qemu-patches/
+!/toolchain/hfsutils-patches/
+/media/
+/ref/
+/kernel/amix-040-060-port/
+/kernel/patch/
+/kernel/kit-2.1c/
+/kernel/amix-2.1p2a/
+/*.ROM
+/*.rom
+/*.zip
+/*.iso
+/*.dsk
+*.iso
+*.dsk
+/images/work/
+/tests/results/
+/tests/aux/auxroot

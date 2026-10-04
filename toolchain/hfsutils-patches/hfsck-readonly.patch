@@ -1,0 +1,33 @@
+hfsck -n never opened the volume and read from an unset descriptor; open it read-only.
+
+--- a/hfsck/main.c
++++ b/hfsck/main.c
+@@ -168,20 +168,17 @@
+ 
+   v_init(&vol, HFS_OPT_NOCACHE);
+ 
+-  if (REPAIR)
++  suid_enable();
++  result = v_open(&vol, path, REPAIR ? HFS_MODE_RDWR : HFS_MODE_RDONLY);
++  suid_disable();
++
++  if (REPAIR && result == -1)
+     {
++      vol.flags |= HFS_VOL_READONLY;
++
+       suid_enable();
+-      result = v_open(&vol, path, HFS_MODE_RDWR);
++      result = v_open(&vol, path, HFS_MODE_RDONLY);
+       suid_disable();
+-
+-      if (result == -1)
+-	{
+-	  vol.flags |= HFS_VOL_READONLY;
+-
+-	  suid_enable();
+-	  result = v_open(&vol, path, HFS_MODE_RDONLY);
+-	  suid_disable();
+-	}
+     }
+ 
+   if (result == -1)

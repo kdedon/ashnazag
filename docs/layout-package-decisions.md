@@ -149,3 +149,11 @@ The forge offers one preset per supported computer, so a first image takes one c
 | B7 | Preset format and the Quadra preset (from today's fixed recipe); planned entries for Falcon, Falcon CT60, TT030, A4000 | The Quadra preset builds the same image as today's recipe |
 | B8 | Recipe export and import in UI and CLI; recipe embedded in the image | Export → import → rebuild is byte-identical; malformed or newer-format recipes are refused with a clear message |
 | B9 | Falcon preset, once the forge can write the Atari disk layout (AHDI, root-sector boot, AXB loader) as `kernel/atari/mkdisk.sh` does | Forge Falcon image boots in Hatari |
+
+### Tape input (2026-10-04)
+
+The forge and `tools/setup.sh` take the AMIX tape the way users have it: usually the two archives `amix_2.1_tape_part1.tar.bz2` and `part2.tar.bz2` (segments 00–28), read directly. Go's standard library decodes bzip2, so WASM can read them too. A directory of segments or a SIMH `.tap` image is also accepted. They split and verify it themselves against a table of AMIX 2.1 segment sizes and SHA-256 values, which holds hashes only, and name any missing segment.
+
+| Id | Work | Acceptance |
+|---|---|---|
+| B10 | The forge accepts a whole tape image or archive (via the shared splitter `tools/amixtape.py`, ported to Go/WASM) and stops asking for segments 02/03/10 | The same image results from a `.tap`, an archive set or a directory; a missing segment is named |

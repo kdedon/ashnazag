@@ -233,6 +233,21 @@ char *name;
 	return v;
 }
 
+#ifndef SYS76
+/* a ROM for UI_ROM: the image file, or the host's at ROMBase */
+static int
+haverom()
+{
+	struct stat sb;
+	long v;
+
+	if (stat("/etc/aux/rom", &sb) == 0)
+		return 1;
+	return getsym("mac_rombase") == 0x40800000L &&
+	    kmemrw(0x52800008L, &v, 0) == 0 && (v >> 16 & 0xffff) >= 0x67c;
+}
+#endif
+
 /* the kernel trace ring (aux_tbuf), oldest first, into klog */
 static long klen;
 
@@ -1335,14 +1350,19 @@ main()
 		return t_done();
 #ifndef SYS76
 	native();
-	if (stat("/aux/bin/macabi", &sb) == 0)
-		macabi();
-	else
+	e = haverom();
+	if (stat("/aux/bin/macabi", &sb) < 0)
 		t_skip("macabi", "no macabi on this root");
-	if (stat("/aux/bin/macjoin", &sb) == 0)
-		macjoin();
+	else if (!e)
+		t_skip("macabi", "no Mac ROM: no /etc/aux/rom, none at ROMBase");
 	else
+		macabi();
+	if (stat("/aux/bin/macjoin", &sb) < 0)
 		t_skip("macjoin", "no macjoin on this root");
+	else if (!e)
+		t_skip("macjoin", "no Mac ROM: no /etc/aux/rom, none at ROMBase");
+	else
+		macjoin();
 #endif
 	if (stat("/mac/bin/startmac", &sb) < 0 || stat("/etc/aux/rom", &sb) < 0 ||
 	    stat(SYSDIR "/System", &sb) < 0)

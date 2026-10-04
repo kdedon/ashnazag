@@ -3,7 +3,8 @@
 #
 #   sh kernel/build.sh
 #
-# AMIX_TAPE=<dir with tape segment 02> rebuilds the RAM-disk root image;
+# AMIX_TAPE=<dir with tape segment 02> (default media/amix-tape, made by
+# tools/setup.sh) rebuilds the RAM-disk root image;
 # without it an existing mac/ramdisk/build/root.img is checked and used.
 #
 # PLATFORM=atari builds the Falcon030 kernel (build/unix-atari030.elf)
@@ -19,7 +20,8 @@ PORT="$K/amix-040-060-port"
 LOG="$K/build/logs"
 BASE_SHA=b37cb0edfdb0b078e70d28466c9749a87db7170a4028b9b85a38c219527f1af0
 PATH="$AUX/toolchain/linux/bin:$AUX/toolchain/bin:$PATH"
-export PATH
+: "${AMIX_TAPE:=$AUX/media/amix-tape}"
+export PATH AMIX_TAPE
 mkdir -p "$LOG"
 
 pass() { echo "PASS $1"; }

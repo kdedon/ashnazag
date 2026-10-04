@@ -2,6 +2,7 @@
 # Direct-boot the kernel ELF on QEMU q800 (no ROM), headless.
 # usage: run-direct.sh [OUTDIR] [QMP-STEP...]   (steps: see qmp.py)
 # Default steps: screendumps while booting, type "echo hello", registers.
+# NET=1 adds user-mode networking (guest 10.0.2.15, gateway 10.0.2.2).
 # one QEMU at a time on this machine: wait for the lock
 [ -n "$AUX_QLOCK" ] || { mkdir -p "$(dirname "$0")/../../images/work" 2>/dev/null; AUX_QLOCK=1 exec flock "$(cd "$(dirname "$0")/../.." && pwd)/images/work/.qemu.lock" sh "$0" "$@"; }
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -17,7 +18,7 @@ rm -f "$SOCK" "$OUT/serial.sock"
 
 LD_LIBRARY_PATH=$Q/lib timeout 120 nice -n 19 \
   "$Q/usr/bin/qemu-system-m68k" -L "$Q/usr/share/qemu" \
-  -M q800 -m 128 -kernel "$KERNEL" \
+  -M q800 -m 128 -kernel "$KERNEL" ${NET:+-nic user} \
   -display none \
   -chardev socket,id=ser0,path="$OUT/serial.sock",server=on,wait=off,logfile="$OUT/serial.log" \
   -serial chardev:ser0 -serial file:"$OUT/serial-b.log" \
