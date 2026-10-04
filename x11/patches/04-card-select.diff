@@ -1,0 +1,107 @@
+--- a/programs/Xserver/Imakefile
++++ b/programs/Xserver/Imakefile
+@@ -189,9 +189,17 @@
+ AMIXDIRS = include dix os mi $(EXTDIRS) $(MFBDIR) $(CFB8DIR) $(CFB16DIR) \
+            $(DDXDIR1) $(DEPDIRS)
+ AMIXOBJS = hw/amix/amixInit.o
++#ifndef RtgZZ9000
++#define RtgZZ9000 YES
++#endif
++#if RtgZZ9000
++RTGZZLIB = hw/amix/rtg/zz9000/LibraryTargetName(zz9000)
++#else
++RTGZZLIB =
++#endif
+ AMIXLIBS = hw/amix/LibraryTargetName(amix) \
+            hw/amix/rtg/LibraryTargetName(rtg) \
+-           hw/amix/rtg/zz9000/LibraryTargetName(zz9000) \
++           $(RTGZZLIB) \
+            hw/amix/rtg/fb/LibraryTargetName(rtgfb) \
+            hw/amix/LibraryTargetName(amix) CFB16Libs
+ ServerTarget(Xamix,$(AMIXDIRS),$(AMIXOBJS),$(AMIXLIBS),$(SYSLIBS))
+--- a/programs/Xserver/hw/amix/Imakefile
++++ b/programs/Xserver/hw/amix/Imakefile
+@@ -1,6 +1,16 @@
+ XCOMM $XConsortium: Imakefile,v 5.13 91/07/29 18:26:59 rws Exp $
+ #include <Server.tmpl>
+ 
++#ifndef RtgZZ9000
++#define RtgZZ9000 YES
++#endif
++#if RtgZZ9000
++#define RtgZZDefs -DZZ9000
++#else
++#define RtgZZDefs /**/
++#endif
++
++
+ SRCS = amixInit.c amixMono.c amixCursor.c amixIo.c amixKbd.c amixMouse.c amixKeyMap.c \
+        amixEv.c amixMacKeyMap.c
+ 
+@@ -9,7 +19,7 @@
+ OBJS = amixMono.o amixCursor.o amixIo.o amixKbd.o amixMouse.o amixKeyMap.o \
+        amixEv.o amixMacKeyMap.o
+ 
+-STD_DEFINES = ServerDefines -DRTG -DZZ9000
++STD_DEFINES = ServerDefines -DRTG RtgZZDefs
+    INCLUDES = -I. -I../../mfb -I../../mi -I../../include -I$(XINCLUDESRC) -I$(FONTINCSRC) -Irtg/fb -I/usr/amiga/include
+ 
+    RTGDIRS = rtg
+--- a/programs/Xserver/hw/amix/rtg/Imakefile
++++ b/programs/Xserver/hw/amix/rtg/Imakefile
+@@ -1,12 +1,26 @@
+ #include <Server.tmpl>
+ 
++#ifndef RtgZZ9000
++#define RtgZZ9000 YES
++#endif
++#if RtgZZ9000
++#define RtgZZDefs -DZZ9000
++#else
++#define RtgZZDefs /**/
++#endif
++
++
+ SRCS = rtgInit.c
+ 
+ OBJS = rtgInit.o
+ 
++#if RtgZZ9000
+ SUBDIRS = zz9000 fb
++#else
++SUBDIRS = fb
++#endif
+ 
+-STD_DEFINES = ServerDefines -DRTG -DZZ9000 -DRTGFB
++STD_DEFINES = ServerDefines -DRTG RtgZZDefs -DRTGFB
+ CDEBUGFLAGS = -g -O
+    INCLUDES = -I. -I.. -I../../../include -I$(XINCLUDESRC) -I../../../mi -I../../../mfb -I$(FONTINCSRC) -I/usr/amiga/include
+ 
+--- a/programs/Xserver/hw/amix/amixIo.c
++++ b/programs/Xserver/hw/amix/amixIo.c
+@@ -406,6 +406,7 @@
+ 	amixFbs[AmixIndex].scrtype.dispz = atoi(argv[i]);
+ 	return 2;
+     }
++#ifdef ZZ9000
+     if (!strcmp(argv[i], "-mode")) {	/* RTG mode: WxH (e.g. 1024x768) */
+ 	if (++i >= argc) UseMsg ();
+ 	if (!ZZ9000SetMode(argv[i])) {
+@@ -415,6 +416,7 @@
+ 	}
+ 	return 2;
+     }
++#endif
+     if (!strcmp(argv[i], "-type")) {	/* screen type */
+ 	if (++i >= argc) UseMsg ();
+ 	amixFbs[AmixIndex].scrtype.type = atoi(argv[i]);
+@@ -520,7 +522,9 @@
+     ErrorF("-width int             screen width in pixels.\n");
+     ErrorF("-height int            screen height in pixels.\n");
+     ErrorF("-depth int             screen depth in planes.\n");
++#ifdef ZZ9000
+     ErrorF("-mode WxH              RTG video mode (e.g. 800x600, 1024x768)\n");
++#endif
+     ErrorF("-group int		   screen group\n");
+ #ifdef RTG
+     rtgUseMsg();

@@ -1,0 +1,11 @@
+The BoardInfo and ModeInfo offsets in p96offsets.inc are adapted from the
+P96 Card Development SDK 3.6.0, published by Individual Computers:
+https://wiki.icomp.de/w/images/7/70/P96CardDevelop.lha
+Author: Jens Schoenfeld. Uploader: Thomas Richter.
+The SDK is licensed under Creative Commons Attribution 4.0:
+https://creativecommons.org/licenses/by/4.0/
+The original structure declarations have been converted into GNU assembler
+offset constants. The driver implementation is original project code.
+
+P96 runtime libraries and monitor loaders are separate, user-supplied software.
+https://wiki.icomp.de/wiki/P96

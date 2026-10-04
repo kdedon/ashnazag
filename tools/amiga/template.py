@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""Prepare a private AmigaOS directory template from supplied 3.2 floppies."""
+import argparse
+import hashlib
+import json
+from pathlib import Path, PurePosixPath
+from adf import ADF
+
+STARTUP = '''; Container startup; original system sequence is Startup-Sequence.amigaos.
+FailAt 21
+MakeDir RAM:ENV RAM:T RAM:Clipboards
+Assign ENV: RAM:ENV
+Assign T: RAM:T
+Assign CLIPS: RAM:Clipboards
+Assign ENVARC: SYS:Prefs/Env-Archive
+Copy ENVARC: ENV: ALL QUIET
+Assign REXX: S:
+Assign PRINTERS: DEVS:Printers
+Assign KEYMAPS: DEVS:Keymaps
+Assign LOCALE: SYS:Locale
+Assign LIBS: SYS:Classes ADD
+Assign HELP: LOCALE:Help DEFER
+Run >NIL: C:container-input
+LoadMonDrvs >NIL:
+SetEnv Language "english"
+AddDataTypes REFRESH QUIET
+IPrefs
+ConClip
+Path C: SYS:Utilities SYS:Rexxc SYS:System S: SYS:Prefs SYS:Tools SYS:Tools/Commodities
+If EXISTS S:User-Startup
+  Execute S:User-Startup
+EndIf
+LoadWB
+EndCLI >NIL:
+'''
+
+
+def prepare(adfs, output, input_binary, card):
+    sources = {}
+    disks = {}
+    for name in ('Install3.2', 'Workbench3.2', 'Extras3.2', 'Classes3.2', 'Fonts', 'Storage3.2', 'Locale', 'ModulesA4000D_3.2'):
+        data = (adfs / (name + '.adf')).read_bytes()
+        disks[name] = {entry.path.lower(): entry for entry in ADF(data).entries()}
+        sources[name] = hashlib.sha256(data).hexdigest()
+    payloads = {}
+    provenance = {}
+
+    def put(path, data, source):
+        key = path.lower()
+        payloads[key] = (path, data)
+        provenance[key] = source
+
+    def one(disk, source, target=None):
+        entry = disks[disk][source.lower()]
+        put(target or entry.path, entry.data, disk + ':' + entry.path)
+
+    def tree(disk, prefix='', target='', omit=()):
+        prefix = prefix.lower().rstrip('/')
+        for key, entry in disks[disk].items():
+            if prefix:
+                if not key.startswith(prefix + '/'):
+                    continue
+                relative = entry.path[len(prefix) + 1:]
+            else:
+                relative = entry.path
+            if relative.split('/')[0].lower() in omit:
+                continue
+            put(str(PurePosixPath(target) / relative), entry.data, disk + ':' + entry.path)
+
+    one('Install3.2', 'Installer', 'System/Installer')
+    one('Install3.2', 'Libs/workbench.library')
+    one('Install3.2', 'Libs/icon.library')
+    tree('Workbench3.2', omit=('disk.info', 'locale'))
+    tree('Extras3.2', omit=('disk.info',))
+    tree('Classes3.2', omit=('disk.info',))
+    tree('Fonts', target='Fonts', omit=('disk.info',))
+    for source, target in (('Classes/DataTypes', 'Classes/DataTypes'), ('C', 'C'), ('LIBS', 'Libs'),
+                           ('DefIcons', 'Prefs/Env-Archive/Sys'), ('Presets/Pointers', 'Prefs/Presets/Pointers'),
+                           ('Monitors', 'Storage/Monitors'), ('DOSDrivers', 'Storage/DOSDrivers'),
+                           ('Keymaps', 'Devs/Keymaps'), ('Printers', 'Storage/Printers')):
+        tree('Storage3.2', source, target)
+    one('Storage3.2', 'Env-Archive/deficons.prefs', 'Prefs/Env-Archive/deficons.prefs')
+    one('Storage3.2', 'Env-Archive/Pointer.prefs', 'Prefs/Env-Archive/Sys/Pointer.prefs')
+    tree('Locale', 'Countries', 'Locale/Countries')
+    for directory in ('DEVS', 'L', 'LIBS'):
+        tree('ModulesA4000D_3.2', directory, directory)
+    one('Install3.2', 'Update/Disk.info', 'Disk.info')
+    one('Install3.2', 'Update/Release', 'Prefs/Env-Archive/Versions/Release')
+    one('Install3.2', 'Update/Startup-HardDrive', 'S/Startup-Sequence.amigaos')
+    put('S/Startup-Sequence', STARTUP.encode('ascii'), 'container')
+    put('C/container-input', input_binary.read_bytes(), 'container')
+    put('Libs/Picasso96/container.card', card.read_bytes(), 'container')
+    required = ('c/assign', 'c/loadwb', 'c/loadmondrvs', 'l/con-handler', 'l/ram-handler',
+                'libs/workbench.library', 'libs/icon.library', 's/startup-sequence', 'c/container-input')
+    if any(name not in payloads for name in required):
+        raise ValueError('template lacks a required startup file')
+    output.mkdir(parents=True, exist_ok=False)
+    paths = {}
+
+    def destination(relative):
+        parent = output
+        key = ''
+        for component in PurePosixPath(relative).parts:
+            key += '/' + component.lower()
+            parent = paths.setdefault(key, parent / component)
+        return parent
+
+    manifest = {'source_adfs': sources, 'files': [], 'profile': 'container-english',
+                'limitations': ['Prepared from media; vendor installer not executed',
+                                'CPU/MMU/ROM patching and physical disk mounts omitted',
+                                'Optional locale help/catalogs and commodities omitted',
+                                'P96 runtime and monitor configuration remain separate',
+                                'Guest boot not verified']}
+    for key, (relative, data) in sorted(payloads.items()):
+        path = destination(relative)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        path.chmod(0o644)
+        manifest['files'].append({'path': str(path.relative_to(output)), 'source': provenance[key],
+                                  'size': len(data), 'sha256': hashlib.sha256(data).hexdigest()})
+    for relative in ('Devs/Monitors', 'Devs/DOSDrivers', 'WBStartup', 'Prefs/Env-Archive', 'Locale/Help'):
+        destination(relative).mkdir(parents=True, exist_ok=True)
+    (output / '.container-template.json').write_text(json.dumps(manifest, indent=2) + '\n')
+    (output / '.container-template.json').chmod(0o644)
+    output.chmod(0o755)
+    for directory in output.rglob('*'):
+        if directory.is_dir():
+            directory.chmod(0o755)
+    return manifest
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('adfs', type=Path)
+    parser.add_argument('output', type=Path)
+    parser.add_argument('--input', type=Path, required=True, dest='input_binary')
+    parser.add_argument('--card', type=Path, required=True)
+    args = parser.parse_args()
+    manifest = prepare(args.adfs, args.output, args.input_binary, args.card)
+    print('Prepared', len(manifest['files']), 'files in', args.output)
+
+
+if __name__ == '__main__':
+    main()

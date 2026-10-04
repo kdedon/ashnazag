@@ -1,0 +1,16 @@
+--- a/src/cpu/newcpu.c
++++ b/src/cpu/newcpu.c
+@@ -10599,6 +10599,13 @@
+ 	uae_u32 pc = m68k_getpc () + o;
+ 	uae_u32 v;
+ 
++	// With the MMU, the valid flags must move with the words, or a word
++	// whose prefetch faulted is later consumed as if it had arrived.
++	if (currprefs.mmu_model) {
++		v = get_word_030_prefetch(o);
++		do_cycles_ce020_internal(2);
++		return v;
++	}
+ //fprintf ( stderr , "get_word_ce030_prefetch_2 %d pc=%x\n" , currcycle , pc);
+ 	v = regs.prefetch020[0];
+ 	regs.prefetch020[0] = regs.prefetch020[1];

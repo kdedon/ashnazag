@@ -1,0 +1,7 @@
+#!/bin/sh
+# Default session: clock, terminal, window manager.  Exit from twm's
+# root menu ends the session.
+[ -f $HOME/.Xresources ] && xrdb -merge $HOME/.Xresources
+xclock -geometry 120x120-8+8 &
+xterm -geometry 80x24+16+40 &
+exec twm

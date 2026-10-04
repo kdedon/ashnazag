@@ -1,0 +1,37 @@
+#!/bin/sh
+# makemac -- make ~/System Folder, your own Mac System Folder, from
+# /mac/lib/System Folder.
+#
+#	makemac [-f]
+#
+# -f copies the template over an existing ~/System Folder, keeping your
+# Preferences, desktop database, MacTCP settings and other files.
+SYS="/mac/lib/System Folder"
+[ -n "$HOME" ] || { echo "makemac: no HOME" >&2; exit 1; }
+T="$HOME/System Folder"
+case $1 in
+-f)	;;
+"")	if [ -d "$T" ]; then
+		echo "makemac: $T exists; makemac -f copies the template over it" >&2
+		exit 1
+	fi ;;
+*)	echo "usage: makemac [-f]" >&2
+	exit 2 ;;
+esac
+[ -d "$SYS" ] || { echo "makemac: no $SYS" >&2; exit 1; }
+[ -d "$T" ] || mkdir -p "$T" || exit 1
+rm -f "$T/.stamp"
+# AppleDouble headers (%name) go with their files; not the File
+# Manager's caches, which belong to their directory; the stamp goes
+# last, so an interrupted copy is redone
+cd "$SYS" && find . -print | while read f; do
+	case $f in
+	./.stamp|./%.stamp|*/.fs_*|*/%.fs_*) continue ;;
+	./Preferences/*|./Desktop\ D[BF]|./%Desktop\ D[BF]|./Scrapbook\ File|./%Scrapbook\ File|\
+	./Control\ Panels/MacTCP|./Control\ Panels/%MacTCP)
+		[ -f "$T/$f" ] && continue ;;
+	esac
+	echo "$f"
+done | cpio -pdmu "$T" 2>/dev/null && cp %.stamp .stamp "$T/" ||
+	{ echo "makemac: copy to $T failed" >&2; exit 1; }
+echo "makemac: $T is your System Folder in startmac"

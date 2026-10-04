@@ -1,0 +1,35 @@
+#!/bin/sh
+# tosdrive -- your TOS drives (~/TOS/drives), added to /tos/sys/drives.
+#
+#	tosdrive			list the drives
+#	tosdrive L dir [ro]		drive L: (D to T) is dir
+#	tosdrive -r L			remove drive L:
+[ -n "$HOME" ] || { echo "tosdrive: no HOME" >&2; exit 1; }
+F=$HOME/TOS/drives
+case $# in
+0)	for t in /tos/sys/drives "$F"; do
+		[ -f "$t" ] && grep -v '^#' "$t" | sed "s,\$,	($t),"
+	done
+	exit 0 ;;
+esac
+[ -d "$HOME/TOS" ] || { echo "tosdrive: no $HOME/TOS; run maketos" >&2; exit 1; }
+if [ "$1" = -r ]; then
+	L=$2
+else
+	L=$1
+fi
+L=`echo "$L" | tr '[a-z]' '[A-Z]'`
+case $L in
+[D-T])	;;
+*)	echo "usage: tosdrive [L dir [ro] | -r L], L from D to T" >&2
+	exit 2 ;;
+esac
+touch "$F" && grep -v "^$L[ 	]" "$F" > "$F.$$"
+if [ "$1" != -r ]; then
+	case $2 in
+	*[\ \	]*)	echo "tosdrive: $2: no spaces in drive paths" >&2; rm -f "$F.$$"; exit 1 ;;
+	esac
+	P=`cd "$2" 2>/dev/null && pwd` || { echo "tosdrive: $2: not a directory" >&2; rm -f "$F.$$"; exit 1; }
+	echo "$L	$P $3" >> "$F.$$"
+fi
+mv "$F.$$" "$F"

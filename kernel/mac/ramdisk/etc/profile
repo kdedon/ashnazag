@@ -1,0 +1,4 @@
+PATH=/sbin:/usr/bin
+export PATH
+# Mac keyboard: Delete sends ^H; ^C interrupts, ^U kills the line
+stty erase '^h' kill '^u' intr '^c' echoe 2>/dev/null

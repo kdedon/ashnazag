@@ -1,0 +1,72 @@
+#!/bin/sh
+set -eu
+umask 022
+PATH=/usr/bin:/sbin:/usr/sbin
+export PATH
+if [ "$#" -ne 1 ] || [ ! -d "$1/root" ]; then
+	echo 'usage: sh installmig staging-directory' >&2
+	exit 2
+fi
+if [ "$(id -u)" != 0 ]; then
+	echo 'installmig: run as root inside the target Unix system' >&2
+	exit 1
+fi
+if [ "$(uname -m)" != mac68k ] && [ "$(uname -m)" != atari68k ]; then
+	echo 'installmig: expected the target mac68k or atari68k Unix system' >&2
+	exit 1
+fi
+SRC=$1/root
+for f in usr/bin/startmig usr/bin/makeamiga usr/sbin/amigareg etc/amiga/kicka4000.rom \
+    etc/amiga/container-boot.rom amiga/sys/S/Startup-Sequence \
+    usr/lib/amiga/mod.d/guestcore usr/lib/amiga/mod.d/amigaguest; do
+	[ -f "$SRC/$f" ] || { echo "installmig: missing $SRC/$f" >&2; exit 1; }
+done
+for d in /usr/lib/amiga/mod.d /etc/amiga /amiga/media /amiga/rtg; do
+	mkdir -p "$d"
+	chmod 755 "$d"
+done
+cp "$SRC/usr/bin/startmig" /usr/bin/startmig
+cp "$SRC/usr/bin/makeamiga" /usr/bin/makeamiga
+cp "$SRC/usr/sbin/amigareg" /usr/sbin/amigareg
+chmod 755 /usr/bin/startmig /usr/bin/makeamiga /usr/sbin/amigareg
+cp "$SRC/usr/lib/amiga/mod.d/guestcore" "$SRC/usr/lib/amiga/mod.d/amigaguest" /usr/lib/amiga/mod.d/
+chmod 644 /usr/lib/amiga/mod.d/guestcore /usr/lib/amiga/mod.d/amigaguest
+if [ -d /usr/aux/lib/mod.d ]; then
+	cp "$SRC/usr/lib/amiga/mod.d/guestcore" /usr/aux/lib/mod.d/guestcore
+	chmod 644 /usr/aux/lib/mod.d/guestcore
+fi
+cp "$SRC/etc/amiga/kicka4000.rom" /etc/amiga/
+cp "$SRC/etc/amiga/container-boot.rom" /etc/amiga/
+chmod 644 /etc/amiga/container-boot.rom
+mkdir -p /amiga/sys
+cp -R "$SRC/amiga/sys/." /amiga/sys/
+chmod -R a+rX /amiga/sys
+cp "$SRC/amiga/media/"*.adf "$SRC/amiga/media/manifest.json" /amiga/media/
+chown root:display /etc/amiga/kicka4000.rom /amiga/media/*
+chmod 640 /etc/amiga/kicka4000.rom /amiga/media/*
+if [ -f "$SRC/amiga/rtg/container.card" ]; then
+	cp "$SRC/amiga/rtg/container.card" "$SRC/amiga/rtg/README.md" "$SRC/amiga/rtg/NOTICE" /amiga/rtg/
+	chmod 644 /amiga/rtg/*
+fi
+if [ -f "$SRC/amiga/rtg/Picasso96.lha" ]; then
+	cp "$SRC/amiga/rtg/Picasso96.lha" "$SRC/amiga/rtg/Picasso96.sha256" /amiga/rtg/
+	chmod 644 /amiga/rtg/Picasso96.lha /amiga/rtg/Picasso96.sha256
+fi
+if [ -d "$SRC/amiga/guest" ]; then
+	mkdir -p /amiga/guest/dos /amiga/guest/input
+	cp "$SRC/amiga/guest/dos/"* /amiga/guest/dos/
+	cp "$SRC/amiga/guest/input/"* /amiga/guest/input/
+	chmod 644 /amiga/guest/dos/* /amiga/guest/input/*
+fi
+if [ ! -c /dev/amiga ]; then
+	mknod /dev/amiga c 57 0
+fi
+chown root:display /dev/amiga
+chmod 660 /dev/amiga
+echo 'Installed. Reboot the target to load the updated shared guestcore, then run:'
+echo '  /usr/sbin/amigareg /usr/lib/amiga/mod.d'
+echo 'As a display-group user:'
+echo '  startmig --check'
+echo '  startmig --probe'
+echo '  makeamiga'
+echo '  startmig'

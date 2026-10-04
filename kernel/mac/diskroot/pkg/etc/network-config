@@ -1,0 +1,5 @@
+# Interfaces beyond loopback.  For the built-in Ethernet, set the address,
+# netmask and gateway and remove the '#'s.
+#/usr/sbin/slink addaen /dev/aen0 aen0 &&
+#	/usr/sbin/ifconfig aen0 192.168.1.80 netmask 255.255.255.0 up -trailers &&
+#	/usr/sbin/route add default 192.168.1.1 1 >/dev/null

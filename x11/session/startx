@@ -1,0 +1,97 @@
+#!/bin/sh
+# startx -- the X11R6.3 server on /dev/fb0 with the AMIX X11R4 clients.
+#
+#   startx [client-script] [-- server options]
+#
+# Runs $HOME/.xinitrc, else /usr/x11r6/lib/X11/xinit/xinitrc, against
+# display :0 and stops the server when that script ends.  Server output
+# goes to /tmp/Xamix.log ($HOME/.Xamix.log while another user's is
+# there).  The server does not listen on TCP; clients need the cookie
+# in $HOME/.Xauthority, made fresh at each start.
+R=/usr/x11r6
+PATH=$R/bin:/usr/X/bin:$PATH
+export PATH
+
+client=
+[ $# -gt 0 ] && [ "$1" != "--" ] && { client=$1; shift; }
+[ "$1" = "--" ] && shift
+[ -n "$client" ] || client=$HOME/.xinitrc
+[ -f "$client" ] || client=$R/lib/X11/xinit/xinitrc
+
+# The server takes :0 without a lock; a running one keeps it.  A socket
+# left by a dead server would pass for the new one's.
+if ps -e | grep ' Xamix *$' >/dev/null; then
+	echo "startx: an X server is running"
+	exit 1
+fi
+rm -f /tmp/.X11-unix/X0 2>/dev/null
+
+# 16 random bytes as 32 hex digits.  There is no random device: each 16-bit
+# word is the checksum of the clock, the process table and the file state.
+key=
+i=0
+while [ $i -lt 8 ]; do
+	i=`expr $i + 1`
+	w=`( echo $i $$; date; ps -ef; ls -l /tmp /dev ) 2>&1 | sum | sed 's/ .*//'`
+	j=0
+	while [ $j -lt 4 ]; do
+		d=`expr $w % 16 + 1`
+		w=`expr $w / 16`
+		key=`echo 0123456789abcdef | cut -c$d`$key
+		j=`expr $j + 1`
+	done
+done
+
+# a fresh MIT-MAGIC-COOKIE-1 for display :0 in the private $HOME/.Xauthority
+umask 077
+XAUTHORITY=${XAUTHORITY:-$HOME/.Xauthority}
+export XAUTHORITY
+host=`uname -n`
+[ `echo "$key" | wc -c` -eq 33 ] || { echo "startx: no cookie"; exit 1; }
+[ -f $XAUTHORITY ] || > $XAUTHORITY
+xauth -f $XAUTHORITY remove $host/unix:0 :0 2>/dev/null
+xauth -f $XAUTHORITY add $host/unix:0 MIT-MAGIC-COOKIE-1 $key &&
+xauth -f $XAUTHORITY add :0 MIT-MAGIC-COOKIE-1 $key ||
+	{ echo "startx: xauth failed"; exit 1; }
+
+# drop anything planted in /tmp; another user's log and pid files stay,
+# and this server's go in $HOME.
+log=/tmp/Xamix.log
+pid=/tmp/Xamix.pid
+rm -f $log $pid 2>/dev/null
+if ls -d $log >/dev/null 2>&1 || ls -d $pid >/dev/null 2>&1; then
+	log=$HOME/.Xamix.log
+	pid=$HOME/.Xamix.pid
+	rm -f $log $pid
+fi
+
+$R/bin/Xamix :0 -auth $XAUTHORITY -fp $R/lib/X11/fonts/misc/,$R/lib/X11/fonts/75dpi/ "$@" \
+	> $log 2>&1 &
+server=$!
+echo $server > $pid
+trap 'kill $server 2>/dev/null; exit 1' 1 2 15
+# the socket is a mode 0 node: test for it, not for read access
+n=0
+until [ -p /tmp/.X11-unix/X0 ]; do
+	n=`expr $n + 1`
+	if kill -0 $server 2>/dev/null; then
+		why="no socket after 60 s, server stopped"
+	else
+		why="server exited"
+		n=99
+	fi
+	if [ $n -gt 60 ]; then
+		kill $server 2>/dev/null
+		echo "startx: $why" >> $log
+		echo "startx: server did not start ($why); see $log"
+		exit 1
+	fi
+	sleep 1
+done
+DISPLAY=:0
+export DISPLAY
+# client messages, including the broken-connection errors from clients
+# still open when the server stops, go to the session log, not the console
+sh $client > $HOME/.xsession-errors 2>&1
+kill $server 2>/dev/null
+wait

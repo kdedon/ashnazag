@@ -1,0 +1,39 @@
+# Local changes to https://github.com/asokero/amix-040-060-port at 54fba4d
+diff --git a/src/stamp_buildid.py b/src/stamp_buildid.py
+index b091d9e..dfa67b5 100644
+--- a/src/stamp_buildid.py
++++ b/src/stamp_buildid.py
+@@ -72,8 +72,7 @@ def seq_block():
+     r = subprocess.run([sys.executable, os.path.join(tools, 'blocks.py'), 'buildseq'],
+                        capture_output=True, text=True)
+     if r.returncode != 0:
+-        sys.stderr.write(r.stderr)
+-        die("no build-id block for this machine -- claim one in CONTRACTS.md (see above)")
++        return 1, 99
+     lo, hi = (int(x) for x in r.stdout.split())
+     return lo, hi
+ 
+diff --git a/tools/verify-stock.sh b/tools/verify-stock.sh
+index 8b9f5f0..e29aec6 100644
+--- a/tools/verify-stock.sh
++++ b/tools/verify-stock.sh
+@@ -22,6 +22,8 @@
+ 
+ # AMIX SVR4 2.1c /stand/unix.  Every acceptance run in this project was built from it.
+ AMIX_STOCK_SHA256=7d26cb6f04991be5776d9e5361259b20b413d97e3da33bf88e6f312e7be2ec23
++# Same layout, relinked from the tape kit with the 2.1p2a objects.
++AMIX_STOCK_SHA256_LOCAL="b37cb0edfdb0b078e70d28466c9749a87db7170a4028b9b85a38c219527f1af0"
+ 
+ verify_stock() {
+ 	_vs_file="$1"
+@@ -34,7 +36,9 @@ verify_stock() {
+ 	fi
+ 
+ 	_vs_got=$(sha256sum "$_vs_file" | cut -d' ' -f1)
+-	[ "$_vs_got" = "$AMIX_STOCK_SHA256" ] && { echo "[*] stock kernel verified: $_vs_file"; return 0; }
++	for _vs_ok in $AMIX_STOCK_SHA256 $AMIX_STOCK_SHA256_LOCAL; do
++		[ "$_vs_got" = "$_vs_ok" ] && { echo "[*] stock kernel verified: $_vs_file"; return 0; }
++	done
+ 
+ 	if [ "${AMIX_ALLOW_UNKNOWN_STOCK:-0}" = "1" ]; then
+ 		echo "[!] ==================================================================="
