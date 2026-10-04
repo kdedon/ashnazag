@@ -9,11 +9,12 @@
 #   key K[+K...]        press together, release (QEMU qcodes)
 #   down K, up K        one transition
 #   move DX DY          relative mouse motion
-#   button MASK         mouse buttons (1 = left)
+#   button MASK [MS]    mouse buttons (1 = left), answered MS ms later (300)
 #   glide N DX DY MS    N moves of DX DY, MS ms apart, answered at once
 #   clicks N HOLD GAP   N left clicks, HOLD and GAP in ms
 #   shot NAME           screen dump -> display/NAME.ppm, .png; "W H"
 #   cmp A B             "same" or "diff N" (pixels)
+#   lit NAME            pixels of dump NAME that are not black
 #   tos NAME            TOS screen: guest box, menu-bar white, desktop colour
 #   ref NAME SHOT DEPTH SEED K
 #                       render the dspat.h pattern (table rotated by K)
@@ -212,7 +213,7 @@ def serve(q, cmd, a):
         return 'started'
     if cmd == 'button':
         q.hmp('mouse_button %d' % int(a[0]))
-        time.sleep(0.3)
+        time.sleep(int(a[1]) / 1000. if len(a) > 1 else 0.3)
         return 'done'
     if cmd == 'click':
         # n quick clicks: a double click is two
@@ -254,6 +255,9 @@ def serve(q, cmd, a):
         w2, h2, p2 = readppm(os.path.join(D, os.path.basename(a[1]) + '.ppm'))
         n = diff(p1, p2) if (w1, h1) == (w2, h2) else -1
         return 'same' if n == 0 else 'diff %d' % n
+    if cmd == 'lit':
+        w, h, px = readppm(os.path.join(D, os.path.basename(a[0]) + '.ppm'))
+        return '%d' % sum(1 for i in range(0, len(px), 3) if px[i:i + 3] != b'\0\0\0')
     if cmd == 'mac':
         w, h, px = readppm(os.path.join(D, os.path.basename(a[0]) + '.ppm'))
         return macscreen(w, h, px, *[int(v) for v in a[1:5]])

@@ -97,5 +97,5 @@ description.
   With less than 4 MB + 256 KB above `end`, no swap unit is made and `swapconf` panics.
 - `gen_strategy` behaviour for multi-page page-I/O is inferred from the port's notes and the
   kernel's `fix_swtbls`, not traced line by line.
-- `ps` needs `/proc` mounted by hand: `mount -F proc /proc /proc`.
+- `/proc` is mounted at boot from `vfstab`; stock `mount` dereferences a null `FILE` when `/etc/vfstab` is missing.
 - A boot-record RAM disk below the top of the kernel chunk wastes the memory above it.

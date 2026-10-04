@@ -1,0 +1,39 @@
+{
+  "formatVersion": 1,
+  "id": "amiga.ibrowse",
+  "upstreamVersion": "UNRESOLVED",
+  "recipeRevision": 1,
+  "variant": "unqualified",
+  "status": "planned",
+  "target": {
+    "family": "amiga",
+    "environmentProfiles": [],
+    "cpus": [],
+    "capabilities": [
+      "bsdsocket.library"
+    ]
+  },
+  "tier": "environment",
+  "shareable": false,
+  "sources": [],
+  "dependencies": [],
+  "operations": [],
+  "state": {
+    "scope": "environment",
+    "writablePaths": [],
+    "preserveOnUpgrade": true
+  },
+  "resources": {
+    "installedBytes": 0,
+    "temporaryBytes": 0,
+    "memoryBytes": 0
+  },
+  "verification": {
+    "requiredPaths": [],
+    "runtimeQualified": false
+  },
+  "metadata": {
+    "format": "amiga",
+    "entries": []
+  }
+}

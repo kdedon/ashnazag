@@ -50,10 +50,14 @@ fi
 # t_tos's launcher, cartridge, C: folder and ROM (none without the ROM)
 TOSB=$B/tos
 KDIR=$KDIR sh "$T/tos/build.sh" "$TOSB"
+# t_amiga's guest image, startmig and ROM
+AMIB=$B/amiga
+KDIR=$KDIR sh "$T/amiga/build.sh" "$AMIB"
 if [ -z "$TESTKB" ]; then
 	TESTKB=$((BASEKB + 128))
 	[ -d "$AUXB/root" ] && TESTKB=$((TESTKB + $(du -sk "$AUXB/root" | cut -f1)))
 	[ -d "$TOSB/root" ] && TESTKB=$((TESTKB + 1024 + $(du -sk "$TOSB/root" | cut -f1)))
+	[ -d "$AMIB/root" ] && TESTKB=$((TESTKB + 64 + $(du -sk "$AMIB/root" | cut -f1)))
 fi
 
 # /etc/group with the display devices' group
@@ -122,6 +126,25 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 		done
 		(cd "$TOSB/root" && find . -type f | sed 's#^\.##' | sort) | while read -r f; do
 			echo "f $f 755 0 3 $TOSB/root$f"
+		done
+	fi
+	if [ -d "$AMIB/root" ] && [ -f "$AUXB/mod.d/amigaguest" ]; then
+		echo "c /dev/amiga 660 0 25 57 0"
+		# SYS: on a ufs volume (run-qemu.sh adds it as SCSI disk 0)
+		if [ -f "$AMIB/sys.img" ]; then
+			echo "b /dev/dsk/c0d0s0 600 0 3 18 0"
+			echo "d /usr/lib/fs/ufs 755 0 3"
+			echo "f /usr/lib/fs/ufs/mount 555 0 3 $RD/build/core/usr/lib/fs/ufs/mount"
+			grep -q "^d /amiga[ 	]" "$M" || echo "d /amiga 755 0 3"
+			echo "d /amiga/sys 755 0 3"
+		fi
+		(cd "$AMIB/root" && find . -type d | sed 's#^\.##' | sort) | while read -r d; do
+			if [ -n "$d" ] && ! grep -q "^d $d[ 	]" "$M"; then
+				echo "d $d 755 0 3"
+			fi
+		done
+		(cd "$AMIB/root" && find . -type f | sed 's#^\.##' | sort) | while read -r f; do
+			echo "f $f 755 0 3 $AMIB/root$f"
 		done
 	fi
 	if [ -f "$B/otb/mod.d/otbridge" ]; then

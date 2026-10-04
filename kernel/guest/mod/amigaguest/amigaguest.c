@@ -1,10 +1,8 @@
 #include "amiga.h"
-#include "amigablit.h"
 
 extern int nodev(), ttimeout(), untimeout(), fpu_present;
 extern void dlm_cacheflush();
 extern struct modwrapper amigaguest_wrapper;
-extern struct proc *prfind();
 __asm__(".weak cputype");
 extern long amiga_cpu __asm__("cputype");
 static struct guest_profile amiga_profile;
@@ -113,11 +111,37 @@ amiga_tick(arg)
 	amiga_splx(s);
 }
 static void
+amiga_census(a)
+	struct amigactr *a;
+{
+	struct amigacensus *c = &a->ac_census;
+	int i, j;
+	printf("amiga census: faults %d intr %d stop %d last pc %x addr %x\n",
+	    (int)a->ac_stat.as_fault, (int)a->ac_stat.as_intr, (int)a->ac_stat.as_stop,
+	    (int)a->ac_stat.as_lastpc, (int)a->ac_stat.as_lastaddr);
+	for (i = 0; i < 256; i++)
+		if (c->custom[i][0] | c->custom[i][1])
+			printf("amiga census: %x r %d w %d\n", 0xdff000 + i * 2,
+			    (int)c->custom[i][0], (int)c->custom[i][1]);
+	for (j = 0; j < 2; j++)
+		for (i = 0; i < 16; i++)
+			if (c->cia[j][i][0] | c->cia[j][i][1])
+				printf("amiga census: %x r %d w %d\n",
+				    (j ? 0xbfd000 : 0xbfe001) + i * 256,
+				    (int)c->cia[j][i][0], (int)c->cia[j][i][1]);
+	for (i = 0; i < AMIGA_NOTHER && c->other[i][1]; i++)
+		printf("amiga census: %x n %d pc %x\n", (int)c->other[i][0],
+		    (int)c->other[i][1], (int)c->other[i][2]);
+}
+static void
 amiga_exit(gp)
 	struct guest_proc *gp;
 {
 	struct amigactr *a = AMIGAP(gp);
-	int s = amiga_spl();
+	int s;
+	if (a->ac_gp == gp && (a->ac_config.ae_flags & AMIGAF_CENSUS))
+		amiga_census(a);
+	s = amiga_spl();
 	if (a->ac_gp == gp && a->ac_timer >= 0)
 		untimeout(a->ac_timer);
 	if (a->ac_gp == gp)
@@ -258,84 +282,6 @@ amigaclose(dev, flag, otyp, cr)
 	amiga_nopen = 0;
 	return 0;
 }
-static int
-amiga_video(arg, cr)
-	caddr_t arg;
-	struct cred *cr;
-{
-	struct amigavideo *av;
-	struct proc *p;
-	struct guest_proc *gp;
-	struct amigactr *a;
-	unsigned long pid;
-	int s, e = 0;
-	if (copyin(arg, (caddr_t)&pid, sizeof pid)) return EFAULT;
-	av = (struct amigavideo *)kmem_zalloc(sizeof *av, KM_SLEEP);
-	s = amiga_spl();
-	p = pid ? prfind((pid_t)pid) : curproc;
-	gp = p ? GUESTP(p) : 0;
-	if (!gp || gp->gp_prof != &amiga_profile) e = ENXIO;
-	else {
-		a = AMIGAP(gp);
-		if (cr->cr_uid != 0 && cr->cr_uid != a->ac_uid) e = EPERM;
-		else {
-			av->av_pid = p->p_pid;
-			av->av_flags = a->ac_config.ae_flags;
-			av->av_frame = a->ac_dev.frames;
-			bcopy((caddr_t)a->ac_dev.custom, (caddr_t)av->av_custom, sizeof av->av_custom);
-			av->av_custom[0x96 / 2] = a->ac_dev.dmacon;
-		}
-	}
-	amiga_splx(s);
-	if (!e && copyout((caddr_t)av, arg, sizeof *av)) e = EFAULT;
-	kmem_free((caddr_t)av, sizeof *av);
-	return e;
-}
-
-static int
-amiga_blitread(opaque, addr, value)
-	void *opaque;
-	unsigned long addr;
-	unsigned short *value;
-{
-	unsigned char b[2];
-	if (copyin((caddr_t)addr, (caddr_t)b, 2)) return -1;
-	*value = G16(b);
-	return 0;
-}
-static int
-amiga_blitwrite(void *opaque, unsigned long addr, unsigned short value)
-{
-	unsigned char b[2];
-	P16(b, value);
-	return copyout((caddr_t)b, (caddr_t)addr, 2) ? -1 : 0;
-}
-void
-amiga_afterio(gp)
-	struct guest_proc *gp;
-{
-	struct amigactr *a = AMIGAP(gp);
-	unsigned short regs[256];
-	int s, pending, zero, e;
-	s = amiga_spl();
-	pending = a->ac_dev.blit_pending;
-	if (!pending || (a->ac_dev.dmacon & 0x240) != 0x240) { amiga_splx(s); return; }
-	bcopy((caddr_t)a->ac_dev.custom, (caddr_t)regs, sizeof regs);
-	amiga_splx(s);
-	e = amigablit_run(regs, pending == 2, a->ac_config.ae_chipsize,
-	    amiga_blitread, amiga_blitwrite, (void *)0, &zero);
-	s = amiga_spl();
-	a->ac_dev.blit_pending = 0;
-	if (!e) {
-		bcopy((caddr_t)regs, (caddr_t)a->ac_dev.custom, sizeof regs);
-		a->ac_dev.blit_zero = zero;
-		a->ac_dev.intreq |= 0x40;
-	}
-	a->ac_epoch++;
-	amiga_splx(s);
-	if (e) psignal(curproc, SIGILL);
-}
-
 int
 amigaioctl(dev, cmd, arg, mode, cr, rvp)
 	dev_t dev;
@@ -349,7 +295,6 @@ amigaioctl(dev, cmd, arg, mode, cr, rvp)
 	struct guest_proc *gp;
 	struct amigactr *a;
 	int e;
-	if (cmd == AMIGAIOC_VIDEO) return amiga_video(arg, cr);
 	if (cmd == AMIGAIOC_INFO) {
 		ai.ai_version = AMIGA_ABI_VERSION;
 		ai.ai_features = AMIGA_FEAT_BASE;
@@ -360,10 +305,12 @@ amigaioctl(dev, cmd, arg, mode, cr, rvp)
 		if (copyin(arg, (caddr_t)&ae, sizeof ae)) return EFAULT;
 		if (ae.ae_version != AMIGA_ABI_VERSION || ae.ae_chipsize != AMIGA_CHIP_SIZE ||
 		    ae.ae_fastsize > AMIGA_FAST_MAX || (ae.ae_fastsize & 0xfffff) ||
-		    (ae.ae_flags & ~AMIGAF_PAL)) return EINVAL;
+		    (ae.ae_flags & ~(AMIGAF_PAL | AMIGAF_CENSUS))) return EINVAL;
+		/* the census goes to the console */
+		if ((ae.ae_flags & AMIGAF_CENSUS) && !suser(cr)) return EPERM;
 		if ((e = guest_attach(&amiga_profile)) != 0) return e;
 		gp = GUESTP(curproc); a = AMIGAP(gp);
-		a->ac_gp = gp; a->ac_config = ae; a->ac_uid = cr->cr_uid;
+		a->ac_gp = gp; a->ac_config = ae;
 		a->ac_stat.as_version = AMIGA_ABI_VERSION;
 		a->ac_stat.as_pid = curproc->p_pid;
 		amigadev_reset(&a->ac_dev);

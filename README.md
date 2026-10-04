@@ -21,7 +21,7 @@ QEMU's `q800` machine with a real Quadra 800 ROM; hardware testing is in progres
 | `kernel/otbridge/` | Open Transport bridge: STREAMS module, virtual Ethernet stations on the SONIC, ASLM library builder, Mac `.ENET` driver |
 | `x11/` | X11R6.3 server for the Mac screen (build, patches, session scripts, image builder) |
 | `kernel/tools/`, `kernel/build.sh` | build: AMIX link kit relink, port build, Mac overlay, checks |
-| `kernel/port-local.diff` | two local changes to the 040/060 port |
+| `kernel/port-local.diff` | three local changes to the 040/060 port |
 | `images/` | disk-image builders (A/UX Startup, direct boot, disk root) and QEMU scripts |
 | `tests/` | functional test suite run under QEMU |
 | `tools/` | COFF/ELF converter and binary tools |

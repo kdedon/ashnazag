@@ -81,11 +81,17 @@ OBJS="$OBJS $W/guest/guest.o"
 
 # 040 base: user addresses in vtop go through the process's page tables.
 VTOP=
+PTALLOC=
+GLOB=
 if [ $MODE = port ]; then
 	echo "[*] vtop: user addresses through the process's page tables"
 	m68k-cbm-sysv4-gcc -m68040 -c "$MAC/vtop/vtop.s" -o "$W/vtop.o"
 	OBJS="$OBJS $W/vtop.o"
 	VTOP=vtop
+	echo "[*] hat_ptalloc: waiting table requests wait for free memory"
+	m68k-cbm-sysv4-gcc -m68040 -c "$MAC/ptalloc/ptalloc.s" -o "$W/ptalloc.o"
+	OBJS="$OBJS $W/ptalloc.o"
+	PTALLOC=hat_ptalloc
 fi
 
 echo "[*] uiomove: kernel writes through segkmap mark the pages modified"
@@ -105,12 +111,13 @@ ramopen ramclose ramstrategy ramprint ramsize
 config_orig
 dmainit
 ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig
-clkset stime mdboot $VTOP"
+clkset stime mdboot $VTOP $PTALLOC"
 # Amiga data replaced: the console streamtab named by cdevsw[0] and oncons(),
 # the device switches and io_start[].
 OVRD="coinfo cdevsw bdevsw io_start execsw fmodsw"
 # Stock bodies kept under __amix_<name>: the wrappers and dlm_init call them.
 ALIAS="sendsig:T valid_usr_range:T fsig:T execsw:D stime:T fmodsw:D"
+[ -n "$PTALLOC" ] && ALIAS="$ALIAS hat_ptalloc:T" GLOB=freemem_wait
 
 echo "[*] FPU probe: null or idle frame, boot option nofpu"
 m68k-cbm-sysv4-gcc -m68040 -c "$MAC/fpu/chkfpu.s" -o "$W/chkfpu.o"
@@ -146,6 +153,9 @@ for s in $OVRD; do
 	m68k-linux-gnu-nm "$BASE" | grep -q " D $s\$" || {
 		echo "[FAIL] $s is not global data in the base"; exit 1; }
 	WEAK="$WEAK --weaken-symbol $s"
+done
+for s in $GLOB; do
+	WEAK="$WEAK --globalize-symbol $s"
 done
 for a in $ALIAS; do
 	s=${a%:*} t=${a#*:}

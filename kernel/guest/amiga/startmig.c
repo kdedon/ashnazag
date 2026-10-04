@@ -2,6 +2,7 @@
 #include <sys/types.h>
 #include <sys/mman.h>
 #include <sys/ioctl.h>
+#include <sys/resource.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,13 +34,13 @@ static void fail(char *);
 static unsigned long get32(unsigned char *);
 
 static void
-loadboot(void)
+loadboot(char *path)
 {
     unsigned char *p = (unsigned char *)BOOTBASE, extra;
     unsigned long n = 0;
     int fd, count;
-    fd = open("/etc/amiga/container-boot.rom", O_RDONLY);
-    if (fd < 0) fail("/etc/amiga/container-boot.rom");
+    fd = open(path, O_RDONLY);
+    if (fd < 0) fail(path);
     while (n < BOOTSIZE) {
         count = read(fd, (char *)p + n, BOOTSIZE - n);
         if (count < 0 && errno == EINTR) continue;
@@ -130,11 +131,13 @@ region(address, size, shared)
 	int shared;
 {
 	int fd = open("/dev/zero", O_RDWR);
+	char what[48];
 	if (fd < 0)
 		fail("/dev/zero");
+	sprintf(what, "mmap %#lx+%#lx", address, size);
 	if (mmap((caddr_t)address, size, PROT_READ | PROT_WRITE | PROT_EXEC,
 	    (shared ? MAP_SHARED : MAP_PRIVATE) | MAP_FIXED, fd, 0) == (caddr_t)-1)
-		fail("mmap");
+		fail(what);
 	close(fd);
 }
 
@@ -156,12 +159,10 @@ displaygone(sig)
 }
 
 static void
-startdisplay(dev)
-    int dev;
+startdisplay()
 {
     int ready[2], life[2], n;
     pid_t pid;
-    long owner = getpid();
     char success;
     struct pollfd p;
     struct sigaction sa;
@@ -178,7 +179,7 @@ startdisplay(dev)
         fail("display fork");
     if (pid == 0) {
         close(ready[0]); close(life[1]);
-        _exit(migdisp(dev, ready[1], life[0], owner));
+        _exit(migdisp(ready[1], life[0]));
     }
     close(ready[1]); close(life[0]);
     displaylife = life[1];
@@ -247,24 +248,26 @@ main(argc, argv)
 	int argc;
 	char **argv;
 {
-	char *rom = "/etc/amiga/kicka4000.rom", *end;
+	char *rom = "/etc/amiga/kicka4000.rom", *boot = "/etc/amiga/container-boot.rom", *end;
 	char sysroot[1024], *home;
 	struct passwd *pw;
-	int readonly = 0, rootreadonly = 0, romonly = 0;
+	int readonly = 0, rootreadonly = 0, census = 0;
 	unsigned long fastmb = 8;
 	struct amigaenter ae;
 	struct amigainfo info;
 	struct sigaction sa;
-	int i, check = 0, probe = 0, experimental = 0, fd;
+	struct rlimit rl;
+	int i, check = 0, probe = 0, fd;
 
 	for (i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--check")) check = 1;
 		else if (!strcmp(argv[i], "--probe")) probe = 1;
-		else if (!strcmp(argv[i], "--experimental")) experimental = 1;
 		else if (!strcmp(argv[i], "--readonly")) readonly = 1;
-		else if (!strcmp(argv[i], "--rom-only")) romonly = 1;
+		else if (!strcmp(argv[i], "--census")) census = 1;
 		else if ((!strcmp(argv[i], "-r") || !strcmp(argv[i], "-rom")) && i + 1 < argc)
 			rom = argv[++i];
+		else if (!strcmp(argv[i], "-boot") && i + 1 < argc)
+			boot = argv[++i];
 		else if (!strcmp(argv[i], "-m") && i + 1 < argc) {
 			char *value = argv[++i];
 			errno = 0;
@@ -273,16 +276,16 @@ main(argc, argv)
 				goto usage;
 		} else goto usage;
 	}
-	if (check + probe + experimental + romonly > 1)
+	if (check + probe > 1)
 		goto usage;
-	if ((romonly || readonly) && (check || probe)) goto usage;
+	if (readonly && (check || probe)) goto usage;
 	if (!readrom(rom))
 		return 1;
 	if (check) {
 		printf("A4000 Kickstart 3.2 (47.96): checksum and CRC verified\n");
 		return 0;
 	}
-	if (!probe && !romonly) {
+	if (!probe) {
 		home = getenv("HOME");
 		if ((!home || !*home) && (pw = getpwuid(getuid())) != 0)
 			home = pw->pw_dir;
@@ -307,15 +310,24 @@ main(argc, argv)
 		fprintf(stderr, "startmig: incompatible kernel ABI\n");
 		return 1;
 	}
-	if (experimental && !(info.ai_features & AMIGA_FEAT_EXPERIMENTAL)) {
-		fprintf(stderr, "startmig: kernel lacks experimental ROM execution support\n");
-		return 1;
-	}
 	if (!probe && !(info.ai_features & (AMIGA_FEAT_BOOT | AMIGA_FEAT_EXPERIMENTAL))) {
 		fprintf(stderr, "startmig: kernel lacks Amiga execution support\n");
 		return 1;
 	}
+	/* the guest's memory exceeds the default soft limit on mappings */
+	if (getrlimit(RLIMIT_VMEM, &rl) == 0 && rl.rlim_cur < rl.rlim_max) {
+		rl.rlim_cur = rl.rlim_max;
+		setrlimit(RLIMIT_VMEM, &rl);
+	}
 	region(0UL, CHIPSIZE, 1);
+	/* helpers fork before the private regions, which each fork would reserve again */
+	if (!probe) {
+		region(MIG_RTG_BASE, MIG_RTG_MAP_SIZE, 1);
+		region(MIG_INPUT_BASE, MIG_INPUT_MAP_SIZE, 1);
+		region(MIG_FS_BASE, MIG_FS_MAP_SIZE, 1);
+		startdisplay();
+		startfilesystem(fd, sysroot, readonly);
+	}
 	if (fastmb)
 		region(FASTBASE, fastmb << 20, 0);
 	region(ROMBASE, ROMSIZE, 0);
@@ -325,15 +337,8 @@ main(argc, argv)
 	if (!probe) {
 		if (!(info.ai_features & AMIGA_FEAT_BOOT))
 			fprintf(stderr, "startmig: boot and guest execution remain unverified\n");
-		if (!romonly) {
-			region(BOOTBASE, BOOTSIZE, 0);
-			loadboot();
-		}
-		region(MIG_RTG_BASE, MIG_RTG_MAP_SIZE, 1);
-		region(MIG_INPUT_BASE, MIG_INPUT_MAP_SIZE, 1);
-		region(MIG_FS_BASE, MIG_FS_MAP_SIZE, 1);
-		startdisplay(fd);
-		if (!romonly) startfilesystem(fd, sysroot, readonly);
+		region(BOOTBASE, BOOTSIZE, 0);
+		loadboot(boot);
 	}
 	/* SIGUSR2 carries virtual interrupts and must be caught */
 	memset((char *)&sa, 0, sizeof sa);
@@ -344,7 +349,7 @@ main(argc, argv)
 	ae.ae_version = AMIGA_ABI_VERSION;
 	ae.ae_chipsize = CHIPSIZE;
 	ae.ae_fastsize = fastmb << 20;
-	ae.ae_flags = AMIGAF_PAL;
+	ae.ae_flags = AMIGAF_PAL | (census ? AMIGAF_CENSUS : 0);
 	if (ioctl(fd, AMIGAIOC_ENTER, &ae) < 0)
 		fail("AMIGAIOC_ENTER");
 	if (probe) {
@@ -362,6 +367,6 @@ main(argc, argv)
 #endif
 	return 0;
 usage:
-	fprintf(stderr, "usage: startmig [-rom file] [-m fast-MB] [--readonly] [--check | --probe | --experimental | --rom-only]\n");
+	fprintf(stderr, "usage: startmig [-rom file] [-boot file] [-m fast-MB] [--readonly] [--census] [--check | --probe]\n");
 	return 2;
 }

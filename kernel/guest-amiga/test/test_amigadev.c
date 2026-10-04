@@ -154,44 +154,24 @@ isolation(void)
 }
 
 static void
-video(void)
+frames(void)
 {
-	unsigned long pos, phase;
+	unsigned long pos;
 	amigadev_reset(&d);
 	assert(get(0xdff004, 2) == 0x2200);
 	assert(get(0xdff07c, 2) == 0xf8);
 	assert(get(0xdff016, 2) & 0x400);
-	amigadev_tick(&d, 1000);
 	pos = get(0xdff006, 2);
-	assert((pos >> 8) >= 20 && (pos >> 8) <= 160);
-	put(0xdff100, 2, 0x102);
-	phase = d.frame_phase;
-	amigadev_tick(&d, 709379);
-	assert(get(0xdff006, 2) == pos && d.frame_phase == phase);
-	put(0xdff100, 2, 0);
+	assert(get(0xdff006, 2) != pos);
 	put(0xdff09a, 2, 0xc020);
 	amigadev_tick(&d, 709379);
-	assert(d.frames == 50 && d.cia[0].tod == 50);
-	assert(d.cia[1].tod == 15600 + (pos >> 8));
+	assert(d.frames == 50 && d.cia[0].tod == 50 && d.cia[1].tod == 15600);
 	assert(amigadev_ipl(&d) == 3);
-	assert(d.frame_phase == phase);
-	put(0xdff080, 4, 0x00123456);
-	assert(get(0xdff080, 4) == 0x00123456);
-	assert(d.custom[0x80 / 2] == 0x12 && d.custom[0x82 / 2] == 0x3456);
-	put(0xdff180, 2, 0xf42);
-	assert(d.palette[0] == 0xff4422);
-	put(0xdff106, 2, 0x2200);
-	put(0xdff180, 2, 0x123);
-	assert(d.palette[32] == 0x010203);
 	put(0xdff058, 2, 0x41);
-	assert(d.blit_pending == 1 && (get(0xdff002, 2) & 0x4000));
-	put(0xdff05e, 2, 1);
-	assert(d.blit_pending == 2);
-	put(0xdff040, 2, 0x9a00);
+	assert(!(get(0xdff002, 2) & 0x4000));
 	put(0xdff05b, 1, 0xf0);
-	assert(d.custom[0x40 / 2] == 0x9af0);
-	put(0xdff05a, 2, 0xcc);
-	assert(d.custom[0x40 / 2] == 0x9acc);
+	put(0xdff180, 2, 0xf42);
+	assert(get(0xdff180, 2) == 0);
 	amigadev_reset(&d);
 	amigadev_configure(&d, 0);
 	assert(get(0xdff004, 2) == 0x3200);
@@ -254,8 +234,8 @@ main(void)
 	mask_and_latch();
 	unsupported();
 	isolation();
-	video();
+	frames();
 	cia_boot();
-	puts("amigadev: IRQs, timers, isolation, beam, palette, CIA ports/TOD/chaining pass");
+	puts("amigadev: IRQs, timers, isolation, frames, CIA ports/TOD/chaining pass");
 	return 0;
 }

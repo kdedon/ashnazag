@@ -9,64 +9,13 @@
 #include <errno.h>
 #include <poll.h>
 #include "dsio.h"
-#include "amigaio.h"
-#include "migvideo.h"
 #include "rtgshare.h"
 #include "inputshare.h"
 
 extern int munmap();
 
-static struct migframe frame;
-static short lookup[4096];
 static unsigned short red[256], green[256], blue[256];
-static unsigned char pixels[MIG_WIDTH * MIG_HEIGHT];
 
-static int palette(int fd)
-{
-    struct fbcmap cm;
-    int i, count = 0, v, index, overflow = 0;
-    memset(lookup, 0xff, sizeof lookup);
-    for (i = 0; i < frame.width * frame.height; i++) {
-        v = frame.rgb[i];
-        if (lookup[v] < 0) {
-            if (count == 256) { overflow = 1; break; }
-            lookup[v] = count;
-            red[count] = ((v >> 8) & 15) * 0x1111;
-            green[count] = ((v >> 4) & 15) * 0x1111;
-            blue[count++] = (v & 15) * 0x1111;
-        }
-    }
-    if (overflow)
-        for (i = 0; i < 256; i++) {
-            red[i] = ((i >> 5) & 7) * 65535UL / 7;
-            green[i] = ((i >> 2) & 7) * 65535UL / 7;
-            blue[i] = (i & 3) * 65535UL / 3;
-        }
-    for (i = 0; i < frame.width * frame.height; i++) {
-        v = frame.rgb[i];
-        index = overflow ? ((v >> 9) << 5) | (((v >> 5) & 7) << 2) | ((v >> 2) & 3) : lookup[v];
-        pixels[i] = index;
-    }
-    cm.cm_start = 0; cm.cm_count = overflow ? 256 : count;
-    cm.cm_red = red; cm.cm_green = green; cm.cm_blue = blue;
-    return ioctl(fd, FBIOPUTCMAP, &cm);
-}
-static void refresh(unsigned char *fb, struct fbinfo *fi)
-{
-    int sx = frame.width <= 384 ? 2 : 1, sy = 2;
-    int x, y, ox, oy, width, height;
-    unsigned char *row;
-    if ((unsigned long)(frame.height * sy) > fi->fi_height) sy = 1;
-    if ((unsigned long)(frame.width * sx) > fi->fi_width) sx = 1;
-    width = frame.width * sx; height = frame.height * sy;
-    ox = fi->fi_width > (unsigned long)width ? (fi->fi_width - width) / 2 : 0;
-    oy = fi->fi_height > (unsigned long)height ? (fi->fi_height - height) / 2 : 0;
-    for (y = 0; y < height && (unsigned long)(oy + y) < fi->fi_height; y++) {
-        row = fb + fi->fi_offset + (oy + y) * fi->fi_rowbytes + ox;
-        for (x = 0; x < width && (unsigned long)(ox + x) < fi->fi_width; x++)
-            row[x] = pixels[(y / sy) * frame.width + x / sx];
-    }
-}
 static int rtg_blank(int fd, unsigned char *fb, struct fbinfo *fi)
 {
     struct fbcmap cm;
@@ -127,11 +76,10 @@ static void input_read(int fd, struct evinfo *info, int hidden,
             events[i].ie_type, events[i].ie_code, events[i].ie_value);
 }
 
-int migdisp(int dev, int ready, int life, long owner)
+int migdisp(int ready, int life)
 {
     struct fbacq acq;
     struct fbinfo fi;
-    struct amigavideo video;
     struct fbnote note;
     struct pollfd p[4];
     struct evinfo keyinfo, mouseinfo;
@@ -140,7 +88,7 @@ int migdisp(int dev, int ready, int life, long owner)
     struct mig_rtg rtg;
     int rtgactive = 0;
     unsigned char *fb;
-    int fd, hidden = 0, status, lastw = 0, lasth = 0, warned = 0;
+    int fd, hidden = 0, status, lastw = 0, lasth = 0;
     char success = 1;
     fd = open("/dev/fb0", O_RDWR);
     if (fd < 0) { perror("startmig: /dev/fb0"); return 1; }
@@ -209,49 +157,22 @@ int migdisp(int dev, int ready, int life, long owner)
         status = mig_rtg_snapshot((const volatile struct mig_rtg *)MIG_RTG_BASE,
             &rtg, fi.fi_width, fi.fi_height);
         if (status < 0) continue;
-        if (status == MIG_RTG_BLANK) {
+        /* until the RTG card shows a screen, the session stays black */
+        if (status != MIG_RTG_VISIBLE) {
             if (rtgactive != MIG_RTG_BLANK && rtg_blank(fd, fb, &fi) < 0) {
                 perror("startmig: RTG blank"); break;
             }
             rtgactive = MIG_RTG_BLANK;
             continue;
         }
-        if (status == MIG_RTG_VISIBLE) {
-            if (rtgactive != MIG_RTG_VISIBLE || lastw != rtg.width || lasth != rtg.height) {
-                memset(fb + fi.fi_offset, 0, fi.fi_rowbytes * fi.fi_height);
-                lastw = rtg.width; lasth = rtg.height;
-            }
-            rtgactive = MIG_RTG_VISIBLE;
-            if (rtg_refresh(fd, fb, &fi, &rtg) < 0) {
-                perror("startmig: RTG palette"); break;
-            }
-            continue;
-        }
-        if (rtgactive) { lastw = lasth = 0; rtgactive = 0; }
-        memset(&video, 0, sizeof video);
-        video.av_pid = owner;
-        if (ioctl(dev, AMIGAIOC_VIDEO, &video) < 0) {
-            if (errno == ENXIO) continue;
-            perror("startmig: AMIGAIOC_VIDEO"); break;
-        }
-        status = mig_render(video.av_custom, (const unsigned char *)0,
-            AMIGA_CHIP_SIZE, &frame);
-        if (status <= 0) {
-            if (status < 0 && !warned) {
-                fprintf(stderr, "startmig: unsupported display mode or invalid display memory\n");
-                warned = 1;
-            }
-            continue;
-        }
-        warned = 0;
-        if (palette(fd) < 0) {
-            perror("startmig: display palette"); break;
-        }
-        if (lastw != frame.width || lasth != frame.height) {
+        if (rtgactive != MIG_RTG_VISIBLE || lastw != rtg.width || lasth != rtg.height) {
             memset(fb + fi.fi_offset, 0, fi.fi_rowbytes * fi.fi_height);
-            lastw = frame.width; lasth = frame.height;
+            lastw = rtg.width; lasth = rtg.height;
         }
-        refresh(fb, &fi);
+        rtgactive = MIG_RTG_VISIBLE;
+        if (rtg_refresh(fd, fb, &fi, &rtg) < 0) {
+            perror("startmig: RTG palette"); break;
+        }
     }
     mig_input_reset(input, &inputstate);
     if (p[2].fd >= 0) close(p[2].fd);

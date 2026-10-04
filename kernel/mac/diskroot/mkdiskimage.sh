@@ -16,7 +16,7 @@ AUX=$(cd "$D/../../.." && pwd)
 KERNEL=${1:-$AUX/kernel/build/unix-mac.elf}
 OUT=${2:-$D/out/q800-unix-disk.img}
 SWAPMB=${SWAPMB:-64}
-B=$D/build
+B=${DISKROOT_BUILD:-$D/build}
 PY="nice -n 19 python3"
 
 KERNEL=$KERNEL sh "$D/mkdiskroot.sh"
@@ -28,7 +28,7 @@ $PY "$D/addparts.py" "$OUT.new" "$B/root.img" "$SWAPMB" $SPARE
 echo "== checks"
 $PY "$AUX/images/auxsash.py" apm "$OUT.new"
 $PY "$AUX/images/auxsash.py" apmcheck "$OUT.new"
-"$AUX/kernel/mac/bootblk/build/mkbb" check "$OUT.new" "$KERNEL"
+"${MKBB:-$AUX/kernel/mac/bootblk/build/mkbb}" check "$OUT.new" "$KERNEL"
 # the kernel's own partition scan, built for the host
 cc -std=gnu89 -w -o "$B/apmtest" "$AUX/kernel/mac/scsi/test/apmtest.c" \
 	"$AUX/kernel/mac/scsi/apm.c"

@@ -9,6 +9,7 @@
 #define AMIGA_ROM_BASE 0x00f80000UL
 #define AMIGA_ROM_SIZE 0x80000UL
 #define AMIGAF_PAL 1
+#define AMIGAF_CENSUS 2
 #define AMIGA_FEAT_BOOT 1
 #define AMIGA_FEAT_BASE 2
 #define AMIGA_FEAT_EXPERIMENTAL 4
@@ -17,12 +18,6 @@
 #define AMIGAIOC_LEAVE AMIGAIOC(2)
 #define AMIGAIOC_STAT AMIGAIOC(3)
 #define AMIGAIOC_INFO AMIGAIOC(4)
-#define AMIGAIOC_VIDEO AMIGAIOC(5)
-
-struct amigavideo {
-	unsigned long av_pid, av_flags, av_frame;
-	unsigned short av_custom[256];
-};
 
 struct amigaenter {
 	unsigned long ae_version, ae_chipsize, ae_fastsize, ae_flags;

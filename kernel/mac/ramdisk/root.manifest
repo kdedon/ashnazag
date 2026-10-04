@@ -64,6 +64,7 @@ f /etc/ioctl.syscon 644 0 3 etc/ioctl.syscon
 f /etc/passwd	444 0 3 build/core/etc/passwd
 f /etc/group	444 0 3 build/group
 e /etc/mnttab	444 0 3
+f /etc/vfstab	644 0 3 etc/vfstab
 e /var/adm/utmp	644 0 2
 e /var/adm/utmpx 644 0 2
 e /var/adm/wtmp	664 4 4

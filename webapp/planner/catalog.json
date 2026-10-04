@@ -1,0 +1,574 @@
+{
+  "schemaVersion": "1",
+  "version": "2026-10-03.4",
+  "machines": [
+    {
+      "id": "q800",
+      "label": "Macintosh Quadra 800",
+      "cpu": "68040",
+      "status": "experimental",
+      "description": "Browser console image recipe using local media and a prebuilt Quadra kernel.",
+      "deviceIds": [
+        "scsi53c96",
+        "scc",
+        "adb",
+        "framebuffer",
+        "sonic"
+      ],
+      "defaultDevices": [
+        "scsi53c96",
+        "scc",
+        "adb",
+        "framebuffer"
+      ],
+      "mediaRequirements": [
+        {
+          "id": "amix",
+          "label": "AMIX installation media",
+          "multiple": true
+        },
+        {
+          "id": "patch",
+          "label": "AMIX 2.1 patch media",
+          "multiple": true
+        },
+        {
+          "id": "aux",
+          "label": "A/UX 3.x support media (shared)",
+          "multiple": true
+        },
+        {
+          "id": "aux2",
+          "label": "A/UX 2.x support media for System 6 (planned)",
+          "multiple": true
+        }
+      ],
+      "family": "Macintosh",
+      "model": "Quadra 800",
+      "variant": "68040",
+      "memoryBanks": [
+        {
+          "id": "ram",
+          "label": "Main RAM",
+          "defaultMiB": 128
+        }
+      ]
+    },
+    {
+      "id": "falcon030",
+      "label": "Atari Falcon030",
+      "cpu": "68030",
+      "status": "experimental",
+      "description": "Existing native Atari relink; browser assembly and DLM integration are pending.",
+      "deviceIds": [
+        "falcon-ide",
+        "ikbd",
+        "falcon-video"
+      ],
+      "defaultDevices": [
+        "falcon-ide",
+        "ikbd",
+        "falcon-video"
+      ],
+      "mediaRequirements": [
+        {
+          "id": "amix",
+          "label": "AMIX installation media",
+          "multiple": true
+        },
+        {
+          "id": "patch",
+          "label": "AMIX 2.1 patch media",
+          "multiple": true
+        },
+        {
+          "id": "aux",
+          "label": "A/UX 3.x support media (shared)",
+          "multiple": true
+        },
+        {
+          "id": "aux2",
+          "label": "A/UX 2.x support media for System 6 (planned)",
+          "multiple": true
+        }
+      ],
+      "family": "Atari",
+      "model": "Falcon",
+      "variant": "Stock 68030",
+      "memoryBanks": [
+        {
+          "id": "st",
+          "label": "ST-RAM",
+          "defaultMiB": 14
+        }
+      ]
+    },
+    {
+      "id": "q700",
+      "family": "Macintosh",
+      "model": "Quadra 700",
+      "cpu": "68040",
+      "variant": "68040",
+      "label": "Quadra 700 \u00b7 68040",
+      "status": "planned",
+      "description": "Separate platform recipe and hardware validation are pending.",
+      "deviceIds": [],
+      "defaultDevices": [],
+      "memoryBanks": [
+        {
+          "id": "ram",
+          "label": "Main RAM",
+          "defaultMiB": 128
+        }
+      ]
+    },
+    {
+      "id": "iici",
+      "family": "Macintosh",
+      "model": "Macintosh IIci",
+      "cpu": "68030",
+      "variant": "68030",
+      "label": "Macintosh IIci \u00b7 68030",
+      "status": "planned",
+      "description": "68030 Macintosh host support needs its own validated platform recipe.",
+      "deviceIds": [],
+      "defaultDevices": [],
+      "memoryBanks": [
+        {
+          "id": "ram",
+          "label": "Main RAM",
+          "defaultMiB": 128
+        }
+      ]
+    },
+    {
+      "id": "falcon060",
+      "family": "Atari",
+      "model": "Falcon",
+      "cpu": "68060",
+      "variant": "CT60 / CT63 68060",
+      "label": "Falcon \u00b7 CT60 / CT63 68060",
+      "status": "planned",
+      "description": "Planned Falcon accelerator target; the 68060 machine layer remains to be qualified.",
+      "deviceIds": [],
+      "defaultDevices": [],
+      "memoryBanks": [
+        {
+          "id": "st",
+          "label": "ST-RAM",
+          "defaultMiB": 14
+        },
+        {
+          "id": "fast",
+          "label": "SDRAM FastRAM",
+          "defaultMiB": 64
+        }
+      ]
+    },
+    {
+      "id": "tt030",
+      "family": "Atari",
+      "model": "TT030",
+      "cpu": "68030",
+      "variant": "68030",
+      "label": "TT030 \u00b7 68030",
+      "status": "planned",
+      "description": "Separate TT030 host recipe and drivers remain to be qualified.",
+      "deviceIds": [],
+      "defaultDevices": [],
+      "memoryBanks": [
+        {
+          "id": "st",
+          "label": "ST-RAM",
+          "defaultMiB": 4
+        },
+        {
+          "id": "tt",
+          "label": "TT-RAM",
+          "defaultMiB": 16
+        }
+      ]
+    },
+    {
+      "id": "megaste",
+      "family": "Atari",
+      "model": "Mega STE",
+      "cpu": "TBD",
+      "variant": "Host feasibility review",
+      "label": "Mega STE \u00b7 Host feasibility review",
+      "status": "planned",
+      "description": "Research candidate only: CPU/MMU requirements and a viable host port have not been established.",
+      "deviceIds": [],
+      "defaultDevices": [],
+      "memoryBanks": []
+    },
+    {
+      "id": "a3000-68030",
+      "family": "Amiga",
+      "model": "A3000",
+      "cpu": "68030",
+      "variant": "68030",
+      "label": "A3000 \u00b7 68030",
+      "status": "planned",
+      "description": "CPU port work exists; this model/CPU combination needs a validated board, memory and device recipe.",
+      "deviceIds": [],
+      "defaultDevices": [],
+      "memoryBanks": [
+        {
+          "id": "chip",
+          "label": "Chip RAM",
+          "defaultMiB": 2
+        },
+        {
+          "id": "fast",
+          "label": "Fast RAM",
+          "defaultMiB": 16
+        }
+      ]
+    },
+    {
+      "id": "a3000-68040",
+      "family": "Amiga",
+      "model": "A3000",
+      "cpu": "68040",
+      "variant": "68040",
+      "label": "A3000 \u00b7 68040",
+      "status": "planned",
+      "description": "CPU port work exists; this model/CPU combination needs a validated board, memory and device recipe.",
+      "deviceIds": [],
+      "defaultDevices": [],
+      "memoryBanks": [
+        {
+          "id": "chip",
+          "label": "Chip RAM",
+          "defaultMiB": 2
+        },
+        {
+          "id": "fast",
+          "label": "Fast RAM",
+          "defaultMiB": 16
+        }
+      ]
+    },
+    {
+      "id": "a3000-68060",
+      "family": "Amiga",
+      "model": "A3000",
+      "cpu": "68060",
+      "variant": "68060",
+      "label": "A3000 \u00b7 68060",
+      "status": "planned",
+      "description": "CPU port work exists; this model/CPU combination needs a validated board, memory and device recipe.",
+      "deviceIds": [],
+      "defaultDevices": [],
+      "memoryBanks": [
+        {
+          "id": "chip",
+          "label": "Chip RAM",
+          "defaultMiB": 2
+        },
+        {
+          "id": "fast",
+          "label": "Fast RAM",
+          "defaultMiB": 16
+        }
+      ]
+    },
+    {
+      "id": "a4000-68030",
+      "family": "Amiga",
+      "model": "A4000",
+      "cpu": "68030",
+      "variant": "68030",
+      "label": "A4000 \u00b7 68030",
+      "status": "planned",
+      "description": "CPU port work exists; this model/CPU combination needs a validated board, memory and device recipe.",
+      "deviceIds": [],
+      "defaultDevices": [],
+      "memoryBanks": [
+        {
+          "id": "chip",
+          "label": "Chip RAM",
+          "defaultMiB": 2
+        },
+        {
+          "id": "fast",
+          "label": "Fast RAM",
+          "defaultMiB": 16
+        }
+      ]
+    },
+    {
+      "id": "amiga040",
+      "family": "Amiga",
+      "model": "A4000",
+      "cpu": "68040",
+      "variant": "68040",
+      "label": "A4000 \u00b7 68040",
+      "status": "planned",
+      "description": "CPU port work exists; this model/CPU combination needs a validated board, memory and device recipe.",
+      "deviceIds": [],
+      "defaultDevices": [],
+      "memoryBanks": [
+        {
+          "id": "chip",
+          "label": "Chip RAM",
+          "defaultMiB": 2
+        },
+        {
+          "id": "fast",
+          "label": "Fast RAM",
+          "defaultMiB": 16
+        }
+      ]
+    },
+    {
+      "id": "a4000-68060",
+      "family": "Amiga",
+      "model": "A4000",
+      "cpu": "68060",
+      "variant": "68060",
+      "label": "A4000 \u00b7 68060",
+      "status": "planned",
+      "description": "CPU port work exists; this model/CPU combination needs a validated board, memory and device recipe.",
+      "deviceIds": [],
+      "defaultDevices": [],
+      "memoryBanks": [
+        {
+          "id": "chip",
+          "label": "Chip RAM",
+          "defaultMiB": 2
+        },
+        {
+          "id": "fast",
+          "label": "Fast RAM",
+          "defaultMiB": 16
+        }
+      ]
+    }
+  ],
+  "devices": [
+    {
+      "id": "scsi53c96",
+      "label": "53C96 SCSI boot disk",
+      "status": "existing",
+      "description": "Root storage driver; must remain available before root mount.",
+      "machineIds": [
+        "q800"
+      ],
+      "builtIn": true,
+      "required": true,
+      "module": ""
+    },
+    {
+      "id": "scc",
+      "label": "SCC serial console",
+      "status": "existing",
+      "description": "Early console and serial TTY are currently linked statically.",
+      "machineIds": [
+        "q800"
+      ],
+      "builtIn": true,
+      "required": true,
+      "module": ""
+    },
+    {
+      "id": "adb",
+      "label": "ADB keyboard and mouse",
+      "status": "existing",
+      "description": "Currently static; future module candidate after console dependencies are split.",
+      "machineIds": [
+        "q800"
+      ],
+      "builtIn": true,
+      "module": ""
+    },
+    {
+      "id": "framebuffer",
+      "label": "Mac framebuffer and display service",
+      "status": "existing",
+      "description": "Currently static with the console and display service.",
+      "machineIds": [
+        "q800"
+      ],
+      "builtIn": true,
+      "module": ""
+    },
+    {
+      "id": "sonic",
+      "label": "SONIC Ethernet",
+      "status": "existing",
+      "description": "Currently static; a future module candidate, not yet selectable at link time.",
+      "machineIds": [
+        "q800"
+      ],
+      "builtIn": true,
+      "module": ""
+    },
+    {
+      "id": "falcon-ide",
+      "label": "Falcon IDE disk",
+      "status": "existing",
+      "description": "Statically linked IDE driver and AHDI partition support.",
+      "machineIds": [
+        "falcon030"
+      ],
+      "builtIn": true,
+      "required": true,
+      "module": ""
+    },
+    {
+      "id": "ikbd",
+      "label": "IKBD keyboard and mouse",
+      "status": "existing",
+      "description": "Statically linked keyboard and console input.",
+      "machineIds": [
+        "falcon030"
+      ],
+      "builtIn": true,
+      "required": true,
+      "module": ""
+    },
+    {
+      "id": "falcon-video",
+      "label": "Falcon framebuffer",
+      "status": "existing",
+      "description": "Statically linked console and display service.",
+      "machineIds": [
+        "falcon030"
+      ],
+      "builtIn": true,
+      "required": true,
+      "module": ""
+    }
+  ],
+  "packages": [
+    {
+      "id": "apkg",
+      "label": "apkg package manager",
+      "status": "experimental",
+      "description": "Existing native installer recipe; browser package acquisition and integrity locking are pending.",
+      "machineIds": [
+        "q800"
+      ],
+      "modules": []
+    },
+    {
+      "id": "x11",
+      "label": "X11 desktop",
+      "status": "experimental",
+      "description": "Existing native X11 image scripts; browser recipe is pending.",
+      "machineIds": [
+        "q800"
+      ],
+      "modules": []
+    }
+  ],
+  "containers": [
+    {
+      "id": "macenv",
+      "label": "Mac environment",
+      "status": "experimental",
+      "description": "Existing guest modules and native image scripts; requires user-supplied Mac media and ROM.",
+      "machineIds": [
+        "q800"
+      ],
+      "modules": [
+        "guestcore",
+        "auxcore",
+        "auxexec",
+        "uinter"
+      ],
+      "mediaRequirements": [],
+      "environments": [
+        {
+          "id": "macos761",
+          "label": "Mac OS 7.6.1",
+          "mediaRequirements": [
+            {
+              "id": "system",
+              "label": "Mac OS 7.6.1 installation media",
+              "multiple": true
+            }
+          ]
+        },
+        {
+          "id": "macos81",
+          "label": "Mac OS 8.1",
+          "mediaRequirements": [
+            {
+              "id": "system",
+              "label": "Mac OS 8.1 installation media",
+              "multiple": true
+            }
+          ]
+        },
+        {
+          "id": "system701",
+          "label": "System 7.0.1 (from A/UX)",
+          "mediaRequirements": []
+        },
+        {
+          "id": "system6",
+          "label": "A/UX System 6.0.x (planned)",
+          "status": "planned",
+          "mediaRequirements": [
+            {
+              "id": "system",
+              "label": "A/UX System 6 media",
+              "multiple": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tosenv",
+      "label": "TOS environment",
+      "status": "experimental",
+      "description": "Guest module exists; end-to-end browser recipe is pending.",
+      "machineIds": [
+        "q800"
+      ],
+      "modules": [
+        "guestcore",
+        "tosguest"
+      ],
+      "mediaRequirements": [],
+      "environments": [
+        {
+          "id": "emutos14",
+          "label": "EmuTOS 1.4",
+          "mediaRequirements": [
+            {
+              "id": "rom",
+              "label": "EmuTOS 1.4 image or archive"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "amigaenv",
+      "label": "AmigaOS environment",
+      "status": "planned",
+      "description": "Browser integration and a validated module artifact set are pending.",
+      "machineIds": [
+        "q800"
+      ],
+      "modules": [],
+      "mediaRequirements": [
+        {
+          "id": "rom",
+          "label": "Kickstart ROM"
+        },
+        {
+          "id": "system",
+          "label": "AmigaOS installation media",
+          "multiple": true
+        }
+      ],
+      "environments": []
+    }
+  ]
+}

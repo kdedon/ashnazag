@@ -38,6 +38,7 @@ static struct {
 	{ "t_streams", 60 },
 	{ "t_stress", 90 },
 	{ "t_page", 900 },
+	{ "t_moddemo", 120 },
 	{ "t_dlm", 90 },
 	{ "t_otb", 300 },
 	{ "t_gate", 150 },
@@ -47,6 +48,7 @@ static struct {
 	{ "t_vtop", 60 },
 	{ "t_display", 360 },
 	{ "t_tos", 700 },
+	{ "t_amiga", 520 },
 	{ 0, 0 }
 };
 

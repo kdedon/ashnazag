@@ -1,0 +1,6 @@
+Decoder subpackages from https://github.com/dictav/go-lha
+Commit 5d3e68383902755431ad44bcf5efaf9545eaa427, MIT license.
+Local changes: import paths, error propagation, match length bounds, short-write
+detection, bounded Huffman lookahead, constant-symbol tables, removal of debug
+output, and corrections to upstream tests.
+Header parsing and package integration are separate Ash Nazag code.

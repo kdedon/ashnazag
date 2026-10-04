@@ -1,0 +1,14 @@
+FAMILY=mac
+SYSTEM_TEMPLATE_ROOT=/mac/sys
+SYSTEM_APPS_ROOT=/mac/apps
+ACCOUNT_ROOT=~/Mac/Shared
+ENVIRONMENT_ROOT=~/Mac
+LEGACY_ROOT=~/System Folder
+ENVIRONMENT_METADATA=.env
+ACCOUNT_PACKAGE_DB=Shared/.pkg/contents
+ENVIRONMENT_PACKAGE_DB=.pkg/contents
+SYSTEM_PACKAGE_DB=/var/sadm/install/contents
+SYSTEM_SOURCE_CACHE=/var/spool/pkg
+USER_SOURCE_CACHE=~/.pkgcache/sha256
+GUEST_APPLICATIONS=Applications
+METADATA=appledouble

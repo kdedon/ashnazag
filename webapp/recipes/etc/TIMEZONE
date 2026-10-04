@@ -1,0 +1,2 @@
+TZ=GMT0
+export TZ

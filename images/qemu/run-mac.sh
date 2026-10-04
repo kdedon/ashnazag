@@ -10,7 +10,7 @@
 [ -n "$AUX_QLOCK" ] || { mkdir -p "$(dirname "$0")/../../images/work" 2>/dev/null; AUX_QLOCK=1 exec flock "$(cd "$(dirname "$0")/../.." && pwd)/images/work/.qemu.lock" sh "$0" "$@"; }
 HERE=$(cd "$(dirname "$0")" && pwd)
 AUX=$(cd "$HERE/../.." && pwd)
-Q=$AUX/toolchain/qemu
+Q=$AUX/toolchain/qemu-local; [ -x "$Q/usr/bin/qemu-system-m68k" ] || Q=$AUX/toolchain/qemu
 NET= SERA=
 while :; do
   case $1 in

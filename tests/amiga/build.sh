@@ -1,0 +1,59 @@
+#!/bin/sh
+# build.sh -- t_amiga's inputs: the synthetic guest image and the user's
+# A4000 Kickstart 3.2 ROM.
+#
+#   sh tests/amiga/build.sh outdir
+#
+# Out: outdir/root/tests/amiga/guest.bin,
+# outdir/root/etc/amiga/kicka4000.rom.  AMIGAROM names the ROM (default:
+# the local staging package's); proprietary, never in the repository.
+# Without the ROM the guest tests still run and the ROM census skips.
+# With the ROM, also startmig and the boot extension; with a prepared
+# SYS: (AMIGASYS) and Picasso96 archive (AMIGAP96), outdir/sys.img: a
+# ufs volume holding SYS: with the Picasso96 runtime and container.card.
+set -e
+T=$(cd "$(dirname "$0")/.." && pwd)
+AUX=$(cd "$T/.." && pwd)
+KDIR=${KDIR:-$AUX/kernel}
+OUT=$1
+AMIGAROM=${AMIGAROM:-$AUX/images/work/amiga-stage/media/ROM/kicka4000.rom}
+BIN=$AUX/toolchain/bin
+rm -rf "$OUT"
+if [ ! -f "$KDIR/guest/include/amigaio.h" ]; then
+	echo "[skip] no Amiga guest"
+	exit 0
+fi
+O=$OUT/obj
+R=$OUT/root
+mkdir -p "$O" "$R/tests/amiga"
+"$BIN/m68k-elf-as" -m68040 --register-prefix-optional -o "$O/guest.o" "$T/amiga/guest.s"
+"$BIN/m68k-elf-ld" --no-warn-rwx-segments -N -e start -Ttext=0x1000 -o "$O/guest.elf" "$O/guest.o"
+"$BIN/m68k-elf-objcopy" -O binary "$O/guest.elf" "$R/tests/amiga/guest.bin"
+if [ -f "$AMIGAROM" ]; then
+	mkdir -p "$R/etc/amiga"
+	cp "$AMIGAROM" "$R/etc/amiga/kicka4000.rom"
+	sh "$KDIR/guest/amiga/build.sh" "$O/mig" > /dev/null
+	sh "$KDIR/guest/amiga/dos/build.sh" "$O/dos" > /dev/null
+	cp "$O/mig/startmig" "$R/tests/amiga/startmig"
+	cp "$O/dos/container-boot.rom" "$R/etc/amiga/boot.rom"
+fi
+AMIGASYS=${AMIGASYS:-$AUX/images/work/amiga-stage/root/amiga/sys}
+AMIGAP96=${AMIGAP96:-$AUX/images/work/amiga-stage/root/amiga/rtg/Picasso96.lha}
+if [ -f "$AMIGAROM" ] && [ -f "$AMIGASYS/S/Startup-Sequence" ]; then
+	sh "$KDIR/guest/amiga/rtg/build.sh" "$O/rtg" > /dev/null
+	M=$O/sys.manifest
+	(cd "$AMIGASYS" && find . -type d | sed 's#^\.##' | sort | sed '/^$/d; s#.*#d & 755 0 3#'
+	 cd "$AMIGASYS" && find . -type f | sed 's#^\.##' | sort | sed "s#.*#f & 755 0 3 $AMIGASYS&#") > "$M"
+	echo "f /LIBS/Picasso96/container.card 755 0 3 $O/rtg/container.card" >> "$M"
+	if [ -f "$AMIGAP96" ]; then
+		P=$O/p96/Picasso96Install
+		7z x -y -o"$O/p96" "$AMIGAP96" > /dev/null
+		for f in Libs/Picasso96/rtg.library Libs/Picasso96/emulation.library \
+		    Libs/Picasso96/fastlayers.library Libs/Picasso96API.library; do
+			echo "f /LIBS/${f#Libs/} 755 0 3 $P/$f" >> "$M"
+		done
+		echo "f /DEVS/Monitors/Container 755 0 3 $P/Devs/Monitors/Picasso96" >> "$M"
+	fi
+	python3 "$AUX/kernel/mac/diskroot/mkufs.py" -s 16 -m /amiga/sys "$M" "$OUT/sys.img"
+fi
+echo "[ok] guest image, $(ls "$R/etc/amiga" 2>/dev/null | wc -l) ROM"
