@@ -116,6 +116,8 @@ static int resolve(struct mig_hostfs *fs,unsigned int vol,unsigned int id,const 
         if (!*part || !strcmp(part,"..")) { pop(rel); p=end?end+1:p+n; continue; }
         if (!strcmp(part,".")) { p=end?end+1:p+n; continue; }
         if (strchr(part,':')) return E_BADNUM;
+        /* an environment's .env stays the session's */
+        if (same(part,".env")) return create&&!end?E_PROTECT:E_NOTFOUND;
         if (full(v,rel,out)) return E_BADNUM;
         d=opendir(out); if (!d) return doserr(errno);
         matches=0; *found=0;
@@ -265,7 +267,7 @@ void mig_hostfs_dispatch(struct mig_hostfs *fs,struct mig_fs_request *r)
             if(!h->dir) {h->dir=opendir(path);if(!h->dir){e=doserr(errno);break;}}
             for (;;) {
                 errno=0;de=readdir(h->dir);if(!de){e=errno?doserr(errno):E_NOMORE;break;}
-                if(!strcmp(de->d_name,".") || !strcmp(de->d_name,".."))continue;
+                if(!strcmp(de->d_name,".") || !strcmp(de->d_name,"..") || same(de->d_name,".env"))continue;
                 if(strlen(path)+strlen(de->d_name)+2>sizeof(path2)) {e=E_BADNUM;break;}
                 strcpy(path2,path);strcat(path2,"/");strcat(path2,de->d_name);
                 if(lstat(path2,&st)<0){e=doserr(errno);break;}

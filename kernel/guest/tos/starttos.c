@@ -1,15 +1,16 @@
 /*
  * starttos -- run Atari TOS as this process: EmuTOS, or the user's ROM image.
  *
- *	starttos [-rom file] [-c cartridge] [-C dir | -d disk] [-D L=dir] [-u dir | -U]
+ *	starttos [-rom file] [-c cartridge] [-e env | -C dir | -d disk] [-D L=dir] [-u dir | -U]
  *		[-m megabytes] [-M] [-S] [-v]
  *
  * ST-RAM is a shared mapping at 0, the ROM a read-only copy at its own
  * base, the machine-layer cartridge at $FA0000.  Drives are host
  * directories used with the caller's permissions: C:, the boot drive,
- * is ~/TOS (else /tos/sys, read-only), U: is "/", others come from
- * /tos/sys/drives, ~/TOS/drives and -D.  -d makes C: a FAT image
- * (512-byte sectors) instead.  A child process owns the display session:
+ * is ~/TOS (else /tos/sys, read-only) or, with -e, ~/TOS/env; U: is "/";
+ * others come from /tos/sys/drives, ~/TOS/drives and -D.  -d makes C: a FAT image
+ * (512-byte sectors) instead.  One writable session per environment:
+ * a second is refused.  A child process owns the display session:
  * it converts the TOS screen to the frame buffer and passes keyboard
  * and mouse to the IKBD.  The parent enters the ROM's reset code.
  * -S keeps GEM on the ST screen: fVDI gets no frame buffer, for
@@ -32,6 +33,7 @@
 #include "dsio.h"
 #include "tosio.h"
 #include "tosfb.h"
+#include "../include/envroot.h"
 #include <stropts.h>
 
 #define	CART	0xfa0000
@@ -41,6 +43,7 @@ static char *rom = "/etc/tos/emutos.img";	/* the free TOS; -rom for the user's *
 static char *cart = "/etc/tos/tosml.img";
 static char *disk;
 static char *cdir;
+static char *env;
 static char *udir = "/";
 static char *xdrv[26];			/* -D */
 static char *tab[26];			/* drive -> host directory */
@@ -287,6 +290,35 @@ fbmap(fd)
 	close(rf.fd);
 }
 
+/* C: from the environment, locked for this session */
+static int
+envsetup()
+{
+	char path[1024], *h;
+	struct passwd *pw;
+	struct stat sb;
+
+	if (disk || cdir)
+		return 0;
+	h = getenv("HOME");
+	if ((h == 0 || *h == 0) && (pw = getpwuid(getuid())) != 0)
+		h = pw->pw_dir;
+	if (envroot("tos", env, h, path, sizeof path) < 0) {
+		if (env == 0)
+			return 0;
+		fprintf(stderr, "starttos: %s: not an environment name\n", env);
+		return -1;
+	}
+	if (stat(path, &sb) < 0 || (sb.st_mode & S_IFMT) != S_IFDIR) {
+		if (env == 0 || strcmp(env, "default") == 0)
+			return 0;
+		fprintf(stderr, "starttos: no environment %s; run maketos -e %s\n", env, env);
+		return -1;
+	}
+	cdir = strdup(path);
+	return envlock("starttos", "tos", cdir) == -1 ? -1 : 0;
+}
+
 static void
 nothing(sig)
 	int sig;
@@ -309,14 +341,15 @@ main(argc, argv)
 	for (c = 1; c < argc; c++)
 		if (strcmp(argv[c], "-rom") == 0)
 			argv[c] = "-r";
-		else if (argv[c][0] == '-' && strchr("rcCdDmu", argv[c][1]) && argv[c][2] == 0)
+		else if (argv[c][0] == '-' && strchr("rcCdDemu", argv[c][1]) && argv[c][2] == 0)
 			c++;		/* skip the option's argument */
-	while ((c = getopt(argc, argv, "r:c:C:d:D:u:Um:MSv")) != -1)
+	while ((c = getopt(argc, argv, "r:c:C:d:D:e:u:Um:MSv")) != -1)
 		switch (c) {
 		case 'r': rom = optarg; break;
 		case 'c': cart = optarg; break;
 		case 'C': cdir = optarg; disk = 0; break;
 		case 'd': disk = optarg; cdir = 0; break;
+		case 'e': env = optarg; break;
 		case 'D':
 			c = optarg[0] & ~040;
 			if (c < 'D' || c > 'T' || optarg[1] != '=') {
@@ -332,9 +365,13 @@ main(argc, argv)
 		case 'S': stscreen = 1; break;
 		case 'v': verbose = 1; break;
 		default:
-			fprintf(stderr, "usage: starttos [-rom file] [-c cartridge] [-C dir | -d disk] [-D L=dir] [-u dir | -U] [-m MB] [-M] [-S] [-v]\n");
+			fprintf(stderr, "usage: starttos [-rom file] [-c cartridge] [-e env | -C dir | -d disk] [-D L=dir] [-u dir | -U] [-m MB] [-M] [-S] [-v]\n");
 			return 2;
 		}
+	if (env && (cdir || disk)) {
+		fprintf(stderr, "starttos: -e, -C and -d exclude each other\n");
+		return 2;
+	}
 	if (ramsize < (1L << 20) || ramsize > (14L << 20)) {
 		fprintf(stderr, "starttos: ST-RAM is 1 to 14 MB\n");
 		return 2;
@@ -342,6 +379,8 @@ main(argc, argv)
 	/* the guest can make system calls: it gets no descriptors but its own */
 	for (c = 3; c < 256; c++)
 		close(c);
+	if (envsetup() < 0)
+		return 1;
 	if ((tfd = open("/dev/tos", O_RDWR)) < 0)
 		die("/dev/tos");
 	if (ioctl(tfd, TOSIOC_OWNER, &to) == 0 && to.to_pid) {

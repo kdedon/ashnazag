@@ -34,24 +34,29 @@ func IBrowse() (Recipe, error) {
 
 // ValidateJSON implements the keywords used by the embedded schemas.
 func ValidateJSON(kind string, data []byte) error {
-	if !utf8.Valid(data) {
-		return fmt.Errorf("JSON must be valid UTF-8")
-	}
 	b, err := Schema(kind)
 	if err != nil {
 		return err
 	}
+	return ValidateSchema(b, data)
+}
+
+// ValidateSchema checks data against a schema using the same keyword subset.
+func ValidateSchema(b, data []byte) error {
+	if !utf8.Valid(data) {
+		return fmt.Errorf("JSON must be valid UTF-8")
+	}
 	var schema map[string]any
-	if err = json.Unmarshal(b, &schema); err != nil {
+	if err := json.Unmarshal(b, &schema); err != nil {
 		return err
 	}
 	var v any
 	d := json.NewDecoder(bytes.NewReader(data))
-	if err = d.Decode(&v); err != nil {
+	if err := d.Decode(&v); err != nil {
 		return err
 	}
 	var extra any
-	if err = d.Decode(&extra); err != io.EOF {
+	if err := d.Decode(&extra); err != io.EOF {
 		return fmt.Errorf("trailing JSON")
 	}
 	return validate(schema, schema, v, "$")

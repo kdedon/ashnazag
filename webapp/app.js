@@ -20,7 +20,7 @@ function fail(message) {
   element('runtime-status').textContent = message;
 }
 
-function request(request) {
+function request(request, forge = false) {
   return new Promise((resolve, reject) => {
     const id = ++requestID;
     const timeout = setTimeout(() => {
@@ -28,7 +28,7 @@ function request(request) {
       reject(new Error('The local planner did not respond. Reload to retry.'));
     }, 30000);
     pending.set(id, { resolve, reject, timeout });
-    worker.postMessage({ id, request });
+    worker.postMessage({ id, request, forge });
   });
 }
 
@@ -364,6 +364,60 @@ async function updatePlan() {
   }
 }
 
+let presets = [];
+let activePreset = null;
+
+function applySelection(preset, settings, recipe = '') {
+  activePreset = preset;
+  selectMachine(preset.machine);
+  draft().devices = [...settings.devices];
+  renderOptions();
+  updatePlan();
+  window.setQuadraSettings?.({ preset: preset.id, rootMiB: settings.rootMiB, swapMiB: settings.swapMiB, recipe });
+  renderPresets();
+}
+
+function renderPresets() {
+  element('presets').replaceChildren(...presets.map((preset) => {
+    const card = textNode('div', '', 'family-card');
+    card.classList.toggle('selected', activePreset?.id === preset.id);
+    card.append(textNode('h3', preset.label), textNode('p', preset.description), textNode('span', preset.status, 'badge'));
+    const button = textNode('button', preset.status === 'planned' ? 'Planned' : `Use ${preset.label}`, 'configure-button');
+    button.type = 'button';
+    button.disabled = preset.status === 'planned';
+    button.addEventListener('click', () => {
+      applySelection(preset, preset.settings);
+      element('preset-status').textContent = `${preset.label} preset applied.`;
+    });
+    card.append(button);
+    return card;
+  }));
+}
+
+window.forgeDevices = (machine) => [...(drafts.get(machine)?.devices ?? catalog.machines.find((item) => item.id === machine).defaultDevices)].sort();
+
+element('recipe-import').addEventListener('change', async (event) => {
+  event.stopPropagation();
+  const file = event.target.files[0];
+  event.target.value = '';
+  if (!file) return;
+  const status = element('preset-status');
+  try {
+    if (file.size > 1048576) throw new Error('recipe exceeds 1 MiB');
+    const text = await file.text();
+    const result = await request({ action: 'import', recipe: text }, true);
+    const preset = presets.find((item) => item.id === result.selection.preset);
+    applySelection(preset, result.selection.settings, text);
+    const notes = [`Recipe imported: ${preset.label}.`];
+    if (result.selection.provision?.length) notes.push('Its packages must be supplied with the native builder.');
+    if (result.blocked) notes.push(result.blocked);
+    if (result.warning) notes.push(result.warning);
+    status.textContent = notes.join(' ');
+  } catch (error) {
+    status.textContent = `Recipe not imported: ${error.message}`;
+  }
+});
+
 element('generate-image').addEventListener('click', () => { if (manifest?.imageBuildSupported) window.openQuadraBuilder(); });
 
 element('configuration').addEventListener('submit', (event) => event.preventDefault());
@@ -414,6 +468,8 @@ for (const id of ['desktop','login','default-session','boot-animation']) {
       else item.reject(new Error(data.error || 'The configuration could not be planned.'));
     };
     catalog = (await request({ action: 'catalog' })).catalog;
+    presets = (await request({ action: 'presets' }, true)).presets;
+    renderPresets();
     renderMachines();
     renderHardware();
     renderOptions();

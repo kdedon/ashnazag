@@ -154,6 +154,65 @@ tracecall(num, a, v)
 	aux_tlog((int)u.u_procp->p_pid, t, v);
 }
 
+/* trace ring: "tag a0..a{n-1}" in hex, nb bytes at ua if readable; the result */
+void
+aux_thex(tag, a, n, ua, nb, v)
+	char *tag;
+	long *a, ua, v;
+	int n, nb;
+{
+	static char hx[] = "0123456789abcdef";
+	unsigned char m[16];
+	char t[128], *p = t;
+	int i;
+
+	while (*tag)
+		*p++ = *tag++;
+	for (; n > 0; n--, a++)
+		for (*p++ = ' ', i = 28; i >= 0; i -= 4)
+			*p++ = hx[*a >> i & 15];
+	if (nb > (int)sizeof m)
+		nb = sizeof m;
+	if (ua && nb > 0 && copyin((caddr_t)ua, (caddr_t)m, (u_int)nb) == 0)
+		for (*p++ = ' ', *p++ = ':', i = 0; i < nb; i++) {
+			*p++ = hx[m[i] >> 4];
+			*p++ = hx[m[i] & 15];
+		}
+	*p = 0;
+	aux_tlog((int)u.u_procp->p_pid, t, v);
+}
+
+/* socket calls with their arguments and addresses or option values */
+static void
+socktrace(num, a, v)
+	int num;
+	long *a, v;
+{
+	char t[8];
+	long ua = 0;
+	int nb = 0;
+
+	switch (num) {
+	case 70: case 75: case 76:
+		ua = v < 0 ? 0 : a[1];
+		nb = 16;
+		break;
+	case 71: case 72:
+		ua = a[1];
+		nb = 16;
+		break;
+	case 77: case 90:
+		ua = a[3];
+		nb = 4;
+		break;
+	}
+	bcopy("sock ", t, 5);
+	t[5] = '0' + num / 10;
+	t[6] = '0' + num % 10;
+	t[7] = 0;
+	aux_thex(t, a, 5, ua, nb, v);
+}
+
 /*
  * The entry, from the trap #0 / #15 gates of an A/UX process.  Mirrors
  * the stock system call path, ending with its preemption and signal
@@ -236,6 +295,8 @@ aux_systrap(gp, r, vec)
 	if (aux_trace & 2)
 		printf("aux %d: %d -> %d %x %x\n", (int)p->p_pid, num, e, rv.r_val1,
 		    rv.r_val2);
+	if (mac_socktrace && num >= 70 && num <= 93)
+		socktrace(num, a, e ? (long)-e : (long)rv.r_val1);
 	if (e == EINTR || e == ERESTART) {
 		if ((ap->ap_compat & COMPAT_BSDSIGNALS) && p->p_cursig &&
 		    (u.u_sigrestart & 1L << (p->p_cursig - 1)) &&

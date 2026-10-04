@@ -15,7 +15,7 @@
 #include "sys/conf.h"
 #include "sys/var.h"
 
-extern int aux_amix();
+extern int aux_amix(), aux_sockctl();
 
 /* ---- errno ---- */
 
@@ -337,6 +337,8 @@ aux_ioctl(ap, a, rv, r)
 	long cmd = a[1];
 	int e, i, v;
 
+	if (aux_sockctl(a, rv, r, &e))
+		return e;
 	switch (cmd) {
 	case 0x40125401:			/* TCGETA */
 		a[1] = 0x5401;
@@ -905,14 +907,4 @@ aux_slotmanager(ap, a, rv, r)
 	e = (*aux_slotmgr)((int)a[0], (caddr_t)a[1], &res);
 	rv->r_val1 = res;
 	return e;
-}
-
-int
-aux_netdown(ap, a, rv, r)
-	struct aux_proc *ap;
-	long *a;
-	rval_t *rv;
-	char *r;
-{
-	return ENETDOWN;
 }

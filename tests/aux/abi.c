@@ -4,6 +4,7 @@
  * wait3/waitpid, flock and fcntl locks, statfs, truncate, utimes, shm,
  * setreuid, and TIOCPKT on a pty master passed as fd 3 (slave fd 4).
  * With argument "q1": raw disk and /proc transfers into quadrant 1.
+ * With argument "sock": only the socket calls, on the loopback network.
  *
  * Freestanding: A/UX numbers and structures, no libc.  One line per
  * check on stdout: "P name" or "F name: detail".
@@ -50,6 +51,21 @@ char abi_id[8] = "aux-abi";	/* keeps .data non-empty */
 #define	A_UTIMES	145
 #define	A_SIGPENDING	149
 #define	A_WAITPID	151
+#define	A_ACCEPT	70
+#define	A_BIND		71
+#define	A_CONNECT	72
+#define	A_GETPEERNAME	75
+#define	A_GETSOCKNAME	76
+#define	A_GETSOCKOPT	77
+#define	A_LISTEN	78
+#define	A_RECV		79
+#define	A_RECVFROM	80
+#define	A_SEND		83
+#define	A_SENDTO	85
+#define	A_SETSOCKOPT	90
+#define	A_SHUTDOWN	91
+#define	A_SOCKET	92
+#define	MSG_PEEK	2
 
 #define	O_RDONLY	0
 #define	O_RDWR		2
@@ -744,11 +760,236 @@ t_tiocpkt()
 	    "errno", errno, 0);
 }
 
+/* ---- sockets, A/UX numbering: STREAM 1, DGRAM 2 ---- */
+
+#define	EINPROGRESS	56
+#define	ENETDOWN	70
+#define	ECONNREFUSED	81
+#define	SIGIO		31
+#define	FIONBIO		0x8004667e
+#define	FIOASYNC	0x8004667d
+#define	FIONREAD	0x4004667f
+#define	SIOCSPGRP	0x80047308
+#define	SIOCGIFCONF	0xc0086914
+#define	SIOCGIFFLAGS	0xc0206911
+#define	SIOCGIFNETMASK	0xc0206917
+
+static volatile int sigios;
+
+static void
+onsigio(sig)
+	int sig;
+{
+	sigios++;
+}
+
+/* sockaddr_in 127.0.0.1:port */
+static void
+lo(a, port)
+	char *a;
+	int port;
+{
+	int i;
+
+	for (i = 0; i < 16; i++)
+		a[i] = 0;
+	a[1] = 2;
+	a[2] = port >> 8;
+	a[3] = port;
+	a[4] = 127;
+	a[7] = 1;
+}
+
+static int
+port(a)
+	char *a;
+{
+	return (a[2] & 0xff) << 8 | (a[3] & 0xff);
+}
+
+static long
+rdready(fd, ms)
+	long fd, ms;
+{
+	long rd = MASK(fd + 1), tv[2];
+
+	tv[0] = ms / 1000;
+	tv[1] = ms % 1000 * 1000;
+	return sys15(A_SELECT, fd + 1, &rd, 0, 0, tv) == 1 && rd == MASK(fd + 1);
+}
+
+static void
+t_sock()
+{
+	char la[16], ca[16], pa[16], b[64], ifb[320];
+	long l, c, a, u1, u2, n, v, len, sv[3], ifc[2], wr, tv[2], t0, pid, st;
+	int i;
+
+	sv[0] = (long)onalrm;
+	sv[1] = 0;
+	sv[2] = 0;
+	sys15(A_SIGVEC, SIGALRM, sv, 0);
+	sys15(A_ALARM, 20);
+	l = sys15(A_SOCKET, 2, 1, 0);
+	if (l < 0 && errno == ENETDOWN) {
+		out("S sock: no network\n");
+		return;
+	}
+	if (!check("sock_socket", l >= 0, "errno", errno, 0))
+		return;
+	len = 4;
+	check("sock_type", sys15(A_GETSOCKOPT, l, 0xffff, 0x1008, &v, &len) == 0 &&
+	    v == 1 && len == 4, "errno, type", errno, v);
+	v = 1;
+	check("sock_reuseaddr", sys15(A_SETSOCKOPT, l, 0xffff, 4, &v, 4) == 0, "errno", errno, 0);
+	lo(la, 0);
+	check("sock_bind", sys15(A_BIND, l, la, 16) == 0, "errno", errno, 0);
+	len = 16;
+	check("sock_getsockname", sys15(A_GETSOCKNAME, l, la, &len) == 0 && len == 16 &&
+	    la[1] == 2 && port(la) != 0, "errno, port", errno, port(la));
+	n = sys15(A_LISTEN, l, 5);
+	check("sock_listen", n == 0, "n, errno", n, errno);
+
+	c = sys15(A_SOCKET, 2, 1, 0);
+	v = 1;
+	sys15(A_IOCTL, c, FIONBIO, &v);
+	n = sys15(A_CONNECT, c, la, 16);
+	check("sock_connect_nb", n == 0 || errno == EINPROGRESS, "n, errno", n, errno);
+	len = 16;
+	a = rdready(l, 2000L) ? sys15(A_ACCEPT, l, pa, &len) : -2;
+	check("sock_accept", a >= 0 && len == 16 && pa[4] == 127, "errno, len", errno, len);
+	wr = MASK(c + 1);
+	tv[0] = 2;
+	tv[1] = 0;
+	check("sock_connect_writable", sys15(A_SELECT, c + 1, 0, &wr, 0, tv) == 1,
+	    "errno", errno, 0);
+	len = 16;
+	check("sock_getpeername", sys15(A_GETPEERNAME, c, ca, &len) == 0 &&
+	    port(ca) == port(la), "errno, port", errno, port(ca));
+	v = 0;
+	sys15(A_IOCTL, c, FIONBIO, &v);
+	if (a < 0)
+		return;
+
+	check("sock_send", sys15(A_SEND, c, "hello", 5, 0) == 5, "errno", errno, 0);
+	check("sock_select", rdready(a, 2000L), "errno", errno, 0);
+	v = -1;
+	check("sock_fionread", sys15(A_IOCTL, a, FIONREAD, &v) == 0 && v == 5,
+	    "errno, n", errno, v);
+	n = sys15(A_RECV, a, b, 64, 0);
+	check("sock_recv", n == 5 && b[0] == 'h' && b[4] == 'o', "n, errno", n, errno);
+	check("sock_write_read", sys15(A_WRITE, a, "abc", 3) == 3 &&
+	    rdready(c, 2000L) && sys15(A_READ, c, b, 64) == 3 && b[2] == 'c',
+	    "errno", errno, 0);
+
+	v = 1;
+	sys15(A_IOCTL, a, FIONBIO, &v);
+	n = sys15(A_RECV, a, b, 64, 0);
+	check("sock_ewouldblock", n == -1 && errno == EWOULDBLOCK, "n, errno", n, errno);
+	v = 0;
+	sys15(A_IOCTL, a, FIONBIO, &v);
+
+	sv[0] = (long)onsigio;
+	sv[1] = 0;
+	sv[2] = 0;
+	sys15(A_SIGVEC, SIGIO, sv, 0);
+	v = sys15(A_GETPID);
+	check("sock_siocspgrp", sys15(A_IOCTL, a, SIOCSPGRP, &v) == 0, "errno", errno, 0);
+	v = 1;
+	check("sock_fioasync", sys15(A_IOCTL, a, FIOASYNC, &v) == 0, "errno", errno, 0);
+	sys15(A_SEND, c, "x", 1, 0);
+	for (t0 = now_ms(); sigios == 0 && now_ms() - t0 < 2000; )
+		rdready(a, 100L);
+	check("sock_sigio", sigios > 0, "count", sigios, 0);
+	sys15(A_RECV, a, b, 64, 0);
+
+	check("sock_shutdown", sys15(A_SHUTDOWN, c, 1) == 0, "errno", errno, 0);
+	n = rdready(a, 2000L) ? sys15(A_RECV, a, b, 64, 0) : -2;
+	check("sock_eof", n == 0, "n, errno", n, errno);
+	n = sys15(A_RECV, a, b, 64, 0);
+	check("sock_eof_sticky", n == 0 && rdready(a, 100L), "n, errno", n, errno);
+	n = sys15(A_SEND, a, "pk", 2, 0) == 2 && rdready(c, 2000L) ?
+	    sys15(A_RECV, c, b, 64, MSG_PEEK) : -2;
+	check("sock_peek_shut", n == 2 && b[0] == 'p' && sys15(A_RECV, c, b, 64, 0) == 2,
+	    "n, errno", n, errno);
+	sys15(A_SHUTDOWN, a, 1);
+	n = rdready(c, 2000L) ? sys15(A_RECV, c, b, 64, MSG_PEEK) : -2;
+	check("sock_peek_eof", n == 0 && sys15(A_RECV, c, b, 64, 0) == 0, "n, errno", n, errno);
+	sys15(A_CLOSE, a);
+	sys15(A_CLOSE, c);
+	/* closed sockets give back their pending-connect state */
+	for (i = 0, n = 0; i < 24 && n == 0; i++) {
+		c = sys15(A_SOCKET, 2, 1, 0);
+		v = 1;
+		sys15(A_IOCTL, c, FIONBIO, &v);
+		if (sys15(A_CONNECT, c, la, 16) != 0 && errno != EINPROGRESS)
+			n = errno;
+		sys15(A_CLOSE, c);
+	}
+	check("sock_connect_reclaim", n == 0, "i, errno", i, n);
+	sys15(A_CLOSE, l);
+
+	if ((pid = sys15(A_FORK)) == 0 || sysd1) {
+		sys15(A_SETREUID, 100, 100);
+		c = sys15(A_SOCKET, 2, 1, 0);
+		lo(ca, 23);
+		n = sys15(A_BIND, c, ca, 16);
+		exit_(n == -1 && errno == EACCES ? 0 : 1);
+	}
+	waitpid_(pid, &st, 0L);
+	check("sock_resvport", st == 0, "status", st, 0);
+
+	sys15(A_ALARM, 10);
+	c = sys15(A_SOCKET, 2, 1, 0);
+	lo(ca, 1);
+	n = sys15(A_CONNECT, c, ca, 16);
+	check("sock_refused", n == -1 && errno == ECONNREFUSED, "n, errno", n, errno);
+	sys15(A_CLOSE, c);
+	c = sys15(A_SOCKET, 2, 1, 0);
+	ifc[0] = sizeof ifb;
+	ifc[1] = (long)ifb;
+	n = sys15(A_IOCTL, c, SIOCGIFCONF, ifc);
+	check("sock_ifconf", n == 0 && ifc[0] >= 32 && ifc[0] % 32 == 0, "errno, len",
+	    errno, ifc[0]);
+	check("sock_ifconf_lolast", n == 0 && (ifc[0] == 32 || (ifb[20] & 0xff) != 127),
+	    "errno, first byte", errno, ifb[20]);
+	if (n == 0 && ifc[0] >= 32) {
+		check("sock_ifflags", sys15(A_IOCTL, c, SIOCGIFFLAGS, ifb) == 0 &&
+		    (ifb[17] & 1), "errno, flags", errno, ifb[17]);
+		check("sock_ifnetmask", sys15(A_IOCTL, c, SIOCGIFNETMASK, ifb) == 0 &&
+		    (ifb[20] & 0xff) == 255, "errno, first byte", errno, ifb[20]);
+	}
+	sys15(A_CLOSE, c);
+
+	u1 = sys15(A_SOCKET, 2, 2, 0);
+	u2 = sys15(A_SOCKET, 2, 2, 0);
+	lo(la, 0);
+	len = 16;
+	check("sock_udp", u1 >= 0 && u2 >= 0 && sys15(A_BIND, u1, la, 16) == 0 &&
+	    sys15(A_GETSOCKNAME, u1, la, &len) == 0 && port(la) != 0, "errno", errno, 0);
+	check("sock_sendto", sys0(A_SENDTO, u2, "dgram", 5L, 0L, la, 16L) == 5,
+	    "errno", errno, 0);
+	len = 16;
+	pa[1] = 0;
+	n = rdready(u1, 2000L) ? sys0(A_RECVFROM, u1, b, 64L, 0L, pa, &len) : -2;
+	check("sock_recvfrom", n == 5 && b[0] == 'd' && len == 16 && pa[1] == 2 &&
+	    pa[4] == 127, "n, errno", n, errno);
+	sys15(A_CLOSE, u1);
+	sys15(A_CLOSE, u2);
+	sys15(A_ALARM, 0);
+}
+
 int
 main(argc, argv)
 	int argc;
 	char **argv;
 {
+	if (argc > 1 && argv[1][0] == 's') {
+		sys15(A_SETCOMPAT, 0x407);
+		t_sock();
+		out("done\n");
+		return nfail != 0;
+	}
 	t_signals();
 	t_altgap();
 	t_itimer();

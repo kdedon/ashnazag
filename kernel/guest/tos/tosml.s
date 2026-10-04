@@ -164,7 +164,9 @@ pvinit:	move.w	#34,-(sp)		| Kbdvbase
 
 | each VBL: while TOS owns the IKBD vectors, events reach its handlers
 | here; when a program takes them, the IKBD carries everything
-pv:	movem.l	d0-d7/a0-a6,-(sp)
+pv:	move.l	sp,pvsp			| on a stack of our own: the interrupted
+	lea	pvstke,sp		| one may be AUTO's, inside its basepage
+	movem.l	d0-d7/a0-a6,-(sp)
 	lea	PV,a5
 	move.l	kbv,a4
 	addq.l	#1,pv_vbl(a5)
@@ -237,6 +239,7 @@ pv:	movem.l	d0-d7/a0-a6,-(sp)
 	bsr	mot
 	move.w	(sp)+,sr
 9:	movem.l	(sp)+,d0-d7/a0-a6
+	move.l	pvsp,sp
 	rts
 
 | motion up to d0 (x << 16 | y), at most a screen's width, in packets
@@ -304,34 +307,38 @@ pkt3:	lea	pkt,a0
 	.long	0x58425241		| XBRA
 	.long	0x41555855		| AUXU
 old_gd:	.long	0
-gd:	movem.l	d1-d7/a0-a6,-(sp)
-	lea	56+6(sp),a0		| a supervisor caller's arguments
-	tst.w	0x59e			| _longframe
-	beq.s	1f
-	addq.l	#2,a0
-1:	btst	#5,56(sp)
-	bne.s	2f
-	move.l	usp,a0
-2:	move.l	sp,a1			| on a stack of our own: a caller in
+gd:	move.l	a1,-(sp)
+	move.l	sp,a1			| on a stack of our own: a caller in
 	cmp.l	#hstk,sp		| supervisor mode may have little room
 	bls.s	3f
 	cmp.l	#hstke,sp
 	bls.s	4f			| a nested call: already on it
 3:	lea	hstke,sp
 4:	move.l	a1,-(sp)
-	clr.l	-(sp)
+	movem.l	d1-d7/a0/a2-a6,-(sp)
+	lea	4+6(a1),a0		| a supervisor caller's arguments
+	tst.w	0x59e			| _longframe
+	beq.s	1f
+	addq.l	#2,a0
+1:	btst	#5,4(a1)
+	bne.s	2f
+	move.l	usp,a0
+2:	clr.l	-(sp)
 	pea	(sp)
 	move.l	a0,-(sp)
 	jsr	gemdos
 	addq.l	#8,sp
 	move.l	(sp)+,d1		| the result
-	move.l	(sp)+,sp
 	tst.l	d0
 	beq.s	5f
 	move.l	d1,d0
-	movem.l	(sp)+,d1-d7/a0-a6
+	movem.l	(sp)+,d1-d7/a0/a2-a6
+	move.l	(sp)+,sp
+	move.l	(sp)+,a1
 	rte
-5:	movem.l	(sp)+,d1-d7/a0-a6
+5:	movem.l	(sp)+,d1-d7/a0/a2-a6
+	move.l	(sp)+,sp
+	move.l	(sp)+,a1
 	move.l	old_gd,-(sp)
 	rts
 
@@ -339,6 +346,9 @@ gd:	movem.l	d1-d7/a0-a6,-(sp)
 	.balign	4
 hstk:	.space	8192
 hstke:
+pvstk:	.space	2048
+pvstke:
+pvsp:	.space	4
 	.text
 
 | GEMDOS from C: arguments as longs

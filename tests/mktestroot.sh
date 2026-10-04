@@ -55,8 +55,8 @@ AMIB=$B/amiga
 KDIR=$KDIR sh "$T/amiga/build.sh" "$AMIB"
 if [ -z "$TESTKB" ]; then
 	TESTKB=$((BASEKB + 128))
-	[ -d "$AUXB/root" ] && TESTKB=$((TESTKB + $(du -sk "$AUXB/root" | cut -f1)))
-	[ -d "$TOSB/root" ] && TESTKB=$((TESTKB + 1024 + $(du -sk "$TOSB/root" | cut -f1)))
+	[ -d "$AUXB/root" ] && TESTKB=$((TESTKB + 256 + $(du -sk "$AUXB/root" | cut -f1)))
+	[ -d "$TOSB/root" ] && TESTKB=$((TESTKB + 1152 + $(du -sk "$TOSB/root" | cut -f1)))
 	[ -d "$AMIB/root" ] && TESTKB=$((TESTKB + 64 + $(du -sk "$AMIB/root" | cut -f1)))
 fi
 
@@ -108,6 +108,13 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 	fi
 	# A/UX files at their A/UX paths (/shlib, terminfo, termcap)
 	if [ -d "$AUXB/root" ]; then
+		# the startmac script and what it runs
+		echo "f /tests/startmac.sh 755 0 3 $AUX/images/macenv/startmac"
+		echo "f /usr/bin/envlock 755 0 3 $B/bin/envlock"
+		for c in cmp expr nawk; do
+			grep -q "^f /usr/bin/$c " "$M" || echo "f /usr/bin/$c 755 0 3 $RD/build/core/usr/bin/$c"
+		done
+		grep -q '^f /usr/bin/grep ' "$M" || echo "f /usr/bin/grep 755 0 3 $RD/build/core/sbin/grep"
 		(cd "$AUXB/root" && find . -type d | sed 's#^\.##' | sort) | while read -r d; do
 			if [ -n "$d" ] && ! grep -q "^d $d[ 	]" "$M"; then
 				echo "d $d 755 0 3"
@@ -119,6 +126,11 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 	fi
 	if [ -d "$TOSB/root" ] && [ -f "$AUXB/mod.d/tosguest" ]; then
 		echo "c /dev/tos 660 0 25 56 0"
+		# maketos's tools
+		for c in cpio find expr; do
+			grep -q "^f /usr/bin/$c " "$M" || echo "f /usr/bin/$c 755 0 3 $RD/build/core/usr/bin/$c"
+		done
+		grep -q '^f /usr/bin/grep ' "$M" || echo "f /usr/bin/grep 755 0 3 $RD/build/core/sbin/grep"
 		(cd "$TOSB/root" && find . -type d | sed 's#^\.##' | sort) | while read -r d; do
 			if [ -n "$d" ] && ! grep -q "^d $d[ 	]" "$M"; then
 				echo "d $d 755 0 3"

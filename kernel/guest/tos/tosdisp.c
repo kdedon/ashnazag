@@ -22,7 +22,7 @@
 #include <stropts.h>
 
 #define	REFRESH	40		/* ms between screen updates */
-#define	STALE	250		/* ms without a VBL: input takes the IKBD */
+#define	STALE	15		/* guest VBLs without the cartridge's: input takes the IKBD */
 
 /* ADB key code -> IKBD scan code (US layout), 0 none */
 static unsigned char adb2ikbd[128] = {
@@ -65,7 +65,7 @@ static unsigned char kdown[128];	/* scan codes held */
 static int hidden;			/* in the background: input is dropped */
 static int pvs;				/* PV_* in use */
 static unsigned long lvbl;		/* the cartridge's VBL count */
-static long lvt;			/* when it last changed */
+static unsigned long lvg;		/* gvbl() when it last changed */
 static long now();
 
 /* keys, motion and buttons to the kernel, which makes the mouse packets */
@@ -108,14 +108,29 @@ post(ev)
 	return 1;
 }
 
-/* when the cartridge's VBL routine last ran, to a poll period */
-static void
+/*
+ * VBLs the guest took or held off by its IPL: the guest's own clock.  A
+ * guest the host is not running gets none, so its input waits for it.
+ */
+static unsigned long
+gvbl()
+{
+	struct tosvideo tv;
+
+	return ioctl(tfd, TOSIOC_VIDEO, &tv) < 0 ? lvg : tv.tv_vbl + tv.tv_vblheld;
+}
+
+/* when the cartridge's VBL routine last ran; guest VBLs since then */
+static unsigned long
 pvbeat()
 {
+	unsigned long g = gvbl();
+
 	if (pv->pv_vbl != lvbl) {
 		lvbl = pv->pv_vbl;
-		lvt = now();
+		lvg = g;
 	}
+	return g - lvg;
 }
 
 /*
@@ -129,8 +144,7 @@ pvpoll()
 	unsigned long h, t;
 	int on, e;
 
-	pvbeat();
-	on = now() - lvt < STALE ? pv->pv_on & (PV_MOUSE | PV_KEYS) : 0;
+	on = pvbeat() < STALE ? pv->pv_on & (PV_MOUSE | PV_KEYS) : 0;
 	if (pvs & ~on) {
 		h = pv->pv_head;
 		t = pv->pv_tail;
@@ -515,7 +529,7 @@ disp(fd, verbose, ram)
 					hide();
 				else if (fn.fn_type == FBN_SHOWN && hidden) {
 					ioctl(tfd, TOSIOC_PAUSE, 0);
-					lvt = now();	/* its VBLs resume */
+					lvg = gvbl();	/* its VBLs resume */
 				}
 				hidden = fn.fn_type == FBN_HIDDEN ? 1 : fn.fn_type == FBN_SHOWN ? 0 : hidden;
 				have = have && !hidden;

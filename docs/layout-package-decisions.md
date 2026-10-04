@@ -11,7 +11,7 @@ This answers [filesystem-package-handover.md](filesystem-package-handover.md). T
    - system: root-installed and read-only.
 3. **No project name in paths.** Use standard SVR4 places: the existing `/mac`, `/tos` and `/amiga` trees, `/etc/default`, `/var/sadm` and `/var/spool/pkg`.
 4. **The builder emits SVR4 packages.** JSON recipes, locks and receipts are builder formats. The builder resolves a recipe into a relocatable SVR4 datastream package. The target installs it with `pkgadd` for the system tier, or with our `pkginst` for the account and environment tiers. No JSON parser runs on the 68k side.
-5. **No lock files.** One writable session per environment is enforced by a `fcntl` lock on the environment's metadata file, held by the running launcher. The kernel drops it when the process exits, so no stale lock is left.
+5. **No lock files.** One writable session per environment is enforced by a `fcntl` lock on the environment's metadata file, held by the running launcher; the legacy Mac `~/System Folder` has no metadata file, so its existing `.stamp` is locked instead. The kernel drops the lock when the process exits, so no stale lock is left. The guest's host-directory drives hide `.env`.
 
 ## Layout
 
@@ -71,7 +71,7 @@ Rules:
 |---|---|---|
 | L1 | `/etc/default/{mac,tos,amiga}` policy files; `.env` format | Parsed by the shell tools and by the builder fixtures |
 | L2 | `makemac`, `maketos` and `makeamiga` take `-e ENV` and `--import`; legacy default unchanged | Two environments of the same OS get distinct roots |
-| L3 | `startmac`, `starttos` and `startmig` take `-e ENV`; `fcntl` lock on `.env` | A second writable session is refused; the lock goes on exit or kill |
+| L3 | `startmac`, `starttos` and `startmig` take `-e ENV`; `fcntl` lock on `.env`, or on `.stamp` in the legacy `~/System Folder` | A second writable session is refused; the lock goes on exit or kill |
 | L4 | Tier mapping per guest (Amiga assigns, TOS drives, Mac Applications aliases) | A guest sees apps from all three tiers, in order |
 | L5 | Per-environment Mac state: PRAM and System Folder, so two Mac environments run at once | 7.1 and 8.1 run side by side with separate preferences |
 | L6 | `pkginst`: relocatable packages into the account or environment tier, run as the user, with a per-tier `contents` database; root `pkgadd` for the system tier | Install, uninstall, `pkgchk`; uninstall keeps user data |
@@ -134,3 +134,18 @@ local real media. The worker builds an approximately 324 MiB image; independent 
 boot-block checks pass. Its policies are included automatically. The
 output is generated media, excluded from publication. Browser UI execution and
 target boot remain unverified.
+
+## Machine presets and exportable build recipes (2026-10-04)
+
+The forge offers one preset per supported computer, so a first image takes one choice plus the user's media. A preset is a versioned build recipe: machine, devices, disk layout, kernel options, guest environments and packages, each with defaults the user can change.
+
+- Presets: base Quadra 800, base Falcon030 (no FPU, IDE, 512 MB raw), Falcon with CT60/CT63 (060), base TT030, base Amiga 4000 (040). A preset is offered only once its machine boots from a forge-built image; the others appear as planned and can't run, like `planned` packages.
+- Export: the exact recipe used, with format version, forge version, preset id and revision, every user change, the resolved package lock, and each input's role, size and SHA-256. File names, paths and media contents are not included, and nothing is uploaded. One click downloads it as JSON.
+- Import: loading an exported recipe restores the same selections. With the same inputs it rebuilds a byte-identical image, so a bug report needs only the recipe plus the hashes to reproduce or compare.
+- The finished image carries its recipe at `/etc/forge/recipe.json`, so a recipe can be recovered from a disk.
+
+| Id | Work | Acceptance |
+|---|---|---|
+| B7 | Preset format and the Quadra preset (from today's fixed recipe); planned entries for Falcon, Falcon CT60, TT030, A4000 | The Quadra preset builds the same image as today's recipe |
+| B8 | Recipe export and import in UI and CLI; recipe embedded in the image | Export → import → rebuild is byte-identical; malformed or newer-format recipes are refused with a clear message |
+| B9 | Falcon preset, once the forge can write the Atari disk layout (AHDI, root-sector boot, AXB loader) as `kernel/atari/mkdisk.sh` does | Forge Falcon image boots in Hatari |

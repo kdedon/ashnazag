@@ -271,6 +271,20 @@ main()
 		check("c_ro", h == -36 && Fdelete("C:\\AUTO\\UTEST.PRG") == -36 &&
 		    Dcreate("C:\\NEW") == -36 && Fopen("C:\\AUTO\\UTEST.PRG", 2) == -36, h);
 
+	/* C:'s files opened and closed, as a copy does; .env, the session's lock, is not one */
+	found = Fopen("C:\\.ENV", 0) < 0;
+	Fsetdta(dta);
+	for (r = Fsfirst("C:\\*.*", 0x07); r == 0; r = Fsnext()) {
+		buf[0] = 'C'; buf[1] = ':'; buf[2] = '\\';
+		for (d = 0; d < 13 && dta[30 + d]; d++)
+			buf[3 + d] = dta[30 + d];
+		buf[3 + d] = 0;
+		found &= !(dta[30] == 'E' && dta[31] == 'N' && dta[32] == 'V' && dta[33] == '~');
+		if ((h = Fopen(buf, 0)) >= 0)
+			Fclose((int)h);
+	}
+	check("env_hidden", found, r);
+
 	/* G: read-only, I: the same directory writable */
 	r = slurp("G:\\README.TXT");
 	check("drive_g", (Drvmap() & 1L << 6) && r == 6 && same(buf, "drive\n") &&

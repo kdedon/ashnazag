@@ -293,6 +293,7 @@ procs(tag)
 static int fvdi;			/* C: holds fVDI */
 static char *fvdifiles[] = { "FVDI.SYS", "ASHFB.SYS", "AUTO/FVDI.PRG" };
 #define	GDIR	"/tmp/tosg"
+#define	EHOME	"/tmp/tosh"		/* EmuTOS's ~: ~/TOS/c is CDIR */
 #define	BALLERDIR "/tos/baller"		/* a GEM game that also writes the screen itself */
 static char *ballerfiles[] = { "BALLER.PRG", "BALLER.RSC", "BALLER.DAT", "BALLER.TAB",
 	"BALLER.MUS", "EMUDESK.INF", 0 };
@@ -436,6 +437,26 @@ rmfiles(dir)
 	rmdir(dir);
 }
 
+/* pid holding a write lock on path, 0 if none, -1 on error */
+static long
+holder(path)
+	char *path;
+{
+	struct flock fl;
+	int fd = open(path, O_RDWR);
+
+	if (fd < 0)
+		return -1;
+	memset((char *)&fl, 0, sizeof fl);
+	fl.l_type = F_WRLCK;
+	if (fcntl(fd, F_GETLK, &fl) < 0) {
+		close(fd);
+		return -1;
+	}
+	close(fd);
+	return fl.l_type == F_UNLCK ? 0 : (long)fl.l_pid;
+}
+
 /* C:: AUTO\UTEST.PRG, H: in the user's drive table; G: and I: on one directory */
 static void
 cmake()
@@ -456,10 +477,14 @@ cmake()
 	rmfiles(CDIR "/TERADESK");
 	unlink(CDIR "/drives");
 	unlink(CDIR "/ctest.txt");
+	unlink(CDIR "/.env");
 	rmdir(CDIR);
 	mkdir(CDIR, 0755);
 	mkdir(CDIR "/AUTO", 0755);
 	fcopy("/tos/sys/AUTO/UTEST.PRG", CDIR "/AUTO/UTEST.PRG");
+	mkdir(EHOME, 0755);
+	mkdir(EHOME "/TOS", 0755);
+	symlink(CDIR, EHOME "/TOS/c");
 	for (i = 0; fvdi && i < 3; i++) {
 		sprintf(a, "%s/%s", FVDIDIR, fvdifiles[i]);
 		sprintf(b, "%s/%s", CDIR, fvdifiles[i]);
@@ -498,7 +523,7 @@ ucheck()
 		"cwd", "attrib", "dfree", "pexec", "links_inside", "escape_dotdot",
 		"escape_link", "escape_uplink", "escape_cwd", "long_path", "c_auto", "drive_g",
 		"drive_cwd", "c_rw", "drive_d", "drive_h", "irq_rte", "irq_movesr", "irq_mask",
-		"irq_nest", 0
+		"irq_nest", "env_hidden", 0
 	};
 	char b[2048], n[40], why[40], *l, *nm;
 	int fd, i, ok, len = 0;
@@ -543,6 +568,8 @@ ucheck()
 			close(fd);
 		}
 		t_check(N("hostfs_c_unix_side"), len == 15, "ctest.txt: %d bytes", len);
+		t_check(N("hostfs_env_lock"), holder(CDIR "/.env") == (long)tpid,
+		    "holder %ld, starttos %ld", holder(CDIR "/.env"), (long)tpid);
 	}
 }
 
@@ -567,9 +594,12 @@ start(rom)
 			/* no ~/TOS: C: is /tos/sys, read-only */
 			putenv("HOME=" GDIR);
 			execl("/tos/bin/starttos", "starttos", "-v", "-u", UDIR, "-rom", rom, (char *)0);
-		} else
-			execl("/tos/bin/starttos", "starttos", "-v", "-u", UDIR, "-C", CDIR,
+		} else {
+			/* C: is environment c, locked for the session */
+			putenv("HOME=" EHOME);
+			execl("/tos/bin/starttos", "starttos", "-v", "-u", UDIR, "-e", "c",
 			    "-D", "I=" GDIR, stscreen ? "-S" : (char *)0, (char *)0);
+		}
 		_exit(127);
 	}
 	close(p[1]);
@@ -999,6 +1029,35 @@ keys()
 		    st.ts_kbrd);
 }
 
+/*
+ * A key pressed just before the guest is held up: the display process
+ * sees no VBL for a while, and the press must still arrive.
+ */
+static void
+heldkey()
+{
+	long kbs = peek(0xe00024L, 4), a, b, t0;
+
+	if (kbs <= 0 || kbs >= 0x100000 || !(peek(PVF(pv_on), 4) & PV_KEYS)) {
+		t_skip(N("held_guest_key"), "no direct key path");
+		return;
+	}
+	kill(tpid, SIGSTOP);
+	host("down shift");
+	nap(600);
+	host("move 1 0");
+	kill(tpid, SIGCONT);
+	t0 = t_now_ms();
+	while (!((a = peek(kbs, 1)) & 2) && a >= 0 && t_now_ms() - t0 < 5000)
+		nap(50);
+	host("up shift");
+	t0 = t_now_ms();
+	while (((b = peek(kbs, 1)) & 2) && t_now_ms() - t0 < 5000)
+		nap(50);
+	t_check(N("held_guest_key"), a >= 0 && (a & 2) && !(b & 2),
+	    "kbshift with Shift down %lx, up %lx", a, b);
+}
+
 /* on: $118 to a stub chaining to TOS's handler, so input takes the IKBD */
 static int
 ikbdonly(on)
@@ -1025,8 +1084,8 @@ ikbdonly(on)
 static void
 direct()
 {
-	long on = peek(PVF(pv_on), 4), p0 = peek(PVF(pv_npkt), 4), p1, on1, vs;
-	unsigned long b0;
+	long on = peek(PVF(pv_on), 4), p0 = peek(PVF(pv_npkt), 4), p1, on1, vs, t0;
+	unsigned long b0, v0;
 
 	ioctl(tfd, TOSIOC_STAT, &st);
 	t_info(N("pv_on"), "%ld head %ld tail %ld xy %lx cxy %lx btn %ld kbin %lu", on,
@@ -1062,9 +1121,16 @@ direct()
 	t_check(N("fallback_back"), peek(PVF(pv_on), 4) == on, "pv_on %ld", peek(PVF(pv_on), 4));
 	/* with the VBL queue off the IKBD carries the motion */
 	vs = peek(0x452L, 4);
+	ioctl(tfd, TOSIOC_STAT, &st);
+	v0 = st.ts_vbl;
 	if (vs < 0 || !poke(0x452L, vs & 0xffff))
 		return;
-	nap(500);
+	/* the display process gives up on the queue after 15 of the guest's VBLs */
+	t0 = t_now_ms();
+	do {
+		nap(100);
+		ioctl(tfd, TOSIOC_STAT, &st);
+	} while (st.ts_vbl - v0 < 20 && t_now_ms() - t0 < 10000);
 	ioctl(tfd, TOSIOC_STAT, &st);
 	b0 = st.ts_kbrd;
 	host("move 20 10");
@@ -1238,6 +1304,27 @@ buttons()
 	    "left %ld/%ld, right %ld/%ld (down/up)", down[0], up[0], down[1], up[1]);
 }
 
+/* input the display process has handed on: ring events and IKBD bytes */
+static unsigned long
+handed()
+{
+	ioctl(tfd, TOSIOC_STAT, &st);
+	return peek(PVF(pv_head), 4) + st.ts_kbin;
+}
+
+/* until handed() moves past c, at most 2 s */
+static unsigned long
+seen(c)
+	unsigned long c;
+{
+	unsigned long v;
+	int i;
+
+	for (i = 0; i < 400 && (v = handed()) == c; i++)
+		nap(5);
+	return v;
+}
+
 /* the pointer moves; on the Desk menu title the menu drops down */
 static void
 pointer(cx, cy)
@@ -1245,8 +1332,9 @@ pointer(cx, cy)
 {
 	char req[40];
 	char *r;
-	int n = 0;
-	unsigned long n0;
+	int n = 0, i, got = 0;
+	unsigned long n0, h, h1;
+	long t0, dt = -1;
 
 	shot(S("m0"));
 	host("move 40 30");
@@ -1285,7 +1373,24 @@ pointer(cx, cy)
 	shot(S("c0"));
 	ioctl(tfd, TOSIOC_STAT, &st);
 	n0 = st.ts_sys;
-	host("clicks 2 40 80");
+	/*
+	 * The host samples the mouse in its own time, which a busy host
+	 * stretches past a short hold: each change waits until the display
+	 * process has handed it on.  The second press stays well inside
+	 * TOS's double-click time.
+	 */
+	h = handed();
+	t0 = t_now_ms();
+	for (i = 0; i < 4; i++) {
+		host(i & 1 ? "button 0 0" : "button 1 0");
+		h1 = seen(h);
+		got += h1 != h;
+		h = h1;
+		if (i == 2)
+			dt = t_now_ms() - t0;
+		if (i < 3)
+			nap(i & 1 ? 40 : 20);
+	}
 	nap(3000);
 	shot(S("c1"));
 	r = cmp2(S("c0"), S("c1"));
@@ -1294,7 +1399,8 @@ pointer(cx, cy)
 		sscanf(r, "diff %d", &n);
 	ioctl(tfd, TOSIOC_STAT, &st);
 	t_check(N("drive_c_window"), n > 5000 && st.ts_sys > 0,
-	    "%s, host calls %lu -> %lu", r ? r : "no answer", n0, st.ts_sys);
+	    "%s, host calls %lu -> %lu, %d of 4 changes seen, second press at %ld ms",
+	    r ? r : "no answer", n0, st.ts_sys, got, dt);
 }
 
 /* one profile: start, desktop, timers, input, idle cost, end */
@@ -1349,6 +1455,7 @@ run(rom)
 		    st.ts_cache);
 		if (hfd >= 0) {
 			keys();
+			heldkey();
 			direct();
 			fullfifo();
 			if (fvdi)

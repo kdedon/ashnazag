@@ -3,6 +3,7 @@
 package main
 
 import (
+	"amigaux.org/imagebuilder/forge"
 	"amigaux.org/imagebuilder/provision"
 	"amigaux.org/imagebuilder/recipes"
 	"amigaux.org/imagebuilder/rootfs"
@@ -11,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"syscall/js"
 )
@@ -89,6 +91,7 @@ func rootFilesystemJS(_ js.Value, args []js.Value) (result any) {
 		} `json:"sources"`
 		KernelSize int64                `json:"kernelSize"`
 		Provision  []provision.Artifact `json:"provision,omitempty"`
+		Recipe     string               `json:"recipe,omitempty"`
 	}
 	decoder := json.NewDecoder(strings.NewReader(args[0].String()))
 	decoder.DisallowUnknownFields()
@@ -142,7 +145,33 @@ func rootFilesystemJS(_ js.Value, args []js.Value) (result any) {
 		return fail(err)
 	}
 	options := ufs.Options{SizeMiB: request.SizeMiB}
-	if request.Mode == "quadra-console" {
+	if request.Recipe != "" {
+		if request.Mode != "quadra-console" {
+			return fail("recipes apply to the Quadra console root")
+		}
+		r, err := forge.Decode([]byte(request.Recipe))
+		if err != nil {
+			return fail(err)
+		}
+		s, err := r.Selection()
+		if err != nil {
+			return fail(err)
+		}
+		if want := r.Artifacts(s); len(want) != len(request.Provision) || (len(want) != 0 && !reflect.DeepEqual(want, request.Provision)) {
+			return fail("provisioning packages differ from the recipe")
+		}
+		var packages []forge.Media
+		start := len(request.Sources) + 1
+		for i, a := range request.Provision {
+			packages = append(packages, forge.Media{Reader: jsReader{args[1].Index(start + i), a.Size}, Size: a.Size})
+		}
+		entries, err = forge.Root(ctx, []byte(request.Recipe), entries, forge.Media{Reader: jsReader{args[1].Index(len(request.Sources)), request.KernelSize}, Size: request.KernelSize}, packages)
+		if err != nil {
+			return fail(err)
+		}
+		request.Provision = nil
+		options.Timestamp = forge.QuadraTimestamp
+	} else if request.Mode == "quadra-console" {
 		entries, err = recipes.QuadraRoot(entries, jsReader{args[1].Index(len(request.Sources)), request.KernelSize}, request.KernelSize)
 		if err != nil {
 			return fail(err)

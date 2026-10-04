@@ -2,24 +2,88 @@
 # makemac -- make ~/System Folder, your own Mac System Folder, from
 # /mac/lib/System Folder.
 #
-#	makemac [-f]
+#	makemac [-f] [-e env]
+#	makemac -e env --import
 #
 # -f copies the template over an existing ~/System Folder, keeping your
 # Preferences, desktop database, MacTCP settings and other files.
+# -e makes environment env, with its own System Folder in ~/Mac/env,
+# instead; --import copies ~/System Folder into a new one.
 SYS="/mac/lib/System Folder"
 [ -n "$HOME" ] || { echo "makemac: no HOME" >&2; exit 1; }
 T="$HOME/System Folder"
-case $1 in
--f)	;;
+force= e= imp=
+usage() {
+	echo "usage: makemac [-f] [-e env] | makemac -e env --import" >&2
+	exit 2
+}
+while [ $# -gt 0 ]; do
+	case $1 in
+	-f)	force=1 ;;
+	-e)	[ $# -ge 2 ] && [ -n "$2" ] || usage
+		e=$2
+		shift ;;
+	--import) imp=1 ;;
+	*)	usage ;;
+	esac
+	shift
+done
+[ -z "$imp" ] || [ -n "$e" -a -z "$force" ] || usage
+[ "$e" != default ] || [ -n "$imp" ] || e=
+# the layout policy is data: KEY=value lines, never run
+pol() {
+	v=`sed -n "s/^$1=//p" /etc/default/mac 2> /dev/null | sed 1q`
+	[ -n "$v" ] || v=$2
+	case $v in
+	"~/"*)	v=$HOME/`expr "x$v" : 'x~/\(.*\)'` ;;
+	esac
+	echo "$v"
+}
+MN=`pol ENVIRONMENT_METADATA .env`
+E=
+if [ -n "$e" ]; then
+	case $e in
+	[Ss][Hh][Aa][Rr][Ee][Dd]|default|[!A-Za-z0-9]*|*[!-A-Za-z0-9._]*)
+		echo "makemac: $e: not an environment name" >&2
+		exit 1 ;;
+	esac
+	[ `expr "x$e" : '.*'` -le 65 ] || { echo "makemac: $e: name too long" >&2; exit 1; }
+	L=$T
+	E=`pol ENVIRONMENT_ROOT "~/Mac"`/$e
+	T="$E/System Folder"
+fi
+if [ -n "$E" ] && [ -z "$force" ] && [ -d "$E" ]; then
+	echo "makemac: $E exists; makemac -f -e $e copies the template over its System Folder" >&2
+	exit 1
+fi
+case $force in
+1)	;;
 "")	if [ -d "$T" ]; then
 		echo "makemac: $T exists; makemac -f copies the template over it" >&2
 		exit 1
 	fi ;;
-*)	echo "usage: makemac [-f]" >&2
-	exit 2 ;;
 esac
-[ -d "$SYS" ] || { echo "makemac: no $SYS" >&2; exit 1; }
+[ -n "$imp" ] || [ -d "$SYS" ] || { echo "makemac: no $SYS" >&2; exit 1; }
+[ -z "$imp" ] || [ -d "$L" ] || { echo "makemac: no $L to import" >&2; exit 1; }
 [ -d "$T" ] || mkdir -p "$T" || exit 1
+if [ -n "$E" ] && [ ! -f "$E/$MN" ]; then
+	{
+		echo "id=$e"
+		echo "name=$e"
+		echo "profile=mac"
+		if [ -n "$imp" ]; then echo "template=legacy"; else echo "template=$SYS"; fi
+		echo "created=`date -u +%Y-%m-%dT%H:%M:%SZ`"
+	} > "$E/$MN" || exit 1
+fi
+if [ -n "$imp" ]; then
+	cd "$L" && find . -print | cpio -pdmu "$T" 2>/dev/null ||
+		{ echo "makemac: copy to $T failed" >&2; exit 1; }
+	echo "makemac: $L copied to $T, the System Folder in startmac -e $e"
+	exit 0
+fi
+# not under a running session, whose lock is on the stamp or metadata
+if [ -n "$E" ]; then K=$E/$MN; else K=$T/.stamp; fi
+[ ! -x /usr/bin/envlock ] || /usr/bin/envlock -t "$K" || exit 1
 rm -f "$T/.stamp"
 # AppleDouble headers (%name) go with their files; not the File
 # Manager's caches, which belong to their directory; the stamp goes
@@ -34,4 +98,4 @@ cd "$SYS" && find . -print | while read f; do
 	echo "$f"
 done | cpio -pdmu "$T" 2>/dev/null && cp %.stamp .stamp "$T/" ||
 	{ echo "makemac: copy to $T failed" >&2; exit 1; }
-echo "makemac: $T is your System Folder in startmac"
+echo "makemac: $T is your System Folder in startmac${e:+ -e $e}"

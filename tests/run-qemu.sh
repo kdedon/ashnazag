@@ -40,6 +40,15 @@ TMO=${TMO:-3600}
 OUT=$T/results/$(date +%Y%m%d-%H%M%S)-$MODE
 mkdir -p "$OUT"
 
+# a kernel older than its sources would test yesterday's kernel
+NEWER=$(find "$KDIR/mac" "$KDIR/dlm" "$KDIR/tools" "$KDIR/port-local.diff" \
+	"$KDIR/amix-040-060-port/src" -newer "$KERNEL" -type f \
+	\( -name '*.[chs]' -o -name '*.sh' -o -name '*.py' -o -name '*.diff' -o -name '*.ld' \) \
+	! -path '*/build/*' ! -path '*/test/*' 2>/dev/null | head -3)
+if [ -n "$NEWER" ] && [ -z "$STALE_OK" ]; then
+	echo "[FAIL] $KERNEL is older than:"; echo "$NEWER"
+	echo "run sh kernel/build.sh (or STALE_OK=1 to test it anyway)"; exit 2
+fi
 if [ -n "$BUILD" ]; then
 	sh "$T/build.sh" > "$OUT/build.log" 2>&1 || { tail "$OUT/build.log"; exit 2; }
 	if [ $MODE = direct ]; then

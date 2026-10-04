@@ -50,6 +50,10 @@ nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -w -D__STDC__=0 -I"$AUX/kernel/mac/di
 "$TC/bin/m68k-cbm-sysv4-ld" -o "$P/macscrn" "$SYS/usr/ccs/lib/crt1.o" \
 	"$SYS/usr/ccs/lib/crti.o" "$P/macscrn.o" "$P"/lm_*.o "$SYS/usr/lib/libc.so.1" \
 	"$SYS/usr/ccs/lib/crtn.o"
+nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -w -D__STDC__=0 -c "$D/envlock.c" -o "$P/envlock.o"
+"$TC/bin/m68k-cbm-sysv4-ld" -o "$P/envlock" "$SYS/usr/ccs/lib/crt1.o" \
+	"$SYS/usr/ccs/lib/crti.o" "$P/envlock.o" "$SYS/usr/lib/libc.so.1" \
+	"$SYS/usr/ccs/lib/crtn.o"
 rm -rf "$P/guest" "$P"/*.o
 sh "$AUX/images/tosenv/mktos.sh" "$P/tos" ||
 	{ echo "[FAIL] TOS container files"; exit 1; }

@@ -171,6 +171,40 @@ function checkImage(file, rootMiB, swapMiB, directory, kernel, provisioned) {
   }
 }
 
+// Export, import and rebuild must give the same bytes in WASM and natively.
+async function recipeRoundTrip(base) {
+  const selection = { preset: 'quadra800', machine: 'q800', settings: { devices: ['adb', 'framebuffer', 'scc', 'scsi53c96'] } };
+  const build = async (expect) => {
+    const run = await runWorker({ ...base, swapMiB: 4, selection, ...(expect ? { expect } : {}) });
+    try {
+      assert.equal(run.result.type, 'complete', run.result.error);
+      return { recipe: run.result.recipe, mismatches: run.result.mismatches, image: fs.readFileSync(run.result.file.source) };
+    } finally { run.cleanup(); }
+  };
+  const first = await build();
+  const recipe = JSON.parse(first.recipe);
+  assert.equal(recipe.formatVersion, 1);
+  assert.deepEqual(recipe.preset, { id: 'quadra800', revision: 1 });
+  assert.deepEqual(recipe.changes, { swapMiB: 4, provision: [{ kind: 'app', family: 'amiga', id: 'test-1' }] });
+  assert.deepEqual(recipe.inputs.map(input => input.role), ['amix-02', 'amix-03', 'amix-10', 'kernel', 'boot-donor', 'package:test-1']);
+  assert(first.image.includes(Buffer.from(first.recipe)), 'image does not carry its recipe');
+  const second = await build(first.recipe);
+  assert.equal(second.recipe, first.recipe);
+  assert.equal(second.mismatches.length, 0);
+  assert(second.image.equals(first.image), 'WASM rebuild is not byte-identical');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ash-recipe-'));
+  try {
+    const file = (name, input) => { const target = path.join(directory, name); fs.writeFileSync(target, Buffer.from(input.read())); return target; };
+    fs.mkdirSync(path.join(directory, 'tapes'));
+    for (const source of base.archives) file(path.join('tapes', source.name), source.file);
+    const output = path.join(directory, 'native.img');
+    const native = spawnSync(path.join(__dirname, 'build/ashforge'), ['build', '-recipe', file('recipe.json', new InputFile(Buffer.from(first.recipe))), '-tapes', path.join(directory, 'tapes'),
+      '-kernel', file('kernel', base.kernel), '-donor', file('donor', base.donor), '-package', `app:amiga:test-1=${file('package', base.provision[0].file)}`, '-output', output], { encoding: 'utf8', timeout: 120000 });
+    assert.equal(native.status, 0, native.stderr);
+    assert(fs.readFileSync(output).equals(first.image), 'native rebuild differs from WASM');
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+}
+
 async function main() {
   const [tapeDir, kernelPath, donorPath, outputPath] = process.argv.slice(2);
   assert(!tapeDir || (kernelPath && donorPath), 'Usage: node test-quadra-worker.cjs [tape-directory kernel.elf donor.img [output.img]]');
@@ -192,6 +226,7 @@ async function main() {
     checkImage(success.result.file, request.rootMiB, request.swapMiB, success.directory, kernel, !tapeDir);
     if (outputPath) fs.copyFileSync(success.result.file.source, outputPath, fs.constants.COPYFILE_EXCL);
   } finally { success.cleanup(); }
+  if (!tapeDir) await recipeRoundTrip(request);
   for (const [label, changes, options, expected] of [
     ['invalid package', { provision: [{kind:'app'}] }, {}, /provisioning/i],
     ['invalid kernel', { kernel: new InputFile(Buffer.alloc(52)) }, {}, /kernel|ELF|executable/i],

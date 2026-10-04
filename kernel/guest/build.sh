@@ -76,6 +76,9 @@ case "$1" in
 	printf '#include "kinc.h"\n#include "guest_rpage.h"\n#include "guest_rom.h"\nstruct guest_ctr c; struct guest_rpage rp; struct guest_romdesc rd; struct guest_profile pf;\n' > "$O/h.c"
 	kcc "$O/h.c" "$O/h.o"
 	python3 "$G/test/chktab.py" "$G/mod/auxcore/auxcalls.c" "$G/mod/auxcore/auxconv.c"
+	${HOSTCC:-cc} -std=gnu89 -w -o "$O/t_auxsock" "$G/test/t_auxsock.c" \
+		"$G/mod/auxcore/auxsockx.c"
+	"$O/t_auxsock"
 	;;
 *)
 	echo "usage: build.sh -k base outdir | -m kernel.elf outdir | -t" >&2

@@ -35,7 +35,7 @@ opening the HTML as a file will not load its worker and WASM reliably.
 The build copies `wasm_exec.js` from the same Go installation as the compiler.
 Set `GO=/path/to/go` to select an installation.
 
-With Node.js 22 or later, `node webapp/test-wasm.cjs` runs the compiled WASM
+With Node.js 22 or later (`toolchain/node/bin` holds a local copy), `node webapp/test-wasm.cjs` runs the compiled WASM
 and compares valid and invalid requests with the native CLI.
 `node webapp/test-image-wasm.cjs` checks WASM disk assembly; an optional path to
 a native Quadra image additionally checks byte-for-byte reconstruction. CI runs
@@ -54,11 +54,37 @@ printf '%s\n' '{"action":"catalog"}' | webapp/build/auxplan
 printf '%s\n' '{"action":"plan","selection":{"machine":"q800","devices":["scsi53c96","scc"],"packages":[],"containers":[]}}' | webapp/build/auxplan
 ```
 
+## Presets and recipes
+
+A preset is a versioned starting selection for one machine: devices, disk
+layout and defaults, all editable afterwards. Only the Quadra 800 preset builds
+today; Falcon030, Falcon CT60/CT63, TT030 and Amiga 4000 are listed as planned.
+
+Each build produces a recipe: format and forge versions, preset id and
+revision, the changes from the preset, the resolved package lock, and each
+input's role, size and SHA-256. It holds no file names, paths or media. The
+browser offers it as a JSON download after a build, and the image carries it at
+`/etc/forge/recipe.json`. Importing a recipe restores its selections; with the
+same inputs the rebuild is byte-identical. Recipes in a malformed or newer
+format are refused.
+
+```sh
+webapp/build/ashforge presets
+webapp/build/ashforge build -preset quadra800 -tapes DIR -kernel unix.elf -donor aux.img -output new.img -export recipe.json
+webapp/build/ashforge build -recipe recipe.json -tapes DIR -kernel unix.elf -donor aux.img -output again.img
+```
+
+`DIR` holds tape segments `02`, `03` and `10`. With `-recipe`, inputs that
+differ from the recorded hashes are refused; the browser builds anyway and
+names the differing inputs. Add `-package kind:family:id=file` per
+provisioning package.
+
 ## Layout
 
 | Path | Purpose |
 | --- | --- |
 | `planner/` | Embedded catalog, compatibility checks and manifest generation |
+| `forge/`, `cmd/ashforge/` | Presets, recipe export/import and the complete Quadra build |
 | `cmd/auxplan/` | Native JSON command |
 | `cmd/wasm/` | Browser Go bridge |
 | `worker.js` | WASM initialization and planner handling outside the UI thread |

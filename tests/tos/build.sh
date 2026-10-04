@@ -5,7 +5,7 @@
 #
 #   sh tests/tos/build.sh outdir
 #
-# Out: outdir/root/tos/bin/starttos, outdir/root/tos/{sys,fvdi,teradesk}/,
+# Out: outdir/root/tos/bin/{starttos,maketos}, outdir/root/tos/{sys,fvdi,teradesk}/,
 # outdir/root/etc/tos/{emutos.img,rom,tosml.img}.
 # EMUTOS names the EmuTOS 512 KB release zip (default: ref/emutos-release),
 # EMUTOSLANG its image (us).  TOSROM names the user's ROM: an image, or a
@@ -46,6 +46,7 @@ done
 nice -n 19 "$TC/bin/m68k-cbm-sysv4-ld" -o "$R/tos/bin/starttos" "$SYS/usr/ccs/lib/crt1.o" \
 	"$SYS/usr/ccs/lib/crti.o" "$O/starttos.o" "$O/tosdisp.o" "$SYS/usr/lib/libc.so.1" \
 	"$T/build/obj/libextra.a" "$LIBGCC" "$SYS/usr/ccs/lib/crtn.o"
+cp "$AUX/images/tosenv/maketos" "$R/tos/bin/maketos"
 XCC="nice -n 19 $TC/bin/m68k-cbm-sysv4-gcc -O -m68020 -Wall -Wno-implicit -fno-builtin"
 $XCC -c "$G/tos/hostfs.c" -o "$O/hostfs.o"
 "$BIN/m68k-elf-as" -m68040 --register-prefix-optional -o "$O/tosml.o" "$G/tos/tosml.s"

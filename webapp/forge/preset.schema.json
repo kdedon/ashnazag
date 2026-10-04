@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kdedon.github.io/ashnazag/schemas/preset.schema.json",
+  "type": "object",
+  "properties": {
+    "formatVersion": {"const": 1},
+    "presets": {"type": "array", "items": {"$ref": "#/$defs/preset"}}
+  },
+  "required": ["formatVersion", "presets"],
+  "additionalProperties": false,
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"},
+    "preset": {
+      "type": "object",
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "revision": {"type": "integer", "minimum": 1},
+        "label": {"type": "string", "minLength": 1, "maxLength": 64},
+        "description": {"type": "string", "maxLength": 200},
+        "status": {"enum": ["available", "planned"]},
+        "machine": {"$ref": "#/$defs/id"},
+        "recipe": {"enum": ["quadra-console"]},
+        "settings": {"$ref": "#/$defs/settings"}
+      },
+      "required": ["id", "revision", "label", "description", "status", "machine", "settings"],
+      "additionalProperties": false
+    },
+    "settings": {
+      "type": "object",
+      "properties": {
+        "devices": {"type": "array", "items": {"$ref": "#/$defs/id"}, "uniqueItems": true},
+        "rootMiB": {"type": "integer", "minimum": 64, "maximum": 2048},
+        "swapMiB": {"type": "integer", "minimum": 4, "maximum": 2048},
+        "diskMiB": {"type": "integer", "minimum": 64, "maximum": 8192}
+      },
+      "required": ["devices"],
+      "additionalProperties": false
+    }
+  }
+}

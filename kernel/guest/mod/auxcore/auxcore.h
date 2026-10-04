@@ -73,6 +73,8 @@ extern int (*aux_slotmgr)();	/* (selector, SpBlock, &result): errno */
 extern void (*aux_uitick)();	/* (gp): a Mac task takes its tick */
 #define	AUX_TBUF	8192
 extern void aux_tlog();			/* (pid, text, value): trace ring */
+extern void aux_thex();			/* (tag, args, n, uaddr, nbytes, value) */
+extern long mac_socktrace;
 
 /* auxconv.c */
 extern int aux_errno_out();

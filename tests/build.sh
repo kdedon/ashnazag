@@ -65,6 +65,9 @@ for s in ${ONLY:-"$T"/src/t_*.c "$T/src/runall.c"}; do
 	link "$BIN/$n" "$O/$n.o" "$O/t.o" $extra
 	echo "[ok] $n"
 done
+# t_env runs startmac's lock helper
+cc "$AUX/images/macenv/envlock.c" "$O/envlock.o" $XA -w
+link "$BIN/envlock" "$O/envlock.o"
 if [ -n "$MODO" ]; then
 	cc "$KDIR/dlm/modadmin.c" "$O/modadmin.o" $XA -w -I"$KDIR/dlm/include"
 	link "$BIN/modadmin" "$O/modadmin.o" $MODO
@@ -86,8 +89,8 @@ if [ -z "$ONLY" ]; then
 	mkdir -p "$B/netbin"
 	for s in "$T"/net/t_*.c; do
 		n=$(basename "$s" .c)
-		cc "$s" "$O/$n.o" $XA
-		link "$B/netbin/$n" "$O/$n.o" "$O/t.o" -L"$SYS/usr/lib" -lsocket -lnsl
+		cc "$s" "$O/$n.o" $XA -I"$KDIR/dlm/include"
+		link "$B/netbin/$n" "$O/$n.o" "$O/t.o" $MODO -L"$SYS/usr/lib" -lsocket -lnsl
 		echo "[ok] $n"
 	done
 fi
