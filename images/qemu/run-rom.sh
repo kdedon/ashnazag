@@ -3,7 +3,7 @@
 # usage: run-rom.sh ROMFILE [DISKIMG] [OUTDIR]
 HERE=$(cd "$(dirname "$0")" && pwd)
 AUX=$(cd "$HERE/../.." && pwd)
-Q=$AUX/toolchain/qemu
+Q=$AUX/toolchain/qemu-local; [ -x "$Q/usr/bin/qemu-system-m68k" ] || Q=$AUX/toolchain/qemu
 ROM=$1
 DISK=$2
 OUT=${3:-$HERE/results/rom}

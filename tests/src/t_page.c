@@ -72,8 +72,11 @@ long p0, p1;
 
 	for (p = p0; p < p1; p++)
 		for (w = 0; w < nw; w += 7)
-			if (m[p * nw + w] != PAT(id, p, w, n))
+			if (m[p * nw + w] != PAT(id, p, w, n)) {
+				t_info("bad", "holder %d gen %d page %ld word %ld: 0x%lx, want 0x%lx",
+				    id, n, p, w, m[p * nw + w], PAT(id, p, w, n));
 				return 1;
+			}
 	return 0;
 }
 
@@ -136,10 +139,13 @@ long npg;
 		fill(m, id, 0L, npg / 2, 2);
 		_exit(check(m, id, 0L, npg / 2, 2) || check(m, id, npg / 2, npg, 1) ? 2 : 0);
 	}
-	r = t_waitchild(pid, &st, 600) != pid || st != 0;
+	r = t_waitchild(pid, &st, 600);
 	write(rfd, &c, 1);
-	if (r)
+	if (r != pid)
 		return 15;
+	/* the child's status: 21, 22 bad data, 40 + signal */
+	if (st != 0)
+		return WIFSIGNALED(st) ? 40 + WTERMSIG(st) : 20 + WEXITSTATUS(st);
 	if (check(m, id, 0L, npg, 1))
 		return 16;
 	free(m);

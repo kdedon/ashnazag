@@ -14,10 +14,7 @@ amigadev_reset(struct amigadev *d)
 	int i, j;
 	d->intena = d->intreq = d->dmacon = d->adkcon = 0;
 	d->pal = 1;
-	d->frame_phase = d->frames = 0;
-	d->blit_pending = 0;
-	d->blit_zero = 1;
-	for (i = 0; i < 256; i++) d->custom[i] = d->palette[i] = 0;
+	d->vbl_phase = d->frames = d->line = 0;
 	for (i = 0; i < 2; i++) {
 		d->cia[i].pending = d->cia[i].mask = d->cia[i].irq = 0;
 		d->cia[i].serial = d->cia[i].serial_left = 0;
@@ -35,17 +32,7 @@ void
 amigadev_configure(struct amigadev *d, int pal)
 {
 	d->pal = pal != 0;
-	d->frame_phase = 0;
-}
-
-static unsigned long
-beam(struct amigadev *d)
-{
-	unsigned long frequency = d->pal ? 709379UL : 715909UL;
-	unsigned long lines = d->pal ? 312UL : 262UL;
-	unsigned long scaled = d->frame_phase * lines;
-	return ((scaled / frequency) << 8) |
-	    (((scaled % frequency) * 227) / frequency);
+	d->vbl_phase = 0;
 }
 
 static void
@@ -115,13 +102,15 @@ amigadev_read(struct amigadev *d, unsigned long address, int size,
 		}
 		sync_irq(d);
 		switch (address & 0x1fe) {
-		case 0x002:
-			v = d->dmacon | (d->blit_pending ? 0x4000 : 0) |
-			    (d->blit_zero ? 0x2000 : 0); break;
+		/* the blitter is always idle */
+		case 0x002: v = d->dmacon | 0x2000; break;
 		case 0x004:
-			v = (d->pal ? 0x2200 : 0x3200) | ((beam(d) >> 16) & 1) |
+			v = (d->pal ? 0x2200 : 0x3200) | (d->line >> 8) |
 			    ((d->frames & 1) ? 0x8000 : 0); break;
-		case 0x006: v = beam(d) & 0xffff; break;
+		/* each read sees the next line, so beam waits end */
+		case 0x006:
+			d->line = (d->line + 1) % (d->pal ? 312 : 262);
+			v = d->line << 8; break;
 		case 0x008: v = 0; break;
 		case 0x00a: case 0x00c: v = 0; break;
 		case 0x00e: v = 0; break;
@@ -133,7 +122,7 @@ amigadev_read(struct amigadev *d, unsigned long address, int size,
 		case 0x01c: v = d->intena; break;
 		case 0x01e: v = d->intreq; break;
 		case 0x07c: v = 0x00f8; break;
-		default: v = d->custom[(address & 0x1fe) / 2]; break;
+		default: v = 0; break;
 		}
 		if (size == 1) v = (address & 1) ? (v & 0xff) : (v >> 8);
 		*value = v;
@@ -178,10 +167,8 @@ amigadev_write(struct amigadev *d, unsigned long address, int size,
 {
 	int i, reg, timer;
 	struct amigacia *c;
-	if (address == 0xdff05bUL && size == 1) {
-		d->custom[0x40 / 2] = (d->custom[0x40 / 2] & 0xff00) | (value & 0xff);
+	if (address == 0xdff05bUL && size == 1)
 		return 0;
-	}
 	if (address >= 0xdff000UL && address < 0xdff200UL) {
 		if ((size != 2 && size != 4) || (address & 1) ||
 		    address + size > 0xdff200UL) return -1;
@@ -190,14 +177,8 @@ amigadev_write(struct amigadev *d, unsigned long address, int size,
 			amigadev_write(d, address + 2, 2, value & 0xffff);
 			return 0;
 		}
-		reg = (address & 0x1fe) / 2;
-		d->custom[reg] = value;
+		/* other registers drive the display, blitter, audio and disk: ignored */
 		switch (address & 0x1fe) {
-		case 0x058: d->blit_pending = 1; break;
-		case 0x05a:
-			d->custom[0x40 / 2] = (d->custom[0x40 / 2] & 0xff00) | (value & 0xff);
-			break;
-		case 0x05e: d->blit_pending = 2; break;
 		case 0x096:
 			d->dmacon = setclear(d->dmacon, value, 0x07ff); break;
 		case 0x09a:
@@ -207,16 +188,6 @@ amigadev_write(struct amigadev *d, unsigned long address, int size,
 			sync_irq(d); break;
 		case 0x09e:
 			d->adkcon = setclear(d->adkcon, value, 0x7fff); break;
-		default:
-			if (reg >= 0xc0 && reg < 0xe0) {
-				unsigned long rgb;
-				i = ((d->custom[0x106 / 2] >> 13) & 7) * 32 + reg - 0xc0;
-				rgb = ((value & 0xf00) << 8) | ((value & 0xf0) << 4) | (value & 15);
-				if (d->custom[0x106 / 2] & 0x200)
-					d->palette[i] = (d->palette[i] & 0xf0f0f0UL) | rgb;
-				else d->palette[i] = rgb | (rgb << 4);
-			}
-			break;
 		}
 		return 0;
 	}
@@ -304,7 +275,7 @@ void
 amigadev_tick(struct amigadev *d, unsigned long ticks)
 {
 	int i, mode;
-	unsigned long ta, frequency, rate, lines, oldline, phase, frames, linecount;
+	unsigned long ta, frequency, frames, lines, oldline;
 	for (i = 0; i < 2; i++) {
 		struct amigacia *c = &d->cia[i];
 		ta = timer_tick(c, 0, (c->control[0] & 0x20) ? 0 : ticks);
@@ -318,19 +289,16 @@ amigadev_tick(struct amigadev *d, unsigned long ticks)
 			} else c->serial_left -= ta;
 		}
 	}
-	if (!(d->custom[0x100 / 2] & 2)) {
-		frequency = d->pal ? 709379UL : 715909UL;
-		rate = d->pal ? 50 : 60;
-		lines = d->pal ? 312 : 262;
-		oldline = d->frame_phase * lines / frequency;
-		phase = d->frame_phase + (ticks % frequency) * rate;
-		frames = (ticks / frequency) * rate + phase / frequency;
-		d->frame_phase = phase % frequency;
-		linecount = frames * lines + d->frame_phase * lines / frequency - oldline;
-		d->frames += frames;
-		if (frames) d->intreq |= 0x20;
-		tod_tick(&d->cia[0], frames);
-		tod_tick(&d->cia[1], linecount);
-	}
+	/* VERTB and the TOD counters follow the host clock at the frame rate */
+	frequency = d->pal ? 709379UL : 715909UL;
+	lines = d->pal ? 312 : 262;
+	oldline = d->vbl_phase * lines / frequency;
+	d->vbl_phase += (ticks % frequency) * (d->pal ? 50 : 60);
+	frames = (ticks / frequency) * (d->pal ? 50 : 60) + d->vbl_phase / frequency;
+	d->vbl_phase %= frequency;
+	d->frames += frames;
+	if (frames) d->intreq |= 0x20;
+	tod_tick(&d->cia[0], frames);
+	tod_tick(&d->cia[1], frames * lines + d->vbl_phase * lines / frequency - oldline);
 	sync_irq(d);
 }

@@ -12,7 +12,7 @@
 import fcntl, json, os, socket, subprocess, sys, tempfile, threading, time
 
 AUX = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-Q = os.path.join(AUX, 'toolchain', 'qemu')
+Q = os.path.join(AUX, 'toolchain', 'qemu-local' if os.path.exists(os.path.join(AUX, 'toolchain', 'qemu-local', 'usr', 'bin', 'qemu-system-m68k')) else 'qemu')
 img = sys.argv[1]
 rom = sys.argv[2] if len(sys.argv) > 2 else os.path.join(AUX, 'Quadra 800.ROM')
 # one QEMU at a time, as tests/run-qemu.sh and images/qemu/run-mac.sh

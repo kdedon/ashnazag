@@ -20,8 +20,8 @@ else
 fi
 IMAGES=$AUX/images
 BBDIR=$AUX/kernel/mac/bootblk
-T=$AUX/toolchain/bin
-PY="nice -n 19 python3 $IMAGES/auxsash.py"
+T=${HFSUTILS:-$AUX/toolchain/bin}
+auxsash() { nice -n 19 python3 "$IMAGES/auxsash.py" "$@"; }
 
 die() { echo "mkboot: $*" >&2; exit 1; }
 
@@ -35,14 +35,21 @@ while [ $# -gt 0 ]; do
 done
 KERNEL=${1:-$AUX/kernel/build/unix-mac.elf}
 OUT=${2:-$IMAGES/q800-unix.img}
-SRC=$IMAGES/q800-test-small.img
-[ -f "$SRC" ] || SRC=$IMAGES/q800-test.img
+SRC=${BOOT_SOURCE:-$IMAGES/q800-test-small.img}
+if [ -z "${BOOT_SOURCE:-}" ] && [ ! -f "$SRC" ]; then
+	SRC=$IMAGES/q800-test.img
+fi
 [ -f "$SRC" ] || die "no A/UX disk image for the map and driver (run images/mkimage.sh --small)"
 [ -f "$KERNEL" ] || die "missing $KERNEL (run sh kernel/build.sh)"
 [ -x "$T/hformat" ] && [ -x "$T/hfsck" ] || die "hfsutils missing in $T (run images/mkimage.sh once)"
 
-sh "$BBDIR/build.sh" >/dev/null
-MKBB=$BBDIR/build/mkbb
+if [ -z "${MKBB:-}" ] || [ -z "${BOOTBLK:-}" ]; then
+	sh "$BBDIR/build.sh" >/dev/null
+fi
+MKBB=${MKBB:-$BBDIR/build/mkbb}
+BOOTBLK=${BOOTBLK:-$BBDIR/build/bootblk.bin}
+[ -x "$MKBB" ] || die "missing boot-block tool $MKBB"
+[ -f "$BOOTBLK" ] || die "missing boot-block template $BOOTBLK"
 
 WORK=$OUT.work
 rm -rf "$WORK"
@@ -64,14 +71,14 @@ dd if=/dev/zero of="$WORK/hfs.vol" bs=1048576 count="$MB" status=none
 "$T/hmount" "$WORK/hfs.vol" 0 >/dev/null
 "$T/hcopy" -r "$WORK/unix.bin" ":unix"
 "$T/humount"
-"$MKBB" patch "$BBDIR/build/bootblk.bin" "$KERNEL" "$WORK/hfs.vol" "$CMD"
+"$MKBB" patch "$BOOTBLK" "$KERNEL" "$WORK/hfs.vol" "$CMD"
 "$T/hfsck" -n "$WORK/hfs.vol" 0 || die "hfsck reports errors"
 
 echo "== disk image"
 rm -f "$OUT.new"
-$PY small "$SRC" "$WORK/hfs.vol" "$OUT.new"
-$PY apm "$OUT.new"
-$PY apmcheck "$OUT.new" "$SRC" || die "partition map check failed"
+auxsash small "$SRC" "$WORK/hfs.vol" "$OUT.new"
+auxsash apm "$OUT.new"
+auxsash apmcheck "$OUT.new" "$SRC" || die "partition map check failed"
 "$T/hfsck" -n "$OUT.new" 1 || die "hfsck reports errors on the image"
 "$T/hmount" "$OUT.new" 1 >/dev/null
 "$T/hls" -l

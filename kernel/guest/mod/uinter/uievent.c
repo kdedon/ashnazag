@@ -76,6 +76,7 @@ static unsigned char cur_sv[16 * 16 * 4];
 
 long	uin_mouse;		/* v << 16 | h */
 long	uin_nev, uin_nget, uin_nkey, uin_nbtn, uin_ncur, uin_ndown, uin_nlost;
+long	uin_nbtnin;		/* button changes from the device */
 
 extern timestruc_t hrestime;
 extern int ui_scrgeom();
@@ -251,6 +252,7 @@ ui_kin(s, type, code, value)
 		break;
 	case IE_BTN:
 		if (code == 1 && (value != 0) != in_btn) {
+			uin_nbtnin++;
 			in_btn = value != 0;
 			in_flags |= IN_BTN;
 			ev_input(in_btn ? 1 : 2, 0L);

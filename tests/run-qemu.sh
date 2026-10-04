@@ -19,7 +19,7 @@
 [ -n "$AUX_QLOCK" ] || { mkdir -p "$(dirname "$0")/../images/work" 2>/dev/null; AUX_QLOCK=1 exec flock "$(cd "$(dirname "$0")/.." && pwd)/images/work/.qemu.lock" sh "$0" "$@"; }
 T=$(cd "$(dirname "$0")" && pwd)
 AUX=$(cd "$T/.." && pwd)
-Q=$AUX/toolchain/qemu
+Q=$AUX/toolchain/qemu-local; [ -x "$Q/usr/bin/qemu-system-m68k" ] || Q=$AUX/toolchain/qemu
 MODE=direct
 BUILD=1
 KDIR=$AUX/kernel
@@ -66,6 +66,10 @@ QEMU="$Q/usr/bin/qemu-system-m68k -L $Q/usr/share/qemu -M q800 -display none"
 if [ $MODE = direct ]; then
 	MEM=${MEM:-128}
 	set -- -m "$MEM" -kernel "$KERNEL" -initrd "$T/build/testroot.img"
+	# t_amiga's SYS: volume, writes discarded
+	[ -f "$T/build/amiga/sys.img" ] && set -- "$@" \
+		-drive file="$T/build/amiga/sys.img",format=raw,if=none,id=hd0,snapshot=on \
+		-device scsi-hd,scsi-id=0,drive=hd0
 elif [ $MODE = net ]; then
 	MEM=${MEM:-128}
 	set -- -m "$MEM" -kernel "$KERNEL" -initrd "$T/build/netroot.img" \

@@ -67,8 +67,6 @@ startmig
 The current execution path requires a 68040 and a packed 8-bit display.
 `--readonly` protects the selected tree. `--check` validates Kickstart without
 opening a device; `--probe` exercises guest attachment without ROM execution.
-`--rom-only` omits the boot extension and directory broker for diagnostics.
-`--experimental` remains an alias for the normal, still-unverified boot path.
 
 Storage and input status describes remaining
 filesystem limitations and target verification.

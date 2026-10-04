@@ -10,6 +10,8 @@ struct ix {
 	long	pc;		/* of the instruction */
 	int	len;
 	long	ba;		/* bus error address */
+	int	nst;		/* RAM stores, done on commit */
+	struct { unsigned long a, v; int sz; } st[16];
 };
 
 struct opnd {
@@ -161,7 +163,29 @@ openbus(x, a, sz)
 	    (a >= 0xe80000 && end <= 0xe90000) ||
 	    (a >= 0xf00000 && end <= 0xf80000) ||
 	    (a >= 0x7f00000 && end <= 0x7f01000) ||
+	    (a >= 0xff000000 && end <= 0xff010000) ||
 	    (a >= fast && end <= fast + 0x1000);
+}
+
+static void
+census(x, a, wr)
+	struct ix *x;
+	unsigned long a;
+	int wr;
+{
+	struct amigacensus *c = &x->ctr->ac_census;
+	unsigned long fast = AMIGA_FAST_BASE;
+	int i;
+	if (a >= 0xdff000 && a < 0xdff200) { c->custom[(a & 0x1fe) / 2][wr]++; return; }
+	if ((a & ~0xf00UL) == 0xbfe001) { c->cia[0][(a >> 8) & 15][wr]++; return; }
+	if ((a & ~0xf00UL) == 0xbfd000) { c->cia[1][(a >> 8) & 15][wr]++; return; }
+	if (a < x->ctr->ac_config.ae_chipsize ||
+	    (a >= fast && a < fast + x->ctr->ac_config.ae_fastsize)) return;
+	for (i = 0; i < AMIGA_NOTHER && c->other[i][1]; i++)
+		if (c->other[i][0] == a) break;
+	if (i == AMIGA_NOTHER) return;
+	if (!c->other[i][1]) { c->other[i][0] = a; c->other[i][2] = x->pc; }
+	c->other[i][1]++;
 }
 
 static int
@@ -173,6 +197,7 @@ ioaccess(x, a, sz, vp, wr)
 	int i;
 	unsigned long value = 0;
 	if (a <= x->fault && x->fault - a < (unsigned long)sz) x->hit = 1;
+	if (x->ctr->ac_config.ae_flags & AMIGAF_CENSUS) census(x, a, wr);
 	if (a >= 0xbfa000 && a < 0xbfb000) a += 0x4000;
 	if (openbus(x, a, sz)) {
 		if (!wr) *vp = sz == 1 ? 0xffUL : sz == 2 ? 0xffffUL : 0xffffffffUL;
@@ -217,8 +242,16 @@ mput(x, a, sz, value)
 	int sz;
 {
 	if (ioaccess(x, a, sz, &value, 1) == 0) return 0;
-	x->ba = a;
-	return -1;
+	/* the rest of the I/O space is absent; elsewhere the store goes to RAM */
+	if ((a <= x->fault && x->fault - a < (unsigned long)sz) ||
+	    (a + sz > 0xa00000 && a < 0x1000000) || a >= 0xff000000 ||
+	    x->nst == sizeof x->st / sizeof x->st[0]) {
+		x->ba = a;
+		return -1;
+	}
+	x->st[x->nst].a = a; x->st[x->nst].v = value; x->st[x->nst].sz = sz;
+	x->nst++;
+	return 0;
 }
 
 static unsigned long
@@ -678,7 +711,8 @@ amiga_fault(gp, r, v)
 	struct amigactr *a = AMIGAP(gp);
 	struct ix x;
 	unsigned long saved[16], epoch, fa;
-	int i, sr = GR_SR(r), ssw, s, e, wb, tries;
+	unsigned char b[4];
+	int i, j, sr = GR_SR(r), ssw, s, e, wb, tries;
 	a->ac_stat.as_fault++;
 	a->ac_stat.as_lastpc = GR_PC(r);
 	if ((GR_FV(r) >> 12) != 7) return 1;
@@ -690,7 +724,7 @@ amiga_fault(gp, r, v)
 	saved[15] = GR_USP(r);
 	for (tries = 0; tries < 3; tries++) {
 		x.r = r; x.pc = GR_PC(r); x.len = 0; x.ba = 0;
-		x.ctr = a; x.fault = fa; x.hit = 0; x.read = ssw & 0x100;
+		x.ctr = a; x.fault = fa; x.hit = 0; x.read = ssw & 0x100; x.nst = 0;
 		s = amiga_spl();
 		epoch = a->ac_epoch; x.dev = a->ac_dev;
 		for (i = 0; i < 4; i++) x.gary[i] = a->ac_gary[i];
@@ -705,13 +739,18 @@ amiga_fault(gp, r, v)
 				for (i = 0; i < 4; i++) a->ac_gary[i] = x.gary[i];
 				a->ac_epoch++;
 				amiga_splx(s);
+				for (i = 0; i < x.nst; i++) {
+					for (j = 0; j < x.st[i].sz; j++)
+						b[j] = x.st[i].v >> (8 * (x.st[i].sz - 1 - j));
+					if (copyout((caddr_t)b, (caddr_t)x.st[i].a, x.st[i].sz))
+						psignal(curproc, SIGSEGV);
+				}
 				if (wb) {
 					P16(r + 78, G16(r + 78) & ~0x80);
 					P16(r + 80, G16(r + 80) & ~0x80);
 					P16(r + 82, G16(r + 82) & ~0x80);
 				} else GR_PC(r) = x.pc + x.len;
 				u.u_sigflag |= USTKCLEAR;
-				amiga_afterio(gp);
 				guest_trapret();
 				return 0;
 			}

@@ -10,11 +10,17 @@ struct amigacia {
 };
 
 struct amigadev {
-	unsigned short intena, intreq, dmacon, adkcon;
-	unsigned short custom[256];
-	unsigned long palette[256], frame_phase, frames;
-	unsigned char pal, blit_pending, blit_zero;
+	unsigned short intena, intreq, dmacon, adkcon, line;
+	unsigned long vbl_phase, frames;
+	unsigned char pal;
 	struct amigacia cia[2];
+};
+
+#define AMIGA_NOTHER 32
+/* register accesses, counted with AMIGAF_CENSUS and logged at exit */
+struct amigacensus {
+	unsigned long custom[256][2], cia[2][16][2];
+	unsigned long other[AMIGA_NOTHER][3];	/* address, count, first PC */
 };
 
 void amigadev_reset(struct amigadev *);

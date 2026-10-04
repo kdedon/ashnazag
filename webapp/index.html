@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#100d0c">
+  <title>Ash Nazag · Disk image forge</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+  <script src="storage.js" defer></script>
+  <script src="assembly.js" defer></script>
+  <script src="filesystem.js" defer></script>
+  <script src="quadra.js" defer></script>
+</head>
+<body>
+  <header class="site-header"><a class="brand" href="./" aria-label="Ash Nazag disk image forge home"><span class="brand-mark" aria-hidden="true">◈</span> ASH NAZAG <span class="brand-sub">THE ONE DISTRIBUTION</span></a><span class="local-badge"><span></span> Runs on your computer</span></header>
+  <main>
+    <section class="intro" aria-labelledby="title"><div class="forge-landscape" aria-hidden="true"><div class="ember-ring"></div></div><div class="intro-copy"><div class="eyebrow">ONE DISTRIBUTION. MANY MACHINES.</div><h1 id="title">Forge your<br><em>disk image.</em></h1><p>Ash Nazag brings System V to your 68k. Choose your machine, its devices, and the software to put on your disk.</p><div class="stage"><span>QUADRA CONSOLE BUILDER</span> Build your disk image locally from your media and a prebuilt kernel.</div></div></section>
+    <div class="workshop">
+      <form id="configuration" aria-label="Image configuration">
+        <section class="panel"><div class="section-heading"><span class="step">01</span><div><h2>Choose your machine</h2><p>Choose a family, then configure the model, memory and drivers.</p></div></div><div id="machines" class="family-grid"><p class="muted">Loading machine profiles…</p></div><section id="hardware-config" class="hardware-config" aria-labelledby="hardware-title"><h3 id="hardware-title">Configure Macintosh</h3><div class="hardware-fields"><label class="version-field">Model<select id="model"></select></label><label class="version-field">CPU / hardware variant<select id="variant"></select></label></div><p id="hardware-status" class="field-help"></p><fieldset><legend>Installed memory</legend><div id="memory" class="hardware-fields"></div><p class="field-help">Enter the RAM fitted to your machine. Memory sizing and hardware boot limits still need validation.</p></fieldset><fieldset><legend>Device drivers</legend><div id="devices" class="option-list"></div></fieldset></section></section>
+        <section class="panel"><div class="section-heading"><span class="step">02</span><div><h2>Equip your system</h2><p>Only options for your machine appear here.</p></div></div><fieldset><legend>Packages</legend><div id="packages" class="option-list"></div></fieldset><fieldset><legend>Guest containers</legend><p class="field-help">Add an environment for each OS version you want. Each keeps its own media.</p><div id="container-types" class="container-types"></div><div id="containers" class="container-instances"></div></fieldset><section id="shared-guest-section" hidden><h3>Shared guest support media</h3><p class="field-help">Choose these once for all matching guests. AMIX base media is separate below.</p><div id="shared-guest-media" class="media-fields"></div></section></section>
+        <section class="panel"><div class="section-heading"><span class="step">03</span><div><h2>Base system media</h2><p>Your installation media will supply the files for the disk image.</p></div></div><div id="base-media" class="media-fields"></div><p class="field-help">Files stay in this browser session. Contents, versions and checksums are not validated yet.</p></section>
+        <section class="panel"><div class="section-heading"><span class="step">04</span><div><h2>Startup &amp; sessions</h2><p>Choose your login screen and the session offered after sign-in.</p></div></div><label class="version-field">X desktop<select id="desktop"><option value="none">No X desktop</option><option value="twm">twm</option><option value="olwm">OpenLook (olwm)</option><option value="olvwm">OpenLook virtual desktop (olvwm)</option></select></label><p class="field-help">Select the X11 package above to configure a desktop. OpenLook also needs the planned XView bundle.</p><label class="version-field">Boot to<select id="login"><option value="console">Console login</option><option value="xdm">Graphical login (xdm · planned)</option></select></label><label class="version-field">Default session after login<select id="default-session"></select></label><label class="option"><input id="boot-animation" type="checkbox"><span class="option-copy"><strong>Boot splash / animation (planned)</strong><p>Quiet startup with a progress indicator. Verbose boot, errors and filesystem prompts remain visible when needed.</p></span></label><p class="field-help">These settings will be applied by the image builder. Graphical login and splash integration are pending; automatic login is not enabled.</p></section>
+      </form>
+      <aside class="summary" aria-labelledby="summary-title"><div class="summary-top"><span class="eyebrow">YOUR DISK IMAGE</span><h2 id="summary-title">Preparing the forge</h2><p id="runtime-status" role="status">Loading machine support…</p></div><div id="plan-content" hidden><p id="memory-summary" class="field-help"></p><div class="plan-group"><h3>Memory budget · all sessions running</h3><p id="memory-budget" class="field-help"></p><div id="memory-warnings" class="warnings" role="status"></div><p class="field-help">Estimate: host 16 MiB + X desktop 16 MiB + guest budgets + splash 2 MiB. Actual use, swap and DMA reservations still need validation.</p></div><div class="plan-group"><h3>Built into the kernel <span id="builtin-count"></span></h3><ul id="builtins" class="tag-list"></ul></div><div class="plan-group"><h3>Loadable modules <span id="module-count"></span></h3><ul id="modules" class="tag-list"></ul><p class="field-help">Boot-critical drivers stay in the kernel. Supported guest components load as modules.</p></div><div class="plan-group"><h3>Guest environments</h3><ul id="guest-summary" class="plain-list"></ul></div><div class="plan-group"><h3>Required inputs</h3><ul id="required-inputs" class="plain-list"></ul></div><details><summary>Assembly stages</summary><ol id="build-steps" class="plain-list"></ol></details><details class="technical-details"><summary>Development details</summary><div id="warnings" class="warnings"></div></details></div><div class="summary-bottom"><div class="output-format"><span>OUTPUT</span><strong>Disk image <code>.img</code></strong></div><button id="generate-image" class="primary-button" type="button" disabled aria-describedby="assembly-status">Generate disk image <span aria-hidden="true">↓</span></button><p id="assembly-status">Checking whether this configuration has a supported image recipe…</p></div></aside>
+    </div>
+    <section class="panel" id="quadra-image-builder"></section>
+    <details class="panel" id="prepared-assembly">
+      <summary>Advanced · Assemble a Quadra image from prepared inputs</summary>
+      <p class="field-help">Combine an existing Quadra boot disk and a prepared UFS root filesystem into a downloadable disk image. This separate tool uses only the inputs below; the machine, packages, guests and startup choices above still await the full image builder.</p>
+      <form id="prepared-assembly-form" aria-label="Prepared Quadra image assembly">
+        <label class="media-field">Quadra boot disk (.img)<input id="prepared-boot" type="file" accept=".img,.dsk,application/octet-stream" required><span class="field-help">Supplies the partition map, disk drivers and HFS boot partition, including its kernel.</span></label>
+        <label class="media-field">Prepared UFS root filesystem (.img)<input id="prepared-root" type="file" accept=".img,.ufs,application/octet-stream" required><span class="field-help">Use a raw UFS filesystem image prepared for the boot disk’s kernel.</span></label>
+        <label class="version-field">Swap size (MiB)<input id="prepared-swap" type="number" min="4" max="2048" step="1" value="64" required></label>
+        <p class="field-help">Assembly runs locally in a worker. Images up to 8 GiB use temporary browser disk storage, subject to available space. Browsers without disk storage support are limited to 256 MiB. Download the image before changing inputs or leaving this page. Input files remain unchanged.</p>
+        <p><button id="prepared-assemble" class="primary-button" type="submit">Assemble prepared disk image <span aria-hidden="true">↓</span></button></p>
+        <button id="prepared-cancel" class="text-button" type="button" hidden>Cancel assembly</button>
+        <progress id="prepared-progress" max="1" value="0" aria-label="Disk image assembly progress" hidden></progress>
+        <p id="prepared-status" class="field-help" role="status" aria-live="polite">Choose both prepared images to begin.</p>
+        <p><a id="prepared-download" download="ash-nazag-q800.img" hidden>Download ash-nazag-q800.img</a></p>
+      </form>
+    </details>
+    <section class="panel" id="filesystem-generator"></section>
+    <footer><span>ASH NAZAG / The One Distribution</span><span>Forged locally. Your media stays with you.</span></footer>
+  </main>
+</body>
+</html>

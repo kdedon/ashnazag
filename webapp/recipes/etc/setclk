@@ -1,0 +1,2 @@
+# The kernel reads the Macintosh clock at boot and sets it in stime(2).
+exit 0

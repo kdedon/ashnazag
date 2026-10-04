@@ -1,2 +1,3 @@
 is:s:initdefault:
 ap::sysinit:/sbin/autopush -f /etc/ap/chan.ap
+pr::sysinit:/sbin/mount /proc </dev/console >/dev/console 2>&1

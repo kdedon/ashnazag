@@ -1,0 +1,76 @@
+{
+  "catalog": [
+    {
+      "formatVersion": 1,
+      "id": "amiga.fixture",
+      "upstreamVersion": "1",
+      "recipeRevision": 1,
+      "variant": "m68k",
+      "status": "qualified",
+      "target": {
+        "family": "amiga",
+        "environmentProfiles": [
+          "amiga-3.2"
+        ]
+      },
+      "tier": "environment",
+      "shareable": false,
+      "sources": [],
+      "dependencies": [],
+      "operations": [
+        {
+          "type": "directory",
+          "path": "Apps",
+          "mode": 493
+        },
+        {
+          "type": "file",
+          "path": "Apps/readme",
+          "mode": 420,
+          "data": "before"
+        },
+        {
+          "type": "patch",
+          "path": "Apps/readme",
+          "sha256": "6db7d803e74f1ffa7d8f5adc0bf95b3e15bf4c8373fffadf546227cc6c6742cb",
+          "data": "installed\n"
+        }
+      ],
+      "state": {
+        "scope": "environment",
+        "writablePaths": [],
+        "preserveOnUpgrade": true
+      },
+      "resources": {
+        "installedBytes": 0,
+        "temporaryBytes": 0,
+        "memoryBytes": 0
+      },
+      "verification": {
+        "requiredPaths": [
+          "Apps/readme"
+        ],
+        "runtimeQualified": true
+      },
+      "metadata": {
+        "format": "amiga",
+        "entries": []
+      }
+    }
+  ],
+  "requests": [
+    {
+      "environmentID": "first",
+      "family": "amiga",
+      "profile": "amiga-3.2",
+      "packages": [
+        {
+          "id": "amiga.fixture",
+          "version": "1",
+          "variant": "m68k",
+          "tier": "environment"
+        }
+      ]
+    }
+  ]
+}

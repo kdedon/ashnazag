@@ -15,12 +15,11 @@ struct amigactr {
 	unsigned long ac_mmu[10];
 	unsigned long ac_fraction, ac_epoch;
 	unsigned char ac_gary[4];
-	uid_t ac_uid;
 	int ac_timer, ac_sleeping;
+	struct amigacensus ac_census;
 };
 #define AMIGAP(gp) ((struct amigactr *)GUEST_PRIV(gp))
 extern int amiga_spl();
 extern void amiga_splx();
 extern int amiga_fault();
-extern void amiga_afterio();
 #endif

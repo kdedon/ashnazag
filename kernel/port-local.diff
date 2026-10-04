@@ -1,4 +1,50 @@
 # Local changes to https://github.com/asokero/amix-040-060-port at 54fba4d
+diff --git a/src/hat040.s b/src/hat040.s
+index 62ba9e4..43ffc8f 100644
+--- a/src/hat040.s
++++ b/src/hat040.s
+@@ -860,7 +860,7 @@ Lhu_done:
+ | THIS port: the 040 leaf PTE address is ALREADY in p_mapping (hat_pteload set pp->p_mapping=&PTE),
+ | so just clrl each PTE (UDT->0 invalid) directly -- no tree walk -- then cpusha+pflusha so the HW
+ | walker reloads the invalid descriptor and the next access faults & re-maps.  CONSERVATIVE: does
+-| NOT free the now-emptier leaf tables or adjust as->a_rss (a bounded leak / soft-count drift, same
++| NOT free the now-emptier leaf tables (a bounded leak, same
+ | philosophy as hat_free040) -- correctness (no stale resident PTE on a freed page) comes first.
+ |
+ | 2026-07-18 ISSUE-10 PRODUCER FIX: harvest each PTE's HW U/M bits into pp->p_ref/p_mod BEFORE
+@@ -898,6 +898,32 @@ Lpu_loop:
+ 	bfextu	%a0@{&3:&1},%d1
+ 	orl	%d1,%d0
+ 	bfins	%d0,%a2@{&5:&1}		| pp->p_mod |= PTE M
++	tstl	%a3@
++	beqw	Lpu_clr
++| the owner's resident count drops with the mapping; hat_unload skips cleared leaves
++	movel	%a3,%d0
++	andil	&0xffffff00,%d0		| leaf base
++	movel	%d0,%d1
++	moveq	&12,%d2
++	lsrl	%d2,%d1
++	cmpl	pages_base,%d1
++	bcsw	Lpu_clr
++	cmpl	pages_end,%d1
++	bccw	Lpu_clr
++	subqw	&8,%sp
++	movel	%sp,%sp@-
++	movel	%d0,%sp@-
++	jsr	hat_pt2ptdat
++	lea	%sp@(16),%sp
++	movel	%a0,%d0
++	beqs	Lpu_clr
++	movel	%a0@,%d0		| ptdat->as
++	beqs	Lpu_clr
++	moveal	%d0,%a0
++	tstl	%a0@(16)
++	beqs	Lpu_clr
++	subql	&1,%a0@(16)		| as rss--
++Lpu_clr:
+ 	clrl	%a3@			| *pte = 0 -> 040 leaf descriptor INVALID (UDT=0)
+ 	movel	%d3,%d2			| advance to next mapping
+ 	braw	Lpu_loop
 diff --git a/src/stamp_buildid.py b/src/stamp_buildid.py
 index b091d9e..dfa67b5 100644
 --- a/src/stamp_buildid.py

@@ -1,0 +1,493 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kdedon.github.io/ashnazag/schemas/lock.schema.json",
+  "type": "object",
+  "properties": {
+    "formatVersion": {
+      "const": 1
+    },
+    "layoutPolicyVersion": {
+      "const": 1
+    },
+    "bindings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/binding"
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/source"
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "formatVersion",
+    "layoutPolicyVersion",
+    "bindings",
+    "artifacts",
+    "warnings"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "target": {
+      "type": "object",
+      "properties": {
+        "family": {
+          "type": "string",
+          "enum": [
+            "mac",
+            "amiga",
+            "tos"
+          ]
+        },
+        "environmentProfiles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$"
+          },
+          "uniqueItems": true
+        },
+        "cpus": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$"
+          },
+          "uniqueItems": true
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$"
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "family",
+        "environmentProfiles"
+      ],
+      "additionalProperties": false
+    },
+    "source": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$"
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "cpio",
+            "svr4",
+            "lha",
+            "adf",
+            "hfs"
+          ]
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provenance": {
+          "type": "string",
+          "minLength": 1
+        },
+        "redistribution": {
+          "type": "string",
+          "enum": [
+            "user-supplied",
+            "permitted",
+            "forbidden"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "format",
+        "size",
+        "sha256",
+        "location",
+        "provenance",
+        "redistribution"
+      ],
+      "additionalProperties": false
+    },
+    "dependency": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\s@#]+$"
+        },
+        "variant": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$"
+        },
+        "tier": {
+          "type": "string",
+          "enum": [
+            "environment",
+            "account",
+            "system"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "variant",
+        "tier"
+      ],
+      "additionalProperties": false
+    },
+    "operation": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "extract",
+            "file",
+            "directory",
+            "symlink",
+            "hardlink",
+            "patch"
+          ]
+        },
+        "source": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "mode": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4095
+        },
+        "data": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "type",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "state": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "type": "string",
+          "enum": [
+            "environment"
+          ]
+        },
+        "writablePaths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "uniqueItems": true
+        },
+        "preserveOnUpgrade": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "scope",
+        "writablePaths",
+        "preserveOnUpgrade"
+      ],
+      "additionalProperties": false
+    },
+    "resources": {
+      "type": "object",
+      "properties": {
+        "installedBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "temporaryBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "memoryBytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "installedBytes",
+        "temporaryBytes",
+        "memoryBytes"
+      ],
+      "additionalProperties": false
+    },
+    "verification": {
+      "type": "object",
+      "properties": {
+        "requiredPaths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "uniqueItems": true
+        },
+        "runtimeQualified": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "requiredPaths",
+        "runtimeQualified"
+      ],
+      "additionalProperties": false
+    },
+    "metadataEntry": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "protection": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "comment": {
+          "type": "string",
+          "maxLength": 79
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "type": "string",
+          "enum": [
+            "none",
+            "appledouble",
+            "amiga",
+            "dos83"
+          ]
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/metadataEntry"
+          }
+        }
+      },
+      "required": [
+        "format",
+        "entries"
+      ],
+      "additionalProperties": false
+    },
+    "recipe": {
+      "type": "object",
+      "properties": {
+        "formatVersion": {
+          "const": 1
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$"
+        },
+        "upstreamVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\s@#]+$"
+        },
+        "recipeRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "variant": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "planned",
+            "qualified"
+          ]
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "tier": {
+          "type": "string",
+          "enum": [
+            "environment",
+            "account",
+            "system"
+          ]
+        },
+        "shareable": {
+          "type": "boolean"
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/source"
+          }
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/dependency"
+          }
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/operation"
+          }
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        },
+        "resources": {
+          "$ref": "#/$defs/resources"
+        },
+        "verification": {
+          "$ref": "#/$defs/verification"
+        },
+        "metadata": {
+          "$ref": "#/$defs/metadata"
+        }
+      },
+      "required": [
+        "formatVersion",
+        "id",
+        "upstreamVersion",
+        "recipeRevision",
+        "variant",
+        "status",
+        "target",
+        "tier",
+        "shareable",
+        "sources",
+        "dependencies",
+        "operations",
+        "state",
+        "resources",
+        "verification",
+        "metadata"
+      ],
+      "additionalProperties": false
+    },
+    "binding": {
+      "type": "object",
+      "properties": {
+        "environmentID": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$"
+        },
+        "tier": {
+          "type": "string",
+          "enum": [
+            "environment",
+            "account",
+            "system"
+          ]
+        },
+        "recipeSHA256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "recipe": {
+          "$ref": "#/$defs/recipe"
+        }
+      },
+      "required": [
+        "environmentID",
+        "tier",
+        "recipeSHA256",
+        "recipe"
+      ],
+      "additionalProperties": false
+    },
+    "installedFile": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "preserved": {
+          "type": "boolean"
+        },
+        "metadata": {
+          "$ref": "#/$defs/metadata"
+        }
+      },
+      "required": [
+        "path",
+        "sha256",
+        "preserved",
+        "metadata"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

@@ -633,7 +633,7 @@ t_events()
 	check("time_lowmem", LOW(0x20c) - t >= -2 && LOW(0x20c) - t <= 2, "Time, expected",
 	    LOW(0x20c), t);
 	check("mouse_lowmem", LOW16(0x830) > 0 && LOW16(0x832) > 0 && LOW(0x82c) == LOW(0x830),
-	    "Mouse", LOW(0x830), LOW(0x82c));
+	    "Mouse, MTemp", LOW(0x830), LOW(0x828));
 	check("mbstate_up", *(volatile unsigned char *)0x172 == 0x80, "MBState",
 	    *(volatile unsigned char *)0x172, 0);
 	check("devices_cursor", ioc(UI_DEVICES, 0) == 0 && ioc(UI_CURSOR, 0) == 0, "errno", errno, 0);

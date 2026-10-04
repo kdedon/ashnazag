@@ -15,6 +15,7 @@ struct amigactr {
     unsigned long ac_epoch;
     unsigned char ac_gary[4];
     struct { unsigned long as_fault, as_lastpc, as_lastaddr; } ac_stat;
+    struct amigacensus ac_census;
 };
 struct guest_proc { struct amigactr a; unsigned short gp_vpend; };
 #define AMIGAP(gp) (&(gp)->a)
@@ -64,9 +65,21 @@ static int copyin(char *from, char *to, unsigned int count)
     memcpy(to, code + address - 0x1000, count);
     return 0;
 }
+static unsigned char ram[16];
+static int signals;
+static void *curproc;
+#define SIGSEGV 11
+static int copyout(char *from, char *to, unsigned int count)
+{
+    uintptr_t address = (uintptr_t)to;
+    if (address < 0x3000 || address + count > 0x3000 + sizeof ram)
+        return -1;
+    memcpy(ram + address - 0x3000, from, count);
+    return 0;
+}
+static void psignal(void *p, int sig) { (void)p; (void)sig; signals++; }
 static int amiga_spl(void) { return spldepth++; }
 static void amiga_splx(int s) { assert(spldepth == s + 1); spldepth = s; }
-static void amiga_afterio(struct guest_proc *gp) { (void)gp; }
 static void guest_trapret(void) { assert(spldepth == 0); tails++; }
 
 #include "../../guest/mod/amigaguest/amigafault.c"
@@ -286,6 +299,38 @@ int main(void)
     setup(&gp, 0x4e71, 0xdff09a, 0);
     put16(frame + 82, 0xc2); put32(frame + 104, 0xdff09a);
     put32(frame + 108, 0xc020);
+    rejected(&gp);
+
+    /* Probe result pushed to RAM: stored on commit. */
+    setup(&gp, 0x2f28, 0x7f00004, 1);
+    put16(code + 2, 4);
+    code_size = 4;
+    regs.a[0] = 0x7f00000;
+    regs.usp = 0x3008;
+    accepted(&gp);
+    assert(regs.usp == 0x3004 && get32(ram + 4) == 0xffffffffUL && signals == 0);
+
+    /* A store to absent RAM fails the instruction. */
+    setup(&gp, 0x2f28, 0x7f00004, 1);
+    put16(code + 2, 4);
+    code_size = 4;
+    regs.a[0] = 0x7f00000;
+    regs.usp = 0x8000;
+    accepted(&gp);
+    assert(signals == 1);
+
+    /* RAM stores never reach ROM or the top 16 MB. */
+    setup(&gp, 0x22a8, 0x7f00004, 1);
+    put16(code + 2, 4);
+    code_size = 4;
+    regs.a[0] = 0x7f00000;
+    regs.a[1] = 0xf80000;
+    rejected(&gp);
+    setup(&gp, 0x22a8, 0x7f00004, 1);
+    put16(code + 2, 4);
+    code_size = 4;
+    regs.a[0] = 0x7f00000;
+    regs.a[1] = 0xff010000;
     rejected(&gp);
 
     puts("[ok] Amiga fault decoder: MOVE, arithmetic, MOVEM, probes, writebacks, and rollback");

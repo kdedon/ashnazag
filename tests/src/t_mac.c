@@ -621,27 +621,50 @@ int h, v;
 	return 0;
 }
 
+/* until the kernel has had c button changes from the device, at most 2 s */
+static void
+btnwait(c)
+long c;
+{
+	int i;
+
+	for (i = 0; i < 400 && getsym("uin_nbtnin") < c; i++)
+		pause_ms(5L);
+}
+
 /*
  * n clicks held hold ms, gap ms apart: mouseDowns the Mac took.  The
  * event queue keeps 32 events and drops the oldest, as the Mac's, so
  * the clicks go CHUNK at a time, each chunk taken before the next.
+ * seen: each change waits until the kernel has it, as the mouse is
+ * sampled in the host's time, which a busy host stretches past hold.
  */
 #define	CHUNK	10
 
 static long
-clicks(n, hold, gap)
-int n, hold, gap;
+clicks(n, hold, gap, seen)
+int n, hold, gap, seen;
 {
 	char r[40];
-	long d0 = getsym("uin_ndown"), e0, g0;
-	int i, k, m;
+	long d0 = getsym("uin_ndown"), e0, g0, b;
+	int i, j, k, m;
 
 	for (k = 0; k < n; k += m) {
 		m = n - k < CHUNK ? n - k : CHUNK;
 		e0 = getsym("uin_nev");
 		g0 = getsym("uin_nget");
 		sprintf(r, "clicks %d %d %d", m, hold, gap);
-		host(r);
+		for (j = 0; seen && j < m; j++) {
+			b = getsym("uin_nbtnin");
+			host("button 1 0");
+			btnwait(b + 1);
+			pause_ms((long)hold);
+			host("button 0 0");
+			btnwait(b + 2);
+			pause_ms((long)gap);
+		}
+		if (!seen)
+			host(r);
 		/* until all are down or, after 1 s, all that came are taken */
 		for (i = 0; i < 200 && getsym("uin_ndown") - d0 < k + m &&
 		    (i < 10 || getsym("uin_nget") - g0 < getsym("uin_nev") - e0); i++)
@@ -688,7 +711,7 @@ desk()
 {
 	unsigned char *lm;
 	char *r;
-	long m0, m1, want, n, dbl = -1, l0;
+	long m0, m1, want, n, dbl = -1, l0, b0;
 	int id, w0 = 0, w1 = 0, chk = 0;
 
 	r = host("mac mac_after 220 120 580 230");
@@ -722,11 +745,13 @@ desk()
 		sscanf(r, "checker %d", &w0);
 	t_check("disk_icon_reached", moveto(scrw - 40, 48), "mouse %#lx", getsym("uin_mouse"));
 	l0 = getsym("uin_nlost");
-	n = clicks(20, 30, 100);
-	t_check("clicks_fast", n == 20, "20 clicks held 30 ms: %ld mouseDowns, %ld events lost",
-	    n, getsym("uin_nlost") - l0);
+	b0 = getsym("uin_nbtnin");
+	n = clicks(20, 30, 100, 1);
+	t_check("clicks_fast", n == 20,
+	    "20 clicks held 30 ms: %ld mouseDowns, %ld button changes, %ld events lost",
+	    n, getsym("uin_nbtnin") - b0, getsym("uin_nlost") - l0);
 	/* the mouse reports every 20 ms: shorter clicks may not reach the kernel */
-	t_info("clicks_short", "20 clicks held 8 ms: %ld mouseDowns", clicks(20, 8, 60));
+	t_info("clicks_short", "20 clicks held 8 ms: %ld mouseDowns", clicks(20, 8, 60, 0));
 	menus();
 	m0 = getsym("uin_nbtn");
 	host("click 2");

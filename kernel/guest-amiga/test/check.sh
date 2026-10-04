@@ -8,8 +8,6 @@ if [ "$#" -gt 1 ]; then
 fi
 sh "$D/run.sh"
 sh "$D/fault.sh"
-sh "$D/blit.sh"
-sh "$D/video.sh"
 sh "$D/rtgtransport.sh"
 sh "$D/hostfs.sh"
 sh "$D/broker.sh"

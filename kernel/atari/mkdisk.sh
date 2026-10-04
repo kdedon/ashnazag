@@ -13,6 +13,8 @@
 # of it used); /home gets the rest, from 4 MB on.  GEM=1: the
 # rest (at most 508 MB) is a TOS FAT partition (BGM, s4) instead of /home.
 # BOOTARGS: kernel command line (default root=c?d0s1, ? = boot unit).
+# TESTS: programs from tests/build/bin to put in /tests, with /tests/ksyms
+# (e.g. TESTS=t_page).
 # The tape segments come from the Mac build or $AMIX_TAPE.
 set -e
 
@@ -44,6 +46,17 @@ ln -sfn "$A/etc" "$W/src/atari"
   echo 'f /usr/amiga/bin/setclk 755 0 3 build/setclk'
   echo 'd /home 755 0 3'
   echo 'f /etc/vfstab 744 0 3 vfstab'; } > "$W/root.manifest"
+if [ -n "$TESTS" ]; then
+	TB=$K/../tests/build
+	"$K/../toolchain/linux/bin/m68k-linux-gnu-nm" "$KERNEL" | awk '$3 ~ /^(freemem|availrmem|availsmem|lbolt|fpu_present|anoninfo)$/ { print $3, $1 }' \
+		> "$W/src/build/ksyms"
+	{ echo 'd /tests 755 0 3'
+	  echo 'f /tests/ksyms 444 0 3 build/ksyms'
+	  for t in $TESTS; do
+		[ -x "$TB/bin/$t" ] || { echo "[FAIL] no $TB/bin/$t (run tests/build.sh)" >&2; exit 1; }
+		echo "f /tests/$t 755 0 3 $TB/bin/$t"
+	  done; } >> "$W/root.manifest"
+fi
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
 	/dev/dsk/c0d0s1 /dev/rdsk/c0d0s1 / ${ROOTFS:-ufs} 1 no - \
 	proc - /proc proc 0 no - \
