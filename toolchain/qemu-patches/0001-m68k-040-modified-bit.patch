@@ -1,0 +1,28 @@
+Subject: [PATCH] target/m68k: set the 68040 M bit on the first write after a read
+
+A table search made for a read loaded the TLB entry writable even while
+the page descriptor's M bit was clear, so a later write hit that entry
+and M was never set.  Guests that track dirty pages through M then lose
+the write at pageout or sync.
+
+The MC68040 sets M before the first write to a page: a write that hits
+an ATC entry with M clear searches the table again to set M (M68040
+User's Manual, 3.5 Address Translation Summary).  Map such a page
+read-only after a read so the first write takes the store path.
+
+--- a/target/m68k/helper.c
++++ b/target/m68k/helper.c
+@@ -892,6 +892,13 @@
+                 goto txfail;
+             }
+         }
++        /*
++         * The first write through an entry with M clear must search the
++         * table again to set M, so a read does not map the page writable.
++         */
++        if (!(next & M68K_DESC_MODIFIED)) {
++            *prot &= ~PAGE_WRITE;
++        }
+     }
+ 
+     if (env->mmu.tcr & M68K_TCR_PAGE_8K) {

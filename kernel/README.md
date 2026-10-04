@@ -26,10 +26,11 @@ Stages, one `PASS`/`FAIL` line each, logs in `build/logs/`:
 6. **coff** — `mac/boot/mkcoff.sh` wraps the ELF as `build/unix-mac.coff` for A/UX
    Startup; `elf2coff -c` must report it ACCEPTED.
 
-Inputs: the toolchains under `aux/toolchain/` (AMIX cross `amix/`, `m68k-linux-gnu`
-binutils/gcc `linux/`, `m68k-elf` binutils `bin/`), the tape link kit in
+Inputs, all set up by `tools/setup.sh` (see `BUILDING.md`): the toolchains under
+`toolchain/` (AMIX cross `amix/` with `src/gcc-cross-amix/build/env.sh`, `m68k-linux-gnu`
+binutils and gcc in `linux/`, `m68k-elf` binutils in `bin/`), the tape link kit in
 `toolchain/amix-root/usr/sys`, the patch-disk sources in `patch/payload/`, NetBSD 10.1
-`syssrc.tgz` in `toolchain/dl/`, and the port clone with its local `config.sh`.
+`syssrc.tgz` in `toolchain/dl/`, and the port clone with its `config.sh`.
 
 ## Notes
 

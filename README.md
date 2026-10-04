@@ -31,9 +31,10 @@ QEMU's `q800` machine with a real Quadra 800 ROM; hardware testing is in progres
 
 Nothing proprietary is in this repository. To build you supply:
 
-- AMIX 2.1 (tape or installation) and its 2.1 patch disk
-- for the Mac environment: A/UX 3.1 and a Quadra ROM image
-- the toolchains below
+- the AMIX 2.1 tape archive (both parts) and its 2.1 patch disk
+- for disk images and the Mac environment: A/UX 3.1, Mac OS CDs and Quadra ROM images
+
+`tools/setup.sh` builds the toolchains and fetches the rest; see `BUILDING.md`.
 
 ## Built on
 
@@ -51,8 +52,8 @@ sh kernel/mac/diskroot/mkdiskimage.sh   # disk-root image
 sh tests/run-qemu.sh        # test suite in QEMU q800
 ```
 
-Paths to your AMIX, A/UX and ROM files are set in the scripts; see `kernel/README.md`
-and `images/README.md`.
+`BUILDING.md` lists the media each target needs; `sh tools/check-env.sh` reports what is
+missing.
 
 ## AI disclosure
 

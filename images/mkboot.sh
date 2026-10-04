@@ -8,7 +8,8 @@
 # -c	kernel command line in the boot blocks (at most 127 bytes)
 # -m	HFS volume size in MB (default: kernel + 1 MB, at least 4)
 # Defaults: kernel/build/unix-mac.elf, images/q800-unix.img.  The map and
-# driver come from images/q800-test-small.img (else q800-test.img).
+# driver come from BOOT_SOURCE, images/q800-test-small.img, q800-test.img
+# or the A/UX 3.1 CD (media/aux-3.1.iso, from tools/setup.sh --aux-cd).
 # Needs python3, cc and hfsutils in toolchain/bin (mkimage.sh builds them).
 set -eu
 
@@ -38,6 +39,7 @@ OUT=${2:-$IMAGES/q800-unix.img}
 SRC=${BOOT_SOURCE:-$IMAGES/q800-test-small.img}
 if [ -z "${BOOT_SOURCE:-}" ] && [ ! -f "$SRC" ]; then
 	SRC=$IMAGES/q800-test.img
+	[ -f "$SRC" ] || SRC=$AUX/media/aux-3.1.iso
 fi
 [ -f "$SRC" ] || die "no A/UX disk image for the map and driver (run images/mkimage.sh --small)"
 [ -f "$KERNEL" ] || die "missing $KERNEL (run sh kernel/build.sh)"

@@ -18,6 +18,8 @@ IMAGES=$(cd "$(dirname "$0")" && pwd)
 AUX=$(dirname "$IMAGES")
 ZIP=$AUX/AUX_3_1_1GB_Use_In_Shoebill.zip
 MEMBER=AUX_3_1_1GB.dsk
+# the unzipped disk, when present, instead of the zip
+DSK=$AUX/$MEMBER
 SMALL=
 if [ "${1:-}" = --small ]; then
 	SMALL=$IMAGES/q800-test-small.img
@@ -40,12 +42,17 @@ DELAY=10
 
 die() { echo "mkimage: $*" >&2; exit 1; }
 
-[ -f "$ZIP" ] || die "missing $ZIP"
+[ -f "$ZIP" ] || [ -f "$DSK" ] || die "missing $ZIP"
 [ -f "$KERNEL" ] || die "missing $KERNEL (run sh kernel/build.sh)"
 
 # hfsutils (hmount, hcopy, hattrib, hls, humount), hfsck and hfsfork
 if [ ! -x "$T/hmount" ] || [ ! -x "$T/hfsck" ]; then
+	mkdir -p "$TC/share/man/man1"
 	[ -d "$HFSSRC" ] || tar -xzf "$TC/dl/hfsutils-3.2.6.tar.gz" -C "$TC/src"
+	for p in "$TC"/hfsutils-patches/*.patch; do
+		patch -d "$HFSSRC" -p1 -R -s -f --dry-run < "$p" >/dev/null 2>&1 ||
+			patch -d "$HFSSRC" -p1 -s < "$p" || die "$p does not apply"
+	done
 	(cd "$HFSSRC" && { [ -f Makefile ] || nice -n 19 ./configure --prefix="$TC"; } &&
 	 nice -n 19 make && make install_cli BINDEST="$T" MANDEST="$TC/share/man" &&
 	 cd hfsck && nice -n 19 make && install -m 755 hfsck "$T/") >/dev/null
@@ -66,7 +73,11 @@ FULL=$OUT.new
 
 echo "== extracting $MEMBER (sparse)"
 rm -f "$FULL"
-nice -n 19 unzip -p "$ZIP" "$MEMBER" | dd of="$FULL" bs=64k conv=sparse status=none
+if [ -f "$DSK" ]; then
+	nice -n 19 dd if="$DSK" of="$FULL" bs=64k conv=sparse status=none
+else
+	nice -n 19 unzip -p "$ZIP" "$MEMBER" | dd of="$FULL" bs=64k conv=sparse status=none
+fi
 
 echo "== adding unix.coff ($(wc -c < "$KERNEL") bytes)"
 "$T/hmount" "$FULL" 1 >/dev/null

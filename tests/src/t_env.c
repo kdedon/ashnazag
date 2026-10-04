@@ -305,6 +305,7 @@ mac()
 	pid_t p;
 	int st;
 
+	mkdir(H, 0755);
 	mkdir(H "/System Folder", 0755);
 	t_check("mac_no_stamp", status(H, "/tmp/env2.log", tv) == 0 && stat(STAMP, &a) < 0,
 	    "envlock -t without a stamp");

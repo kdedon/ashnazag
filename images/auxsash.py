@@ -192,6 +192,17 @@ def regions_of(f, size):
     return regs
 
 
+def ddm_driver(b0, drvent):
+    # an A/UX CD's map lists the driver but its DDM has no descriptor
+    # (CDs boot through the ROM); describe it from the partition entry
+    if struct.unpack('>H', b0[16:18])[0]:
+        return b0
+    b0 = bytearray(b0)
+    st, size = struct.unpack('>I', drvent[8:12])[0], struct.unpack('>I', drvent[96:100])[0]
+    struct.pack_into('>HIHH', b0, 16, 1, st, (size + 511) // 512, 1)
+    return bytes(b0)
+
+
 def small(src, vol, out):
     # DDM, map entries for the map, the driver and the HFS volume, driver copy
     with open(src, 'rb') as f:
@@ -208,7 +219,7 @@ def small(src, vol, out):
     n = len(hdat) // 512
     hstart = 64 + len(driver) // 512
     total = hstart + n
-    img = bytearray(head[:512]) + bytes(63 * 512)
+    img = bytearray(ddm_driver(head[:512], head[512 * drv[0][0]:512 * (drv[0][0] + 1)])) + bytes(63 * 512)
     struct.pack_into('>I', img, 4, total)                       # sbBlkCount
     keep = [parts[0][0], drv[0][0], hfs[0][0]]
     for k, i in enumerate(keep, 1):
@@ -282,6 +293,7 @@ def apmcheck(path, src):
             mdrv = f.read(dp[0][2] * 512)
         if len(dp) != 1 or dp[0][1:3] != sd[0][1:3] or mdrv != sdrv:
             bad.append('driver partition differs from the source')
+        s0 = ddm_driver(s0, sent.get('Apple_Driver', bytes(512)))
         if b0[:4] + b0[8:] != s0[:4] + s0[8:]:
             bad.append('DDM differs from the source outside sbBlkCount')
         for i, st, cnt, name, typ in parts:
