@@ -28,6 +28,7 @@
 
 extern int aux_amix();
 extern int grow(), waitid(), strioctl(), ttimeout();
+extern int aux_connecting(), aux_connwait();
 extern cred_t *crcopy();
 extern clock_t lbolt;
 
@@ -131,6 +132,16 @@ aux_select(ap, a, rv, r)
 			m++;
 		}
 	}
+	/*
+	 * A socket still connecting is writable once the transport answers,
+	 * which arrives as input: wait for that instead.  revents marks
+	 * these: 1 write, 2 read and write.
+	 */
+	for (i = 0; i < m; i++)
+		if ((pf[i].events & POLLOUT) && aux_connecting(pf[i].fd)) {
+			pf[i].revents = pf[i].events & POLLIN ? 2 : 1;
+			pf[i].events = (pf[i].events & ~POLLOUT) | POLLIN | POLLRDNORM;
+		}
 	g = aux_gap(r, m * sizeof (struct pollfd));
 	if (m && copyout((caddr_t)pf, g, m * sizeof (struct pollfd))) {
 		e = EFAULT;
@@ -153,6 +164,18 @@ aux_select(ap, a, rv, r)
 		if (re & POLLNVAL) {
 			e = EBADF;
 			goto done;
+		}
+		if (pf[i].revents) {
+			ev = pf[i].revents;
+			if (re && (re = aux_connwait(k, r)) != -1) {
+				out[1][k >> 5] |= 1L << (k & 31);
+				cnt++;
+				if (ev == 2 && re) {
+					out[0][k >> 5] |= 1L << (k & 31);
+					cnt++;
+				}
+			}
+			continue;
 		}
 		if ((ev & POLLIN) && (re & (POLLIN | POLLRDNORM | POLLHUP | POLLERR))) {
 			out[0][k >> 5] |= 1L << (k & 31);

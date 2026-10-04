@@ -372,6 +372,8 @@ tos_tick(arg)
 	if (t->t_state != 1)
 		return;
 	s = splhi_();
+	if (t->t_vblpend && curproc == t->t_proc && vipl(t->t_gp) >= 4)
+		t->t_st.ts_vblheld++;
 	t->t_vblpend = 1;
 	tos_timers();
 	splx_(s);
@@ -533,6 +535,7 @@ tosioctl(dev, cmd, arg, mode, cr, rvp)
 		bcopy((caddr_t)t->t_vid + 0x40, (caddr_t)tv->tv_stpal, sizeof tv->tv_stpal);
 		bcopy((caddr_t)t->t_ttpal, (caddr_t)tv->tv_ttpal, sizeof tv->tv_ttpal);
 		tv->tv_vbl = t->t_st.ts_vbl;
+		tv->tv_vblheld = t->t_st.ts_vblheld;
 		splx_(s);
 		e = copyout((caddr_t)tv, arg, sizeof *tv) ? EFAULT : 0;
 		kmem_free((caddr_t)tv, sizeof *tv);

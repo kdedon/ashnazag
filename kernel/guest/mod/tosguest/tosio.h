@@ -48,6 +48,7 @@ struct tosvideo {
 	unsigned short	tv_stpal[16];	/* $FF8240 */
 	unsigned short	tv_ttpal[256];	/* $FF8400 */
 	unsigned long	tv_vbl;
+	unsigned long	tv_vblheld;	/* ts_vblheld */
 };
 
 struct tosstat {
@@ -70,6 +71,7 @@ struct tosstat {
 	unsigned long	ts_cache;	/* cache instructions and CACR writes */
 	unsigned long	ts_slept;	/* clock ticks asleep in stop */
 	unsigned long	ts_idle;	/* input polls slept on */
+	unsigned long	ts_vblheld;	/* ticks the guest ran with a VBL masked */
 };
 
 /*

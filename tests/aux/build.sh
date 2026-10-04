@@ -79,6 +79,16 @@ if [ -f "$OUT/mod.d/uinter" ] && [ -f "$AUXROOT/mac/bin/startmac" ] && [ -f "$SY
 		rm -rf "$S"
 		mv "$S.keep" "$S"
 	fi
+	# mtcp, t_mactcp's Mac application, a startup item there
+	LX=$AUX/toolchain/linux/bin/m68k-linux-gnu
+	if [ -x "$LX-gcc" ]; then
+		mkdir -p "$OUT/root/mac/sys/MTcp" "$OUT/obj"
+		nice -n 19 "$LX-gcc" -m68020 -mpcrel -O -ffreestanding -fno-builtin -nostdlib \
+			-Wl,-Ttext=0 -Wl,--build-id=none -o "$OUT/obj/mtcp.elf" \
+			"$T/net/mtcp/mtcp0.s" "$T/net/mtcp/mtcp.c"
+		"$LX-objcopy" -O binary -j .text -j .rodata "$OUT/obj/mtcp.elf" "$OUT/obj/mtcp.bin"
+		python3 "$T/net/mtcp/mkapp.py" "$OUT/obj/mtcp.bin" "$OUT/root/mac/sys/MTcp/mtcp"
+	fi
 	CD81=${CD81:-$AUX/media/MacOS8_1.iso}
 	[ ! -f "$CD81" ] ||
 		sh "$AUX/images/macenv/mksys81.sh" "$CD81" "$OUT/root/mac/sys/S81"

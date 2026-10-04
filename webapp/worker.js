@@ -1,4 +1,4 @@
-/* global Go, auxPlanner */
+/* global Go, auxForge, auxPlanner */
 'use strict';
 let ready;
 const started = new Promise((resolve) => { ready = resolve; });
@@ -18,7 +18,7 @@ initialization.catch((error) => postMessage({ type: 'fatal', error: error.messag
 self.onmessage = async ({ data }) => {
   try {
     await initialization;
-    postMessage({ id: data.id, ...JSON.parse(auxPlanner(JSON.stringify(data.request))) });
+    postMessage({ id: data.id, ...JSON.parse((data.forge ? auxForge : auxPlanner)(JSON.stringify(data.request))) });
   } catch (error) {
     postMessage({ id: data.id, ok: false, error: error.message });
   }

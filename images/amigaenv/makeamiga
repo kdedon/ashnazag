@@ -1,19 +1,87 @@
 #!/bin/sh
-# makeamiga [-f] copies the system template into your Amiga home.
+# makeamiga [-f] [-e env] copies the system template into your Amiga home,
+# or environment env's, ~/Amiga/env; makeamiga -e env --import copies
+# ~/Amiga into a new environment.
 SYS=/amiga/sys
 [ -n "$HOME" ] || { echo "makeamiga: no HOME" >&2; exit 1; }
 T=$HOME/Amiga
-[ "$#" -le 1 ] || { echo 'usage: makeamiga [-f]' >&2; exit 2; }
-case ${1-} in
--f) ;;
-"") if [ -e "$T" ]; then
-        echo "makeamiga: $T exists; makeamiga -f refreshes template files" >&2
-        exit 1
-     fi ;;
-*) echo 'usage: makeamiga [-f]' >&2; exit 2 ;;
-esac
-[ -d "$SYS" ] || { echo "makeamiga: no $SYS" >&2; exit 1; }
+force= e= imp=
+usage() {
+	echo "usage: makeamiga [-f] [-e env] | makeamiga -e env --import" >&2
+	exit 2
+}
+while [ $# -gt 0 ]; do
+	case $1 in
+	-f)	force=1 ;;
+	-e)	[ $# -ge 2 ] && [ -n "$2" ] || usage
+		e=$2
+		shift ;;
+	--import) imp=1 ;;
+	*)	usage ;;
+	esac
+	shift
+done
+[ -z "$imp" ] || [ -n "$e" -a -z "$force" ] || usage
+[ "$e" != default ] || [ -n "$imp" ] || e=
+# the layout policy is data: KEY=value lines, never run
+pol() {
+	v=`sed -n "s/^$1=//p" /etc/default/amiga 2> /dev/null | sed 1q`
+	[ -n "$v" ] || v=$2
+	case $v in
+	"~/"*)	v=$HOME/`expr "x$v" : 'x~/\(.*\)'` ;;
+	esac
+	echo "$v"
+}
+if [ -n "$e" ]; then
+	case $e in
+	[Ss][Hh][Aa][Rr][Ee][Dd]|default|[!A-Za-z0-9]*|*[!-A-Za-z0-9._]*)
+		echo "makeamiga: $e: not an environment name" >&2
+		exit 1 ;;
+	esac
+	[ `expr "x$e" : '.*'` -le 65 ] || { echo "makeamiga: $e: name too long" >&2; exit 1; }
+	L=$T
+	T=`pol ENVIRONMENT_ROOT "~/Amiga"`/$e
+	MN=`pol ENVIRONMENT_METADATA .env`
+	M=$T/$MN
+fi
+if [ -z "$force" ] && [ -d "$T" ]; then
+	if [ -n "$e" ]; then
+		echo "makeamiga: $T exists; makeamiga -f -e $e refreshes template files" >&2
+	else
+		echo "makeamiga: $T exists; makeamiga -f refreshes template files" >&2
+	fi
+	exit 1
+fi
+[ -n "$imp" ] || [ -d "$SYS" ] || { echo "makeamiga: no $SYS" >&2; exit 1; }
+[ -z "$imp" ] || [ -d "$L" ] || { echo "makeamiga: no $L to import" >&2; exit 1; }
 [ -d "$T" ] || mkdir -p "$T" || exit 1
+# the metadata goes first: an import skips directories that have it
+if [ -n "$e" ] && [ ! -f "$M" ]; then
+	{
+		echo "id=$e"
+		echo "name=$e"
+		echo "profile=amiga-3.2-a4000"
+		if [ -n "$imp" ]; then echo "template=legacy"; else echo "template=$SYS"; fi
+		echo "created=`date -u +%Y-%m-%dT%H:%M:%SZ`"
+	} > "$M" || exit 1
+fi
+if [ -n "$imp" ]; then
+	# ~/Amiga without its metadata, Shared and the environments in it
+	cd "$L" && for i in * .[!.]* ..?*; do
+		[ -f "$i" ] || [ -d "$i" ] || [ -h "$i" ] || continue
+		case $i in
+		"$MN"|Shared) continue ;;
+		esac
+		if [ -h "$i" ]; then echo "$i"; elif [ ! -f "$i/$MN" ]; then find "$i" -print; fi
+	done | cpio -pdmu "$T" 2>/dev/null ||
+		{ echo "makeamiga: copy to $T failed" >&2; exit 1; }
+	echo "makeamiga: $L copied to $T, SYS: in startmig -e $e"
+	exit 0
+fi
 cd "$SYS" && find . -print | cpio -pdmu "$T" 2>/dev/null ||
-    { echo "makeamiga: copy to $T failed" >&2; exit 1; }
-echo "makeamiga: $T is SYS: in startmig"
+	{ echo "makeamiga: copy to $T failed" >&2; exit 1; }
+if [ -n "$e" ]; then
+	echo "makeamiga: $T is SYS: in startmig -e $e"
+else
+	echo "makeamiga: $T is SYS: in startmig"
+fi

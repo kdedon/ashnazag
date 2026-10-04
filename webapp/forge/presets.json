@@ -1,0 +1,51 @@
+{
+  "formatVersion": 1,
+  "presets": [
+    {
+      "id": "quadra800",
+      "revision": 1,
+      "label": "Quadra 800",
+      "description": "68040 console system on SCSI disk.",
+      "status": "available",
+      "machine": "q800",
+      "recipe": "quadra-console",
+      "settings": {"devices": ["adb", "framebuffer", "scc", "scsi53c96"], "rootMiB": 64, "swapMiB": 64}
+    },
+    {
+      "id": "falcon030",
+      "revision": 1,
+      "label": "Falcon030",
+      "description": "68030 without FPU, IDE disk, 512 MB raw image.",
+      "status": "planned",
+      "machine": "falcon030",
+      "settings": {"devices": ["falcon-ide", "falcon-video", "ikbd"], "diskMiB": 512}
+    },
+    {
+      "id": "falcon-ct60",
+      "revision": 1,
+      "label": "Falcon CT60/CT63",
+      "description": "Falcon with a 68060 accelerator.",
+      "status": "planned",
+      "machine": "falcon060",
+      "settings": {"devices": []}
+    },
+    {
+      "id": "tt030",
+      "revision": 1,
+      "label": "TT030",
+      "description": "68030 with ST-RAM and TT-RAM.",
+      "status": "planned",
+      "machine": "tt030",
+      "settings": {"devices": []}
+    },
+    {
+      "id": "a4000-040",
+      "revision": 1,
+      "label": "Amiga 4000",
+      "description": "68040 with Zorro III.",
+      "status": "planned",
+      "machine": "amiga040",
+      "settings": {"devices": []}
+    }
+  ]
+}

@@ -955,6 +955,60 @@ startmac()
 		t_info("system_open", "%.*s", (int)(strchr(o, '\n') - o), o);
 }
 
+/* pid holding a write lock on path, 0 if none, -1 on error */
+static long
+holder(path)
+	char *path;
+{
+	struct flock fl;
+	int fd = open(path, O_RDWR);
+
+	if (fd < 0)
+		return -1;
+	memset((char *)&fl, 0, sizeof fl);
+	fl.l_type = F_WRLCK;
+	if (fcntl(fd, F_GETLK, &fl) < 0) {
+		close(fd);
+		return -1;
+	}
+	close(fd);
+	return fl.l_type == F_UNLCK ? 0 : (long)fl.l_pid;
+}
+
+#define	ENVSH	"/tests/startmac.sh"	/* the startmac script, with -e */
+#define	ENVF	"/tmp/Mac/r1/.env"
+#define	ENVSTAMP "/mac/lib/System Folder/.stamp"
+
+/* environment r1 for the script: its stamp current, the System in TBSYSTEM */
+static void
+envmake()
+{
+	system("/usr/bin/mkdir -p '/mac/lib/System Folder' '/tmp/Mac/r1/System Folder'");
+	system("[ -f '" ENVSTAMP "' ] || echo test > '" ENVSTAMP "'");
+	system("/usr/bin/cp '" ENVSTAMP "' '/tmp/Mac/r1/System Folder/.stamp'");
+	system("echo > '/tmp/Mac/r1/System Folder/System'");
+}
+
+/* startmac -e r1 to completion; its exit status */
+static int
+envsecond()
+{
+	static char *av[] = { "/sbin/sh", ENVSH, "-e", "r1", 0 };
+	int fd, st;
+	pid_t p;
+
+	if ((p = fork()) == 0) {
+		fd = open("/tmp/envmac.log", O_WRONLY | O_CREAT | O_TRUNC, 0666);
+		dup2(fd, 1);
+		dup2(fd, 2);
+		execve(av[0], av, macenv);
+		_exit(127);
+	}
+	if (p < 0 || t_waitchild(p, &st, 30) < 0 || !WIFEXITED(st))
+		return -1;
+	return WEXITSTATUS(st);
+}
+
 /*
  * PRAM kept for the next session; startmac again, as another user
  * (group display) after the killed one: the desktop, no alert.
@@ -1012,6 +1066,56 @@ restart()
 	close(p[0]);
 	system("/usr/bin/chown -R 0 " SYSDIR " /dev/console");
 	t_check("restart_console", waitfront(0L, 5), "front %ld", front());
+}
+
+/* the startmac script with -e: the session holds the lock, a second is refused */
+static void
+envrun()
+{
+	static char *av[] = { "/sbin/sh", ENVSH, "-e", "r1", 0 };
+	char b[256];
+	int p[2], st, fd, n;
+	pid_t pid;
+
+	t_rearm(240);
+	envmake();
+	if (pipe(p) < 0)
+		return;
+	if ((pid = fork()) == 0) {
+		setpgrp();
+		dup2(p[1], 1);
+		dup2(p[1], 2);
+		close(p[0]);
+		close(p[1]);
+		for (fd = 3; fd < 20; fd++)
+			close(fd);
+		execve(av[0], av, macenv);
+		_exit(127);
+	}
+	close(p[1]);
+	macid = 0;
+	relay(p[0], 90);
+	t_check("env_front", macid > 0, "the Mac's session never came to front");
+	t_check("env_held", holder(ENVF) > 0, "holder %ld", holder(ENVF));
+	st = envsecond();
+	b[0] = 0;
+	if ((fd = open("/tmp/envmac.log", O_RDONLY)) >= 0) {
+		n = read(fd, b, sizeof b - 1);
+		b[n > 0 ? n : 0] = 0;
+		close(fd);
+	}
+	t_check("env_second", st == 1 && strstr(b, "in use") != 0, "status %d: %s", st, b);
+	kill(-pid, SIGHUP);
+	if (t_waitchild(pid, &st, 20) < 0)
+		st = -1;
+	close(p[0]);
+	for (n = 0; n < 50 && holder(ENVF) > 0; n++)
+		pause_ms(200L);
+	t_check("env_released", holder(ENVF) == 0, "holder %ld", holder(ENVF));
+	t_check("env_console", waitfront(0L, 5), "front %ld", front());
+	if ((n = shmget(TLOW, 0, 0)) >= 0)
+		shmctl(n, IPC_RMID, (struct shmid_ds *)0);
+	system("/usr/bin/rm -rf /tmp/Mac");
 }
 
 #ifdef SYS76
@@ -1267,6 +1371,8 @@ main()
 		startmac();
 		if (macid > 0)
 			restart();
+		if (macid > 0 && stat(ENVSH, &sb) == 0)
+			envrun();
 #endif
 		fiddlog();
 	}

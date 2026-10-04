@@ -64,7 +64,17 @@ async function main() {
   }
   assert.equal(JSON.parse(globalThis.auxPlanner()).ok, false);
   assert.equal(JSON.parse(globalThis.auxPlanner('x'.repeat(1024 * 1024 + 1))).ok, false);
-  console.log(`PASS: ${cases.length} native/WASM parity cases and 2 bridge boundary checks`);
+  const presets = JSON.parse(globalThis.auxForge(JSON.stringify({ action: 'presets' })));
+  const nativePresets = spawnSync(path.join(build, 'ashforge'), ['presets'], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(nativePresets.status, 0, nativePresets.stderr);
+  assert.deepEqual(presets.presets, JSON.parse(nativePresets.stdout));
+  assert.deepEqual(presets.presets.filter((preset) => preset.status === 'available').map((preset) => preset.id), ['quadra800']);
+  for (const [recipe, expected] of [['{', /not a forge recipe/], [JSON.stringify({ formatVersion: 2 }), /newer than this forge/], [JSON.stringify({ formatVersion: 1 }), /invalid recipe/]]) {
+    const result = JSON.parse(globalThis.auxForge(JSON.stringify({ action: 'import', recipe })));
+    assert.equal(result.ok, false);
+    assert.match(result.error, expected);
+  }
+  console.log(`PASS: ${cases.length} native/WASM parity cases, 2 bridge boundary checks, presets and recipe import checks`);
   process.exit(0);
 }
 main().catch((error) => { console.error(error); process.exit(1); });

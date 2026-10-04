@@ -15,9 +15,13 @@ extern int aux_xstat(), aux_xlstat(), aux_xfstat();
 extern int aux_getdirentries(), aux_utssys(), aux_gethostname();
 extern int aux_getdomainname(), aux_gettimeofday(), aux_getdtablesize();
 extern int aux_getcompat(), aux_setcompat(), aux_setpgrp(), aux_setsid();
-extern int aux_setpgid(), aux_swapmmumode(), aux_netdown(), aux_slotmanager();
+extern int aux_setpgid(), aux_swapmmumode(), aux_slotmanager();
 extern int aux_sigvec(), aux_sigblock(), aux_sigsetmask(), aux_sigpause();
 extern int aux_sigstack();
+extern int aux_accept(), aux_bind(), aux_connect(), aux_getpeername();
+extern int aux_getsockname(), aux_getsockopt(), aux_listen(), aux_recv();
+extern int aux_recvfrom(), aux_recvmsg(), aux_send(), aux_sendmsg(), aux_sendto();
+extern int aux_setsockopt(), aux_shutdown(), aux_socket(), aux_socketpair();
 extern int aux_read(), aux_select(), aux_waitpid(), aux_flock();
 extern int aux_statfs(), aux_fstatfs(), aux_truncate(), aux_ftruncate();
 extern int aux_utimes(), aux_getitimer(), aux_setitimer(), aux_alarm();
@@ -87,30 +91,30 @@ struct auxent auxcalls[] = {
 	{ 65, 1, T, 0, 0 },		/* powerdown */
 	{ 66, 2, 0, 0, aux_slotmanager },
 	{ 67, 1, S, 0, aux_swapmmumode },
-	{ 70, 3, S, 0, aux_netdown },	/* accept */
-	{ 71, 3, S, 0, aux_netdown },	/* bind */
-	{ 72, 3, S, 0, aux_netdown },	/* connect */
+	{ 70, 3, S, 0, aux_accept },
+	{ 71, 3, S, 0, aux_bind },
+	{ 72, 3, S, 0, aux_connect },
 	{ 73, 0, T, 0, 0 },		/* gethostid */
 	{ 74, 2, S, 0, aux_gethostname },
-	{ 75, 3, S, 0, aux_netdown },	/* getpeername */
-	{ 76, 3, S, 0, aux_netdown },	/* getsockname */
-	{ 77, 5, S, 0, aux_netdown },	/* getsockopt */
-	{ 78, 2, S, 0, aux_netdown },	/* listen */
-	{ 79, 4, S, 0, aux_netdown },	/* recv */
-	{ 80, 6, S, 0, aux_netdown },	/* recvfrom */
-	{ 81, 3, S, 0, aux_netdown },	/* recvmsg */
+	{ 75, 3, S, 0, aux_getpeername },
+	{ 76, 3, S, 0, aux_getsockname },
+	{ 77, 5, S, 0, aux_getsockopt },
+	{ 78, 2, S, 0, aux_listen },
+	{ 79, 4, S, 0, aux_recv },
+	{ 80, 6, S, 0, aux_recvfrom },
+	{ 81, 3, S, 0, aux_recvmsg },
 	{ 82, 5, S, 0, aux_select },
-	{ 83, 4, S, 0, aux_netdown },	/* send */
-	{ 84, 3, S, 0, aux_netdown },	/* sendmsg */
-	{ 85, 6, S, 0, aux_netdown },	/* sendto */
+	{ 83, 4, S, 0, aux_send },
+	{ 84, 3, S, 0, aux_sendmsg },
+	{ 85, 6, S, 0, aux_sendto },
 	{ 86, 1, T, 0, 0 },		/* sethostid */
 	{ 87, 2, T, 0, 0 },		/* sethostname */
 	{ 88, 2, S, 0, aux_setregid },
 	{ 89, 2, S, 0, aux_setreuid },
-	{ 90, 5, S, 0, aux_netdown },	/* setsockopt */
-	{ 91, 2, S, 0, aux_netdown },	/* shutdown */
-	{ 92, 3, S, 0, aux_netdown },	/* socket */
-	{ 93, 4, S, 0, aux_netdown },	/* socketpair */
+	{ 90, 5, S, 0, aux_setsockopt },
+	{ 91, 2, S, 0, aux_shutdown },
+	{ 92, 3, S, 0, aux_socket },
+	{ 93, 4, S, 0, aux_socketpair },
 	{ 100, 2, S, 0, aux_getdomainname },
 	{ 101, 2, T, 0, 0 },		/* setdomainname */
 	{ 102, 2, S, 92, 0 },		/* getgroups */

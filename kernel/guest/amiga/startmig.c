@@ -1,4 +1,7 @@
-/* startmig -- validate local Kickstart media and enter an Amiga profile. */
+/*
+ * startmig -- validate local Kickstart media and enter an Amiga profile.
+ * SYS: is ~/Amiga, or ~/Amiga/env with -e; one writable session each.
+ */
 #include <sys/types.h>
 #include <sys/mman.h>
 #include <sys/ioctl.h>
@@ -17,6 +20,7 @@
 #include "inputshare.h"
 #include "hostfswire.h"
 #include "sysroot.h"
+#include "envroot.h"
 
 #define ROMBASE 0xf80000UL
 #define ROMSIZE 0x80000UL
@@ -249,7 +253,8 @@ main(argc, argv)
 	char **argv;
 {
 	char *rom = "/etc/amiga/kicka4000.rom", *boot = "/etc/amiga/container-boot.rom", *end;
-	char sysroot[1024], *home;
+	char sysroot[1024], *home, *env = 0;
+	struct stat sb;
 	struct passwd *pw;
 	int readonly = 0, rootreadonly = 0, census = 0;
 	unsigned long fastmb = 8;
@@ -257,7 +262,7 @@ main(argc, argv)
 	struct amigainfo info;
 	struct sigaction sa;
 	struct rlimit rl;
-	int i, check = 0, probe = 0, fd;
+	int i, check = 0, probe = 0, fd, lockfd = -1;
 
 	for (i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--check")) check = 1;
@@ -266,6 +271,8 @@ main(argc, argv)
 		else if (!strcmp(argv[i], "--census")) census = 1;
 		else if ((!strcmp(argv[i], "-r") || !strcmp(argv[i], "-rom")) && i + 1 < argc)
 			rom = argv[++i];
+		else if (!strcmp(argv[i], "-e") && i + 1 < argc)
+			env = argv[++i];
 		else if (!strcmp(argv[i], "-boot") && i + 1 < argc)
 			boot = argv[++i];
 		else if (!strcmp(argv[i], "-m") && i + 1 < argc) {
@@ -279,28 +286,37 @@ main(argc, argv)
 	if (check + probe > 1)
 		goto usage;
 	if (readonly && (check || probe)) goto usage;
+	if (!probe && !check) {
+		home = getenv("HOME");
+		if ((!home || !*home) && (pw = getpwuid(getuid())) != 0)
+			home = pw->pw_dir;
+		if (env && strcmp(env, "default") != 0) {
+			if (envroot("amiga", env, home, sysroot, sizeof sysroot) < 0 ||
+			    stat(sysroot, &sb) < 0 || (sb.st_mode & S_IFMT) != S_IFDIR) {
+				fprintf(stderr, "startmig: no environment %s; run makeamiga -e %s\n", env, env);
+				return 1;
+			}
+		} else if (mig_sysroot(home, "/amiga/sys", sysroot, sizeof sysroot, &rootreadonly) < 0)
+			fail("Amiga system directory; install /amiga/sys and run makeamiga");
+		if (rootreadonly)
+			fprintf(stderr, "startmig: SYS: is /amiga/sys, read-only; run makeamiga for your own\n");
+		readonly |= rootreadonly;
+		if (!readonly && (lockfd = envlock("startmig", "amiga", sysroot)) == -1)
+			return 1;
+	}
 	if (!readrom(rom))
 		return 1;
 	if (check) {
 		printf("A4000 Kickstart 3.2 (47.96): checksum and CRC verified\n");
 		return 0;
 	}
-	if (!probe) {
-		home = getenv("HOME");
-		if ((!home || !*home) && (pw = getpwuid(getuid())) != 0)
-			home = pw->pw_dir;
-		if (mig_sysroot(home, "/amiga/sys", sysroot, sizeof sysroot, &rootreadonly) < 0)
-			fail("Amiga system directory; install /amiga/sys and run makeamiga");
-		if (rootreadonly)
-			fprintf(stderr, "startmig: SYS: is /amiga/sys, read-only; run makeamiga for your own\n");
-		readonly |= rootreadonly;
-		if (!checksystem(sysroot)) {
-			fprintf(stderr, "startmig: %s has no readable S/Startup-Sequence; run makeamiga -f\n", sysroot);
-			return 1;
-		}
+	if (!probe && !checksystem(sysroot)) {
+		fprintf(stderr, "startmig: %s has no readable S/Startup-Sequence; run makeamiga -f\n", sysroot);
+		return 1;
 	}
 	for (i = 3; i < 256; i++)
-		close(i);
+		if (i != lockfd)
+			close(i);
 	fd = open("/dev/amiga", O_RDWR);
 	if (fd < 0)
 		fail("/dev/amiga");
@@ -367,6 +383,6 @@ main(argc, argv)
 #endif
 	return 0;
 usage:
-	fprintf(stderr, "usage: startmig [-rom file] [-boot file] [-m fast-MB] [--readonly] [--census] [--check | --probe]\n");
+	fprintf(stderr, "usage: startmig [-rom file] [-boot file] [-e env] [-m fast-MB] [--readonly] [--census] [--check | --probe]\n");
 	return 2;
 }

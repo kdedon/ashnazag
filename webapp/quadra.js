@@ -23,14 +23,16 @@
       <progress id="quadra-progress" aria-label="Quadra build progress" hidden></progress>
       <p id="quadra-status" role="status" aria-live="polite" class="field-help">Choose the five source files to begin.</p>
       <p><a id="quadra-download" download="ash-nazag-q800.img" hidden>Download ash-nazag-q800.img</a></p>
+      <p><a id="quadra-recipe" download="ash-nazag-q800-recipe.json" hidden>Export build recipe (JSON)</a></p>
+      <p class="field-help">The recipe lists your selections and each input's size and SHA-256, never file names or contents. The image carries it at <code>/etc/forge/recipe.json</code>.</p>
     </form>`;
   const get = name => document.getElementById(`quadra-${name}`);
   const form = get('form'), button = get('build'), cancel = get('cancel');
-  const status = get('status'), progress = get('progress'), download = get('download');
+  const status = get('status'), progress = get('progress'), download = get('download'), recipeLink = get('recipe');
   const tapes = ['02', '03', '10'].map(name => get(`tape${name}`));
   const kernel = get('kernel'), donor = get('donor'), root = get('root'), swap = get('swap');
   const inputs = [...tapes, kernel, donor, root, swap];
-  let worker = null, leases = [], url = null, generation = 0;
+  let worker = null, leases = [], url = null, recipeURL = null, generation = 0, imported = '';
   const abandoned = cleanAbandonedImages().catch(() => {});
   const controls = busy => {
     for (const input of [...inputs, button]) input.disabled = busy;
@@ -42,6 +44,8 @@
     worker?.terminate(); worker = null;
     if (url) URL.revokeObjectURL(url);
     url = null; download.hidden = true; download.removeAttribute('href');
+    if (recipeURL) URL.revokeObjectURL(recipeURL);
+    recipeURL = null; recipeLink.hidden = true; recipeLink.removeAttribute('href');
     const old = leases; leases = [];
     await Promise.all(old.map(lease => lease.remove().catch(() => {})));
   }
@@ -76,14 +80,15 @@
             void fail('The builder returned an invalid disk image.'); return;
           }
           url = URL.createObjectURL(data.file); download.href = url; download.hidden = false;
+          recipeURL = URL.createObjectURL(new Blob([data.recipe], { type: 'application/json' })); recipeLink.href = recipeURL; recipeLink.hidden = false;
           worker.terminate(); worker = null; controls(false);
-          status.textContent = `Quadra disk image ready (${(data.file.size / 1048576).toFixed(1)} MiB). Download it below.`;
+          status.textContent = `Quadra disk image ready (${(data.file.size / 1048576).toFixed(1)} MiB). Download it below.` + (data.mismatches.length ? ` Inputs differ from the imported recipe (${data.mismatches.join(', ')}), so the image differs too.` : '');
           download.focus();
         }
       };
       worker.onerror = event => { event.preventDefault(); if (run === generation) void fail(`Quadra worker failed: ${event.message}`); };
       worker.onmessageerror = () => { if (run === generation) void fail('The Quadra worker returned unreadable data.'); };
-      worker.postMessage({ type: 'quadra', archives: tapes.map((input, i) => ({ name: ['02', '03', '10'][i], file: input.files[0] })), kernel: kernel.files[0], donor: donor.files[0], rootMiB: Number(root.value), swapMiB: Number(swap.value), temporaryNames: leases.map(lease => lease.name) });
+      worker.postMessage({ type: 'quadra', archives: tapes.map((input, i) => ({ name: ['02', '03', '10'][i], file: input.files[0] })), kernel: kernel.files[0], donor: donor.files[0], rootMiB: Number(root.value), swapMiB: Number(swap.value), temporaryNames: leases.map(lease => lease.name), selection: { preset: 'quadra800', machine: 'q800', settings: { devices: window.forgeDevices?.('q800') ?? ['adb', 'framebuffer', 'scc', 'scsi53c96'] } }, expect: imported });
     } catch (error) { if (run === generation) await fail(`Quadra build failed: ${error.message}`); }
   });
   cancel.addEventListener('click', () => { void fail('Quadra build cancelled.'); });
@@ -91,5 +96,10 @@
     void reset(); controls(false); status.textContent = 'Inputs changed. Forge a new disk image.';
   });
   window.addEventListener('pagehide', () => { void reset(); controls(false); });
+  window.setQuadraSettings = settings => {
+    if (settings.preset !== 'quadra800') return;
+    root.value = settings.rootMiB; swap.value = settings.swapMiB; imported = settings.recipe;
+    void reset(); controls(false);
+  };
   window.openQuadraBuilder = () => { panel.scrollIntoView({ behavior: 'smooth', block: 'start' }); tapes[0].focus({ preventScroll: true }); };
 })();

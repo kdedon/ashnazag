@@ -1,24 +1,93 @@
 #!/bin/sh
 # maketos -- make ~/TOS, your own TOS boot drive C:, from /tos/sys.
 #
-#	maketos [-f]
+#	maketos [-f] [-e env]
+#	maketos -e env --import
 #
 # -f copies the template over an existing ~/TOS, keeping your other files.
+# -e makes environment env, ~/TOS/env, instead; --import copies ~/TOS
+# into a new one.
 SYS=/tos/sys
 [ -n "$HOME" ] || { echo "maketos: no HOME" >&2; exit 1; }
 T=$HOME/TOS
-case $1 in
--f)	;;
-"")	if [ -d "$T" ]; then
+force= e= imp=
+usage() {
+	echo "usage: maketos [-f] [-e env] | maketos -e env --import" >&2
+	exit 2
+}
+while [ $# -gt 0 ]; do
+	case $1 in
+	-f)	force=1 ;;
+	-e)	[ $# -ge 2 ] && [ -n "$2" ] || usage
+		e=$2
+		shift ;;
+	--import) imp=1 ;;
+	*)	usage ;;
+	esac
+	shift
+done
+[ -z "$imp" ] || [ -n "$e" -a -z "$force" ] || usage
+[ "$e" != default ] || [ -n "$imp" ] || e=
+# the layout policy is data: KEY=value lines, never run
+pol() {
+	v=`sed -n "s/^$1=//p" /etc/default/tos 2> /dev/null | sed 1q`
+	[ -n "$v" ] || v=$2
+	case $v in
+	"~/"*)	v=$HOME/`expr "x$v" : 'x~/\(.*\)'` ;;
+	esac
+	echo "$v"
+}
+if [ -n "$e" ]; then
+	case $e in
+	[Ss][Hh][Aa][Rr][Ee][Dd]|default|[!A-Za-z0-9]*|*[!-A-Za-z0-9._]*)
+		echo "maketos: $e: not an environment name" >&2
+		exit 1 ;;
+	esac
+	[ `expr "x$e" : '.*'` -le 65 ] || { echo "maketos: $e: name too long" >&2; exit 1; }
+	L=$T
+	T=`pol ENVIRONMENT_ROOT "~/TOS"`/$e
+	MN=`pol ENVIRONMENT_METADATA .env`
+	M=$T/$MN
+fi
+if [ -z "$force" ] && [ -d "$T" ]; then
+	if [ -n "$e" ]; then
+		echo "maketos: $T exists; maketos -f -e $e copies the template over it" >&2
+	else
 		echo "maketos: $T exists; maketos -f copies the template over it" >&2
-		exit 1
-	fi ;;
-*)	echo "usage: maketos [-f]" >&2
-	exit 2 ;;
-esac
-[ -d "$SYS" ] || { echo "maketos: no $SYS" >&2; exit 1; }
+	fi
+	exit 1
+fi
+[ -n "$imp" ] || [ -d "$SYS" ] || { echo "maketos: no $SYS" >&2; exit 1; }
+[ -z "$imp" ] || [ -d "$L" ] || { echo "maketos: no $L to import" >&2; exit 1; }
 [ -d "$T" ] || mkdir -p "$T" || exit 1
+# the metadata goes first: an import skips directories that have it
+if [ -n "$e" ] && [ ! -f "$M" ]; then
+	{
+		echo "id=$e"
+		echo "name=$e"
+		echo "profile=tos"
+		if [ -n "$imp" ]; then echo "template=legacy"; else echo "template=$SYS"; fi
+		echo "created=`date -u +%Y-%m-%dT%H:%M:%SZ`"
+	} > "$M" || exit 1
+fi
+if [ -n "$imp" ]; then
+	# ~/TOS without its metadata, Shared and the environments in it
+	cd "$L" && for i in * .[!.]* ..?*; do
+		[ -f "$i" ] || [ -d "$i" ] || [ -h "$i" ] || continue
+		case $i in
+		"$MN"|Shared) continue ;;
+		esac
+		if [ -h "$i" ]; then echo "$i"; elif [ ! -f "$i/$MN" ]; then find "$i" -print; fi
+	done | cpio -pdmu "$T" 2>/dev/null ||
+		{ echo "maketos: copy to $T failed" >&2; exit 1; }
+	echo "maketos: $L copied to $T, drive C: in starttos -e $e"
+	exit 0
+fi
 # the system's drive table stays the system's: ~/TOS/drives adds to it
 cd "$SYS" && find . -print | grep -v '^\./drives$' | cpio -pdmu "$T" 2>/dev/null ||
 	{ echo "maketos: copy to $T failed" >&2; exit 1; }
-echo "maketos: $T is drive C: in starttos"
+if [ -n "$e" ]; then
+	echo "maketos: $T is drive C: in starttos -e $e"
+else
+	echo "maketos: $T is drive C: in starttos"
+fi

@@ -2,7 +2,8 @@
 # startmac -- the Mac environment, as on A/UX: root's System Folder is
 # /mac/sys/System Folder, other users get $HOME/System Folder from
 # makemac; both are copies of /mac/lib/System Folder, refreshed when it
-# changes.
+# changes.  startmac -e env uses environment env's System Folder, from
+# makemac -e env.  One session per System Folder: a second is refused.
 #
 # /etc/aux/macenv.conf (shell syntax) or the environment may set
 #   TBMEMORY  Mac memory, e.g. 32M; default a quarter of physical
@@ -15,6 +16,18 @@ umask 022
 m=$MACMODEL t=$TBMEMORY
 [ -r /etc/aux/macenv.conf ] && . /etc/aux/macenv.conf
 MACMODEL=${m:-$MACMODEL} TBMEMORY=${t:-$TBMEMORY}
+e=
+if [ "$1" = -e ]; then
+	[ $# -ge 2 ] || { echo "usage: startmac [-e env] [arg ...]" >&2; exit 2; }
+	e=$2
+	shift 2
+	case $e in
+	default) e= ;;
+	[Ss][Hh][Aa][Rr][Ee][Dd]|[!A-Za-z0-9]*|*[!-A-Za-z0-9._]*)
+		echo "startmac: $e: not an environment name" >&2
+		exit 1 ;;
+	esac
+fi
 ps -e | grep -s ' fidd$' > /dev/null || /etc/aux/fidd < /dev/null
 case `id` in
 uid=0\(*)
@@ -32,10 +45,31 @@ uid=0\(*)
 	H=$HOME ;;
 esac
 S="$H/System Folder"
+# the session locks the environment's metadata file, or the legacy
+# folder's stamp; a missing stamp comes with the refresh below
+F="$S/.stamp"
+if [ -n "$e" ]; then
+	# the layout policy is data: KEY=value lines, never run
+	R=`sed -n 's/^ENVIRONMENT_ROOT=//p' /etc/default/mac 2> /dev/null | sed 1q`
+	case ${R:="~/Mac"} in
+	"~/"*)	R=$HOME/`expr "x$R" : 'x~/\(.*\)'` ;;
+	esac
+	M=`sed -n 's/^ENVIRONMENT_METADATA=//p' /etc/default/mac 2> /dev/null | sed 1q`
+	L=$R/$e
+	S="$L/System Folder"
+	F=$L/${M:-.env}
+	[ -d "$L" ] || { echo "startmac: no environment $e; run makemac -e $e" >&2; exit 1; }
+	[ -f "$F" ] || : >> "$F"
+fi
+envlock -t "$F" || exit 1
 # a new or outdated copy of the template
 [ -f "$S/System" ] && cmp -s "/mac/lib/System Folder/.stamp" "$S/.stamp" || {
 	[ ! -f "$S/System" ] || echo "startmac: updating $S"
-	HOME=$H makemac -f > /dev/null && [ -f "$S/System" ] ||
+	if [ -n "$e" ]; then
+		makemac -f -e "$e" > /dev/null
+	else
+		HOME=$H makemac -f > /dev/null
+	fi && [ -f "$S/System" ] ||
 		{ echo "startmac: cannot make $S" >&2; exit 1; }
 }
 macscrn "$S/%System" 2> /dev/null
@@ -65,7 +99,7 @@ v=`ulimit -v`
 [ "$v" = unlimited ] || [ "$v" -ge "$k" ] || ulimit -v $k
 TBSYSTEM=${TBSYSTEM:-$S}
 export TBSYSTEM TBMEMORY
-[ -t 0 ] || exec /mac/bin/startmac "$@"
+[ -t 0 ] || exec envlock "$F" /mac/bin/startmac "$@"
 # the Mac has the keyboard: no echo, and what the tty got meanwhile is
 # dropped, not run by the shell afterwards
 t=`stty -g`
@@ -73,7 +107,7 @@ t=`stty -g`
 trap : 2 3
 trap 'stty $t; exit 1' 1 15
 stty -echo
-/mac/bin/startmac "$@"
+envlock "$F" /mac/bin/startmac "$@"
 r=$?
 stty -icanon min 0 time 0
 cat > /dev/null

@@ -1,6 +1,6 @@
 --- a/kernel/mac/diskroot/root.manifest
 +++ b/kernel/mac/diskroot/root.manifest
-@@ -55,6 +55,47 @@
+@@ -55,6 +55,48 @@
  # date(1) runs setclk -s after stime(2); the kernel keeps the RTC
  f /usr/amiga/bin/setclk 755 0 3 etc/setclk
  
@@ -32,6 +32,7 @@
 +a macpkg/macguest.cpio
 +f /usr/bin/macdiag 750 0 3 macpkg/macdiag
 +f /usr/bin/macscrn 755 0 3 macpkg/macscrn
++f /usr/bin/envlock 755 0 3 macpkg/envlock
 +# TOS container: EmuTOS, its cartridge, the C: folder template /tos/sys,
 +# guest's ~/TOS and the system's apps (drive G:)
 +d /etc/tos	755 0 3

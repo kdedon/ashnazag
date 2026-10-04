@@ -291,7 +291,27 @@ extern int mac_rd_config(), mac_diskpick();
 extern void mac_dskname();
 
 long mac_rootarg = -1;		/* dd minor from root=, -1 none */
+long mac_socktrace = 1;		/* socktrace: log A/UX socket calls */
 extern long mac_nofpu;
+
+/* w as a word of the boot command line */
+static int
+mac_word(s, w)
+char *s, *w;
+{
+	register char *p;
+	register int i;
+
+	for (p = s; *p; p++) {
+		if (p != s && p[-1] != ' ')
+			continue;
+		for (i = 0; w[i] && p[i] == w[i]; i++)
+			;
+		if (w[i] == 0 && (p[i] == 0 || p[i] == ' '))
+			return 1;
+	}
+	return 0;
+}
 
 /* nofpu as a word of the boot command line: probe no FPU */
 static void
@@ -379,6 +399,7 @@ bi_parse()
 	mac_model = mac_memsize = mac_vaddr = mac_vdepth = 0;
 	mac_vrow = mac_vdim = mac_rombase = mac_via1 = 0;
 	mac_auxinfo[0] = mac_auxinfo[1] = mac_auxinfo[2] = 0;
+	mac_socktrace = 0;
 
 	for (n = 0; n + 4 <= mac_bilen; n += size) {
 		tag = *(unsigned short *)(mac_bi + n);
@@ -419,6 +440,7 @@ bi_parse()
 			mac_puts("\"\n");
 			mac_rootparse((char *)p);
 			mac_fpuparse((char *)p);
+			mac_socktrace = mac_word((char *)p, "socktrace");
 #ifdef BOOTDIAG
 			diag_parse((char *)p);
 #endif

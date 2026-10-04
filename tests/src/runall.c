@@ -49,6 +49,7 @@ static struct {
 	{ "t_display", 360 },
 	{ "t_tos", 700 },
 	{ "t_amiga", 520 },
+	{ "t_env", 240 },
 	{ 0, 0 }
 };
 

@@ -1,4 +1,4 @@
-/* global Go, auxQuadraBoot, auxRootFilesystem, auxAssemble, createImageOutput */
+/* global Go, auxForgeRecipe, auxQuadraBoot, auxRootFilesystem, auxAssemble, createImageOutput */
 'use strict';
 importScripts('./storage.js');
 self.onmessage = async ({ data }) => {
@@ -35,6 +35,16 @@ self.onmessage = async ({ data }) => {
     await ready;
     const reader = new FileReaderSync();
     const read = file => (offset, length) => new Uint8Array(reader.readAsArrayBuffer(file.slice(offset, offset + length)));
+    let recipe, mismatches = [];
+    if (data.selection) {
+      postMessage({ type: 'status', message: 'Hashing inputs for the build recipe…' });
+      const { preset, machine, settings } = data.selection;
+      const selection = { preset, machine, settings: { ...settings, rootMiB, swapMiB }, provision: provision.map(({ kind, family, id }) => ({ kind, family, id })) };
+      const files = [...archives.map(source => source.file), kernel, donor, ...provision.map(item => item.file)];
+      const made = JSON.parse(auxForgeRecipe(JSON.stringify({ selection, sizes: files.map(file => file.size), expect: data.expect ?? '' }), files.map(read)));
+      if (!made.ok) throw new Error(made.error);
+      recipe = made.recipe; mismatches = made.mismatches ?? [];
+    }
     postMessage({ type: 'status', message: 'Creating the HFS boot partition and installing the kernel…' });
     const bootResult = auxQuadraBoot(donor.size, kernel.size, read(donor), read(kernel));
     if (!bootResult.ok) throw new Error(bootResult.error);
@@ -46,7 +56,7 @@ self.onmessage = async ({ data }) => {
     rootOutput = await createImageOutput(rootMiB * 1048576, temporaryNames[0]);
     diskOutput = await createImageOutput(total, temporaryNames[1]);
     postMessage({ type: 'status', message: 'Layering AMIX media and applying Quadra console patches…' });
-    const metadata = { mode: 'quadra-console', sizeMiB: rootMiB, sources: archives.map(source => ({ name: source.name, size: source.file.size })), kernelSize: kernel.size, provision: packageMetadata };
+    const metadata = { mode: 'quadra-console', sizeMiB: rootMiB, sources: archives.map(source => ({ name: source.name, size: source.file.size })), kernelSize: kernel.size, provision: packageMetadata, ...(recipe ? { recipe } : {}) };
     let rootWritten = 0, rootReported = 0;
     const rootResult = JSON.parse(auxRootFilesystem(JSON.stringify(metadata), [...archives.map(source => read(source.file)), read(kernel), ...provision.map(item => read(item.file))], (offset, chunk) => {
       rootOutput.write(offset, chunk);
@@ -72,7 +82,7 @@ self.onmessage = async ({ data }) => {
     if (bytes !== total) throw new Error('Disk image size verification failed.');
     const file = await diskOutput.finish();
     await rootOutput.remove(); rootOutput = null;
-    postMessage({ type: 'complete', file, bytes, report: rootResult.report });
+    postMessage({ type: 'complete', file, bytes, report: rootResult.report, recipe, mismatches });
   } catch (error) {
     await Promise.all([rootOutput, diskOutput].filter(Boolean).map(output => output.remove().catch(() => {})));
     postMessage({ type: 'error', error: error.name === 'QuotaExceededError' ? 'Browser storage ran out of space. Free space or reduce the root or swap size.' : error.message });

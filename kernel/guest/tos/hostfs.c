@@ -8,7 +8,8 @@
  * scanning the directory.  Below a root other than "/", ".." and
  * symbolic links resolve as if the root were "/": a guard against
  * accidents, not a security boundary, since TOS programs run as the
- * user and can make host calls themselves.
+ * user and can make host calls themselves.  An environment's .env is
+ * hidden: the session's lock on it would go when the guest closed it.
  */
 
 #include <sys/types.h>
@@ -316,6 +317,13 @@ lookup(r, t, out)
 	return 0;
 }
 
+static int
+hidden(n)
+	char *n;
+{
+	return n[0] == '.' && n[1] == 'e' && n[2] == 'n' && n[3] == 'v' && n[4] == 0;
+}
+
 static void
 pop(r)
 	char *r;
@@ -371,6 +379,8 @@ walk(n, last, nf)
 			;
 		else if (l == 2 && c[0] == '.' && c[1] == '.')
 			pop(rel);
+		else if (hidden(c))
+			return -1;
 		else {
 			if (push(rel, c) < 0)
 				return -1;
@@ -609,7 +619,7 @@ next(s)
 		if (s->root && de->d_name[0] == '.' &&
 		    (de->d_name[1] == 0 || (de->d_name[1] == '.' && de->d_name[2] == 0)))
 			continue;
-		if (slen(de->d_name) >= 64)
+		if (slen(de->d_name) >= 64 || hidden(de->d_name))
 			continue;
 		short83(de->d_name, sn);
 		if (!match(s->pat, sn))

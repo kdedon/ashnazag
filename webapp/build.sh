@@ -9,6 +9,7 @@ cp ../etc/default/mac ../etc/default/tos ../etc/default/amiga provision/policies
 "$GO" build -trimpath -o build/ashbuild ./cmd/ashbuild
 "$GO" build -trimpath -o build/ashfs ./cmd/ashfs
 "$GO" build -trimpath -o build/ashpkg ./cmd/ashpkg
+"$GO" build -trimpath -o build/ashforge ./cmd/ashforge
 GOOS=js GOARCH=wasm "$GO" build -trimpath -o build/site/planner.wasm ./cmd/wasm
 goroot=$("$GO" env GOROOT)
 runtime="$goroot/lib/wasm/wasm_exec.js"
