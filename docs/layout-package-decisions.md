@@ -157,3 +157,12 @@ The forge and `tools/setup.sh` take the AMIX tape the way users have it: usually
 | Id | Work | Acceptance |
 |---|---|---|
 | B10 | The forge accepts a whole tape image or archive (via the shared splitter `tools/amixtape.py`, ported to Go/WASM) and stops asking for segments 02/03/10 | The same image results from a `.tap`, an archive set or a directory; a missing segment is named |
+
+### Time zone (2026-10-04)
+
+`/etc/TIMEZONE` comes from the host where one exists. On a Mac, the kernel sets it at boot from the GMT offset the Map control panel keeps in PRAM. Elsewhere, such as the Falcon, it comes from the build: the forge defaults to the browser's own zone, and the user can change it. `mkdisk.sh` takes `TZ=`, defaulting to `CST6CDT`.
+
+| Id | Work | Acceptance |
+|---|---|---|
+| B11 | Forge time-zone option, defaulting to the browser's zone (`Intl.DateTimeFormat().resolvedOptions().timeZone` mapped to a System V TZ string), recorded in the recipe | The image's `/etc/TIMEZONE` matches the choice |
+| L9 | Mac kernel: TZ from PRAM's GMT offset at boot, when the image leaves it unset | The `date` local time matches the Mac's Map setting |

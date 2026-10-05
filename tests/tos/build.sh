@@ -90,8 +90,10 @@ if AUX=$AUX sh "$G/tos/fvdi/build.sh" "$O/fvdi" > "$O/fvdi.log" 2>&1; then
 	cp "$O/fvdi/fvdi.sys" "$R/tos/fvdi/FVDI.SYS"
 	cp "$O/fvdi/ashfb.sys" "$R/tos/fvdi/ASHFB.SYS"
 	cp "$O/fvdi/fvdi.prg" "$R/tos/fvdi/AUTO/FVDI.PRG"
+elif [ "$NOFVDI" = 1 ]; then
+	echo "[skip] fVDI (NOFVDI=1): $(tail -1 "$O/fvdi.log")"
 else
-	echo "[skip] fVDI: $(tail -1 "$O/fvdi.log")"
+	echo "[FAIL] fVDI: $(tail -1 "$O/fvdi.log") (NOFVDI=1 to build without it)"; exit 1
 fi
 # TeraDesk, started by the desktop
 if AUX=$AUX MINT=$O/mint sh "$G/tos/teradesk/build.sh" "$O/teradesk" > "$O/teradesk.log" 2>&1; then

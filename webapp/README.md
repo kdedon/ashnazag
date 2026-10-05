@@ -6,7 +6,10 @@ image. Media stay on the user's computer. The intended output is a bootable `.im
 the internal JSON plan is an implementation detail.
 
 The Quadra console recipe builds a complete `.img` in the browser from extracted
-AMIX tape segments 02/03/10, a prebuilt Quadra kernel ELF, and an A/UX donor disk.
+the AMIX 2.1 tape, a prebuilt Quadra kernel ELF, and an A/UX donor disk. The tape
+may be given as its archive parts (`.tar.bz2`, `.tar.gz`, `.tar`, `.zip`), a SIMH
+`.tap` image or the segment files; segments are found by size and SHA-256
+(`amixtape/segments.json`, shared with `tools/amixtape.py`), and missing ones are named.
 Go/WASM creates a new HFS boot volume, patches and builds the UFS root, and adds
 swap and the Apple partition map. The donor supplies only its map and disk driver.
 No native commands or uploads are involved in this browser path.
@@ -70,11 +73,17 @@ format are refused.
 
 ```sh
 webapp/build/ashforge presets
-webapp/build/ashforge build -preset quadra800 -tapes DIR -kernel unix.elf -donor aux.img -output new.img -export recipe.json
-webapp/build/ashforge build -recipe recipe.json -tapes DIR -kernel unix.elf -donor aux.img -output again.img
+webapp/build/ashforge tape amix_2.1_tape_part1.tar.bz2 amix_2.1_tape_part2.tar.bz2
+webapp/build/ashforge build -preset quadra800 -tape PART1 -tape PART2 -kernel unix.elf -donor aux.img -output new.img -export recipe.json
+webapp/build/ashforge build -recipe recipe.json -tape PART1 -tape PART2 -kernel unix.elf -donor aux.img -output again.img
 ```
 
-`DIR` holds tape segments `02`, `03` and `10`. With `-recipe`, inputs that
+`ashforge tape` lists the segments found and names the missing ones. `-tape` also
+takes a `.tap` image, segment files or a directory of them. The recipe's
+`amix-tape` input covers the segments used; its `parts` list each given file's
+size and SHA-256 and are left out of the image's copy, so any packaging of the
+same tape gives the same image. Format 1 recipes, which listed segments 02, 03
+and 10 separately, are converted on import. With `-recipe`, inputs that
 differ from the recorded hashes are refused; the browser builds anyway and
 names the differing inputs. Add `-package kind:family:id=file` per
 provisioning package.
@@ -134,7 +143,7 @@ The advanced filesystem panel layers extracted SVR4 cpio archives into a
 conflicts fail. Hardlinks preserve their original data when a target path is replaced.
 File metadata, symlinks and devices are retained; payloads stream in bounded chunks.
 
-The Quadra console recipe takes AMIX segments 02, 03 and 10 plus a prebuilt kernel
+The Quadra console recipe takes the AMIX 2.1 tape plus a prebuilt kernel
 ELF. It applies console/device configuration, UFS mounts, shutdown changes and the
 swap page-size patch. It produces a root filesystem, which still needs a compatible
 HFS boot partition and disk assembly. Guest/desktop selections are not applied.

@@ -1,6 +1,6 @@
 --- a/kernel/mac/diskroot/root.manifest
 +++ b/kernel/mac/diskroot/root.manifest
-@@ -55,6 +55,48 @@
+@@ -55,6 +55,49 @@
  # date(1) runs setclk -s after stime(2); the kernel keeps the RTC
  f /usr/amiga/bin/setclk 755 0 3 etc/setclk
  
@@ -30,6 +30,7 @@
 +f /usr/bin/makemac 755 0 3 macpkg/makemac
 +# guest's ~/System Folder, as makemac makes it
 +a macpkg/macguest.cpio
++a macpkg/amiga.cpio
 +f /usr/bin/macdiag 750 0 3 macpkg/macdiag
 +f /usr/bin/macscrn 755 0 3 macpkg/macscrn
 +f /usr/bin/envlock 755 0 3 macpkg/envlock

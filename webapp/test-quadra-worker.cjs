@@ -9,6 +9,7 @@ const { webcrypto } = require('node:crypto');
 
 class InputFile {
   constructor(source, start = 0, size) {
+    if (Array.isArray(source)) source = Buffer.concat(source.map(part => Buffer.from(part)));
     this.source = source;
     this.start = start;
     this.size = size ?? (typeof source === 'string' ? fs.statSync(source).size : source.length);
@@ -183,11 +184,13 @@ async function recipeRoundTrip(base) {
   };
   const first = await build();
   const recipe = JSON.parse(first.recipe);
-  assert.equal(recipe.formatVersion, 1);
+  assert.equal(recipe.formatVersion, 2);
   assert.deepEqual(recipe.preset, { id: 'quadra800', revision: 1 });
   assert.deepEqual(recipe.changes, { swapMiB: 4, provision: [{ kind: 'app', family: 'amiga', id: 'test-1' }] });
-  assert.deepEqual(recipe.inputs.map(input => input.role), ['amix-02', 'amix-03', 'amix-10', 'kernel', 'boot-donor', 'package:test-1']);
-  assert(first.image.includes(Buffer.from(first.recipe)), 'image does not carry its recipe');
+  assert.deepEqual(recipe.inputs.map(input => input.role), ['amix-tape', 'kernel', 'boot-donor', 'package:test-1']);
+  assert.deepEqual(recipe.inputs[0].parts.map(part => part.size), base.archives.map(source => source.file.size));
+  delete recipe.inputs[0].parts;
+  assert(first.image.includes(Buffer.from(JSON.stringify(recipe, null, 2) + '\n')), 'image does not carry its recipe without tape parts');
   const second = await build(first.recipe);
   assert.equal(second.recipe, first.recipe);
   assert.equal(second.mismatches.length, 0);
@@ -207,11 +210,12 @@ async function recipeRoundTrip(base) {
 
 async function main() {
   const [tapeDir, kernelPath, donorPath, outputPath] = process.argv.slice(2);
-  assert(!tapeDir || (kernelPath && donorPath), 'Usage: node test-quadra-worker.cjs [tape-directory kernel.elf donor.img [output.img]]');
+  assert(!tapeDir || (kernelPath && donorPath), 'Usage: node test-quadra-worker.cjs [tape-part,... kernel.elf donor.img [output.img]]');
   const kernel = new InputFile(kernelPath || kernelFixture());
   const donor = new InputFile(donorPath || donorFixture());
-  const archives = ['02', '03', '10'].map((name, index) => ({ name, file: new InputFile(tapeDir ? path.join(tapeDir, name) : index === 0 ? coreArchive() : archive({})) }));
-  const request = { type: 'quadra', archives, kernel, donor, rootMiB: 64, swapMiB: 256, temporaryNames: ['ash-image-root-test', 'ash-image-final-test'] };
+  const sources = tapeDir ? { tape: tapeDir.split(',').map(name => Object.assign(new InputFile(name), { name: path.basename(name) })) }
+    : { archives: ['02', '03', '10'].map((name, index) => ({ name, file: new InputFile(index === 0 ? coreArchive() : archive({})) })) };
+  const request = { type: 'quadra', ...sources, kernel, donor, rootMiB: 64, swapMiB: 256, temporaryNames: ['ash-image-root-test', 'ash-image-final-test'] };
   if (!tapeDir) {
     const data = fs.readFileSync(path.join(__dirname, 'svr4/testdata/ASHtest.pkg'));
     request.provision = [{kind:'app', family:'amiga', id:'test-1', sha256:require('node:crypto').createHash('sha256').update(data).digest('hex'), file:new InputFile(data)}];
@@ -229,6 +233,7 @@ async function main() {
   if (!tapeDir) await recipeRoundTrip(request);
   for (const [label, changes, options, expected] of [
     ['invalid package', { provision: [{kind:'app'}] }, {}, /provisioning/i],
+    ['incomplete tape', { archives: undefined, tape: [Object.assign(new InputFile(Buffer.alloc(8192)), { name: 'tape.img' })] }, {}, /segments 02, 03, 10 not found/],
     ['invalid kernel', { kernel: new InputFile(Buffer.alloc(52)) }, {}, /kernel|ELF|executable/i],
     ['storage quota', {}, { quota: 1 }, /space|quota/i],
     ['write failure', {}, { failWrite: true }, /Injected storage failure/],

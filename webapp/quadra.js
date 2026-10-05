@@ -6,13 +6,11 @@
     <p class="field-help">This recipe installs the Quadra console system with its default devices. Packages, guests, graphical login and custom drivers are not included. Supply a prebuilt Quadra kernel; kernel compilation is not yet available in the browser.</p>
     <form id="quadra-form" aria-label="Complete Quadra image build">
       <div class="media-fields">
-        <label class="media-field">AMIX tape segment 02<input id="quadra-tape02" type="file" required></label>
-        <label class="media-field">AMIX tape segment 03<input id="quadra-tape03" type="file" required></label>
-        <label class="media-field">AMIX tape segment 10<input id="quadra-tape10" type="file" required></label>
+        <label class="media-field">AMIX 2.1 tape archive (one or more parts)<input id="quadra-tape" type="file" multiple required><span class="field-help">Select every part, such as both <code>.tar.bz2</code> archives, or a <code>.tap</code> image or the segment files. Missing segments are named.</span></label>
         <label class="media-field">Prebuilt Quadra kernel (m68k ELF)<input id="quadra-kernel" type="file" required></label>
         <label class="media-field">A/UX boot donor disk<input id="quadra-donor" type="file" accept=".img,.dsk,application/octet-stream" required><span class="field-help">Supplies the Apple partition map and disk drivers. The builder creates a new HFS boot partition for the selected kernel.</span></label>
       </div>
-      <p class="field-help">Select extracted cpio tape segments, not the complete tape image. All media stays on your computer.</p>
+      <p class="field-help">All media stays on your computer.</p>
       <div class="hardware-fields">
         <label class="version-field">Root filesystem (MiB)<input id="quadra-root" type="number" min="64" max="2048" step="4" value="64" required></label>
         <label class="version-field">Swap (MiB)<input id="quadra-swap" type="number" min="4" max="2048" step="1" value="64" required></label>
@@ -21,7 +19,7 @@
       <button id="quadra-build" class="primary-button" type="submit">Forge Quadra disk image <span aria-hidden="true">↓</span></button>
       <button id="quadra-cancel" class="text-button" type="button" hidden>Cancel build</button>
       <progress id="quadra-progress" aria-label="Quadra build progress" hidden></progress>
-      <p id="quadra-status" role="status" aria-live="polite" class="field-help">Choose the five source files to begin.</p>
+      <p id="quadra-status" role="status" aria-live="polite" class="field-help">Choose the source files to begin.</p>
       <p><a id="quadra-download" download="ash-nazag-q800.img" hidden>Download ash-nazag-q800.img</a></p>
       <p><a id="quadra-recipe" download="ash-nazag-q800-recipe.json" hidden>Export build recipe (JSON)</a></p>
       <p class="field-help">The recipe lists your selections and each input's size and SHA-256, never file names or contents. The image carries it at <code>/etc/forge/recipe.json</code>.</p>
@@ -29,9 +27,8 @@
   const get = name => document.getElementById(`quadra-${name}`);
   const form = get('form'), button = get('build'), cancel = get('cancel');
   const status = get('status'), progress = get('progress'), download = get('download'), recipeLink = get('recipe');
-  const tapes = ['02', '03', '10'].map(name => get(`tape${name}`));
-  const kernel = get('kernel'), donor = get('donor'), root = get('root'), swap = get('swap');
-  const inputs = [...tapes, kernel, donor, root, swap];
+  const tape = get('tape'), kernel = get('kernel'), donor = get('donor'), root = get('root'), swap = get('swap');
+  const inputs = [tape, kernel, donor, root, swap];
   let worker = null, leases = [], url = null, recipeURL = null, generation = 0, imported = '';
   const abandoned = cleanAbandonedImages().catch(() => {});
   const controls = busy => {
@@ -88,7 +85,7 @@
       };
       worker.onerror = event => { event.preventDefault(); if (run === generation) void fail(`Quadra worker failed: ${event.message}`); };
       worker.onmessageerror = () => { if (run === generation) void fail('The Quadra worker returned unreadable data.'); };
-      worker.postMessage({ type: 'quadra', archives: tapes.map((input, i) => ({ name: ['02', '03', '10'][i], file: input.files[0] })), kernel: kernel.files[0], donor: donor.files[0], rootMiB: Number(root.value), swapMiB: Number(swap.value), temporaryNames: leases.map(lease => lease.name), selection: { preset: 'quadra800', machine: 'q800', settings: { devices: window.forgeDevices?.('q800') ?? ['adb', 'framebuffer', 'scc', 'scsi53c96'] } }, expect: imported });
+      worker.postMessage({ type: 'quadra', tape: Array.from(tape.files), kernel: kernel.files[0], donor: donor.files[0], rootMiB: Number(root.value), swapMiB: Number(swap.value), temporaryNames: leases.map(lease => lease.name), selection: { preset: 'quadra800', machine: 'q800', settings: { devices: window.forgeDevices?.('q800') ?? ['adb', 'framebuffer', 'scc', 'scsi53c96'] } }, expect: imported });
     } catch (error) { if (run === generation) await fail(`Quadra build failed: ${error.message}`); }
   });
   cancel.addEventListener('click', () => { void fail('Quadra build cancelled.'); });
@@ -101,5 +98,5 @@
     root.value = settings.rootMiB; swap.value = settings.swapMiB; imported = settings.recipe;
     void reset(); controls(false);
   };
-  window.openQuadraBuilder = () => { panel.scrollIntoView({ behavior: 'smooth', block: 'start' }); tapes[0].focus({ preventScroll: true }); };
+  window.openQuadraBuilder = () => { panel.scrollIntoView({ behavior: 'smooth', block: 'start' }); tape.focus({ preventScroll: true }); };
 })();

@@ -45,6 +45,25 @@ if [ -f "$AMIGAROM" ] && [ -f "$AMIGASYS/S/Startup-Sequence" ]; then
 	(cd "$AMIGASYS" && find . -type d | sed 's#^\.##' | sort | sed '/^$/d; s#.*#d & 755 0 3#'
 	 cd "$AMIGASYS" && find . -type f | sed 's#^\.##' | sort | sed "s#.*#f & 755 0 3 $AMIGASYS&#") > "$M"
 	echo "f /LIBS/Picasso96/container.card 755 0 3 $O/rtg/container.card" >> "$M"
+	# the current startup and the files binding Workbench to container.card
+	G=$O/p96gen
+	python3 "$AUX/tools/amiga/p96prefs.py" "$G" | sed 's#^Devs/#DEVS/#' > "$O/p96gen.list"
+	python3 -c 'import sys; sys.path[0] = sys.argv[1]; from template import STARTUP; print(STARTUP, end="")' \
+	    "$AUX/tools/amiga" > "$G/Startup-Sequence"
+	echo S/Startup-Sequence >> "$O/p96gen.list"
+	sh "$KDIR/guest/amiga/input/build.sh" "$O/input" > /dev/null
+	echo C/container-input >> "$O/p96gen.list"
+	awk 'NR == FNR { drop["/" tolower($0)]; next } !(tolower($2) in drop)' "$O/p96gen.list" "$M" > "$M.new"
+	mv "$M.new" "$M"
+	grep -q -i '^d /Prefs/Env-Archive/Picasso96 ' "$M" || echo "d /Prefs/Env-Archive/Picasso96 755 0 3" >> "$M"
+	while read -r f; do
+		case $f in
+		S/*) echo "f /$f 755 0 3 $G/Startup-Sequence" ;;
+		C/container-input) echo "f /$f 755 0 3 $O/input/container-input" ;;
+		DEVS/*) echo "f /$f 755 0 3 $G/Devs/${f#DEVS/}" ;;
+		*) echo "f /$f 755 0 3 $G/$f" ;;
+		esac
+	done < "$O/p96gen.list" >> "$M"
 	if [ -f "$AMIGAP96" ]; then
 		P=$O/p96/Picasso96Install
 		7z x -y -o"$O/p96" "$AMIGAP96" > /dev/null

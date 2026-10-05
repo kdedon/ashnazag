@@ -25,6 +25,10 @@ _start:
  sub.l %a2,%a2
  sub.l %a3,%a3
  sub.l %a4,%a4
+ lea vars(%pc),%a0
+ moveq #2,%d0
+1: clr.l (%a0)+
+ dbra %d0,1b
  lea dosname(%pc),%a1
  moveq #37,%d0
  jsr -552(%a6)
@@ -41,6 +45,20 @@ _start:
  move.l %d0,%a2
  tst.l %d0
  beq cleanup
+ move.l %a3,%a0
+ moveq #40,%d0
+ jsr -654(%a6)
+ move.l %d0,tioreq
+ beq cleanup
+ lea timername(%pc),%a0
+ moveq #1,%d0
+ moveq #0,%d1
+ move.l tioreq,%a1
+ jsr -444(%a6)
+ tst.l %d0
+ bne cleanup
+ move.l tioreq,%a0
+ move.l 20(%a0),timerbase
  lea inputname(%pc),%a0
  moveq #0,%d0
  moveq #0,%d1
@@ -48,6 +66,7 @@ _start:
  jsr -444(%a6)
  tst.l %d0
  bne cleanup
+ st inputopen
  move.l head(%a5),tail(%a5)
  move.l reset(%a5),ack(%a5)
  addq.l #1,28(%a5)
@@ -127,11 +146,21 @@ interrupted:
 stop:
  clr.l ready(%a5)
  bsr release_all
- move.l %a2,%a1
- jsr -450(%a6)
 cleanup:
  clr.l ready(%a5)
- cmp.l #0,%a2
+ tst.b inputopen
+ beq 1f
+ move.l %a2,%a1
+ jsr -450(%a6)
+1: tst.l timerbase
+ beq 1f
+ move.l tioreq,%a1
+ jsr -450(%a6)
+1: move.l tioreq,%d0
+ beq 1f
+ move.l %d0,%a0
+ jsr -660(%a6)
+1: cmp.l #0,%a2
  beq 1f
  move.l %a2,%a0
  jsr -660(%a6)
@@ -150,7 +179,13 @@ done:
  move.l %d7,%d0
  movem.l (%sp)+,%d2-%d7/%a2-%a6
  rts
+| one event to input.device, stamped with the system time
 send:
+ move.l %a6,-(%sp)
+ move.l timerbase,%a6
+ lea event+14(%pc),%a0
+ jsr -66(%a6)
+ move.l (%sp)+,%a6
  move.w #11,28(%a2)
  clr.b 30(%a2)
  move.l #22,36(%a2)
@@ -185,8 +220,14 @@ release_all:
  movem.l (%sp)+,%d2/%a0
  rts
 inputname: .asciz "input.device"
+timername: .asciz "timer.device"
 dosname: .asciz "dos.library"
- .asciz "$VER: container-input 1.0 (04.10.2026)"
- .balign 2
+ .asciz "$VER: container-input 1.1 (04.10.2026)"
+ .balign 4
+vars:
+tioreq: .long 0
+timerbase: .long 0
+inputopen: .byte 0
+ .balign 4
 event: .space 22
 held: .space 128

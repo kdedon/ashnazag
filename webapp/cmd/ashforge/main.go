@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -12,15 +13,20 @@ import (
 	"strings"
 	"syscall"
 
+	"amigaux.org/imagebuilder/amixtape"
 	"amigaux.org/imagebuilder/forge"
 )
 
 const usage = `usage:
   ashforge presets
   ashforge check -recipe recipe.json
+  ashforge tape part...
   ashforge build (-preset quadra800 | -recipe recipe.json) [-root MiB] [-swap MiB]
-                 [-package kind:family:id=file ...] -tapes dir -kernel unix.elf
-                 -donor disk.img -output new.img [-export recipe.json]`
+                 [-package kind:family:id=file ...] -tape part [-tape part ...]
+                 -kernel unix.elf -donor disk.img -output new.img [-export recipe.json]
+
+A tape part is an archive (.tar.bz2, .tar.gz, .tar, .zip), a SIMH .tap image,
+a segment file, a raw image or a directory of these.`
 
 type list []string
 
@@ -62,20 +68,124 @@ func open(name string) (*os.File, forge.Media, error) {
 	return f, forge.Media{Reader: f, Size: st.Size()}, nil
 }
 
+// tapeParts opens the files of the named parts, expanding directories.
+func tapeParts(names []string) ([]amixtape.Part, func(), error) {
+	var parts []amixtape.Part
+	var files []*os.File
+	closeAll := func() {
+		for _, f := range files {
+			f.Close()
+		}
+	}
+	for _, name := range names {
+		paths := []string{name}
+		if st, err := os.Stat(name); err == nil && st.IsDir() {
+			entries, err := os.ReadDir(name)
+			if err != nil {
+				closeAll()
+				return nil, nil, err
+			}
+			paths = paths[:0]
+			for _, e := range entries {
+				if e.Type().IsRegular() {
+					paths = append(paths, filepath.Join(name, e.Name()))
+				}
+			}
+		}
+		for _, p := range paths {
+			f, m, err := open(p)
+			if err != nil {
+				closeAll()
+				return nil, nil, err
+			}
+			files = append(files, f)
+			parts = append(parts, amixtape.Part{Name: p, Reader: m.Reader, Size: m.Size})
+		}
+	}
+	return parts, closeAll, nil
+}
+
+// tapeMedia returns the segments a build layers and the tape input. dir
+// names segments already split, taken as they are.
+func tapeMedia(ctx context.Context, names []string, dir string) ([]forge.Media, forge.Input, error) {
+	var segs []forge.Media
+	var digests []amixtape.Digest
+	if dir != "" {
+		for _, id := range forge.TapeSegments {
+			b, err := os.ReadFile(filepath.Join(dir, id))
+			if err != nil {
+				return nil, forge.Input{}, err
+			}
+			in, err := forge.Digest(ctx, "", bytes.NewReader(b), int64(len(b)))
+			if err != nil {
+				return nil, forge.Input{}, err
+			}
+			segs = append(segs, forge.Media{Reader: bytes.NewReader(b), Size: int64(len(b))})
+			digests = append(digests, amixtape.Digest{Size: in.Size, SHA256: in.SHA256})
+		}
+	} else {
+		parts, closeAll, err := tapeParts(names)
+		if err != nil {
+			return nil, forge.Input{}, err
+		}
+		defer closeAll()
+		res, err := amixtape.Scan(ctx, amixtape.Table, parts, forge.TapeSegments, nil)
+		if err != nil {
+			return nil, forge.Input{}, err
+		}
+		if err = res.Need(forge.TapeSegments); err != nil {
+			return nil, forge.Input{}, err
+		}
+		for _, id := range forge.TapeSegments {
+			segs = append(segs, forge.Media{Reader: bytes.NewReader(res.Data[id]), Size: int64(len(res.Data[id]))})
+		}
+		digests = res.Parts
+	}
+	in, err := forge.TapeInput(ctx, segs, digests)
+	return segs, in, err
+}
+
+func checkTape(ctx context.Context, names []string) error {
+	if len(names) == 0 {
+		return fmt.Errorf("%s", usage)
+	}
+	parts, closeAll, err := tapeParts(names)
+	if err != nil {
+		return err
+	}
+	defer closeAll()
+	res, err := amixtape.Scan(ctx, amixtape.Table, parts, nil, nil)
+	if err != nil {
+		return err
+	}
+	for _, s := range amixtape.Table {
+		if where, ok := res.Found[s.ID]; ok {
+			fmt.Printf("%s  %s\n", s.ID, where)
+		}
+	}
+	var ids []string
+	for _, s := range amixtape.Table {
+		ids = append(ids, s.ID)
+	}
+	return res.Need(ids)
+}
+
 func build(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("build", flag.ContinueOnError)
 	preset := fs.String("preset", "", "preset id")
 	recipePath := fs.String("recipe", "", "exported recipe to rebuild")
 	root := fs.Int("root", 0, "root filesystem MiB")
 	swap := fs.Int("swap", 0, "swap MiB")
-	tapes := fs.String("tapes", "", "directory holding AMIX tape segments 02, 03 and 10")
+	var tape list
+	fs.Var(&tape, "tape", "AMIX 2.1 tape part; repeat for each part")
+	tapes := fs.String("tapes", "", "directory of split segments 02, 03 and 10, not checked against the AMIX table")
 	kernel := fs.String("kernel", "", "prebuilt Quadra kernel ELF")
 	donor := fs.String("donor", "", "A/UX boot donor disk")
 	output := fs.String("output", "", "new disk image")
 	export := fs.String("export", "", "write the recipe here")
 	var pkgs list
 	fs.Var(&pkgs, "package", "provisioning package kind:family:id=file; repeat in order")
-	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || (*preset == "") == (*recipePath == "") || *tapes == "" || *kernel == "" || *donor == "" || *output == "" {
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || (*preset == "") == (*recipePath == "") || (len(tape) == 0) == (*tapes == "") || *kernel == "" || *donor == "" || *output == "" {
 		return fmt.Errorf("%s", usage)
 	}
 	var imported *forge.Recipe
@@ -108,7 +218,7 @@ func build(ctx context.Context, args []string) error {
 	if len(pkgs) != 0 {
 		s.Provision = nil
 	}
-	files := []string{filepath.Join(*tapes, "02"), filepath.Join(*tapes, "03"), filepath.Join(*tapes, "10"), *kernel, *donor}
+	files := []string{*kernel, *donor}
 	for _, p := range pkgs {
 		spec, file, ok := strings.Cut(p, "=")
 		parts := strings.Split(spec, ":")
@@ -118,18 +228,21 @@ func build(ctx context.Context, args []string) error {
 		s.Provision = append(s.Provision, forge.Package{Kind: parts[0], Family: parts[1], ID: parts[2]})
 		files = append(files, file)
 	}
-	if len(files) != len(forge.Roles(s)) {
+	if len(files) != len(forge.Roles(s))-1 {
 		return fmt.Errorf("supply each of the recipe's %d packages with -package", len(s.Provision))
 	}
-	var media []forge.Media
-	var inputs []forge.Input
+	media, tapeIn, err := tapeMedia(ctx, tape, *tapes)
+	if err != nil {
+		return err
+	}
+	inputs := []forge.Input{tapeIn}
 	for i, name := range files {
 		f, m, err := open(name)
 		if err != nil {
 			return err
 		}
 		defer f.Close()
-		in, err := forge.Digest(ctx, forge.Roles(s)[i], m.Reader, m.Size)
+		in, err := forge.Digest(ctx, forge.Roles(s)[i+1], m.Reader, m.Size)
 		if err != nil {
 			return err
 		}
@@ -218,6 +331,8 @@ func run() error {
 		return printJSON(s)
 	case "build":
 		return build(ctx, os.Args[2:])
+	case "tape":
+		return checkTape(ctx, os.Args[2:])
 	}
 	return fmt.Errorf("%s", usage)
 }

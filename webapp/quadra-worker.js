@@ -1,4 +1,4 @@
-/* global Go, auxForgeRecipe, auxQuadraBoot, auxRootFilesystem, auxAssemble, createImageOutput */
+/* global Go, auxAmixTape, auxForgeRecipe, auxQuadraBoot, auxRootFilesystem, auxAssemble, createImageOutput */
 'use strict';
 importScripts('./storage.js');
 self.onmessage = async ({ data }) => {
@@ -6,9 +6,12 @@ self.onmessage = async ({ data }) => {
   self.onmessage = null;
   let rootOutput, diskOutput;
   try {
-    const { archives, kernel, donor, rootMiB, swapMiB, temporaryNames } = data;
-    if (!Array.isArray(archives) || archives.length !== 3 || archives.some((source, i) => source.name !== ['02', '03', '10'][i] || !(source.file instanceof Blob) || !source.file.size || source.file.size > 8 * 1073741824)) {
-      throw new Error('Choose nonempty extracted AMIX segments 02, 03 and 10.');
+    const { tape, kernel, donor, rootMiB, swapMiB, temporaryNames } = data;
+    let { archives } = data, tapeParts;
+    if (tape !== undefined) {
+      if (!Array.isArray(tape) || !tape.length || tape.length > 64 || tape.some(file => !(file instanceof Blob) || !file.size || file.size > 8 * 1073741824)) throw new Error('Choose the AMIX 2.1 tape archive: 1–64 parts, each up to 8 GiB.');
+    } else if (!Array.isArray(archives) || archives.length !== 3 || archives.some((source, i) => source.name !== ['02', '03', '10'][i] || !(source.file instanceof Blob) || !source.file.size || source.file.size > 8 * 1073741824)) {
+      throw new Error('Choose the AMIX 2.1 tape archive.');
     }
     if (!(kernel instanceof Blob) || kernel.size < 52 || kernel.size > 32 * 1048576) throw new Error('Choose a prebuilt Quadra kernel ELF up to 32 MiB.');
     if (!(donor instanceof Blob) || donor.size < 1024 || donor.size > 8 * 1073741824) throw new Error('Choose an A/UX boot donor disk up to 8 GiB.');
@@ -35,13 +38,21 @@ self.onmessage = async ({ data }) => {
     await ready;
     const reader = new FileReaderSync();
     const read = file => (offset, length) => new Uint8Array(reader.readAsArrayBuffer(file.slice(offset, offset + length)));
+    if (tape) {
+      postMessage({ type: 'status', message: 'Reading the AMIX tape…' });
+      const split = auxAmixTape(JSON.stringify({ names: tape.map(file => String(file.name ?? '')), sizes: tape.map(file => file.size) }), tape.map(read),
+        id => postMessage({ type: 'status', message: `Reading the AMIX tape: found segment ${id}…` }));
+      if (!split.ok) throw new Error(split.error);
+      archives = ['02', '03', '10'].map((name, i) => ({ name, file: new Blob([split.segments[i]]) }));
+      tapeParts = JSON.parse(split.parts);
+    }
     let recipe, mismatches = [];
     if (data.selection) {
       postMessage({ type: 'status', message: 'Hashing inputs for the build recipe…' });
       const { preset, machine, settings } = data.selection;
       const selection = { preset, machine, settings: { ...settings, rootMiB, swapMiB }, provision: provision.map(({ kind, family, id }) => ({ kind, family, id })) };
       const files = [...archives.map(source => source.file), kernel, donor, ...provision.map(item => item.file)];
-      const made = JSON.parse(auxForgeRecipe(JSON.stringify({ selection, sizes: files.map(file => file.size), expect: data.expect ?? '' }), files.map(read)));
+      const made = JSON.parse(auxForgeRecipe(JSON.stringify({ selection, sizes: files.map(file => file.size), expect: data.expect ?? '', tapeParts }), files.map(read)));
       if (!made.ok) throw new Error(made.error);
       recipe = made.recipe; mismatches = made.mismatches ?? [];
     }

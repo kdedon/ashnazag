@@ -107,10 +107,11 @@ amigadev_read(struct amigadev *d, unsigned long address, int size,
 		case 0x004:
 			v = (d->pal ? 0x2200 : 0x3200) | (d->line >> 8) |
 			    ((d->frames & 1) ? 0x8000 : 0); break;
-		/* each read sees the next line, so beam waits end */
+		/* each read sees the next line at a scattered horizontal
+		 * position, so waits on either end */
 		case 0x006:
 			d->line = (d->line + 1) % (d->pal ? 312 : 262);
-			v = d->line << 8; break;
+			v = d->line << 8 | d->line * 0x4f % 0xe3; break;
 		case 0x008: v = 0; break;
 		case 0x00a: case 0x00c: v = 0; break;
 		case 0x00e: v = 0; break;

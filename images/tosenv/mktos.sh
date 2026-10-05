@@ -10,7 +10,8 @@
 # 512 KB release zip, EMUTOSLANG its image (us); FVDI the fVDI tree
 # (kernel/guest/tos/fvdi/build.sh).  TOSAPPS names the
 # unpacked apps of APPS.md (default ref/tosapps); without them the
-# image has none.  NOTERADESK=1 leaves TeraDesk out.
+# image has none.  NOTERADESK=1 leaves TeraDesk out,
+# NOFVDI=1 fVDI.
 set -e
 D=$(cd "$(dirname "$0")" && pwd)
 AUX=$(cd "$D/../.." && pwd)
@@ -76,8 +77,10 @@ if AUX=$AUX sh "$G/tos/fvdi/build.sh" "$O/fvdi" > "$O/fvdi.log" 2>&1; then
 	tar -C "$(dirname "${FVDI:-$AUX/ref/fvdi}")" --exclude=.git -czf "$T/tos/src/fvdi/fvdi.tar.gz" \
 		"$(basename "${FVDI:-$AUX/ref/fvdi}")"
 	cp -r "$G/tos/fvdi/." "$G/tos/tosfb.h" "$T/tos/src/fvdi/ashfb/"
+elif [ "$NOFVDI" = 1 ]; then
+	echo "[warn] fVDI (NOFVDI=1): GEM uses the ROM's VDI"
 else
-	echo "[warn] fVDI: $(tail -1 "$O/fvdi.log"); GEM uses the ROM's VDI"
+	echo "[FAIL] fVDI: $(tail -1 "$O/fvdi.log") (NOFVDI=1 to build without it)"; exit 1
 fi
 # TeraDesk, a desktop to run instead of the ROM's; its source beside it (GPL)
 if [ -n "$NOTERADESK" ]; then

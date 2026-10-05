@@ -5,26 +5,29 @@ import hashlib
 import json
 from pathlib import Path, PurePosixPath
 from adf import ADF
+from p96prefs import FILES as P96FILES
 
 STARTUP = '''; Container startup; original system sequence is Startup-Sequence.amigaos.
+; Output opens the boot shell window and with it the Workbench screen, so
+; everything stays silent until IPrefs has set the screen mode.
 FailAt 21
-MakeDir RAM:ENV RAM:T RAM:Clipboards
-Assign ENV: RAM:ENV
-Assign T: RAM:T
-Assign CLIPS: RAM:Clipboards
-Assign ENVARC: SYS:Prefs/Env-Archive
-Copy ENVARC: ENV: ALL QUIET
-Assign REXX: S:
-Assign PRINTERS: DEVS:Printers
-Assign KEYMAPS: DEVS:Keymaps
-Assign LOCALE: SYS:Locale
-Assign LIBS: SYS:Classes ADD
-Assign HELP: LOCALE:Help DEFER
+MakeDir >NIL: RAM:ENV RAM:T RAM:Clipboards
+Assign >NIL: ENV: RAM:ENV
+Assign >NIL: T: RAM:T
+Assign >NIL: CLIPS: RAM:Clipboards
+Assign >NIL: ENVARC: SYS:Prefs/Env-Archive
+Copy >NIL: ENVARC: ENV: ALL QUIET
+Assign >NIL: REXX: S:
+Assign >NIL: PRINTERS: DEVS:Printers
+Assign >NIL: KEYMAPS: DEVS:Keymaps
+Assign >NIL: LOCALE: SYS:Locale
+Assign >NIL: LIBS: SYS:Classes ADD
+Assign >NIL: HELP: LOCALE:Help DEFER
 Run >NIL: C:container-input
-LoadMonDrvs >NIL:
-SetEnv Language "english"
-AddDataTypes REFRESH QUIET
-IPrefs
+LoadMonDrvs >NIL: EXCEPT Container
+SetEnv >NIL: Language "english"
+AddDataTypes >NIL: REFRESH QUIET
+IPrefs >NIL:
 ConClip
 Path C: SYS:Utilities SYS:Rexxc SYS:System S: SYS:Prefs SYS:Tools SYS:Tools/Commodities
 If EXISTS S:User-Startup
@@ -90,6 +93,8 @@ def prepare(adfs, output, input_binary, card):
     put('S/Startup-Sequence', STARTUP.encode('ascii'), 'container')
     put('C/container-input', input_binary.read_bytes(), 'container')
     put('Libs/Picasso96/container.card', card.read_bytes(), 'container')
+    for path, make in P96FILES.items():
+        put(path, make(), 'container')
     required = ('c/assign', 'c/loadwb', 'c/loadmondrvs', 'l/con-handler', 'l/ram-handler',
                 'libs/workbench.library', 'libs/icon.library', 's/startup-sequence', 'c/container-input')
     if any(name not in payloads for name in required):

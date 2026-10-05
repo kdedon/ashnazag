@@ -22,7 +22,13 @@ OUT=$(cd "$OUT" && pwd)
 W=$OUT/work
 rm -rf "$W"
 mkdir -p "$W/bin"
-cp -r "$FVDI" "$W/src"
+# the pinned commit, whatever state the checkout is in
+mkdir -p "$W/src"
+if git -C "$FVDI" rev-parse -q --verify "$FVDIREV^{commit}" > /dev/null 2>&1; then
+	git -C "$FVDI" archive "$FVDIREV" | tar -x -C "$W/src"
+else
+	cp -r "$FVDI/." "$W/src"
+fi
 patch -s -p1 -d "$W/src" < "$H/wheelv.patch"
 cat > "$W/bin/cc" <<CC
 #!/bin/sh

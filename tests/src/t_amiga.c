@@ -13,7 +13,9 @@
  * ("amiga census" lines) and the guest's last fault.
  * With SYS: on a ufs volume (SCSI disk 0), startmig boots it from
  * /amiga/sys; host-side access times show DOS reading Startup-Sequence
- * and Workbench loading.
+ * and Workbench loading.  The boot extension binds container.card
+ * before any screen opens; the RTG session then shows Workbench, a
+ * drag on its backdrop changes the screen and SIGTERM ends the session.
  * Skips without guest support, the module or the 68040 path.
  */
 #include <sys/types.h>
@@ -342,7 +344,10 @@ two()
 				vbl();
 			setsr(0x2000L);
 			write(rdy[1], "e", 1);
-			if (read(go[0], &c, 1) != 1)
+			/* the guest's VBL interrupts the wait */
+			while ((e = read(go[0], &c, 1)) < 0 && errno == EINTR)
+				;
+			if (e != 1)
 				_exit(80);
 			nap(500);
 			if (i == 0)
@@ -528,13 +533,93 @@ host(req)
 	return 0;
 }
 
+/* screen dumps NAME a second apart until two match (at most 20 s) */
+static void
+settle(name)
+	char *name;
+{
+	char req[64], *r;
+	int k;
+
+	for (k = 0; k < 20; k++) {
+		sprintf(req, "shot %s", name);
+		host(req);
+		sleep(1);
+		host("shot amiga_tmp");
+		sprintf(req, "cmp %s amiga_tmp", name);
+		if ((r = host(req)) == 0 || strcmp(r, "same") == 0)
+			return;
+	}
+}
+
+/* box of the pixels that differ between dumps A and B, in rows Y0 and below */
+static int
+pbox(a, b, y0, v)
+	char *a, *b;
+	int y0, v[4];
+{
+	char req[80], *r;
+
+	v[0] = v[1] = v[2] = v[3] = -1;
+	sprintf(req, "box %s %s %d", a, b, y0);
+	return (r = host(req)) != 0 && sscanf(r, "%d %d %d %d", &v[0], &v[1], &v[2], &v[3]) == 4;
+}
+
+/*
+ * Dump NAME each second until its box against BASE is at least MINH rows
+ * high and the same three times running (at most 20 s): motion has stopped.
+ */
+static void
+track(base, name, y0, minh, v)
+	char *base, *name;
+	int y0, minh, v[4];
+{
+	char req[64];
+	int k, n, p[4];
+
+	sprintf(req, "shot %s", name);
+	p[0] = -2;
+	for (k = n = 0; k < 20 && n < 2; k++) {
+		sleep(1);
+		host(req);
+		if (!pbox(base, name, y0, v) || v[3] - v[1] < minh)
+			n = 0;
+		else if (memcmp(v, p, sizeof p) == 0)
+			n++;
+		else
+			n = 0;
+		memcpy(p, v, sizeof p);
+	}
+}
+
+/* a pointer or lasso's near edge at V */
+static int
+at(e, v)
+	int e, v;
+{
+	return e >= v - 2 && e <= v + 2;
+}
+
+/* its far edge: V plus at most the pointer's size */
+static int
+near(e, v)
+	int e, v;
+{
+	return e >= v && e < v + 24;
+}
+
 static void
 boot()
 {
-	static char *mark[] = { "S/Startup-Sequence", "C/IPrefs", "C/LoadWB", "LIBS/workbench.library" };
-	static char *name[] = { "boot_dos", "boot_cli", "boot_loadwb", "boot_workbench" };
-	int i, k, st, fd, seen[4];
+	static char *mark[] = { "S/Startup-Sequence", "C/IPrefs", "C/LoadWB", "LIBS/workbench.library",
+	    "LIBS/Picasso96/container.card", "DEVS/Monitors/Container.info", "LIBS/Picasso96/rtg.library",
+	    "DEVS/Picasso96Settings", "Prefs/Env-Archive/Picasso96/DisableAmigaBlitter" };
+	static char *name[] = { "boot_dos", "boot_cli", "boot_loadwb", "boot_workbench", "boot_rtg",
+	    "boot_icon", "boot_rtglib", "boot_modes", "boot_env" };
+	int i, k, n, st, fd, w, h, seen[9], b[4], o[4];
 	char *r;
+	char line[256];
+	FILE *f;
 	time_t t0;
 	pid_t p;
 
@@ -562,33 +647,98 @@ boot()
 	}
 	memset(seen, 0, sizeof seen);
 	for (i = 0; i < 180 && waitpid(p, &st, WNOHANG) != p; i++) {
-		for (k = 0; k < 4; k++)
+		for (k = n = 0; k < 9; k++) {
 			if (!seen[k] && used(mark[k], t0)) {
 				seen[k] = 1;
 				t_info(name[k], "SYS:%s read after %d s", mark[k], i);
 			}
-		if (seen[0] && seen[1] && seen[2] && seen[3])
+			n += seen[k];
+		}
+		if (n == 9)
 			break;
 		sleep(1);
 	}
-	for (k = 0; k < 4; k++)
+	for (k = 0; k < 5; k++)
 		t_check(name[k], seen[k], "SYS:%s never read", mark[k]);
 	t_check("boot_alive", i < 180 ? kill(p, 0) == 0 : 1, "startmig ended: status 0x%x", st);
-	sleep(10);
-	if ((r = host("shot amiga_wb")) == 0 || (r = host("lit amiga_wb")) == 0)
-		t_skip("boot_screen", "no test host");
-	else if (atoi(r) == 0)
-		t_skip("boot_screen", "screen black: no RTG screen");
-	else {
-		t_check("boot_screen", 1, "");
-		t_info("boot_screen", "%s pixels lit", r);
+	/* Workbench draws its screen well after LoadWB starts */
+	w = h = 0;
+	for (k = 0; k < 30; k++) {
+		sleep(5);
+		if ((r = host("shot amiga_wb")) == 0 || sscanf(r, "%d %d", &w, &h) != 2 ||
+		    (r = host("lit amiga_wb")) == 0 || atoi(r) > w * h / 2)
+			break;
 	}
-	kill(p, SIGKILL);
+	if (r == 0)
+		t_skip("boot_screen", "no test host");
+	else {
+		t_check("boot_screen", atoi(r) > 0, "screen black: no RTG screen");
+		t_info("boot_screen", "%s of %d pixels lit %d s after the boot marks", r, w * h, 5 * k + 5);
+		/* the backdrop fills most of the Workbench screen */
+		t_check("boot_wbscreen", atoi(r) > w * h / 2, "%s of %d pixels lit", r, w * h);
+		/*
+		 * The mouse sums motion until polled: a reversal sent at once would
+		 * cancel pending motion, so moves go in polled steps.  Positions are
+		 * the box of pixels a move changed, below the title bar.
+		 */
+		host("move -2000 -2000 50");
+		settle("amiga_home");
+		host("move 200 160 50");
+		track("amiga_home", "amiga_in0", 0, 100, o);
+		/* the old pointer is at the origin: the box's top left */
+		k = pbox("amiga_home", "amiga_in0", o[1] + 16, b);
+		t_info("boot_input", "origin %d,%d; pointer at %d,%d", o[0], o[1], b[0] - o[0], b[1] - o[1]);
+		t_check("boot_input", k && at(b[0] - o[0], 200) && at(b[1] - o[1], 160),
+		    "pointer at %d,%d, not 200,160", b[0] - o[0], b[1] - o[1]);
+		/* drag on the backdrop: the lasso runs from 200,160 to 260,200 */
+		host("button 1");
+		host("move 60 40 50");
+		track("amiga_in0", "amiga_in1", o[1] + 16, 0, b);
+		host("button 0");
+		t_info("boot_drag", "lasso %d,%d-%d,%d", b[0] - o[0], b[1] - o[1], b[2] - o[0], b[3] - o[1]);
+		t_check("boot_drag", at(b[0] - o[0], 200) && at(b[1] - o[1], 160) &&
+		    near(b[2] - o[0], 260) && near(b[3] - o[1], 200),
+		    "lasso %d,%d-%d,%d, not 200,160-260,200", b[0] - o[0], b[1] - o[1], b[2] - o[0], b[3] - o[1]);
+		/* and back up and left */
+		settle("amiga_in2");
+		host("move -100 -80 50");
+		track("amiga_in2", "amiga_back", o[1] + 16, 0, b);
+		t_info("boot_back", "pointer at %d,%d", b[0] - o[0], b[1] - o[1]);
+		t_check("boot_back", at(b[0] - o[0], 160) && at(b[1] - o[1], 120) &&
+		    near(b[2] - o[0], 260) && near(b[3] - o[1], 200),
+		    "pointer at %d,%d, not 160,120", b[0] - o[0], b[1] - o[1]);
+		/* Left Amiga with the cursor keys moves the pointer */
+		host("shot amiga_in2");
+		for (k = 0; k < 15; k++) {
+			host("key meta_l+shift+down");
+			host("key meta_l+shift+right");
+			host("shot amiga_key");
+			if ((r = host("cmp amiga_in2 amiga_key")) == 0 || strncmp(r, "diff", 4) == 0)
+				break;
+		}
+		t_check("boot_key", r && strncmp(r, "diff", 4) == 0, "screen unchanged by keys");
+	}
+	kill(p, SIGTERM);
 	t_waitchild(p, &st, 10);
-	system("cat /tmp/startmig.log");
+	t_check("boot_exit", WIFSIGNALED(st) && WTERMSIG(st) == SIGTERM, "startmig status 0x%x", st);
+	if (w) {
+		sleep(2);
+		host("shot amiga_exit");
+		r = host("cmp amiga_wb amiga_exit");
+		t_check("boot_release", r && strncmp(r, "diff", 4) == 0, "session still shown: %s",
+		    r ? r : "no reply");
+	}
 	/* the helpers drop their files when they see the exit */
 	for (i = 0; i < 10 && (sleep(1), system("/sbin/umount " SYS) != 0); i++)
 		;
+	/* line by line: the console takes at most 256 bytes per write */
+	if ((f = fopen("/tmp/startmig.log", "r")) != 0) {
+		while (fgets(line, sizeof line, f) != 0) {
+			fputs(line, stdout);
+			fflush(stdout);
+		}
+		fclose(f);
+	}
 	t_check("boot_umount", i < 10, "umount " SYS " failed");
 }
 

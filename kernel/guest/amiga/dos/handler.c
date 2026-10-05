@@ -20,12 +20,14 @@ static void copy(void *d,const void *s,U n) { B *a=d; const B *b=s; while(n--) *
 static void *ptr(U b) { return (void *)(b<<2); }
 static U bptr(void *p) { return (U)p>>2; }
 static U key(U b) { return b ? ((struct lock *)ptr(b))->key : rootkey; }
+/* strips a device prefix; nonzero for a leading colon, the volume root.
+ * Other prefixes (assigns) are relative to the lock DOS passes. */
 static U bstring(char *dst,U src) {
  B *s=ptr(src); U n,i,skip=0;
  if(!s) { *dst=0; return 0; }
  n=*s++;
  for(i=0;i<n;i++) if(s[i]==':') { skip=i+1; break; }
- copy(dst,s+skip,n-skip); dst[n-skip]=0; return skip!=0;
+ copy(dst,s+skip,n-skip); dst[n-skip]=0; return skip==1;
 }
 static void request(void *timer,volatile U *box) {
  MIG_FS_BARRIER();
@@ -93,6 +95,8 @@ void handler(void) {
     info[5]=r->length; info[6]=0x444f5301; info[7]=volume; info[8]=-1; p->res1=-1;
    } break;
   case 1027: case 27: p->res1=-1; break;
+  /* notification requests are accepted; changes are never signalled */
+  case 4097: case 4098: p->res1=-1; break;
   case 8: case 22:
    r->op=op==8?1:14; r->handle=key(p->arg[0]); if(bstring(r->path,p->arg[1])) r->handle=rootkey; r->flags=p->arg[2]==-1;
    request(timer,box); if(r->error) break;

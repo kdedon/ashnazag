@@ -12,11 +12,9 @@
         <ol id="filesystem-order"></ol>
       </div>
       <div id="filesystem-quadra" hidden>
-        <label class="media-field">AMIX tape segment 02<input id="filesystem-tape02" type="file" disabled required></label>
-        <label class="media-field">AMIX tape segment 03<input id="filesystem-tape03" type="file" disabled required></label>
-        <label class="media-field">AMIX tape segment 10<input id="filesystem-tape10" type="file" disabled required></label>
+        <label class="media-field">AMIX 2.1 tape archive (one or more parts)<input id="filesystem-tape" type="file" multiple disabled required></label>
         <label class="media-field">Prebuilt Quadra kernel (m68k ELF)<input id="filesystem-kernel" type="file" disabled required></label>
-        <p class="field-help">Console-only Quadra recipe. Select extracted cpio segments, not the complete tape image. Kernel compilation and guest installation are separate steps.</p>
+        <p class="field-help">Console-only Quadra recipe. Select every tape part: both <code>.tar.bz2</code> archives, a <code>.tap</code> image or the segment files. Kernel compilation and guest environment installation are separate steps.</p>
       </div>
       <label class="version-field">Filesystem size (MiB)<input id="filesystem-size" type="number" min="4" max="2048" step="4" value="64" required></label>
       <p class="field-help">Up to 2 GiB per UFS filesystem with browser disk storage and sufficient quota. The memory fallback supports up to 256 MiB. Leave room for filesystem metadata and free space.</p>
@@ -27,7 +25,7 @@
     </form></details>`;
   const get = suffix => document.getElementById(`filesystem-${suffix}`);
   const form = get('form'), archive = get('archive'), size = get('size'), button = get('build');
-  const mode = get('mode'), tapes = ['02', '03', '10'].map(n => get(`tape${n}`)), kernel = get('kernel');
+  const mode = get('mode'), tape = get('tape'), kernel = get('kernel');
   const cancel = get('cancel'), status = get('status'), download = get('download');
   let worker = null, temporary = null, url = null, generation = 0;
   const controls = busy => {
@@ -35,7 +33,7 @@
     get('layers').hidden = quadra; get('quadra').hidden = !quadra;
     for (const input of [mode, size, button]) input.disabled = busy;
     archive.disabled = busy || quadra;
-    for (const input of [...tapes, kernel]) input.disabled = busy || !quadra;
+    for (const input of [tape, kernel]) input.disabled = busy || !quadra;
     cancel.hidden = !busy;
     form.setAttribute('aria-busy', String(busy));
   };
@@ -80,14 +78,13 @@
       };
       worker.onerror = event => { event.preventDefault(); if (run === generation) void fail(`Filesystem worker failed: ${event.message}`); };
       worker.onmessageerror = () => { if (run === generation) void fail('Filesystem worker returned unreadable data.'); };
-      const archives = mode.value === 'quadra-console'
-        ? tapes.map((input, i) => ({ name: ['02', '03', '10'][i], file: input.files[0] }))
-        : Array.from(archive.files, file => ({ name: file.name, file }));
-      worker.postMessage({ type: 'filesystem', mode: mode.value, archives, kernel: mode.value === 'quadra-console' ? kernel.files[0] : null, sizeMiB: Number(size.value), temporaryName: temporary.name });
+      const quadra = mode.value === 'quadra-console';
+      const sources = quadra ? { tape: Array.from(tape.files) } : { archives: Array.from(archive.files, file => ({ name: file.name, file })) };
+      worker.postMessage({ type: 'filesystem', mode: mode.value, ...sources, kernel: quadra ? kernel.files[0] : null, sizeMiB: Number(size.value), temporaryName: temporary.name });
     } catch (error) { if (run === generation) await fail(`Filesystem generation failed: ${error.message}`); }
   });
   cancel.addEventListener('click', () => { void fail('Filesystem generation cancelled.'); });
-  for (const input of [mode, archive, ...tapes, kernel, size]) input.addEventListener('change', () => {
+  for (const input of [mode, archive, tape, kernel, size]) input.addEventListener('change', () => {
     void reset(); controls(false);
     get('order').replaceChildren(...Array.from(archive.files, file => {
       const item = document.createElement('li'); item.textContent = file.name; return item;
