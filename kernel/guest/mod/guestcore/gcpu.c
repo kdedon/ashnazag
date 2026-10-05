@@ -20,6 +20,8 @@ extern void dlm_cacheflush();
 extern int preempt(), issig();
 extern void psig();
 extern int runrun;
+__asm__(".weak cputype");
+extern long g_cputype __asm__("cputype");	/* 30, 40, 60; absent: 68030 */
 
 #define	SR_REAL		0x80ff		/* T1 and CCR */
 #define	SR_VIRT		0x3700		/* S, M, IPL */
@@ -81,18 +83,26 @@ vsr_set(gp, r, v)
 		GR_USP(r) = gp->gp_vusp;
 		gp->gp_vusp = t;
 	}
+	if ((v & SR_IPL) < (gp->gp_vsr & SR_IPL))
+		gp->gp_flags |= GPF_IDROP;
 	gp->gp_vsr = (v & SR_VIRT) | (gp->gp_flags & GPF_SPIN ? SR_S : 0);
 	if ((v & SR_IPL) == 0)
 		gp->gp_flags &= ~GPF_VPEND;	/* held signals go out on the way back */
 }
 
-/* the stock trap tail: reschedule, then deliverable signals */
+/*
+ * The stock trap tail: reschedule, then deliverable signals.  GPF_ETAIL
+ * tells the profile's hooks that the guest is not at an instruction
+ * boundary of its own.
+ */
 static void
 trapret()
 {
 	struct proc *p = u.u_procp;
 	struct guest_proc *gp = GUESTP(p);
 
+	if (gp)
+		gp->gp_flags |= GPF_ETAIL;
 	if (gp && gp->gp_prof->gpf_intr)
 		(*gp->gp_prof->gpf_intr)(gp, (char *)u.u_ar0);
 	if (runrun)
@@ -100,6 +110,8 @@ trapret()
 	if (p->p_cursig || p->p_sig || (p->p_flag & SPRSTOP))
 		if (issig(0))
 			psig();
+	if (gp)
+		gp->gp_flags &= ~(GPF_ETAIL | GPF_IDROP);
 }
 
 /* for profile modules */
@@ -732,10 +744,13 @@ guest_fnote(gp, r, v)
 	char *r;
 	int v;
 {
-	if ((gp->gp_flags & GPF_ALINE) && (GR_FV(r) >> 12) == 7) {
+	unsigned long fa;
+	int ssw;
+
+	if ((gp->gp_flags & GPF_ALINE) && guest_bfault(r, &fa, &ssw) >= 0) {
 		gp->gp_fpc = GR_PC(r);
-		gp->gp_fea = *(long *)(r + 72);
-		gp->gp_fssw = *(unsigned short *)(r + 76);
+		gp->gp_fea = fa;
+		gp->gp_fssw = ssw;
 		gp->gp_fpre = gp->gp_proc->p_sig & (sigmask(SIGBUS) | sigmask(SIGSEGV));
 		gp->gp_flags = (gp->gp_flags & ~GPF_UNOTE) | GPF_FAULT;
 	}
@@ -746,9 +761,9 @@ guest_fnote(gp, r, v)
  * The signal of an access fault the kernel could not resolve goes to
  * the guest's vector 2 as a 68040 format-7 frame (60 bytes), or for a
  * guest that sees a 68030 its long bus fault frame (format $B, 92
- * bytes), whose size its handlers rely on.  Only on the way out of the
- * noted fault: a signal another process sent stays a signal.
- * 0: reflected.
+ * bytes), whose size its handlers rely on.  A guest on a 68030 host
+ * sees one whatever its flags.  Only on the way out of the noted
+ * fault: a signal another process sent stays a signal.  0: reflected.
  */
 static int
 guest_fault(p, gp, n)
@@ -759,7 +774,7 @@ guest_fault(p, gp, n)
 	char *r = (char *)u.u_ar0, f[92];
 	sigqueue_t *sq, *q, **pp;
 	long h, usp;
-	int s, n30 = (gp->gp_flags & GPF_CPU030) != 0, fl = n30 ? 92 : 60;
+	int s, fl;
 
 	if (!(gp->gp_flags & GPF_FAULT) || gp->gp_fpc != GR_PC(r) || GR_VEC(r) != 2 ||
 	    (GR_SR(r) & 0x2000))
@@ -771,22 +786,9 @@ guest_fault(p, gp, n)
 	splx_(s);
 	if (h)
 		return 1;
+	fl = guest_bframe(f, GR_SR(r) | gp->gp_vsr, GR_PC(r), gp->gp_fea, gp->gp_fssw,
+	    (gp->gp_flags & GPF_CPU030) || !&g_cputype || g_cputype < 40);
 	usp = GR_USP(r) - fl;
-	bzero(f, fl);
-	P16(f, GR_SR(r) | gp->gp_vsr);
-	P32(f + 2, GR_PC(r));
-	if (n30) {
-		P16(f + 6, 0xb008);
-		/* data fault; RW, size and function code from the 68040's SSW */
-		P16(f + 10, 0x100 | (gp->gp_fssw >> 2 & 0x40) | (gp->gp_fssw >> 1 & 0x30) |
-		    (gp->gp_fssw & 7));
-		P32(f + 16, gp->gp_fea);
-	} else {
-		P16(f + 6, 0x7008);
-		P32(f + 8, gp->gp_fea);
-		P16(f + 12, gp->gp_fssw & 0x017f);	/* RW, size, TT, TM */
-		P32(f + 20, gp->gp_fea);
-	}
 	if (copyin((caddr_t)(gp->gp_vvbr + 8), (caddr_t)&h, 4) || h == 0 || (h & 1) ||
 	    copyout(f, (caddr_t)usp, fl))
 		return 1;
@@ -841,18 +843,23 @@ guest_fsig1(p, gp)
 	struct proc *p;
 	struct guest_proc *gp;
 {
-	k_sigset_t h;
+	k_sigset_t h, pass = VIPL_PASS;
 	int s, n;
 
 	if (gp->gp_prof->gpf_fsig)
 		return (*gp->gp_prof->gpf_fsig)(p, gp);
 	if (!(gp->gp_flags & GPF_PRIV) || (gp->gp_vsr & SR_IPL) == 0)
 		return __amix_fsig(p);
+	/* a signal no handler catches runs no guest code: it need not wait */
+	if (p == u.u_procp)
+		for (n = 1; n < NSIG; n++)
+			if (u.u_signal[n - 1] == SIG_DFL)
+				pass |= sigmask(n);
 	s = splhi_();
-	if (p->p_sig & ~p->p_hold & ~VIPL_PASS)
+	if (p->p_sig & ~p->p_hold & ~pass)
 		gp->gp_flags |= GPF_VPEND;
 	h = p->p_hold;
-	p->p_hold |= ~VIPL_PASS;
+	p->p_hold |= ~pass;
 	n = __amix_fsig(p);
 	p->p_hold = h;
 	splx_(s);

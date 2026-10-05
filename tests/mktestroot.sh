@@ -33,7 +33,7 @@ fi
 [ -f "$RD/build/core/sbin/init" ] || { echo "[FAIL] no $RD/build/core (run mkroot.sh)"; exit 1; }
 [ -x "$B/bin/runall" ] || { echo "[FAIL] no tests/build/bin (run build.sh)"; exit 1; }
 
-nm "$KERNEL" | awk '$3 ~ /^(freemem|availrmem|availsmem|lbolt|fpu_present|anoninfo|ticks_til_clock|mac_ticks|dlm_inited|sn_nintr|sn_nslot|guest_loading|guest_nftrap|guest_nfpriv|rd_unit|adb_nintr|adb_nsrq)$/ { print $3, $1 }' \
+nm "$KERNEL" | awk '$3 ~ /^(freemem|availrmem|availsmem|lbolt|fpu_present|anoninfo|ticks_til_clock|mac_ticks|dlm_inited|sn_nintr|sn_nslot|guest_loading|guest_nftrap|guest_nfpriv|rd_unit|adb_nintr|adb_nsrq|segmapcnt)$/ { print $3, $1 }' \
 	> "$B/ksyms"
 # t_dlm's modules, built against this kernel (none without module support)
 KDIR=$KDIR sh "$T/dlm/build.sh" "$KERNEL" "$B/dlm"
@@ -56,6 +56,20 @@ KDIR=$KDIR sh "$T/mint/build.sh" "$MINTB"
 # t_amiga's guest image, startmig and ROM
 AMIB=$B/amiga
 KDIR=$KDIR sh "$T/amiga/build.sh" "$AMIB"
+# t_ufs's volume: /d/f0../d/f3 in t_pattern (run-qemu.sh adds it as SCSI disk 2)
+UFSB=$B/ufs
+if [ -z "$NET" ]; then
+	rm -rf "$UFSB"
+	mkdir -p "$UFSB/src"
+	echo "d /d 755 0 3" > "$UFSB/manifest"
+	for k in 0 1 2 3; do
+		python3 -c "import sys; sys.stdout.buffer.write(bytes((o * 131 + (o >> 9) * 7 + $k) & 255
+			for o in range(3000 + 9000 * $k)))" > "$UFSB/src/f$k"
+		echo "f /d/f$k 644 0 3 f$k" >> "$UFSB/manifest"
+	done
+	python3 "$KDIR/mac/diskroot/mkufs.py" -s 4 -t 723000000 -r "$UFSB/src" -m /ufs \
+		"$UFSB/manifest" "$UFSB/ufs.img"
+fi
 if [ -z "$TESTKB" ]; then
 	TESTKB=$((BASEKB + 128))
 	[ -d "$AUXB/root" ] && TESTKB=$((TESTKB + 256 + $(du -sk "$AUXB/root" | cut -f1)))
@@ -78,6 +92,10 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 	grep -q '^c /dev/term/b' "$M" || echo "c /dev/term/b 620 0 7 0 1"
 	# clone is major 27; ptmx 15, pts 14, ticlts 30
 	echo "c /dev/ptmx 666 0 3 27 15"
+	if [ -f "$UFSB/ufs.img" ]; then
+		echo "b /dev/dsk/c2d0s0 600 0 3 18 2"
+		echo "d /ufs 755 0 3"
+	fi
 	echo "c /dev/ticlts 666 0 3 27 30"
 	grep -q '^d /dev/pts' "$M" || echo "d /dev/pts 755 0 3"
 	for i in 0 1 2 3 4 5 6 7; do echo "c /dev/pts/$i 620 0 7 14 $i"; done
@@ -85,7 +103,11 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 	echo "f /tests/ksyms 444 0 3 $B/ksyms"
 	# t_arith's FP through awk
 	grep -q '^f /usr/bin/awk ' "$M" || echo "f /usr/bin/awk 755 0 3 $RD/build/core/usr/bin/nawk"
+	[ -z "$ONLY" ] || { : > "$B/.group"; echo "f /tests/.group 444 0 3 $B/.group"; }
 	for f in "$B"/bin/*; do
+		# GROUP/ONLY: only the chosen tests (helpers that are not t_* stay)
+		case " $ONLY " in "  ") ;; *t_*) case $(basename "$f") in t_*)
+			case " $ONLY " in *"/$(basename "$f").c "*) ;; *) continue ;; esac ;; esac ;; esac
 		echo "f /tests/$(basename "$f") 755 0 3 $f"
 	done
 	if [ -n "$NET" ]; then
@@ -164,8 +186,6 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 		# SYS: on a ufs volume (run-qemu.sh adds it as SCSI disk 0)
 		if [ -f "$AMIB/sys.img" ]; then
 			echo "b /dev/dsk/c0d0s0 600 0 3 18 0"
-			echo "d /usr/lib/fs/ufs 755 0 3"
-			echo "f /usr/lib/fs/ufs/mount 555 0 3 $RD/build/core/usr/lib/fs/ufs/mount"
 			grep -q "^d /amiga[ 	]" "$M" || echo "d /amiga 755 0 3"
 			echo "d /amiga/sys 755 0 3"
 		fi
@@ -177,6 +197,10 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 		(cd "$AMIB/root" && find . -type f | sed 's#^\.##' | sort) | while read -r f; do
 			echo "f $f 755 0 3 $AMIB/root$f"
 		done
+	fi
+	if [ -f "$AMIB/sys.img" ] || [ -f "$UFSB/ufs.img" ]; then
+		echo "d /usr/lib/fs/ufs 755 0 3"
+		echo "f /usr/lib/fs/ufs/mount 555 0 3 $RD/build/core/usr/lib/fs/ufs/mount"
 	fi
 	if [ -f "$B/otb/mod.d/otbridge" ]; then
 		echo "d /tests/otb 755 0 3"

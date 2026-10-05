@@ -15,10 +15,20 @@ AUX = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 Q = os.path.join(AUX, 'toolchain', 'qemu-local' if os.path.exists(os.path.join(AUX, 'toolchain', 'qemu-local', 'usr', 'bin', 'qemu-system-m68k')) else 'qemu')
 img = sys.argv[1]
 rom = sys.argv[2] if len(sys.argv) > 2 else os.path.join(AUX, 'Quadra 800.ROM')
-# one QEMU at a time, as tests/run-qemu.sh and images/qemu/run-mac.sh
+# one of the QEMU slots that tools/qslot.sh shares out
 os.makedirs(os.path.join(AUX, 'images', 'work'), exist_ok=True)
-lock = open(os.path.join(AUX, 'images', 'work', '.qemu.lock'), 'a')
-fcntl.flock(lock, fcntl.LOCK_EX)
+lock = None
+while lock is None:
+    for i in range(int(os.environ.get('QSLOTS', '4'))):
+        f = open(os.path.join(AUX, 'images', 'work', '.qemu.lock' + ('.%d' % i if i else '')), 'a')
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock = f
+            break
+        except OSError:
+            f.close()
+    else:
+        time.sleep(5)
 w = tempfile.mkdtemp(prefix='mkdesktop.')
 log, sock = os.path.join(w, 'serial.log'), os.path.join(w, 'serial.sock')
 qsock = os.path.join(w, 'qmp.sock')

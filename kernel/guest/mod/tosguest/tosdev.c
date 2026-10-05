@@ -190,6 +190,19 @@ where(a, na)
 	return a >= 0xf00000 && a < 0x1000000 && (a < 0xfa0000 || a >= 0xfc0000);
 }
 
+__asm__(".weak ds_bltgo");
+extern void ds_bltgo();
+
+/* the guest's blit, on the machine's blitter; without one it ends at once */
+static void
+bltgo()
+{
+	if (&ds_bltgo)
+		ds_bltgo(tosc.t_blt);
+	else
+		tosc.t_blt[0x3c] &= 0x7f;
+}
+
 /* 0, or -1 with x->ba set */
 static int
 mget(x, a, sz, vp)
@@ -202,6 +215,10 @@ mget(x, a, sz, vp)
 	unsigned char b[4];
 	int i;
 
+	/* a blit cut short by a signal goes on when the guest looks */
+	na = a & 0xffffff;
+	if ((tosc.t_flags & TEF_FALCON) && na <= 0xff8a3c && na + sz > 0xff8a3c && (tosc.t_blt[0x3c] & 0x80))
+		bltgo();
 	if (!where(a, &na)) {
 		if (copyin((caddr_t)na, (caddr_t)b, sz)) {
 			x->ba = a;
@@ -221,13 +238,17 @@ mget(x, a, sz, vp)
 	return 0;
 }
 
+/* the display service, on a Falcon: the guest's Videl writes */
+__asm__(".weak ds_vidput");
+extern void ds_vidput();
+
 static int
 mput(x, a, sz, v)
 	struct ix *x;
 	unsigned long a, v;
 	int sz;
 {
-	unsigned long na;
+	unsigned long na, v0 = v;
 	unsigned char b[4];
 	int i;
 
@@ -245,6 +266,11 @@ mput(x, a, sz, v)
 			x->ba = a + i;
 			return -1;
 		}
+	if ((tosc.t_flags & TEF_FALCON) && &ds_vidput)
+		ds_vidput(a, sz, v0);
+	na = a & 0xffffff;
+	if ((tosc.t_flags & TEF_FALCON) && na <= 0xff8a3c && na + sz > 0xff8a3c && (tosc.t_blt[0x3c] & 0x80))
+		bltgo();
 	return 0;
 }
 
@@ -680,8 +706,7 @@ tos_berr(gp, r, a, ssw, absent)
 	tosc.t_st.ts_refl[2]++;
 	trace(absent ? "absent" : "bus error", a, GR_PC(r));
 	bzero(f, sizeof f);
-	/* SSW: data fault, RW, size, supervisor data */
-	P16(f + 2, 0x0100 | (ssw & 0x100 ? 0x40 : 0) | (ssw & 0x60) >> 1 | 5);
+	P16(f + 2, guest_ssw030((ssw & ~7) | 5));	/* supervisor data */
 	P32(f + 8, a);
 	if (guest_reflect(gp, r, GR_PC(r), 0xa008, f, 26, -1) < 0) {
 		printf("tos: bus error with no guest stack, pc %x\n", (int)GR_PC(r));
@@ -726,17 +751,16 @@ tos_fault(gp, r, v)
 	char *r;
 	int v;
 {
-	unsigned long fa, na;
-	int ssw, e;
+	unsigned long fa, na, d;
+	int ssw, e, sz;
 	struct ix x;
 	char save[64];
 	int sr;
 
-	if ((GR_FV(r) >> 12) != 7 || (gp->gp_flags & TGF_SOLO))
+	if ((gp->gp_flags & TGF_SOLO) || (e = guest_bfault(r, &fa, &ssw)) < 0)
 		return 1;		/* a lone guest has no machine registers */
-	fa = *(unsigned long *)(r + 64 + 20);
-	ssw = *(unsigned short *)(r + 64 + 12);
-	if (!where(fa, &na) && where(*(unsigned long *)(r + 64 + 8), &na))
+	if ((GR_FV(r) >> 12) == 7 && !where(fa, &na) &&
+	    where(*(unsigned long *)(r + 64 + 8), &na))
 		fa = *(unsigned long *)(r + 64 + 8);
 	tosc.t_st.ts_lastpc = GR_PC(r);
 	if (!where(fa, &na)) {
@@ -744,19 +768,30 @@ tos_fault(gp, r, v)
 			return 1;		/* paged memory: the stock handler */
 		return tos_berr(gp, r, (long)fa, ssw, 0);
 	}
-	if ((ssw & 7) == 2 || (ssw & 7) == 6)	/* instruction fetch */
+	if (e)					/* instruction fetch */
 		return tos_berr(gp, r, (long)fa, ssw, 0);
-	if (!(ssw & 0x100) && writebacks(r)) {
+	x.r = r;
+	x.ba = 0;
+	if (guest_bfcycle(r, &d)) {		/* 68030: the faulted cycle, here */
+		sz = (ssw >> 5) & 3;
+		sz = sz ? sz : 4;
+		if (ssw & 0x100 ? mget(&x, fa, sz, &d) : mput(&x, fa, sz, d & szmask(sz)))
+			return tos_berr(gp, r, x.ba, ssw, 1);
+		guest_bfdone(r, d);
+		tosc.t_st.ts_io++;
+		tos_kick(0);
+		guest_trapret();
+		return 0;
+	}
+	if (!(ssw & 0x100) && (GR_FV(r) >> 12) == 7 && writebacks(r)) {
 		tosc.t_st.ts_io++;
 		u.u_sigflag |= USTKCLEAR;
 		tos_kick(0);
 		guest_trapret();
 		return 0;
 	}
-	x.r = r;
 	x.pc = GR_PC(r);
 	x.len = 0;
-	x.ba = 0;
 	bcopy(r, save, sizeof save);
 	sr = GR_SR(r);
 	e = emul(&x);
@@ -1440,6 +1475,68 @@ scc_wr(o, v)
 }
 
 /*
+ * Falcon registers: -2 not a Falcon one, -1 absent (no TT MFP, palette
+ * or SCU).  The monitor type is the machine's own when it is a Falcon.
+ */
+__asm__(".weak ata_machtype");
+extern unsigned long ata_machtype;
+
+static int
+falcon_rd(o)
+	int o;
+{
+	struct tosctr *t = &tosc;
+	int v, n;
+
+	if (o == 0xff8006) {		/* bits 5, 4 and 1: ST-RAM 512 KB << n, 5 = 14 MB */
+		v = &ata_machtype ? *(volatile unsigned char *)0xffff8006 : 0x80;
+		for (n = 0; n < 4 && 0x80000 << (n + 1) <= t->t_ramsize; n++)
+			;
+		if (t->t_ramsize >= 0xe00000)
+			n = 5;
+		return (v & ~0x32) | (n & 6) << 3 | (n & 1) << 1;
+	}
+	if (o >= 0xff8200 && o < 0xff8300)
+		return vid_rd(o & 0xff);
+	if (o >= 0xff9800 && o < 0xff9c00)
+		return t->t_fpal[o & 0x3ff];
+	if (o >= 0xff8900 && o < 0xff8944)
+		return t->t_snd[o - 0xff8900];
+	if (o >= 0xff8a00 && o < 0xff8a40)
+		return t->t_blt[o - 0xff8a00];
+	if (o >= 0xffa200 && o < 0xffa208)	/* host port: transmit always empty */
+		return o == 0xffa202 ? 6 : t->t_dsp[o & 7];
+	if ((o >= 0xfffa80 && o < 0xfffab0) || (o >= 0xff8400 && o < 0xff8600) ||
+	    (o >= 0xff8e00 && o < 0xff8e10))
+		return -1;
+	return -2;
+}
+
+static int
+falcon_wr(o, v)
+	int o, v;
+{
+	struct tosctr *t = &tosc;
+
+	if (o == 0xff8006)
+		return 0;
+	if (o >= 0xff8200 && o < 0xff8300)
+		vid_wr(o & 0xff, v);
+	else if (o >= 0xff9800 && o < 0xff9c00) {
+		t->t_fpal[o & 0x3ff] = v;
+		t->t_vgen++;
+	} else if (o >= 0xff8900 && o < 0xff8944)
+		t->t_snd[o - 0xff8900] = v;
+	else if (o >= 0xff8a00 && o < 0xff8a40)
+		t->t_blt[o - 0xff8a00] = v;
+	else if (o >= 0xffa200 && o < 0xffa208)
+		t->t_dsp[o & 7] = v;
+	else
+		return falcon_rd(o) == -1 ? -1 : -2;
+	return 0;
+}
+
+/*
  * One byte of the ST I/O page.  0, or -1: nothing there (bus error).
  */
 static int
@@ -1450,7 +1547,10 @@ iorb(a, vp)
 	struct tosctr *t = &tosc;
 	int o = a & 0xffffff, v = 0xff;
 
-	if (o >= 0xff8000 && o < 0xff8100)
+	if ((t->t_flags & TEF_FALCON) && (v = falcon_rd(o)) != -2) {
+		if (v < 0)
+			goto absent;
+	} else if (o >= 0xff8000 && o < 0xff8100)
 		v = t->t_misc[o & 15];
 	else if (o >= 0xff8200 && o < 0xff8266)	/* ST/TT shifter; no Videl above */
 		v = vid_rd(o & 0xff);
@@ -1502,6 +1602,7 @@ iorb(a, vp)
 	else if (o >= 0xfffc00 && o < 0xfffc08)
 		v = 0xff;
 	else {
+absent:
 		t->t_st.ts_lastio = a;
 		t->t_st.ts_lastiopc = t->t_st.ts_lastpc;
 		return -1;
@@ -1516,10 +1617,13 @@ iowb(a, v)
 	int v;
 {
 	struct tosctr *t = &tosc;
-	int o = a & 0xffffff;
+	int o = a & 0xffffff, i;
 
 	v &= 0xff;
-	if (o >= 0xff8000 && o < 0xff8100)
+	if ((t->t_flags & TEF_FALCON) && (i = falcon_wr(o, v)) != -2) {
+		if (i < 0)
+			goto absent;
+	} else if (o >= 0xff8000 && o < 0xff8100)
 		t->t_misc[o & 15] = v;
 	else if (o >= 0xff8200 && o < 0xff8266)
 		vid_wr(o & 0xff, v);
@@ -1565,6 +1669,7 @@ iowb(a, v)
 	else if (o >= 0xfffc00 && o < 0xfffc08)
 		;
 	else {
+absent:
 		t->t_st.ts_lastio = a;
 		t->t_st.ts_lastiopc = t->t_st.ts_lastpc;
 		return -1;

@@ -1,0 +1,50 @@
+wait login:
+type root\n
+wait # 
+type /tests/auxreg /tests/mod.d 54 56; echo auxreg-rc=$?\n
+wait auxreg-rc=
+type /tests/modadmin -l /tests/mod.d/guestcore; /tests/modadmin -s | grep -c tosguest; mkdir -p /tmp/c; echo mods-done\n
+wait mods-done
+type /tests/starttos -P -C /tmp/c -c /tests/tosml.img -v 2> /tmp/st.log; echo starttos-rc=$?\n
+sleep 120
+debug screenshot OUT/1-desktop.png
+sleep 1
+debug info videl
+event keydown 0x1d
+event keypress 0x2e
+event keyup 0x1d
+sleep 30
+debug screenshot OUT/1-ctrlc.png
+event keydown 0x1d
+event keydown 0x38
+event keypress 0x01
+event keyup 0x38
+event keyup 0x1d
+sleep 5
+debug screenshot OUT/2-console.png
+event keydown 0x1d
+event keydown 0x38
+event keypress 0x02
+event keyup 0x38
+event keyup 0x1d
+sleep 10
+debug screenshot OUT/3-back.png
+sleep 1
+debug info videl
+event keydown 0x1d
+event keydown 0x38
+event keypress 0x01
+event keyup 0x38
+event keyup 0x1d
+sleep 5
+event keydown 0x1d
+event keypress 0x2e
+event keyup 0x1d
+wait ^C
+type cat /tmp/st.log; echo log-done\n
+wait log-done
+type sleep 2; echo starttos-left=`ps -e | grep -c starttos`\n
+wait starttos-left=
+sleep 2
+debug screenshot OUT/4-exit.png
+debug quit 0

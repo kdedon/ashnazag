@@ -171,7 +171,7 @@ struct cred *cr;
 	if ((flags & MAP_TYPE) != MAP_SHARED)
 		return EINVAL;
 	if (off < 0 || (off & DS_PGOFF) || rlen == 0 || rlen < len ||
-	    rlen > ds_disp.d_info.fi_size || off > ds_disp.d_info.fi_size - rlen)
+	    rlen > s->s_size || off > s->s_size - rlen)
 		return ENXIO;
 	if (flags & MAP_FIXED)
 		(void)as_unmap(as, *addrp, len);
@@ -251,7 +251,7 @@ u_int len;
 	if (root == 0)
 		return;
 	lo = ds_disp.d_page >> DS_PGSHIFT;
-	hi = lo + (ds_disp.d_info.fi_size >> DS_PGSHIFT);
+	hi = lo + (ds_disp.d_vsize >> DS_PGSHIFT);
 	e = (unsigned long)addr + len;
 	for (va = (unsigned long)addr & ~DS_PGOFF; va < e; va += DS_PGSIZE) {
 		a = root[(va >> 25) & 0x7F];
@@ -296,7 +296,7 @@ enum seg_rw rw;
 		if ((pv[0] & (PROT_READ | PROT_WRITE | PROT_EXEC)) == 0 ||
 		    (rw == S_WRITE && !(pv[0] & PROT_WRITE)))
 			return FC_PROT;
-		if (off >= ds_disp.d_info.fi_size ||
+		if (off >= s->s_size ||
 		    (pp = page_numtookpp(s->s_pfn[off >> DS_PGSHIFT])) == 0)
 			return FC_MAKE_ERR(EFAULT);
 		hat_memload(seg, (addr_t)va, pp, pv[0], HAT_NOFLAGS);

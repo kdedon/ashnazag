@@ -3,8 +3,8 @@
 # usage: run-direct.sh [OUTDIR] [QMP-STEP...]   (steps: see qmp.py)
 # Default steps: screendumps while booting, type "echo hello", registers.
 # NET=1 adds user-mode networking (guest 10.0.2.15, gateway 10.0.2.2).
-# one QEMU at a time on this machine: wait for the lock
-[ -n "$AUX_QLOCK" ] || { mkdir -p "$(dirname "$0")/../../images/work" 2>/dev/null; AUX_QLOCK=1 exec flock "$(cd "$(dirname "$0")/../.." && pwd)/images/work/.qemu.lock" sh "$0" "$@"; }
+# up to QSLOTS QEMUs at once (tools/qslot.sh)
+[ -n "$AUX_QLOCK" ] || exec sh "$(dirname "$0")/../../tools/qslot.sh" "$0" "$@"
 HERE=$(cd "$(dirname "$0")" && pwd)
 AUX=$(cd "$HERE/../.." && pwd)
 Q=$AUX/toolchain/qemu-local; [ -x "$Q/usr/bin/qemu-system-m68k" ] || Q=$AUX/toolchain/qemu

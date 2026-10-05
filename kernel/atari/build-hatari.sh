@@ -20,8 +20,10 @@ D=$B/deps
 git -C "$SRC" fetch -q origin
 git -C "$SRC" checkout -q "$REV"
 # local fixes: cycle-exact 030 + MMU consumed a faulted prefetch word; a
-# command fifo with an idle writer was reported as a read error
-for P in "$AUX"/kernel/atari/hatari-030ce-prefetch.patch "$AUX"/kernel/atari/hatari-fifo-eagain.patch; do
+# command fifo with an idle writer was reported as a read error; rte
+# reran a data cycle the bus error handler had completed (DF cleared)
+for P in "$AUX"/kernel/atari/hatari-030ce-prefetch.patch "$AUX"/kernel/atari/hatari-fifo-eagain.patch \
+	"$AUX"/kernel/atari/hatari-030-rte-resume.patch; do
 	git -C "$SRC" apply -R --check "$P" 2>/dev/null || git -C "$SRC" apply "$P"
 done
 mkdir -p "$D"

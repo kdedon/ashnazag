@@ -1,0 +1,9 @@
+; waits for the host test's go file, then opens the test page; IBrowse
+; writes its cache beside itself, so it runs from RAM: off a read-only SYS:
+Lab wait
+If NOT EXISTS SYS:ibgo
+  Wait 1
+  Skip wait BACK
+EndIf
+Copy SYS:IBrowse RAM:IBrowse ALL CLONE QUIET
+RAM:IBrowse/IBrowse file:///SYS:ibtest.html

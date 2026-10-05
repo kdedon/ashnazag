@@ -24,6 +24,12 @@ An optional fourth argument selects a local Picasso96 archive, otherwise
 `Picasso96.lha` at the repository root is used if present. Its original archive
 and checksum are retained under `root/amiga/rtg/`.
 
+With the archives in `media/amiga` (or `AMIGAAPPS`; empty disables),
+MUI 3.9, AmiSSL 5.27 and the IBrowse 3.0a demo are added to the template as
+their installers would install them: `SYS:MUI`, `SYS:AmiSSL`, `SYS:IBrowse`
+and the installers' blocks in `S:User-Startup`. IBrowse needs a network stack
+for remote pages; local files open now.
+
 `root/` holds the target installation layout. Media hashes are in
 `media/manifest.json`; `/amiga/sys/.container-template.json` records each
 prepared file's source. Proprietary media and the prepared OS stay local.

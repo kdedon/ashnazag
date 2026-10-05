@@ -22,6 +22,7 @@
 #define FBIOGVBL	FBIOC(11)	/* out unsigned long: VBL count */
 #define FBIOBLANK	FBIOC(12)	/* value: 1 blank, 0 unblank */
 #define FBIOCACHE	FBIOC(13)	/* value: FBC_WT or FBC_CI, for the next mmap */
+#define FBIOVIDEL	FBIOC(14)	/* value: where the caller maps a FBA_VIDEL session */
 
 #define EVIOC(n)	(('E' << 8) | (n))
 #define EVIOCGINFO	EVIOC(1)	/* out struct evinfo */
@@ -95,6 +96,7 @@ struct fbacq {
 };
 #define FBK_USER	1
 #define FBA_FRONT	0x01
+#define FBA_VIDEL	0x02	/* owns the video hardware; fi_size grows to the pool */
 
 struct fbstate {
 	long		st_session;	/* caller's session id, -1 none */

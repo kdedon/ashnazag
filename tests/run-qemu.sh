@@ -14,9 +14,12 @@
 # (display/hostio.py: keys, mouse, screen dumps in results/.../display/).
 # Out: results/<time>-<mode>/ with serial.log, serial.ts (host time of each
 # line), screen.png, summary.txt.
+# GROUP=smoke|core|mac|tos|mint|amiga|display runs that set only.
 # Exit: 0 all PASS, 1 any FAIL, 2 timeout, panic or no TESTS DONE.
-# one QEMU at a time on this machine: wait for the lock
-[ -n "$AUX_QLOCK" ] || { mkdir -p "$(dirname "$0")/../images/work" 2>/dev/null; AUX_QLOCK=1 exec flock "$(cd "$(dirname "$0")/.." && pwd)/images/work/.qemu.lock" sh "$0" "$@"; }
+# up to QSLOTS QEMUs at once (tools/qslot.sh)
+# one run per checkout at a time: they share tests/build
+[ -n "$AUX_TLOCK" ] || AUX_TLOCK=1 exec flock "$(dirname "$0")/.treelock" sh "$0" "$@"
+[ -n "$AUX_QLOCK" ] || exec sh "$(dirname "$0")/../tools/qslot.sh" "$0" "$@"
 T=$(cd "$(dirname "$0")" && pwd)
 AUX=$(cd "$T/.." && pwd)
 Q=$AUX/toolchain/qemu-local; [ -x "$Q/usr/bin/qemu-system-m68k" ] || Q=$AUX/toolchain/qemu
@@ -39,6 +42,26 @@ ROM=${ROM:-$AUX/Quadra 800.ROM}
 TMO=${TMO:-3600}
 OUT=$T/results/$(date +%Y%m%d-%H%M%S)-$MODE
 mkdir -p "$OUT"
+
+# GROUP: a named set of test programs (ONLY= lists them explicitly)
+case ${GROUP:-} in
+"") ;;
+smoke)	G="t_sys t_file t_proc t_pipe t_dlm t_gate t_vtop" ;;
+core)	G="t_arith t_file t_mem t_pipe t_proc t_sig t_streams t_sys t_time t_tty t_vtop t_dlm t_gate t_page t_moddemo t_stress t_env t_ufs" ;;
+mac)	G="t_aux t_mac t_mac6 t_mac76 t_mac81 t_env" ;;
+tos)	G="t_tos t_env" ;;
+mint)	G="t_mint" ;;
+amiga)	G="t_amiga t_env" ;;
+display) G="t_display" ;;
+*)	echo "GROUP: smoke core mac tos mint amiga display"; exit 2 ;;
+esac
+if [ -n "${G:-}" ]; then
+	ONLY="$T/src/runall.c"
+	for t in $G; do ONLY="$ONLY $T/src/$t.c"; done
+	export ONLY
+fi
+# keep the newest dozen result directories
+ls -dt "$T"/results/*/ 2>/dev/null | tail -n +13 | while read d; do rm -rf "$d"; done
 
 # a kernel older than its sources would test yesterday's kernel
 NEWER=$(find "$KDIR/mac" "$KDIR/dlm" "$KDIR/tools" "$KDIR/port-local.diff" \
@@ -77,6 +100,10 @@ QEMU="$Q/usr/bin/qemu-system-m68k -L $Q/usr/share/qemu -M q800 -display none"
 if [ $MODE = direct ]; then
 	MEM=${MEM:-128}
 	set -- -m "$MEM" -kernel "$KERNEL" -initrd "$T/build/testroot.img"
+	# t_ufs's volume, writes discarded
+	[ -f "$T/build/ufs/ufs.img" ] && set -- "$@" \
+		-drive file="$T/build/ufs/ufs.img",format=raw,if=none,id=hd2,snapshot=on \
+		-device scsi-hd,scsi-id=2,drive=hd2
 	# t_amiga's SYS: volume, writes discarded
 	[ -f "$T/build/amiga/sys.img" ] && set -- "$@" \
 		-drive file="$T/build/amiga/sys.img",format=raw,if=none,id=hd0,snapshot=on \

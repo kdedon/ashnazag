@@ -1,11 +1,12 @@
 /*
  * starttos -- run Atari TOS as this process: EmuTOS, or the user's ROM image.
  *
- *	starttos [-rom file] [-c cartridge] [-e env | -C dir | -d disk] [-D L=dir] [-u dir | -U]
+ *	starttos [-rom file | -P] [-c cartridge] [-e env | -C dir | -d disk] [-D L=dir] [-u dir | -U]
  *		[-m megabytes] [-M] [-S] [-v]
  *
  * ST-RAM is a shared mapping at 0, the ROM a read-only copy at its own
- * base, the machine-layer cartridge at $FA0000.  Drives are host
+ * base, the machine-layer cartridge at $FA0000.  -P (a Falcon) runs the
+ * machine's own ROM, mapped read-only from $E00000, with Falcon registers.  Drives are host
  * directories used with the caller's permissions: C:, the boot drive,
  * is ~/TOS (else /tos/sys, read-only) or, with -e, ~/TOS/env; U: is "/";
  * others come from /tos/sys/drives, ~/TOS/drives and -D.  -d makes C: a FAT image
@@ -13,6 +14,8 @@
  * a second is refused.  A child process owns the display session:
  * it converts the TOS screen to the frame buffer and passes keyboard
  * and mouse to the IKBD.  The parent enters the ROM's reset code.
+ * With -P the session owns the video hardware: TOS sets its own modes
+ * and draws at the top of ST-RAM, which is the session's region.
  * -S keeps GEM on the ST screen: fVDI gets no frame buffer, for
  * programs that also write and read that screen themselves.
  */
@@ -38,6 +41,8 @@
 
 #define	CART	0xfa0000
 #define	CARTSZ	0x20000
+#define	FROM	0xe00000L	/* a Falcon's ROM */
+#define	FROMSZ	0x80000L
 
 static char *rom = "/etc/tos/emutos.img";	/* the free TOS; -rom for the user's */
 static char *cart = "/etc/tos/tosml.img";
@@ -49,9 +54,9 @@ static char *xdrv[26];			/* -D */
 static char *tab[26];			/* drive -> host directory */
 static char tro[26];			/* read-only */
 static long ramsize = 4L << 20;
-static int mono, stscreen, verbose;
+static int mono, stscreen, verbose, pass;
 static int tfd;
-extern int fbpipe;
+extern int fbpipe, vpass;
 
 extern void disp();
 
@@ -273,6 +278,16 @@ fbmap(fd)
 		return;
 	}
 	close(fd);
+	if (pass) {
+		/* the top of ST-RAM, where TOS keeps its screen, is the session's */
+		if (ioctl(rf.fd, FBIOGINFO, &fi) < 0 || fi.fi_size > (unsigned long)ramsize / 2 ||
+		    mmap((caddr_t)(ramsize - fi.fi_size), fi.fi_size, PROT_READ | PROT_WRITE | PROT_EXEC,
+		    MAP_SHARED | MAP_FIXED, rf.fd, 0) == (caddr_t)-1 ||
+		    ioctl(rf.fd, FBIOVIDEL, ramsize - fi.fi_size) < 0)
+			die("display");
+		close(rf.fd);
+		return;
+	}
 	if (!stscreen && ioctl(rf.fd, FBIOGINFO, &fi) == 0 && fi.fi_depth == 8 &&
 	    fi.fi_width < 0x10000 && fi.fi_height < 0x10000) {
 		ioctl(rf.fd, FBIOCACHE, FBC_WT);	/* NuBus refuses; it stays inhibited */
@@ -343,7 +358,7 @@ main(argc, argv)
 			argv[c] = "-r";
 		else if (argv[c][0] == '-' && strchr("rcCdDemu", argv[c][1]) && argv[c][2] == 0)
 			c++;		/* skip the option's argument */
-	while ((c = getopt(argc, argv, "r:c:C:d:D:e:u:Um:MSv")) != -1)
+	while ((c = getopt(argc, argv, "r:c:C:d:D:e:u:Um:MPSv")) != -1)
 		switch (c) {
 		case 'r': rom = optarg; break;
 		case 'c': cart = optarg; break;
@@ -362,10 +377,11 @@ main(argc, argv)
 		case 'U': udir = 0; break;
 		case 'm': ramsize = atol(optarg) << 20; break;
 		case 'M': mono = 1; break;
+		case 'P': pass = 1; break;
 		case 'S': stscreen = 1; break;
 		case 'v': verbose = 1; break;
 		default:
-			fprintf(stderr, "usage: starttos [-rom file] [-c cartridge] [-e env | -C dir | -d disk] [-D L=dir] [-u dir | -U] [-m MB] [-M] [-S] [-v]\n");
+			fprintf(stderr, "usage: starttos [-rom file | -P] [-c cartridge] [-e env | -C dir | -d disk] [-D L=dir] [-u dir | -U] [-m MB] [-M] [-S] [-v]\n");
 			return 2;
 		}
 	if (env && (cdir || disk)) {
@@ -389,18 +405,32 @@ main(argc, argv)
 		return 1;
 	}
 
-	n = readall(rom, rbuf, (long)sizeof rbuf);
+	if (pass) {
+		if ((c = open("/dev/mem", O_RDONLY)) < 0)
+			die("/dev/mem");
+		if (mmap((caddr_t)FROM, FROMSZ, PROT_READ | PROT_EXEC, MAP_SHARED | MAP_FIXED,
+		    c, (off_t)FROM) == (caddr_t)-1)
+			die("ROM");
+		close(c);
+		rom = "the ROM";
+		memcpy(rbuf, (char *)FROM, 16);
+		n = FROMSZ;
+	} else
+		n = readall(rom, rbuf, (long)sizeof rbuf);
 	base = get32((unsigned char *)rbuf + 8);
 	pc = get32((unsigned char *)rbuf + 4);
-	if ((base != 0xe00000 && base != 0xfc0000) || pc < base || pc >= base + n) {
+	if ((base != 0xe00000 && base != 0xfc0000) || pc < base || pc >= base + n ||
+	    (pass && base != FROM)) {
 		fprintf(stderr, "starttos: %s: not a TOS image\n", rom);
 		return 1;
 	}
 	region(0L, (unsigned long)ramsize, 1);
-	region(base, (n + 0xfff) & ~0xfffL, 0);
-	memcpy((char *)base, rbuf, n);
-	if (mprotect((caddr_t)base, (n + 0xfff) & ~0xfffL, PROT_READ | PROT_EXEC) < 0)
-		die("mprotect");
+	if (!pass) {
+		region(base, (n + 0xfff) & ~0xfffL, 0);
+		memcpy((char *)base, rbuf, n);
+		if (mprotect((caddr_t)base, (n + 0xfff) & ~0xfffL, PROT_READ | PROT_EXEC) < 0)
+			die("mprotect");
+	}
 	/* shared: the display process posts input in its last page */
 	region((unsigned long)CART, (unsigned long)CARTSZ, 1);
 	(void)readall(cart, (char *)CART, TOSPV - CART);
@@ -426,6 +456,7 @@ main(argc, argv)
 	if (pid == 0) {
 		close(pfd[0]);
 		fbpipe = pfd[1];
+		vpass = pass;
 		disp(tfd, verbose, (unsigned long)ramsize);
 		_exit(0);
 	}
@@ -438,7 +469,7 @@ main(argc, argv)
 	/* a guest's send on a reset connection fails instead of ending the session */
 	signal(SIGPIPE, SIG_IGN);
 	te.te_ramsize = ramsize;
-	te.te_flags = mono ? TEF_MONO : 0;
+	te.te_flags = (mono ? TEF_MONO : 0) | (pass ? TEF_FALCON : 0);
 	if (ioctl(tfd, TOSIOC_ENTER, &te) < 0)
 		die("TOSIOC_ENTER");
 	__asm__ __volatile__("mov.l %0,%%sp\n\tjmp (%1)" : : "d" (0x8000L), "a" (pc));

@@ -21,6 +21,12 @@
 #include "sys/kmem.h"
 #include "sys/stream.h"
 #include "sys/time.h"
+#ifdef DS_ATARI
+#include "sys/cred.h"
+#include "sys/proc.h"
+#include "sys/disp.h"
+#include "sys/signal.h"
+#endif
 #include "fbcons.h"
 #include "adb.h"
 #include "ds.h"
@@ -33,7 +39,11 @@ extern void (*fbcons_panicfn)();
 extern int fbcons_grab();
 extern struct fbpmode fbp_mode[];
 #ifdef DS_ATARI
-extern void ata_dspoll();
+extern void ata_dspoll(), ata_vsave(), ata_vload(), ata_vput(), ata_bsave(), ata_bload();
+extern int ata_vget();
+extern int ata_vnative(), ata_brun();
+extern unsigned long ata_pool;
+static struct dsvid ds_vcons;		/* the mode under a Videl session */
 #endif
 extern int fbp_nmode, fbp_cur;
 
@@ -211,6 +221,10 @@ ds_vbl()
 	register struct dssess *s = ds_front;
 
 	ds_vblcount++;
+#ifdef DS_ATARI
+	if (s->s_vid)
+		s->s_dlo = 256, s->s_dhi = 0;
+#endif
 	if (HWCLUT && s->s_dhi > s->s_dlo) {
 		ds_clutload(s, s->s_dlo, s->s_dhi);
 		s->s_dlo = 256;
@@ -362,7 +376,7 @@ static caddr_t
 ds_shadow(s)
 register struct dssess *s;
 {
-	register unsigned long size = ds_disp.d_info.fi_size, i, pa;
+	register unsigned long size = s->s_size, i, pa;
 
 	s->s_memsize = size + DS_PGSIZE;
 	s->s_mem = (caddr_t)kmem_zalloc(s->s_memsize, KM_NOSLEEP);
@@ -395,10 +409,15 @@ register struct dssess *s;
 {
 	if (s->s_mem == 0)
 		return;
-	kmem_free((caddr_t)s->s_pfn, (ds_disp.d_info.fi_size >> DS_PGSHIFT) * 4);
+	kmem_free((caddr_t)s->s_pfn, (s->s_size >> DS_PGSHIFT) * 4);
 	kmem_free(s->s_mem, s->s_memsize);
 	s->s_mem = s->s_shadow = 0;
 	s->s_pfn = 0;
+#ifdef DS_ATARI
+	if (s->s_vid)
+		kmem_free((caddr_t)s->s_vid, sizeof *s->s_vid);
+	s->s_vid = 0;
+#endif
 }
 
 /* a new user session, hidden; 0 and *errp on failure */
@@ -407,6 +426,16 @@ ds_newsess(uid, name, errp)
 long uid;
 char *name;
 int *errp;
+{
+	return ds_mksess(uid, name, errp, 0);
+}
+
+/* as ds_newsess; vid: the session owns the Videl (FBA_VIDEL) */
+struct dssess *
+ds_mksess(uid, name, errp, vid)
+long uid;
+char *name;
+int *errp, vid;
 {
 	register struct dssess *s = 0;
 	register int i;
@@ -427,11 +456,44 @@ int *errp;
 	bzero((caddr_t)s, sizeof *s);
 	s->s_used = 1;			/* claimed while the shadow is allocated */
 	s->s_dead = 1;
-	if (ds_shadow(s) == 0) {
+	s->s_size = ds_disp.d_info.fi_size;
+#ifdef DS_ATARI
+	if (vid) {
+		for (i = 1; i <= DS_NSESS; i++)
+			if (ds_sess[i].s_used && !ds_sess[i].s_dead && ds_sess[i].s_vid) {
+				s->s_used = 0;
+				*errp = EBUSY;
+				return 0;
+			}
+		s->s_size = ds_disp.d_vsize;
+		s->s_vid = (struct dsvid *)kmem_zalloc(sizeof *s->s_vid, KM_NOSLEEP);
+	}
+	if (vid && s->s_vid == 0) {
 		s->s_used = 0;
 		*errp = ENOMEM;
 		return 0;
 	}
+#else
+	if (vid) {
+		s->s_used = 0;
+		*errp = EINVAL;
+		return 0;
+	}
+#endif
+	if (ds_shadow(s) == 0) {
+#ifdef DS_ATARI
+		if (s->s_vid)
+			kmem_free((caddr_t)s->s_vid, sizeof *s->s_vid);
+		s->s_vid = 0;
+#endif
+		s->s_used = 0;
+		*errp = ENOMEM;
+		return 0;
+	}
+#ifdef DS_ATARI
+	if (s->s_vid)
+		ata_vsave(s->s_vid);	/* starts in the console's mode */
+#endif
 	for (i = 0; i < 15 && name[i]; i++)
 		s->s_name[i] = name[i];
 	s->s_uid = uid;
@@ -541,6 +603,10 @@ register struct dssess *s;
 			CLRB(s->s_keys, c);
 			if (s == &ds_sess[0])
 				adbkbd_cons(c | 0x80);
+#ifdef DS_ATARI
+			else if (s->s_vid)
+				ds_evpost(s, 0, IE_KEY, ata_vnative(c), 0L, sec, us);
+#endif
 			else
 				ds_evpost(s, 0, IE_KEY, c, 0L, sec, us);
 		}
@@ -574,7 +640,6 @@ register struct dssess *to;
 {
 	register struct dssess *from = ds_front;
 	register caddr_t vram = (caddr_t)ds_disp.d_page;
-	register unsigned long n = ds_disp.d_info.fi_size;
 	register int x;
 
 	if (to == from)
@@ -588,17 +653,41 @@ register struct dssess *to;
 	ds_unloadsess(to);
 	DS_CPUSHA();
 	if (!from->s_dead)
-		ds_lcopy((unsigned long *)from->s_shadow, (unsigned long *)vram, n);
+		ds_lcopy((unsigned long *)from->s_shadow, (unsigned long *)vram, from->s_size);
 	if (from == &ds_sess[0])
 		fbcons.fc_m.fm_base = (unsigned long)ds_sess[0].s_shadow +
 		    ds_disp.d_info.fi_offset;
-	ds_lcopy((unsigned long *)vram, (unsigned long *)to->s_shadow, n);
+#ifdef DS_ATARI
+	/* the Videl's mode and palette go with the session that owns it */
+	/* and so does the blitter, idle between a guest's runs */
+	/* a guest's mode is what it wrote, which the Videl may read back otherwise */
+	if (from->s_vid && !from->s_dead)
+		ata_bsave(from->s_vid->v_blt);
+	else if (!from->s_vid && to->s_vid) {
+		ata_vsave(&ds_vcons);
+		ata_bsave(ds_vcons.v_blt);
+	}
+	if (to->s_vid) {
+		ata_vload(to->s_vid);
+		ata_bload(to->s_vid->v_blt);
+	} else if (from->s_vid) {
+		ata_vload(&ds_vcons);
+		ata_bload(ds_vcons.v_blt);
+	}
+#endif
+	ds_lcopy((unsigned long *)vram, (unsigned long *)to->s_shadow, to->s_size);
 	if (to == &ds_sess[0])
 		fbcons.fc_m.fm_base = ds_disp.d_base;
 	DS_CPUSHA();
 	x = DS_SPL(DS_HI);
 	ds_front = to;
 	ds_serial++;
+#ifdef DS_ATARI
+	wakeup((caddr_t)&ds_front);	/* blits waiting for the front */
+#endif
+#ifdef DS_ATARI
+	if (!to->s_vid)
+#endif
 	if (HWCLUT)
 		ds_clutload(to, 0, (int)ds_disp.d_info.fi_cmapsize);
 	to->s_dlo = 256;
@@ -649,6 +738,10 @@ ds_panic()
 {
 	if (!ds_disp.d_on || ds_front == &ds_sess[0])
 		return;
+#ifdef DS_ATARI
+	if (ds_front->s_vid)
+		ata_vload(&ds_vcons);
+#endif
 	ds_front = &ds_sess[0];
 	fbcons.fc_m.fm_base = ds_disp.d_base;
 	if (HWCLUT)
@@ -714,6 +807,11 @@ int unit, kind, b, more;
 		return;
 	}
 	ds_now(&sec, &us);
+#ifdef DS_ATARI
+	if (s->s_vid)
+		ds_evpost(s, 0, IE_KEY, ata_vnative(c), up ? 0L : 1L, sec, us);
+	else
+#endif
 	ds_evpost(s, 0, IE_KEY, c, up ? 0L : 1L, sec, us);
 }
 
@@ -826,6 +924,13 @@ ds_init()
 	fi->fi_rowbytes = m->fm_row;
 	fi->fi_offset = m->fm_base - ds_disp.d_page;
 	fi->fi_size = (fi->fi_offset + m->fm_row * m->fm_height + DS_PGOFF) & ~DS_PGOFF;
+	ds_disp.d_vsize = fi->fi_size;
+#ifdef DS_ATARI
+	/* the console's screen opens the pool, which ends at the top of ST-RAM */
+	if (ds_disp.d_page >= ata_pool && ds_disp.d_page - ata_pool < DS_VPOOL &&
+	    ata_pool + DS_VPOOL - ds_disp.d_page > fi->fi_size)
+		ds_disp.d_vsize = ata_pool + DS_VPOOL - ds_disp.d_page;
+#endif
 	end = ds_disp.d_dafb ? DAFB_REG : (ds_disp.d_page & 0xFF000000) + 0x01000000;
 	if (fi->fi_size > end - ds_disp.d_page)
 		return ENXIO;
@@ -867,6 +972,7 @@ ds_init()
 #endif
 
 	ds_sess[0].s_used = 1;
+	ds_sess[0].s_size = fi->fi_size;
 	ds_sess[0].s_cache = FBC_CI;
 	for (i = 0; "console"[i]; i++)
 		ds_sess[0].s_name[i] = "console"[i];
@@ -916,3 +1022,349 @@ ds_init()
 	    (int)fi->fi_rowbytes, (int)fi->fi_size);
 	return 0;
 }
+
+#ifdef DS_ATARI
+/* ---------------------------------------------------- Videl passthrough */
+
+/*
+ * The calling process passes the guest's Videl writes for s, whose
+ * region it maps at win.  Process context.
+ */
+int
+ds_vidpass(s, win)
+register struct dssess *s;
+unsigned long win;
+{
+	if (s->s_vid == 0)
+		return EINVAL;
+	if (win & DS_PGOFF)
+		return EINVAL;
+	s->s_vproc = curproc;
+	s->s_vpid = curproc->p_pid;
+	s->s_vwin = win;
+	return 0;
+}
+
+static struct dssess *
+ds_vowner()
+{
+	register struct dssess *s;
+	register int i;
+
+	for (i = 1; i <= DS_NSESS; i++) {
+		s = &ds_sess[i];
+		if (s->s_used && !s->s_dead && s->s_vid && s->s_vproc == curproc &&
+		    s->s_vpid == curproc->p_pid)
+			return s;
+	}
+	return 0;
+}
+
+#define VREG(o)		((o) >= 0xFF8200 && (o) < 0xFF82C4)
+#define VPAL(o)		((o) >= 0xFF9800 && (o) < 0xFF9C00)
+#define VBASE(o)	((o) == 0xFF8201 || (o) == 0xFF8203 || (o) == 0xFF820D)
+
+/*
+ * A guest write of sz bytes at a, from the owner's process.  It is
+ * kept in the session's state and, while the session is in front,
+ * written to the Videl.  The screen address is the guest's: it becomes
+ * the same place in the pool, or the pool's start when it lies outside
+ * the region.  The address counters are not written.
+ */
+void
+ds_vidput(a, sz, v)
+unsigned long a, v;
+int sz;
+{
+	register struct dssess *s;
+	register struct dsvid *d;
+	register unsigned char *p;
+	register unsigned long o, g;
+	register int i, base = 0, other = 0;
+
+	a &= 0xFFFFFF;
+	if (sz < 1 || sz > 4 || !((VREG(a) && VREG(a + sz - 1)) ||
+	    (VPAL(a) && VPAL(a + sz - 1))) || (s = ds_vowner()) == 0)
+		return;
+	d = s->s_vid;
+	for (i = 0; i < sz; i++) {
+		o = a + i;
+		p = VPAL(o) ? (unsigned char *)d->v_pal + (o - 0xFF9800) : &d->v_reg[o - 0xFF8200];
+		if (VBASE(o)) {
+			g = s->s_vgbase;
+			g &= ~(0xFFL << (o == 0xFF8201 ? 16 : o == 0xFF8203 ? 8 : 0));
+			g |= ((v >> 8 * (sz - 1 - i)) & 0xFF) << (o == 0xFF8201 ? 16 : o == 0xFF8203 ? 8 : 0);
+			s->s_vgbase = g;
+			base = 1;
+		} else if (o >= 0xFF8205 && o <= 0xFF8209)
+			;
+		else {
+			*p = v >> 8 * (sz - 1 - i);
+			other = 1;
+		}
+		if (o == 0xFF8260)
+			d->v_st = 1;
+		else if (o == 0xFF8266 || o == 0xFF8267)
+			d->v_st = 0;
+	}
+	if (base) {
+		o = s->s_vgbase - s->s_vwin;
+		if (o >= s->s_size)
+			o = 0;
+		o += ds_disp.d_page;
+		d->v_reg[0x01] = o >> 16;
+		d->v_reg[0x03] = o >> 8;
+		d->v_reg[0x0D] = o;
+	}
+	if (s != ds_front)
+		return;
+	if (other && !base && !(a <= 0xFF8209 && a + sz > 0xFF8205))
+		ata_vput(a, sz, v);
+	else if (other)
+		for (i = 0; i < sz; i++)
+			if (!VBASE(a + i) && (a + i < 0xFF8205 || a + i > 0xFF8209))
+				ata_vput(a + i, 1, v >> 8 * (sz - 1 - i));
+	if (base) {
+		ata_vput(0xFF8201L, 1, (unsigned long)d->v_reg[0x01]);
+		ata_vput(0xFF8203L, 1, (unsigned long)d->v_reg[0x03]);
+		ata_vput(0xFF820DL, 1, (unsigned long)d->v_reg[0x0D]);
+	}
+	/* the ST shift mode also sets the line width and the video mode */
+	if (a <= 0xFF8260 && a + sz > 0xFF8260)
+		for (i = 0; i < 2; i++) {
+			d->v_reg[0x10 + i] = ata_vget(0xFF8210L + i);
+			d->v_reg[0xC2 + i] = ata_vget(0xFF82C2L + i);
+		}
+}
+#endif
+
+#ifdef DS_ATARI
+/* ---------------------------------------------------- blitter passthrough */
+
+#define BW(o)	(b[o] << 8 | b[(o) + 1])
+#define BL(o)	((unsigned long)BW(o) << 16 | BW((o) + 2))
+#define PB(p, v, n)	{ register int k_; for (k_ = 0; k_ < (n); k_++) (p)[k_] = (v) >> 8 * ((n) - 1 - k_); }
+#define PG(a)	((a) & ~(unsigned long)DS_PGOFF)
+#define NONE	1UL		/* no address: odd */
+
+/* a blit in progress, from the guest's registers */
+struct dsblit {
+	struct dsbrun	t_r;
+	unsigned long	t_sa, t_da;	/* the guest's next source read, destination */
+	unsigned long	t_p1;		/* its last source read, or NONE */
+	unsigned long	t_xn;
+	int		t_line;
+	int		t_op, t_hop, t_smudge, t_fxsr, t_nfsr, t_skew, t_src;
+};
+
+/* reads of the source at word j of the line, FXSR's aside */
+#define NREAD(j)	(t->t_src && !((j) == t->t_xn && t->t_nfsr && t->t_xn > 1))
+
+/*
+ * The physical address of the owner's word at guest address g, where
+ * the blitter reaches (ST-RAM, or the ROM when read), or NONE.  fault:
+ * bring the page in first, for writing when wr, so that it is dirty.
+ */
+static unsigned long
+ds_bpa(g, wr, fault)
+unsigned long g;
+int wr, fault;
+{
+	unsigned long pa;
+	char c;
+
+	if (g == NONE)
+		return 0;
+	if (fault && (copyin((caddr_t)g, &c, 1) || (wr && copyout(&c, (caddr_t)g, 1))))
+		return NONE;
+	pa = vtop((caddr_t)g, curproc);
+	if (pa == (unsigned long)-1 || pa >= (wr ? 0xE00000L : 0xF00000L))
+		return NONE;
+	return pa;
+}
+
+/* whether the words at g and g + inc are adjacent in physical memory too */
+static int
+ds_bnext(g, inc, wr, fault)
+unsigned long g;
+long inc;
+int wr, fault;
+{
+	unsigned long p, q;
+
+	if (PG(g + inc) == PG(g))
+		return 1;
+	p = ds_bpa(g, wr, fault);
+	q = ds_bpa(g + inc, wr, fault);
+	return !(p & 1) && !(q & 1) && q == p + inc;
+}
+
+/* one run reading from sg (NONE: no read) and writing at dg; see ds_bline */
+static int
+ds_bstep(t, sg, dg, mode)
+register struct dsblit *t;
+unsigned long sg, dg;
+int mode;
+{
+	t->t_r.r_sa = ds_bpa(sg, 0, mode == 0);
+	t->t_r.r_da = ds_bpa(dg, 1, mode == 0);
+	if (t->t_r.r_sa & 1 || t->t_r.r_da & 1)
+		return -1;
+	return mode == 2 ? ata_brun(&t->t_r) : 0;
+}
+
+/*
+ * One line of t: mode 0 brings its pages in, 1 checks they are still
+ * there, 2 runs it and moves t to the next line.  A run covers the part
+ * of the line whose source and destination are each contiguous in
+ * physical memory, so the screen's lines never split.  The source
+ * buffer carries over from one run to the next, as it does from line
+ * to line.  The FXSR word, when not adjacent to the first, is loaded
+ * by a run that writes nothing.  A last word on its own under NFSR
+ * rereads the word before and drops it, as the blitter does on a
+ * one-word line.  0, or -1.
+ */
+static int
+ds_bline(t0, b, mode)
+struct dsblit *t0;
+register unsigned char *b;
+int mode;
+{
+	struct dsblit w;
+	register struct dsblit *t = &w;
+	unsigned long a, e, j, f, rd, sap, x;
+
+	w = *t0;
+	for (a = 1; a <= t->t_xn; a = e + 1) {
+		/* f: the FXSR read; rd: word a's */
+		f = NONE;
+		rd = t->t_sa;
+		if (t->t_src && a == 1 && t->t_fxsr) {
+			f = t->t_sa;
+			rd = t->t_sa + t->t_r.r_sxi;
+		} else if (t->t_src && a > 1 && !NREAD(a))
+			rd = t->t_p1;
+		t->t_r.r_skew = t->t_skew;
+		t->t_r.r_ctl = t->t_smudge | t->t_line;
+		if (f != NONE && !ds_bnext(f, (long)t->t_r.r_sxi, 0, mode == 0)) {
+			t->t_r.r_hop = 2;
+			t->t_r.r_op = 3;
+			t->t_r.r_em[0] = 0;
+			t->t_r.r_xn = 1;
+			if (ds_bstep(t, f, t->t_da, mode))
+				return -1;
+			f = NONE;
+		}
+		x = t->t_da;
+		sap = rd;
+		for (e = a; e < t->t_xn; e++) {
+			if (!ds_bnext(x, (long)t->t_r.r_dxi, 1, mode == 0))
+				break;
+			x += t->t_r.r_dxi;
+			if (NREAD(e + 1)) {
+				if (!ds_bnext(sap, (long)t->t_r.r_sxi, 0, mode == 0))
+					break;
+				sap += t->t_r.r_sxi;
+			}
+		}
+		t->t_r.r_hop = t->t_hop;
+		t->t_r.r_op = t->t_op;
+		t->t_r.r_xn = e - a + 1;
+		t->t_r.r_em[0] = a == 1 ? BW(0x28) : a == t->t_xn ? BW(0x2c) : BW(0x2a);
+		t->t_r.r_em[1] = BW(0x2a);
+		t->t_r.r_em[2] = e == t->t_xn ? BW(0x2c) : BW(0x2a);
+		t->t_r.r_skew |= (f != NONE ? 0x80 : 0) | (e == t->t_xn && t->t_nfsr ? 0x40 : 0);
+		if (ds_bstep(t, !t->t_src ? NONE : f != NONE ? f : rd, t->t_da, mode))
+			return -1;
+		for (j = a; j <= e; j++) {
+			if (t->t_src && j == 1 && t->t_fxsr)
+				t->t_sa += t->t_r.r_sxi;
+			if (NREAD(j)) {
+				t->t_p1 = t->t_sa;
+				t->t_sa += j == t->t_xn || (j == t->t_xn - 1 && t->t_nfsr) ?
+				    t->t_r.r_syi : t->t_r.r_sxi;
+			}
+			t->t_da += j == t->t_xn ? t->t_r.r_dyi : t->t_r.r_dxi;
+		}
+	}
+	t->t_line = (t->t_line + (t->t_r.r_dyi < 0 ? -1 : 1)) & 15;
+	if (mode == 2)
+		*t0 = w;
+	return 0;
+}
+
+/*
+ * The owner's guest started its blitter: b is its view of the
+ * registers.  Each line runs on the blitter while the session is in
+ * front, with interrupts that could switch sessions held off; else it
+ * waits for the front.  A signal while waiting leaves the blit busy,
+ * to go on when the guest next looks.  b ends as the blitter would
+ * leave it.
+ */
+void
+ds_bltgo(b)
+register unsigned char *b;
+{
+	register struct dssess *s;
+	struct dsblit t;
+	unsigned long yn;
+	int i, x, n, rc = -1;
+
+	if ((s = ds_vowner()) == 0)
+		goto out;
+	for (i = 0; i < 16; i++)
+		t.t_r.r_ht[i] = BW(2 * i);
+	t.t_r.r_sxi = (short)BW(0x20);
+	t.t_r.r_syi = (short)BW(0x22);
+	t.t_r.r_dxi = (short)BW(0x2e);
+	t.t_r.r_dyi = (short)BW(0x30);
+	t.t_sa = BL(0x24) & 0xFFFFFE;
+	t.t_da = BL(0x32) & 0xFFFFFE;
+	t.t_p1 = NONE;
+	t.t_xn = BW(0x36) ? BW(0x36) : 0x10000;
+	t.t_hop = b[0x3a] & 3;
+	t.t_op = b[0x3b] & 15;
+	t.t_line = b[0x3c] & 15;
+	t.t_smudge = b[0x3c] & 0x20;
+	t.t_fxsr = b[0x3d] & 0x80;
+	t.t_nfsr = b[0x3d] & 0x40;
+	t.t_skew = b[0x3d] & 15;
+	t.t_src = (0x7bde >> t.t_op & 1) && ((t.t_hop & 2) || (t.t_hop == 1 && t.t_smudge));
+	/* a line count of 0: the blit is over, as after a busy bit set again */
+	for (yn = BW(0x38); yn; yn--) {
+		for (n = 0;; n++) {
+			while (s != ds_front)
+				if (sleep((caddr_t)&ds_front, (PZERO + 1) | PCATCH)) {
+					rc = 1;
+					goto out;
+				}
+			if (n == 8 || ds_vowner() != s || ds_bline(&t, b, 0))
+				goto out;
+			x = DS_SPL(DS_HI);
+			if (s == ds_front && ds_bline(&t, b, 1) == 0)
+				break;
+			DS_SPLX(x);
+		}
+		i = ds_bline(&t, b, 2);
+		DS_SPLX(x);
+		if (i)
+			goto out;
+		PB(b + 0x38, yn - 1, 2);
+		PB(b + 0x24, t.t_sa, 4);
+		PB(b + 0x32, t.t_da, 4);
+		b[0x3c] = (b[0x3c] & 0xE0) | t.t_line;
+		/* a long blit lets others run and a kill end it; b holds where it is */
+		if (runrun)
+			preempt();
+		if (yn > 1 && (curproc->p_sig & sigmask(SIGKILL))) {
+			rc = 1;
+			goto out;
+		}
+	}
+	rc = 0;
+out:
+	DS_CPUSHA();
+	if (rc <= 0)
+		b[0x3c] &= 0x7F;
+}
+#endif

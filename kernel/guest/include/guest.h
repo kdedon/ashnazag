@@ -89,6 +89,8 @@ struct guest_proc {
 #define	GPF_FTRAP	0x100	/* traps #1-#15 but #13: frame to the guest vector in the gate */
 #define	GPF_FTRAP13	0x200	/* trap #13 too */
 #define	GPF_CPU030	0x400	/* sees a 68030: its bus fault frames, its MMU */
+#define	GPF_ETAIL	0x800	/* in the tail of an emulated instruction or reflected exception */
+#define	GPF_IDROP	0x1000	/* the IPL dropped since the last such tail */
 #define	GPF_PROFILE	0xffff0000	/* profile's own bits */
 #define	GUEST_PRIV(gp)	((char *)((gp) + 1))	/* profile state */
 #define	GUESTP(p)	((struct guest_proc *)(p)->p_evpdp)
@@ -156,6 +158,11 @@ extern int guest_aline();		/* disposition: A-line reflection */
 extern int guest_priv();		/* disposition: privilege emulation */
 extern int guest_fline();		/* the same for 68030 MMU instructions in line F */
 extern int guest_fnote();		/* disposition: note an access fault */
+extern int guest_bfault();		/* (regs, &fa, &ssw): 0 data, 1 fetch, -1 none */
+extern int guest_bfcycle();		/* (regs, &v): a 68030 cycle to finish here */
+extern void guest_bfdone();		/* (regs, v): finished */
+extern int guest_bframe();		/* (f, sr, pc, fa, ssw, cpu030): vector-2 frame */
+extern int guest_ssw030();		/* (ssw): the 68030's SSW */
 extern int guest_detach();		/* (pf): curproc leaves its guest */
 extern int guest_attach();		/* (pf): curproc becomes a guest */
 extern int guest_getsr();		/* (gp, regs): the SR the guest sees */

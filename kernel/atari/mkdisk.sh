@@ -17,7 +17,7 @@
 # TESTS: programs from tests/build/bin to put in /tests, with /tests/ksyms
 # (e.g. TESTS=t_page).  MODS: a module directory (guest/build.sh -m's
 # mod.d) to put in /tests/mod.d, with /tests/auxreg, /dev/uinter0 and
-# /dev/tos.
+# /dev/tos.  TOSOUT: mktos.sh's outdir; starttos and the cartridge go in /tests.
 # The tape segments come from the Mac build or $AMIX_TAPE.
 set -e
 
@@ -81,6 +81,8 @@ if [ -n "$TESTS" ]; then
 		echo 'c /dev/uinter0 666 0 3 54 0'
 		echo 'c /dev/tos 660 0 25 56 0'
 		for m in "$MODS"/*; do echo "f /tests/mod.d/${m##*/} 644 0 3 $m"; done
+		[ -z "$TOSOUT" ] || { echo "f /tests/starttos 755 0 3 $TOSOUT/starttos"
+			echo "f /tests/tosml.img 644 0 3 $TOSOUT/tosml.img"; }
 	  fi; } >> "$W/root.manifest"
 fi
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \

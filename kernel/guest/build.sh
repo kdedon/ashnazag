@@ -79,6 +79,9 @@ case "$1" in
 	${HOSTCC:-cc} -std=gnu89 -w -o "$O/t_auxsock" "$G/test/t_auxsock.c" \
 		"$G/mod/auxcore/auxsockx.c"
 	"$O/t_auxsock"
+	${HOSTCC:-cc} -std=gnu89 -w -o "$O/t_gframe" "$G/test/t_gframe.c" \
+		"$G/mod/guestcore/gframe.c"
+	"$O/t_gframe"
 	;;
 *)
 	echo "usage: build.sh -k base outdir | -m kernel.elf outdir | -t" >&2

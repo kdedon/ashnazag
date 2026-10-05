@@ -37,6 +37,7 @@ static struct {
 	{ "t_sys", 60 },
 	{ "t_streams", 60 },
 	{ "t_stress", 90 },
+	{ "t_ufs", 300 },
 	{ "t_page", 900 },
 	{ "t_moddemo", 120 },
 	{ "t_dlm", 90 },
@@ -46,11 +47,13 @@ static struct {
 	{ "t_mac", 330 },
 	{ "t_mac76", 330 },
 	{ "t_mac6", 330 },
+	/* a second run in the same boot: nothing of the first may linger */
+	{ "t_mac", 330 },
 	{ "t_vtop", 60 },
 	{ "t_display", 360 },
 	{ "t_tos", 700 },
 	{ "t_mint", 300 },
-	{ "t_amiga", 520 },
+	{ "t_amiga", 680 },
 	{ "t_env", 240 },
 	{ 0, 0 }
 };
@@ -114,6 +117,9 @@ int secs;
 	long t0;
 
 	sprintf(path, "/tests/%s", name);
+	/* a GROUP run leaves out the tests it didn't choose */
+	if (access(path, 0) < 0 && access("/tests/.group", 0) == 0)
+		return 0;
 	sprintf(buf, "=== %s\n", name);
 	say(buf);
 	count(&p0, &f0, &s0);

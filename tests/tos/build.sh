@@ -35,7 +35,7 @@ mkdir -p "$O" "$R/tos/bin" "$R/etc/tos"
 [ -f "$EMUTOS" ] && unzip -p "$EMUTOS" "*/etos512${EMUTOSLANG:-us}.img" > "$R/etc/tos/emutos.img"
 [ -s "$R/etc/tos/emutos.img" ] || rm -f "$R/etc/tos/emutos.img"
 case $TOSROM in
-*.zip)	unzip -p "$TOSROM" '*.img' > "$R/etc/tos/rom" ;;
+*.zip)	[ ! -f "$TOSROM" ] || unzip -p "$TOSROM" '*.img' > "$R/etc/tos/rom" ;;
 *)	[ -f "$TOSROM" ] && cp "$TOSROM" "$R/etc/tos/rom" ;;
 esac
 [ -s "$R/etc/tos/rom" ] || rm -f "$R/etc/tos/rom"
