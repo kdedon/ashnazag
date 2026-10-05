@@ -50,6 +50,9 @@ fi
 # t_tos's launcher, cartridge, C: folder and ROM (none without the ROM)
 TOSB=$B/tos
 KDIR=$KDIR sh "$T/tos/build.sh" "$TOSB"
+# t_mint's mintrun and MiNTLib programs
+MINTB=$B/mint
+KDIR=$KDIR sh "$T/mint/build.sh" "$MINTB"
 # t_amiga's guest image, startmig and ROM
 AMIB=$B/amiga
 KDIR=$KDIR sh "$T/amiga/build.sh" "$AMIB"
@@ -122,6 +125,17 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 		done
 		(cd "$AUXB/root" && find . -type f | sed 's#^\.##' | sort) | while read -r f; do
 			echo "f $f 755 0 3 $AUXB/root$f"
+		done
+	fi
+	if [ -d "$MINTB/root" ] && [ -f "$AUXB/mod.d/tosguest" ]; then
+		[ -d "$TOSB/root" ] || echo "c /dev/tos 660 0 25 56 0"
+		(cd "$MINTB/root" && find . -type d | sed 's#^\.##' | sort) | while read -r d; do
+			if [ -n "$d" ] && ! grep -q "^d $d[ 	]" "$M"; then
+				echo "d $d 755 0 3"
+			fi
+		done
+		(cd "$MINTB/root" && find . -type f | sed 's#^\.##' | sort) | while read -r f; do
+			echo "f $f 755 0 3 $MINTB/root$f"
 		done
 	fi
 	if [ -d "$TOSB/root" ] && [ -f "$AUXB/mod.d/tosguest" ]; then

@@ -160,7 +160,7 @@ The forge and `tools/setup.sh` take the AMIX tape the way users have it: usually
 
 ### Time zone (2026-10-04)
 
-`/etc/TIMEZONE` comes from the host where one exists. On a Mac, the kernel sets it at boot from the GMT offset the Map control panel keeps in PRAM. Elsewhere, such as the Falcon, it comes from the build: the forge defaults to the browser's own zone, and the user can change it. `mkdisk.sh` takes `TZ=`, defaulting to `CST6CDT`.
+`/etc/TIMEZONE` comes from the host where one exists. On a Mac, the kernel sets it at boot from the GMT offset the Map control panel keeps in PRAM. Elsewhere, such as the Falcon, it comes from the build: the forge defaults to the browser's own zone, and the user can change it. `mkdisk.sh` takes `ZONE=`, defaulting to `CST6CDT`.
 
 | Id | Work | Acceptance |
 |---|---|---|

@@ -10,6 +10,7 @@
 #include "tosio.h"
 
 #define	SR_S		0x2000
+#define	TGF_SOLO	0x10000		/* gp_flags: TEF_NOMACH guest */
 #define	SR_IPL		0x0700
 
 /* MFP 68901: registers at the odd addresses $FFFA01 + 2n */

@@ -5,6 +5,8 @@ PATH=/usr/bin:/sbin:/usr/sbin
 case $1 in
 'start')
 	/usr/aux/lib/auxreg /usr/aux/lib/mod.d 54 56 || exit 1
+	# the Amiga environment, when installed: /dev/amiga (57)
+	[ ! -x /usr/sbin/amigareg ] || /usr/sbin/amigareg /usr/aux/lib/mod.d
 	# fidd finds the root in an A/UX mount table: A/UX's name, this device
 	if [ ! -s /etc/mtab ]; then
 		ls -lL /dev/dsk/c0d0s1 | nawk '{ sub(",", "", $5)

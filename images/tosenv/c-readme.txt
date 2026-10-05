@@ -10,8 +10,8 @@ GEM draws through fVDI (AUTO\FVDI.PRG) at the screen's full size.
 Rename it to FVDI.PRX to boot with the ST screen; text-mode
 programs need that.  Its source is in /tos/src/fvdi.
 
-TERADESK holds TeraDesk, a desktop to use instead of the built-in one:
-select TERADESK\DESKTOP.PRG, choose Options > Install application,
-set Boot status to Auto, then Options > Save desktop.  Quitting it
-returns to the built-in desktop; set Boot status back to Normal there
-to stop using it.  Its source is in /tos/src.
+TERADESK holds TeraDesk, the desktop that starts at boot.  Quitting
+it returns to the built-in desktop, where text files open in Qed.  To
+boot into the built-in desktop, select TERADESK\DESKTOP.PRG there,
+choose Options > Install application, set Boot status to Normal, then
+Options > Save desktop.  Its source is in /tos/src.

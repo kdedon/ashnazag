@@ -732,8 +732,8 @@ tos_fault(gp, r, v)
 	char save[64];
 	int sr;
 
-	if ((GR_FV(r) >> 12) != 7)
-		return 1;
+	if ((GR_FV(r) >> 12) != 7 || (gp->gp_flags & TGF_SOLO))
+		return 1;		/* a lone guest has no machine registers */
 	fa = *(unsigned long *)(r + 64 + 20);
 	ssw = *(unsigned short *)(r + 64 + 12);
 	if (!where(fa, &na) && where(*(unsigned long *)(r + 64 + 8), &na))

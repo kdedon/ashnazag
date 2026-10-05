@@ -61,7 +61,7 @@ for s in ${ONLY:-"$T"/src/t_*.c "$T/src/runall.c"}; do
 	cc "$s" "$O/$n.o" $XA -I"$KDIR/dlm/include" -I"$KDIR/mac/display" \
 		-I"$KDIR/guest/mod/tosguest" -I"$KDIR/guest/include"
 	extra=
-	case $n in t_dlm|t_aux|t_mac|t_mac76|t_mac81|t_tos|t_amiga) extra=$MODO ;; esac
+	case $n in t_dlm|t_aux|t_mac|t_mac76|t_mac81|t_tos|t_mint|t_amiga) extra=$MODO ;; esac
 	link "$BIN/$n" "$O/$n.o" "$O/t.o" $extra
 	echo "[ok] $n"
 done

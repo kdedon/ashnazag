@@ -1,0 +1,20 @@
+wait login:
+type root\n
+wait # 
+type /tests/auxreg /tests/mod.d 54 56; echo auxreg-rc=$?\n
+wait auxreg-rc=
+type sh -c ': <> /dev/tos' && sh -c ': <> /dev/uinter0' && echo opened-ok\n
+wait # 
+type for m in guestcore auxcore auxexec; do /tests/modadmin -l /tests/mod.d/$m || echo modfail=$m; done; echo mods-done\n
+wait mods-done
+type /tests/modadmin -s; echo stat-rc=$?\n
+wait stat-rc=
+sleep 2
+debug screenshot OUT/1-mods.png
+type cd /; shutdown -y -g0 -i6\n
+wait login:
+type root\n
+wait # 
+type echo rebooted-ok\n
+wait rebooted-ok
+debug quit 0

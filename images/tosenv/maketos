@@ -83,8 +83,11 @@ if [ -n "$imp" ]; then
 	echo "maketos: $L copied to $T, drive C: in starttos -e $e"
 	exit 0
 fi
-# the system's drive table stays the system's: ~/TOS/drives adds to it
-cd "$SYS" && find . -print | grep -v '^\./drives$' | cpio -pdmu "$T" 2>/dev/null ||
+# the system's drive table stays the system's: ~/TOS/drives adds to it;
+# a saved desktop stays
+cd "$SYS" && find . -print | grep -v '^\./drives$' |
+	if [ -f "$T/EMUDESK.INF" ]; then grep -v '^\./EMUDESK\.INF$'; else cat; fi |
+	cpio -pdmu "$T" 2>/dev/null ||
 	{ echo "maketos: copy to $T failed" >&2; exit 1; }
 if [ -n "$e" ]; then
 	echo "maketos: $T is drive C: in starttos -e $e"

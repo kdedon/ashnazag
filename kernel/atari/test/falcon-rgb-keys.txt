@@ -1,0 +1,10 @@
+wait login:
+sleep 2
+debug screenshot OUT/1-login.png
+type root\n
+wait # 
+type echo uname=`uname -n`; echo ps-lines=`ps -ef | wc -l`\n
+wait ps-lines=
+sleep 2
+debug screenshot OUT/2-root.png
+debug quit 0

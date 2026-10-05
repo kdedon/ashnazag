@@ -1209,6 +1209,33 @@ int lo, hi, secs;
 	return shotdiff(ref, name);
 }
 
+/* Special > Shut Down as root: the Mac ends by itself, with no panic */
+static void
+shutdown76()
+{
+	long t0;
+	int st = 0;
+	pid_t r = 0;
+
+	t_rearm(120);
+	moveto(232, 9);
+	host("button 1");
+	pause_ms(800L);
+	moveto(250, 139);
+	pause_ms(500L);
+	host("shot " SHOT "shutdown");
+	host("button 0");
+	for (t0 = t_now_ms(); t_now_ms() - t0 < 60000L; pause_ms(500L))
+		if ((r = waitpid(macpid, &st, WNOHANG)) != 0)
+			break;
+	t_check("shutdown_exits", r == macpid, "startmac still running after %ld ms",
+	    t_now_ms() - t0);
+	if (r == macpid) {
+		t_info("shutdown_status", "%#x after %ld ms", st, t_now_ms() - t0);
+		macpid = 0;
+	}
+}
+
 /* About closed, SimpleText opened from the desktop and quit, the disk window */
 static void
 app76()
@@ -1257,6 +1284,7 @@ app76()
 	n = shotdiff(SHOT "diskclosed", SHOT "special");
 	t_check("special_menu", n > 1000, "%d pixels changed", n);
 	t_check("finder_stays", alive76(), "");
+	shutdown76();
 }
 
 /* the 7.6.1 Finder: its desktop, the System version, About This Computer */

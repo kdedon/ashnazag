@@ -303,6 +303,10 @@ static int baller;			/* C: holds it and starts it */
 #define	TDPRG	"/tos/teradesk/TERADESK/DESKTOP.PRG"
 static char *tdfiles[] = { "DESKTOP.PRG", "DESKTOP.RSC", "ICONS.RSC", "CICONS.RSC", 0 };
 static int teradesk;			/* C: holds it and starts it */
+#define	DESKINF	"/tos/teradesk/EMUDESK.INF"	/* the C: template's saved desktop */
+#define	QEDDIR	"/tos/qed"		/* Qed, which opens text files */
+static char *qedfiles[] = { "qed.app", "qed.rsc", "icons.rsc", "qed.cfg", 0 };
+static int textopen;			/* C: holds Qed and the template's desktop, no autorun */
 static int stscreen;			/* fVDI kept off the frame buffer */
 #define	STIKPRG	"/tos/stik/STIKTEST.PRG"
 static int stik;			/* C:\AUTO starts it */
@@ -460,6 +464,27 @@ holder(path)
 	return fl.l_type == F_UNLCK ? 0 : (long)fl.l_pid;
 }
 
+/* the template's saved desktop into C:, without its autorun line unless autorun */
+static void
+deskinf(autorun)
+	int autorun;
+{
+	char b[2048], *l, *e;
+	int fd, n;
+
+	if ((fd = open(DESKINF, O_RDONLY)) < 0)
+		return;
+	n = read(fd, b, sizeof b - 1);
+	close(fd);
+	b[n > 0 ? n : 0] = 0;
+	for (l = b; !autorun && (l = strstr(l, "#Z")) != 0; )
+		if ((e = strchr(l, '\n')) != 0)
+			memmove(l, e + 1, strlen(e + 1) + 1);
+		else
+			*l = 0;
+	wfile(CDIR "/EMUDESK.INF", b);
+}
+
 /* C:: AUTO\UTEST.PRG, H: in the user's drive table; G: and I: on one directory */
 static void
 cmake()
@@ -479,6 +504,9 @@ cmake()
 	}
 	rmdir(CDIR "/AUTO");
 	rmfiles(CDIR "/TERADESK");
+	rmfiles(CDIR "/APPS/QED");
+	rmdir(CDIR "/APPS");
+	unlink(CDIR "/EMUDESK.INF");
 	unlink(CDIR "/drives");
 	unlink(CDIR "/ctest.txt");
 	unlink(CDIR "/.env");
@@ -510,7 +538,17 @@ cmake()
 			sprintf(b, "%s/TERADESK/%s", CDIR, tdfiles[i]);
 			fcopy(a, b);
 		}
-		wfile(CDIR "/EMUDESK.INF", "#Z 01 C:\\TERADESK\\DESKTOP.PRG@\r\n");
+		deskinf(1);
+	}
+	if (textopen) {
+		mkdir(CDIR "/APPS", 0755);
+		mkdir(CDIR "/APPS/QED", 0755);
+		for (i = 0; qedfiles[i]; i++) {
+			sprintf(a, "%s/%s", QEDDIR, qedfiles[i]);
+			sprintf(b, "%s/APPS/QED/%s", CDIR, qedfiles[i]);
+			fcopy(a, b);
+		}
+		deskinf(0);
 	}
 	wfile(CDIR "/drives", "# user drives\nH " UDIR "/sub\n");
 	unlink(GDIR "/w.txt");
@@ -1651,6 +1689,90 @@ terarun()
 		nap(200);
 }
 
+/* a double click where the pointer is, each change seen by the display process */
+static void
+dclick()
+{
+	unsigned long h = handed();
+	int i;
+
+	for (i = 0; i < 4; i++) {
+		host(i & 1 ? "button 0 0" : "button 1 0");
+		h = seen(h);
+		if (i < 3)
+			nap(i & 1 ? 40 : 20);
+	}
+}
+
+/* pointer to x, y from the top left */
+static void
+ptrto(x, y)
+	int x, y;
+{
+	char req[40];
+
+	host("move -400 0");
+	nap(300);
+	host("move 0 -300");
+	nap(300);
+	sprintf(req, "move %d %d", x, y);
+	host(req);
+	nap(500);
+}
+
+/*
+ * EmuDesk under fVDI with the template's desktop: a text file opened
+ * from a drive window runs Qed.  The desktop's own viewer would write
+ * to the ST screen, which fVDI hides, and look hung.
+ */
+static void
+textrun()
+{
+	int i, up = 0, status, ok = 0;
+	long t0;
+
+	outn = 0;
+	start((char *)0);
+	t0 = t_now_ms();
+	while (t_now_ms() - t0 < 10000 && (sess = front()) <= 0) {
+		relay();
+		nap(200);
+	}
+	for (i = 0; i < 30 && !up; i++) {
+		nap(2000);
+		relay();
+		up = desktop(S("desk"), 0);
+	}
+	t_check(N("desktop"), up, "no desktop after %ld s", (t_now_ms() - t0) / 1000);
+	if (up) {
+		/* drive G:'s icon, then its one file, readme.txt */
+		ptrto(115, 40);
+		dclick();
+		nap(3000);
+		shot(S("window"));
+		ptrto(60, 160);
+		dclick();
+		for (i = 0; i < 30 && !(ok = running(QEDDIR "/qed.app")); i++) {
+			nap(1000);
+			relay();
+		}
+		shot(S("opened"));
+		t_check(N("qed_runs"), ok, "no Qed %ld s after the double click",
+		    (t_now_ms() - t0) / 1000);
+	}
+	relay();
+	kill(tpid, SIGTERM);
+	t0 = t_now_ms();
+	while (waitpid(tpid, &status, WNOHANG) != tpid && t_now_ms() - t0 < 5000)
+		nap(100);
+	t_check(N("ended"), t_now_ms() - t0 < 5000, "starttos still running");
+	relay();
+	close(ofd);
+	ofd = -1;
+	while (front() != 0 && t_now_ms() - t0 < 10000)
+		nap(200);
+}
+
 /* STIKTEST.PRG's results, up to 120 s for them */
 static void
 stikrun()
@@ -1768,6 +1890,15 @@ main()
 		terarun();
 	}
 	teradesk = 0;
+	textopen = 1;
+	if (stat(QEDDIR "/qed.app", &sb) < 0 || stat(DESKINF, &sb) < 0 ||
+	    stat(FVDIDIR "/FVDI.SYS", &sb) < 0 || stat(EMUTOS, &sb) < 0 || hfd < 0)
+		t_skip("textopen", "no Qed, template desktop, fVDI, EmuTOS or host line");
+	else {
+		pf = "textopen";
+		textrun();
+	}
+	textopen = 0;
 	baller = 1;
 	if (stat(BALLERDIR "/BALLER.PRG", &sb) < 0 || stat(EMUTOS, &sb) < 0 || hfd < 0)
 		t_skip("baller", "no Ballerburg, EmuTOS or host line");

@@ -170,6 +170,8 @@ tos_fsig(p, gp)
 	k_sigset_t h;
 	int s, n;
 
+	if (gp->gp_flags & TGF_SOLO)
+		return __amix_fsig(p);
 	s = splhi_();
 	h = p->p_hold;
 	sigdelset(&p->p_hold, TOS_SIG);
@@ -201,7 +203,7 @@ tos_sendsig(gp, sig, sip, hdlr)
 	char *r = (char *)u.u_ar0;
 	int s, l, id;
 
-	if (sig != TOS_SIG)
+	if (sig != TOS_SIG || (gp->gp_flags & TGF_SOLO))
 		return __amix_sendsig(sig, sip, hdlr);
 	if (tosc.t_gp != gp)
 		return 1;
@@ -225,6 +227,19 @@ tos_sendsig(gp, sig, sip, hdlr)
 
 /* ---- dispositions ---- */
 
+/* the session's counters; a lone guest's go to a scratch copy */
+static struct tosstat solost;
+#define	TST(gp)	((gp)->gp_flags & TGF_SOLO ? &solost : &tosc.t_st)
+
+/* a lone guest's empty vector: the Unix signal instead */
+static int
+solonull(gp, v)
+	struct guest_proc *gp;
+	int v;
+{
+	return (gp->gp_flags & TGF_SOLO) && fuword((caddr_t)(gp->gp_vvbr + (v << 2))) == 0;
+}
+
 /* the CPU's own frame, through the guest's vector */
 static int
 tos_refl(gp, r, v)
@@ -234,15 +249,17 @@ tos_refl(gp, r, v)
 {
 	int n;
 
+	if (solonull(gp, v))
+		return 1;
 	switch (GR_FV(r) >> 12) {
 	case 0: n = 0; break;
 	case 2: case 3: n = 4; break;
 	case 4: n = 8; break;
 	default: return 1;
 	}
-	tosc.t_st.ts_lastpc = GR_PC(r);
+	TST(gp)->ts_lastpc = GR_PC(r);
 	if (v < 64)
-		tosc.t_st.ts_refl[v]++;
+		TST(gp)->ts_refl[v]++;
 	if (guest_reflect(gp, r, GR_PC(r), (int)GR_FV(r), r + 72, n + 2, -1) < 0) {
 		printf("tos: vector %d with no guest stack, pc %x\n", v, (int)GR_PC(r));
 		psignal(curproc, SIGSEGV);
@@ -261,8 +278,10 @@ tos_refl0(gp, r, v, pc)
 	int v;
 	long pc;
 {
+	if (solonull(gp, v))
+		return 1;
 	if (v < 64)
-		tosc.t_st.ts_refl[v]++;
+		TST(gp)->ts_refl[v]++;
 	if (guest_reflect(gp, r, pc, v << 2, (char *)0, 2, -1) < 0) {
 		printf("tos: vector %d with no guest stack, pc %x\n", v, (int)pc);
 		psignal(curproc, SIGSEGV);
@@ -293,10 +312,10 @@ tos_priv(gp, r, v)
 {
 	char sr[2];
 
-	tosc.t_st.ts_lastpc = GR_PC(r);
+	TST(gp)->ts_lastpc = GR_PC(r);
 	if (!(gp->gp_vsr & SR_S))
 		return tos_refl(gp, r, v);
-	tosc.t_st.ts_priv++;
+	TST(gp)->ts_priv++;
 	if (opword(r) == 0x4e70) {		/* reset */
 		GR_PC(r) += 2;
 		guest_trapret();
@@ -305,13 +324,14 @@ tos_priv(gp, r, v)
 	if (opword(r) == 0x4e72 && copyin((caddr_t)GR_PC(r) + 2, sr, 2) == 0) {
 		guest_setsr(gp, r, (int)G16(sr));
 		GR_PC(r) += 4;
-		tos_stop_insn(gp);
+		if (!(gp->gp_flags & TGF_SOLO))
+			tos_stop_insn(gp);
 		guest_trapret();
 		return 0;
 	}
 	if (opword(r) >> 8 == 0xf4 || (opword(r) == 0x4e7b &&
 	    copyin((caddr_t)GR_PC(r) + 2, sr, 2) == 0 && (G16(sr) & 0xfff) == 2))
-		tosc.t_st.ts_cache++;	/* cinv, cpush, CACR: pushed for real */
+		TST(gp)->ts_cache++;	/* cinv, cpush, CACR: pushed for real */
 	if (guest_priv(gp, r, v) == 0)
 		return 0;
 	return tos_refl0(gp, r, 4, GR_PC(r));	/* illegal instruction */
@@ -328,8 +348,8 @@ tos_fline(gp, r, v)
 	int op = opword(r), n, sr;
 	char save[64];
 
-	tosc.t_st.ts_lastpc = GR_PC(r);
-	if ((op & 0xffc0) == 0xf000) {
+	TST(gp)->ts_lastpc = GR_PC(r);
+	if ((op & 0xffc0) == 0xf000 && !(gp->gp_flags & TGF_SOLO)) {
 		if (!(gp->gp_vsr & SR_S))
 			return tos_refl0(gp, r, 8, GR_PC(r));
 		bcopy(r, save, sizeof save);
@@ -358,7 +378,7 @@ tos_sys(gp, r, v)
 	char *r;
 	int v;
 {
-	tosc.t_st.ts_sys++;
+	TST(gp)->ts_sys++;
 	return 1;
 }
 
@@ -413,6 +433,8 @@ static int
 tos_pfork(pg, cg)
 	struct guest_proc *pg, *cg;
 {
+	if (pg->gp_flags & TGF_SOLO)
+		return 0;
 	return EINVAL;			/* one process per container */
 }
 
@@ -449,6 +471,8 @@ tosrdwr(dev, uiop, cr)
 	return EINVAL;
 }
 
+static int solo();
+
 static int
 enter(arg, cr)
 	caddr_t arg;
@@ -463,6 +487,8 @@ enter(arg, cr)
 		return EFAULT;
 	if (te.te_ramsize < 0x80000 || te.te_ramsize > 0xe00000 || (te.te_ramsize & 0xfff))
 		return EINVAL;
+	if (te.te_flags & TEF_NOMACH)
+		return solo();
 	s = splhi_();
 	if (t->t_state != 0) {
 		splx_(s);
@@ -494,6 +520,23 @@ enter(arg, cr)
 	return 0;
 }
 
+/* a guest of its own: no machine, no tick, any number of them */
+static int
+solo()
+{
+	struct guest_proc *gp;
+	int e;
+
+	if ((e = guest_attach(&tos_profile)) != 0)
+		return e;
+	gp = GUESTP(curproc);
+	gp->gp_flags |= GPF_PRIV | GPF_FTRAP | TGF_SOLO;
+	gp->gp_vsr = 0x2700;
+	gp->gp_vpend = 0;
+	gp->gp_vusp = gp->gp_vvbr = gp->gp_vcacr = 0;
+	return 0;
+}
+
 /* a socket call of the container's (struct tossock); it may block as the descriptor says */
 static int
 tsock(arg)
@@ -501,7 +544,7 @@ tsock(arg)
 {
 	struct tossock so;
 	struct hs h;
-	char a[HS_ADDR];
+	char a[HS_ADDR], o[64];
 	int e, v = 0, n = HS_ADDR, sc = u.u_syscall;
 
 	if (copyin(arg, (caddr_t)&so, sizeof so))
@@ -538,6 +581,27 @@ tsock(arg)
 		case TSO_NAME:
 			e = hs_name(&h, (int)so.so_arg, a, &n);
 			break;
+		case TSO_GETOPT:
+			if ((v = (int)so.so_len) < 0)
+				e = EINVAL;
+			else if (v > sizeof o)
+				v = sizeof o;
+			if (e == 0 && (e = hs_getopt(&h, (int)(so.so_arg >> 16) & 0xffff,
+			    (int)so.so_arg & 0xffff, o, &v)) == 0 && copyout(o, so.so_buf, v))
+				e = EFAULT;
+			break;
+		case TSO_SETOPT:
+			if (so.so_len < 0 || so.so_len > sizeof o)
+				e = EINVAL;
+			else if (copyin(so.so_buf, o, (int)so.so_len))
+				e = EFAULT;
+			else
+				e = hs_setopt(&h, (int)(so.so_arg >> 16) & 0xffff,
+				    (int)so.so_arg & 0xffff, o, (int)so.so_len);
+			break;
+		case TSO_SHUTDOWN:
+			e = hs_shutdown(&h, (int)so.so_arg);
+			break;
 		default:
 			e = EINVAL;
 		}
@@ -565,6 +629,9 @@ tosioctl(dev, cmd, arg, mode, cr, rvp)
 
 	if (cmd == TOSIOC_ENTER)
 		return enter(arg, cr);
+	if (cmd == TOSIOC_SOCK && GUESTP(curproc) &&
+	    GUESTP(curproc)->gp_prof == &tos_profile && (GUESTP(curproc)->gp_flags & TGF_SOLO))
+		return tsock(arg);
 	if (cmd == TOSIOC_OWNER) {
 		struct tosowner to;
 
