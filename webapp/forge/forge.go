@@ -14,13 +14,14 @@ import (
 	"sort"
 	"strings"
 
+	"amigaux.org/imagebuilder/amixtape"
 	"amigaux.org/imagebuilder/packages"
 	"amigaux.org/imagebuilder/planner"
 	"amigaux.org/imagebuilder/provision"
 )
 
 const (
-	FormatVersion = 1
+	FormatVersion = 2
 	Version       = "0.1.0"
 	// RecipePath is where every built image carries its recipe.
 	RecipePath = "/etc/forge/recipe.json"
@@ -77,6 +78,8 @@ type Input struct {
 	Role   string `json:"role"`
 	Size   int64  `json:"size"`
 	SHA256 string `json:"sha256"`
+	// Parts are the files the tape came in; they do not affect the image.
+	Parts []amixtape.Digest `json:"parts,omitempty"`
 }
 
 type Recipe struct {
@@ -160,9 +163,16 @@ func sorted(list []string) []string {
 	return out
 }
 
+// TapeSegments are the AMIX tape segments the root is layered from, in order.
+var TapeSegments = []string{"02", "03", "10"}
+
+// TapeRole is the AMIX tape input. Its size and digest cover the segments
+// used, so any packaging of the same tape gives the same recipe and image.
+const TapeRole = "amix-tape"
+
 // Roles lists the inputs a selection consumes, in build order.
 func Roles(s Selection) []string {
-	roles := []string{"amix-02", "amix-03", "amix-10", "kernel", "boot-donor"}
+	roles := []string{TapeRole, "kernel", "boot-donor"}
 	for _, p := range s.Provision {
 		roles = append(roles, "package:"+p.ID)
 	}
@@ -234,6 +244,9 @@ func (r Recipe) Selection() (Selection, error) {
 		return s, fmt.Errorf("recipe lists %d inputs; its selection needs %d", len(r.Inputs), len(roles))
 	}
 	for i, in := range r.Inputs {
+		if len(in.Parts) != 0 && in.Role != TapeRole {
+			return s, fmt.Errorf("input %d (%s) cannot have parts", i+1, in.Role)
+		}
 		if in.Role != roles[i] {
 			return s, fmt.Errorf("input %d has role %q; expected %q", i+1, in.Role, roles[i])
 		}
@@ -304,10 +317,33 @@ func Decode(data []byte) (Recipe, error) {
 		return r, fmt.Errorf("invalid recipe: %v", err)
 	}
 	r.Lock = lock
+	if r.FormatVersion == 1 {
+		if err := upgrade(&r); err != nil {
+			return r, fmt.Errorf("invalid recipe: %v", err)
+		}
+	}
 	if _, err := r.Selection(); err != nil {
 		return r, fmt.Errorf("invalid recipe: %v", err)
 	}
 	return r, nil
+}
+
+// upgrade replaces a format 1 recipe's segment inputs with the tape input.
+func upgrade(r *Recipe) error {
+	r.FormatVersion = FormatVersion
+	if len(r.Inputs) == 0 {
+		return nil
+	}
+	if len(r.Inputs) < len(TapeSegments) {
+		return fmt.Errorf("recipe lists %d inputs", len(r.Inputs))
+	}
+	for i, id := range TapeSegments {
+		if r.Inputs[i].Role != "amix-"+id {
+			return fmt.Errorf("input %d has role %q; expected %q", i+1, r.Inputs[i].Role, "amix-"+id)
+		}
+	}
+	r.Inputs = append([]Input{tapeInput(r.Inputs[:len(TapeSegments)])}, r.Inputs[len(TapeSegments):]...)
+	return nil
 }
 
 // Digest hashes one input.
@@ -332,11 +368,54 @@ func Digest(ctx context.Context, role string, r io.ReaderAt, size int64) (Input,
 	return Input{Role: role, Size: size, SHA256: hex.EncodeToString(h.Sum(nil))}, nil
 }
 
+// TapeInput describes the tape from its segments, in TapeSegments order,
+// and the parts they came from.
+func TapeInput(ctx context.Context, segments []Media, parts []amixtape.Digest) (Input, error) {
+	if len(segments) != len(TapeSegments) {
+		return Input{}, fmt.Errorf("expected AMIX tape segments %s", strings.Join(TapeSegments, ", "))
+	}
+	ins := make([]Input, len(segments))
+	for i, m := range segments {
+		in, err := Digest(ctx, "amix-"+TapeSegments[i], m.Reader, m.Size)
+		if err != nil {
+			return Input{}, err
+		}
+		ins[i] = in
+	}
+	in := tapeInput(ins)
+	in.Parts = append([]amixtape.Digest(nil), parts...)
+	return in, nil
+}
+
+// tapeInput sums the segment sizes and hashes "<id> <sha256>" lines, so
+// segment digests from older recipes convert too.
+func tapeInput(segments []Input) Input {
+	h := sha256.New()
+	in := Input{Role: TapeRole}
+	for _, s := range segments {
+		fmt.Fprintf(h, "%s %s\n", strings.TrimPrefix(s.Role, "amix-"), s.SHA256)
+		in.Size += s.Size
+	}
+	in.SHA256 = hex.EncodeToString(h.Sum(nil))
+	return in
+}
+
+// Portable drops the tape's part digests, as images carry the recipe.
+func (r Recipe) Portable() Recipe {
+	r.Inputs = append([]Input(nil), r.Inputs...)
+	for i := range r.Inputs {
+		r.Inputs[i].Parts = nil
+	}
+	return r
+}
+
 // Mismatches names the roles whose inputs differ between two recipes.
+// Tape parts are not compared.
 func Mismatches(want, got []Input) []string {
 	var out []string
+	same := func(a, b Input) bool { return a.Role == b.Role && a.Size == b.Size && a.SHA256 == b.SHA256 }
 	for i, w := range want {
-		if i >= len(got) || got[i] != w {
+		if i >= len(got) || !same(got[i], w) {
 			out = append(out, w.Role)
 		}
 	}

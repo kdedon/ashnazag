@@ -8,12 +8,16 @@
 #   ping
 #   key K[+K...]        press together, release (QEMU qcodes)
 #   down K, up K        one transition
-#   move DX DY          relative mouse motion
+#   move DX DY [MS]     relative mouse motion; with MS, in steps of at most
+#                       63 per axis, MS ms apart, so each poll of the
+#                       mouse takes one step and later moves cannot cancel it
 #   button MASK [MS]    mouse buttons (1 = left), answered MS ms later (300)
 #   glide N DX DY MS    N moves of DX DY, MS ms apart, answered at once
 #   clicks N HOLD GAP   N left clicks, HOLD and GAP in ms
 #   shot NAME           screen dump -> display/NAME.ppm, .png; "W H"
 #   cmp A B             "same" or "diff N" (pixels)
+#   box A B [Y0]        "X0 Y0 X1 Y1" bounding the pixels that differ (in
+#                       rows Y0 and below), or "none"
 #   lit NAME            pixels of dump NAME that are not black
 #   tos NAME            TOS screen: guest box, menu-bar white, desktop colour
 #   ref NAME SHOT DEPTH SEED K
@@ -199,7 +203,17 @@ def serve(q, cmd, a):
         time.sleep(0.2)
         return 'error' in r and r['error']['desc'] or 'done'
     if cmd == 'move':
-        q.hmp('mouse_move %d %d' % (int(a[0]), int(a[1])))
+        dx, dy = int(a[0]), int(a[1])
+        if len(a) < 3:
+            q.hmp('mouse_move %d %d' % (dx, dy))
+            time.sleep(0.3)
+            return 'done'
+        gap = int(a[2]) / 1000.
+        while dx or dy:
+            sx, sy = max(-63, min(63, dx)), max(-63, min(63, dy))
+            q.hmp('mouse_move %d %d' % (sx, sy))
+            dx, dy = dx - sx, dy - sy
+            time.sleep(gap)
         time.sleep(0.3)
         return 'done'
     if cmd == 'glide':
@@ -255,6 +269,22 @@ def serve(q, cmd, a):
         w2, h2, p2 = readppm(os.path.join(D, os.path.basename(a[1]) + '.ppm'))
         n = diff(p1, p2) if (w1, h1) == (w2, h2) else -1
         return 'same' if n == 0 else 'diff %d' % n
+    if cmd == 'box':
+        w1, h1, p1 = readppm(os.path.join(D, os.path.basename(a[0]) + '.ppm'))
+        w2, h2, p2 = readppm(os.path.join(D, os.path.basename(a[1]) + '.ppm'))
+        if (w1, h1) != (w2, h2):
+            return 'size'
+        x0 = y0 = 1 << 30
+        x1 = y1 = -1
+        for y in range(int(a[2]) if len(a) > 2 else 0, h1):
+            o = y * w1 * 3
+            if p1[o:o + w1 * 3] == p2[o:o + w1 * 3]:
+                continue
+            for x in range(w1):
+                if p1[o + 3 * x:o + 3 * x + 3] != p2[o + 3 * x:o + 3 * x + 3]:
+                    x0, x1 = min(x0, x), max(x1, x)
+                    y0, y1 = min(y0, y), max(y1, y)
+        return 'none' if x1 < 0 else '%d %d %d %d' % (x0, y0, x1, y1)
     if cmd == 'lit':
         w, h, px = readppm(os.path.join(D, os.path.basename(a[0]) + '.ppm'))
         return '%d' % sum(1 for i in range(0, len(px), 3) if px[i:i + 3] != b'\0\0\0')

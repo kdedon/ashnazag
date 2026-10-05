@@ -72,6 +72,8 @@ QEMU="$Q/usr/bin/qemu-system-m68k -L $Q/usr/share/qemu -M q800 -display none"
 [ -n "$GEOM" ] && QEMU="$QEMU -g $GEOM"
 # CMDLINE: one kernel boot option for a direct boot, e.g. nofpu
 [ -n "$CMDLINE" ] && [ $MODE != rom ] && QEMU="$QEMU -append $CMDLINE"
+# GDB: a unix socket path for a gdbstub (the guest runs without waiting)
+[ -n "$GDB" ] && QEMU="$QEMU -gdb unix:$GDB,server=on,wait=off"
 if [ $MODE = direct ]; then
 	MEM=${MEM:-128}
 	set -- -m "$MEM" -kernel "$KERNEL" -initrd "$T/build/testroot.img"

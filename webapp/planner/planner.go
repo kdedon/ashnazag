@@ -332,7 +332,7 @@ func Plan(s Selection) (Manifest, error) {
 	s = m.Selection
 	if s.Machine == "q800" && len(s.Devices) == 4 && contains(s.Devices, "adb") && contains(s.Devices, "framebuffer") && contains(s.Devices, "scc") && contains(s.Devices, "scsi53c96") && len(s.Packages) == 0 && len(s.Containers) == 0 && len(s.ContainerInstances) == 0 && s.Desktop == "none" && s.Boot.Login == "console" && s.Boot.DefaultSession == "console" && !s.Boot.Animation {
 		m.ImageBuildSupported = true
-		m.RequiredInputs = []string{"AMIX tape segments 02, 03 and 10", "Prebuilt Quadra kernel ELF", "A/UX donor disk for its Apple disk driver"}
+		m.RequiredInputs = []string{"AMIX 2.1 tape archive (one or more parts)", "Prebuilt Quadra kernel ELF", "A/UX donor disk for its Apple disk driver"}
 		m.Steps = []string{"Apply Quadra console root recipe", "Create UFS root filesystem", "Create HFS boot volume with supplied kernel", "Assemble Apple partition map, root and swap", "Download disk image"}
 		m.Warnings = []string{"The supplied kernel is used unchanged; kernel compilation and driver selection are not performed in the browser.", "This console recipe does not install guests, packages, graphical login or boot animations."}
 	}

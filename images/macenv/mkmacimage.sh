@@ -58,6 +58,14 @@ rm -rf "$P/guest" "$P"/*.o
 sh "$AUX/images/tosenv/mktos.sh" "$P/tos" ||
 	{ echo "[FAIL] TOS container files"; exit 1; }
 
+# the Amiga environment's package, installed once as root with
+# sh /usr/lib/amiga/stage/installmig /usr/lib/amiga/stage
+AMIGASTAGE=${AMIGASTAGE:-}
+mkdir -p "$P/amigapkg/usr/lib/amiga"
+[ -z "$AMIGASTAGE" ] || cp -rp "$AMIGASTAGE" "$P/amigapkg/usr/lib/amiga/stage"
+(cd "$P/amigapkg" && find . -depth -print | cpio -o -H newc -R 0:3 --quiet) > "$P/amiga.cpio"
+rm -rf "$P/amigapkg"
+
 cp "$D/S05aux" "$D/startmac" "$D/makemac" "$P/"
 mv "$P/startmac" "$P/startmac.sh"
 cp "$AUXROOT/shlib/libc1_s" "$AUXROOT/shlib/libmac1_s" "$AUXROOT/etc/fidd" "$P/"

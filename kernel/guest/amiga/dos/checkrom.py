@@ -17,7 +17,11 @@ for offset in (14, 18, 22):
     assert BASE + 26 <= long(offset) < end
 assert rom[long(14)-BASE:].split(b'\0', 1)[0] == b'container.boot'
 assert rom[long(22)-BASE:long(22)-BASE+2] == b'\x48\xe7'
-assert b'\x4e\xae\xff\xa0' in rom[:end-BASE]  # FindResident
-assert b'\x4e\xae\xff\x9a' in rom[:end-BASE]  # InitResident
-assert b'\x4e\xae\xff\xdc' in rom[:end-BASE]  # AddBootNode
-print(f'{sys.argv[1]}: native cold-start resident, {end-BASE} linked bytes, DOS diagnostic boot entry')
+tag = end - BASE
+assert word(tag) == 0x4afc and long(tag+2) == end and rom[tag+10:tag+14] == bytes([4, 1, 0, 146])
+assert rom[long(tag+14)-BASE:].split(b'\0', 1)[0] == b'container.rtg'
+assert long(tag+6) > end and rom[long(tag+22)-BASE:long(tag+22)-BASE+2] == b'\x48\xe7'
+assert b'\x4e\xae\xff\xa0' in rom[:long(tag+6)-BASE]  # FindResident
+assert b'\x4e\xae\xff\x9a' in rom[:long(tag+6)-BASE]  # InitResident
+assert b'\x4e\xae\xff\xdc' in rom[:long(tag+6)-BASE]  # AddBootNode
+print(f'{sys.argv[1]}: native cold-start resident, {end-BASE} linked bytes, DOS diagnostic boot entry, after-DOS RTG resident')

@@ -69,12 +69,42 @@ async function main() {
   assert.equal(nativePresets.status, 0, nativePresets.stderr);
   assert.deepEqual(presets.presets, JSON.parse(nativePresets.stdout));
   assert.deepEqual(presets.presets.filter((preset) => preset.status === 'available').map((preset) => preset.id), ['quadra800']);
-  for (const [recipe, expected] of [['{', /not a forge recipe/], [JSON.stringify({ formatVersion: 2 }), /newer than this forge/], [JSON.stringify({ formatVersion: 1 }), /invalid recipe/]]) {
+  for (const [recipe, expected] of [['{', /not a forge recipe/], [JSON.stringify({ formatVersion: 3 }), /newer than this forge/], [JSON.stringify({ formatVersion: 1 }), /invalid recipe/]]) {
     const result = JSON.parse(globalThis.auxForge(JSON.stringify({ action: 'import', recipe })));
     assert.equal(result.ok, false);
     assert.match(result.error, expected);
   }
-  console.log(`PASS: ${cases.length} native/WASM parity cases, 2 bridge boundary checks, presets and recipe import checks`);
+  // Format 1 recipes listed segments 02, 03 and 10; import turns them into the tape input.
+  const hash = c => c.repeat(64);
+  const old = { formatVersion: 1, forgeVersion: '0.1.0', preset: { id: 'quadra800', revision: 1 }, changes: {},
+    lock: { formatVersion: 1, layoutPolicyVersion: 1, bindings: [], artifacts: [], warnings: [] },
+    inputs: [['amix-02', 'a'], ['amix-03', 'b'], ['amix-10', 'c'], ['kernel', 'd'], ['boot-donor', 'e']].map(([role, c], i) => ({ role, size: 100 + i, sha256: hash(c) })) };
+  const upgraded = JSON.parse(globalThis.auxForge(JSON.stringify({ action: 'import', recipe: JSON.stringify(old) })));
+  assert.equal(upgraded.ok, true, upgraded.error);
+  assert.equal(upgraded.recipe.formatVersion, 2);
+  assert.deepEqual(upgraded.recipe.inputs.map(input => [input.role, input.size]), [['amix-tape', 303], ['kernel', 103], ['boot-donor', 104]]);
+  // The tape splitter names what it cannot find.
+  const tar = (name, data) => {
+    const header = Buffer.alloc(512);
+    header.write(name, 0); header.write('0000644\0', 100); header.write('0000000\0', 108); header.write('0000000\0', 116);
+    header.write(data.length.toString(8).padStart(11, '0') + '\0', 124); header.write('00000000000\0', 136);
+    header.write('        ', 148); header.write('0', 156); header.write('ustar\0' + '00', 257);
+    let sum = 0; for (const byte of header) sum += byte;
+    header.write(sum.toString(8).padStart(6, '0') + '\0 ', 148);
+    return Buffer.concat([header, data, Buffer.alloc((512 - data.length % 512) % 512), Buffer.alloc(1024)]);
+  };
+  const split = parts => globalThis.auxAmixTape(JSON.stringify({ names: parts.map(p => p[0]), sizes: parts.map(p => p[1].length) }),
+    parts.map(p => (offset, length) => new Uint8Array(p[1].subarray(offset, offset + length))));
+  for (const [parts, expected] of [
+    [[['t.tar', tar('Tape/02', Buffer.alloc(1000, 1))]], /segment 02 is damaged \(t\.tar:Tape\/02.*segments 03, 10 not found/],
+    [[['a.tar.bz2', Buffer.from('BZh91AY&SY' + 'x'.repeat(50))]], /tape part 1 \(a\.tar\.bz2\)/],
+    [[['empty', Buffer.alloc(0)]], /tape part 1 is empty/],
+  ]) {
+    const result = split(parts);
+    assert.equal(result.ok, false);
+    assert.match(result.error, expected);
+  }
+  console.log(`PASS: ${cases.length} native/WASM parity cases, 2 bridge boundary checks, presets, recipe import and tape checks`);
   process.exit(0);
 }
 main().catch((error) => { console.error(error); process.exit(1); });

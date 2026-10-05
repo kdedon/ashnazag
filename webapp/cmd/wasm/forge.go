@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"syscall/js"
 
+	"amigaux.org/imagebuilder/amixtape"
 	"amigaux.org/imagebuilder/forge"
 )
 
@@ -68,27 +69,49 @@ func forgeRecipeJS(_ js.Value, args []js.Value) (result any) {
 		return jsonResult(nil, fmt.Errorf("expected request JSON and read callbacks"))
 	}
 	var req struct {
-		Selection forge.Selection `json:"selection"`
-		Sizes     []int64         `json:"sizes"`
-		Expect    string          `json:"expect"`
+		Selection forge.Selection   `json:"selection"`
+		Sizes     []int64           `json:"sizes"`
+		Expect    string            `json:"expect"`
+		TapeParts []amixtape.Digest `json:"tapeParts"`
 	}
 	if err := json.Unmarshal([]byte(args[0].String()), &req); err != nil {
 		return jsonResult(nil, err)
 	}
+	// The tape's segments come first, then one file per later role.
 	roles := forge.Roles(req.Selection)
-	if len(req.Sizes) != len(roles) || args[1].Length() != len(roles) {
-		return jsonResult(nil, fmt.Errorf("expected %d inputs", len(roles)))
+	n := len(forge.TapeSegments)
+	if len(req.Sizes) != len(roles)-1+n || args[1].Length() != len(req.Sizes) {
+		return jsonResult(nil, fmt.Errorf("expected %d inputs", len(roles)-1+n))
 	}
-	inputs := make([]forge.Input, len(roles))
-	for i, role := range roles {
-		if req.Sizes[i] <= 0 || req.Sizes[i] > assemblyLimit || args[1].Index(i).Type() != js.TypeFunction {
-			return jsonResult(nil, fmt.Errorf("invalid %s input", role))
+	media := make([]forge.Media, len(req.Sizes))
+	for i, size := range req.Sizes {
+		if size <= 0 || size > assemblyLimit || args[1].Index(i).Type() != js.TypeFunction {
+			return jsonResult(nil, fmt.Errorf("invalid %s input", roles[max(0, i-n+1)]))
 		}
-		in, err := forge.Digest(context.Background(), role, jsReader{args[1].Index(i), req.Sizes[i]}, req.Sizes[i])
+		media[i] = forge.Media{Reader: jsReader{args[1].Index(i), size}, Size: size}
+	}
+	parts := req.TapeParts
+	if parts == nil {
+		// Split segments are their own parts.
+		for _, m := range media[:n] {
+			in, err := forge.Digest(context.Background(), forge.TapeRole, m.Reader, m.Size)
+			if err != nil {
+				return jsonResult(nil, err)
+			}
+			parts = append(parts, amixtape.Digest{Size: in.Size, SHA256: in.SHA256})
+		}
+	}
+	tape, err := forge.TapeInput(context.Background(), media[:n], parts)
+	if err != nil {
+		return jsonResult(nil, err)
+	}
+	inputs := []forge.Input{tape}
+	for i, m := range media[n:] {
+		in, err := forge.Digest(context.Background(), roles[i+1], m.Reader, m.Size)
 		if err != nil {
 			return jsonResult(nil, err)
 		}
-		inputs[i] = in
+		inputs = append(inputs, in)
 	}
 	r, err := forge.NewRecipe(req.Selection, inputs)
 	if err != nil {

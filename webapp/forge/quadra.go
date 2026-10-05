@@ -20,7 +20,8 @@ import (
 // QuadraTimestamp fixes root file times so equal inputs give equal images.
 const QuadraTimestamp = 723000000
 
-// Media is one input, in the order Roles gives.
+// Media is one input. Builds take the tape's segments (TapeSegments), then
+// one Media per later role.
 type Media struct {
 	Reader io.ReaderAt
 	Size   int64
@@ -47,16 +48,21 @@ func Install(entries []ufs.Entry, recipe []byte) ([]ufs.Entry, error) {
 // Verify hashes the media and compares them with the recipe.
 func Verify(ctx context.Context, r Recipe, s Selection, media []Media) error {
 	roles := Roles(s)
-	if len(media) != len(roles) {
-		return fmt.Errorf("expected %d inputs, got %d", len(roles), len(media))
+	n := len(TapeSegments)
+	if len(media) != len(roles)-1+n {
+		return fmt.Errorf("expected %d inputs, got %d", len(roles)-1+n, len(media))
 	}
-	got := make([]Input, len(media))
-	for i, m := range media {
-		in, err := Digest(ctx, roles[i], m.Reader, m.Size)
+	tape, err := TapeInput(ctx, media[:n], nil)
+	if err != nil {
+		return err
+	}
+	got := []Input{tape}
+	for i, m := range media[n:] {
+		in, err := Digest(ctx, roles[i+1], m.Reader, m.Size)
 		if err != nil {
 			return err
 		}
-		got[i] = in
+		got = append(got, in)
 	}
 	if bad := Mismatches(r.Inputs, got); len(bad) != 0 {
 		return fmt.Errorf("inputs differ from the recipe: %s", strings.Join(bad, ", "))
@@ -147,7 +153,7 @@ func Root(ctx context.Context, recipe []byte, entries []ufs.Entry, kernel Media,
 			return nil, err
 		}
 	}
-	canonical, err := Encode(r)
+	canonical, err := Encode(r.Portable())
 	if err != nil {
 		return nil, err
 	}

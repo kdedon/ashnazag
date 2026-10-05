@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"amigaux.org/imagebuilder/amixtape"
 	"amigaux.org/imagebuilder/provision"
 	"amigaux.org/imagebuilder/recipes"
 	"amigaux.org/imagebuilder/rootfs"
@@ -127,10 +128,17 @@ func media(files [][]byte) []Media {
 	return out
 }
 
+var testParts = []amixtape.Digest{{Size: 7, SHA256: strings.Repeat("ab", 32)}}
+
 func digests(t *testing.T, s Selection, files [][]byte) []Input {
-	var out []Input
-	for i, role := range Roles(s) {
-		in, err := Digest(context.Background(), role, bytes.NewReader(files[i]), int64(len(files[i])))
+	n := len(TapeSegments)
+	tape, err := TapeInput(context.Background(), media(files[:n]), testParts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := []Input{tape}
+	for i, role := range Roles(s)[1:] {
+		in, err := Digest(context.Background(), role, bytes.NewReader(files[n+i]), int64(len(files[n+i])))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -211,6 +219,7 @@ func TestPresetMatchesFixedRecipe(t *testing.T) {
 		t.Fatal(err)
 	}
 	text, _ := Encode(r)
+	portable, _ := Encode(r.Portable())
 	got, err := Root(ctx, text, layers(), media(files)[3], media(files)[5:])
 	if err != nil {
 		t.Fatal(err)
@@ -227,7 +236,7 @@ func TestPresetMatchesFixedRecipe(t *testing.T) {
 		delete(seen, e.Path)
 	}
 	dir, file := seen["/etc/forge"], seen[RecipePath]
-	if len(seen) != 2 || dir.Kind != 'd' || file.Mode != 0644 || file.UID != 0 || file.GID != 0 || file.Size != int64(len(text)) {
+	if len(seen) != 2 || dir.Kind != 'd' || file.Mode != 0644 || file.UID != 0 || file.GID != 0 || file.Size != int64(len(portable)) {
 		t.Fatalf("unexpected extra entries %v", seen)
 	}
 }
@@ -266,8 +275,14 @@ func TestExportImportRebuild(t *testing.T) {
 	if !bytes.Equal(first, second) {
 		t.Fatal("rebuild is not byte-identical")
 	}
-	if !bytes.Contains(first, exported) {
-		t.Fatal("image does not carry its recipe")
+	portable, _ := Encode(r.Portable())
+	if !bytes.Contains(first, portable) || bytes.Contains(portable, []byte("parts")) || !bytes.Contains(exported, []byte(`"parts"`)) {
+		t.Fatal("image does not carry its recipe without tape parts")
+	}
+	// Another packaging of the same tape gives the same image.
+	other, _ := NewRecipe(s, append([]Input{{Role: TapeRole, Size: r.Inputs[0].Size, SHA256: r.Inputs[0].SHA256}}, r.Inputs[1:]...))
+	if !bytes.Equal(build(t, other, files), first) || len(Mismatches(r.Inputs, other.Inputs)) != 0 {
+		t.Fatal("tape packaging changes the image")
 	}
 	sum := sha256.Sum256(first)
 	t.Logf("image %d bytes, sha256 %s", len(first), hex.EncodeToString(sum[:]))
@@ -286,8 +301,9 @@ func TestDecodeRejects(t *testing.T) {
 	r, _ := NewRecipe(s, digests(t, s, fixtureMedia()))
 	good, _ := Encode(r)
 	for _, c := range []struct{ old, new, want string }{
-		{`"formatVersion": 1`, `"formatVersion": 2`, "newer than this forge"},
-		{`"formatVersion": 1`, `"formatVersion": "1"`, "missing formatVersion"},
+		{`"formatVersion": 2`, `"formatVersion": 3`, "newer than this forge"},
+		{`"formatVersion": 2`, `"formatVersion": "2"`, "missing formatVersion"},
+		{`"role": "kernel",`, `"role": "kernel", "parts": [{"size": 1, "sha256": "` + strings.Repeat("0", 64) + `"}],`, "cannot have parts"},
 		{`"forgeVersion"`, `"fileName": "x", "forgeVersion"`, "unknown property"},
 		{`"id": "quadra800"`, `"id": "nosuch"`, "unknown preset"},
 		{`"revision": 1`, `"revision": 9`, "revision 9 is newer"},
@@ -326,5 +342,38 @@ func TestRootRefusesRecipeWithoutDigests(t *testing.T) {
 	text, _ := Encode(r)
 	if _, err := Root(context.Background(), text, nil, Media{Reader: bytes.NewReader(nil)}, make([]Media, len(s.Provision))); err == nil {
 		t.Fatal("recipe without input digests accepted")
+	}
+}
+
+// Format 1 recipes named segments 02, 03 and 10 as separate inputs.
+func TestDecodeUpgradesSegmentRoles(t *testing.T) {
+	files := fixtureMedia()
+	s := testSelection()
+	r, _ := NewRecipe(s, digests(t, s, files))
+	r.Inputs[0].Parts = nil
+	text, _ := Encode(r)
+	var segs []string
+	for i, id := range TapeSegments {
+		in, _ := Digest(context.Background(), "amix-"+id, bytes.NewReader(files[i]), int64(len(files[i])))
+		segs = append(segs, fmt.Sprintf(`{"role": %q, "size": %d, "sha256": %q}`, in.Role, in.Size, in.SHA256))
+	}
+	tape := fmt.Sprintf(`{
+      "role": "amix-tape",
+      "size": %d,
+      "sha256": %q
+    }`, r.Inputs[0].Size, r.Inputs[0].SHA256)
+	old := strings.Replace(strings.Replace(string(text), tape, strings.Join(segs, ", "), 1), `"formatVersion": 2`, `"formatVersion": 1`, 1)
+	if old == string(text) || !strings.Contains(old, "amix-10") {
+		t.Fatal("fixture did not convert")
+	}
+	got, err := Decode([]byte(old))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := Encode(got); !bytes.Equal(b, text) {
+		t.Fatalf("upgrade differs:\n%s", b)
+	}
+	if _, err = Decode([]byte(strings.Replace(old, "amix-03", "amix-04", 1))); err == nil || !strings.Contains(err.Error(), `expected "amix-03"`) {
+		t.Fatal(err)
 	}
 }

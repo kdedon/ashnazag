@@ -62,6 +62,14 @@ nice -n 19 python3 "$AUX/tools/amiga/template.py" "$OUT/media/ADF" "$ROOT/amiga/
 if [ -f "$PICASSO" ]; then
 	cp "$PICASSO" "$ROOT/amiga/rtg/Picasso96.lha"
 	(cd "$ROOT/amiga/rtg" && sha256sum Picasso96.lha > Picasso96.sha256)
+	# the Picasso96 runtime the boot extension binds container.card with
+	7z x -y -o"$OUT/p96" "$PICASSO" > /dev/null
+	P=$OUT/p96/Picasso96Install
+	for f in Picasso96/rtg.library Picasso96/emulation.library Picasso96/fastlayers.library Picasso96API.library; do
+		cp "$P/Libs/$f" "$ROOT/amiga/sys/LIBS/$f"
+	done
+	cp "$P/Devs/Monitors/Picasso96" "$ROOT/amiga/sys/DEVS/Monitors/Container"
+	rm -rf "$OUT/p96"
 fi
 if [ -n "$MODULES" ]; then
 	mkdir -p "$ROOT/usr/lib/amiga/mod.d"

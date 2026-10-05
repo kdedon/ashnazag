@@ -1,4 +1,4 @@
-/* global Go, auxRootFilesystem, createImageOutput */
+/* global Go, auxAmixTape, auxRootFilesystem, createImageOutput */
 'use strict';
 importScripts('./storage.js');
 self.onmessage = async ({ data }) => {
@@ -6,9 +6,13 @@ self.onmessage = async ({ data }) => {
   self.onmessage = null;
   let output;
   try {
-    const { mode, archives, kernel, sizeMiB, temporaryName } = data;
+    const { mode, tape, kernel, sizeMiB, temporaryName } = data;
+    let { archives } = data;
     if (!['layers', 'quadra-console'].includes(mode)) throw new Error('Choose a supported filesystem recipe.');
-    if (!Array.isArray(archives) || !archives.length || archives.length > 64) throw new Error('Choose 1–64 archives.');
+    if (mode === 'quadra-console' && tape !== undefined) {
+      if (!Array.isArray(tape) || !tape.length || tape.length > 64 || tape.some(file => !(file instanceof Blob) || !file.size || file.size > 8 * 1073741824)) throw new Error('Choose the AMIX 2.1 tape archive: 1–64 parts, each up to 8 GiB.');
+      archives = [];
+    } else if (!Array.isArray(archives) || !archives.length || archives.length > 64) throw new Error('Choose 1–64 archives.');
     for (const { file } of archives) {
       if (!(file instanceof Blob) || !file.size || file.size > 8 * 1073741824) throw new Error('Choose nonempty SVR4 cpio archives up to 8 GiB each.');
     }
@@ -34,6 +38,13 @@ self.onmessage = async ({ data }) => {
     go.run(instance).catch(error => postMessage({ type: 'error', error: error.message }));
     await ready;
     const reader = new FileReaderSync();
+    if (mode === 'quadra-console' && tape) {
+      postMessage({ type: 'status', message: 'Reading the AMIX tape…' });
+      const split = auxAmixTape(JSON.stringify({ names: tape.map(file => String(file.name ?? '')), sizes: tape.map(file => file.size) }),
+        tape.map(file => (offset, length) => new Uint8Array(reader.readAsArrayBuffer(file.slice(offset, offset + length)))));
+      if (!split.ok) throw new Error(split.error);
+      archives = ['02', '03', '10'].map((name, i) => ({ name, file: new Blob([split.segments[i]]) }));
+    }
     let bytes = 0, reported = 0;
     const files = archives.map(source => source.file);
     if (mode === 'quadra-console') files.push(kernel);
