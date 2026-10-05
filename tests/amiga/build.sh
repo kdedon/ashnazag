@@ -11,6 +11,8 @@
 # With the ROM, also startmig and the boot extension; with a prepared
 # SYS: (AMIGASYS) and Picasso96 archive (AMIGAP96), outdir/sys.img: a
 # ufs volume holding SYS: with the Picasso96 runtime and container.card.
+# With IBrowse in SYS:, User-Startup also runs ibrowse/ibtest, which opens
+# ibrowse/ibtest.html once t_amiga creates SYS:ibgo.
 set -e
 T=$(cd "$(dirname "$0")/.." && pwd)
 AUX=$(cd "$T/.." && pwd)
@@ -73,6 +75,15 @@ if [ -f "$AMIGAROM" ] && [ -f "$AMIGASYS/S/Startup-Sequence" ]; then
 		done
 		echo "f /DEVS/Monitors/Container 755 0 3 $P/Devs/Monitors/Picasso96" >> "$M"
 	fi
-	python3 "$AUX/kernel/mac/diskroot/mkufs.py" -s 16 -m /amiga/sys "$M" "$OUT/sys.img"
+	if [ -f "$AMIGASYS/IBrowse/IBrowse" ]; then
+		U=$(cd "$AMIGASYS/S" && ls | grep -i '^user-startup$' || :)
+		{ [ -z "$U" ] || cat "$AMIGASYS/S/$U"; echo 'Run >NIL: Execute S:ibtest'; } > "$O/User-Startup"
+		sed "/ \/S\/$U /d" "$M" > "$M.new"
+		mv "$M.new" "$M"
+		echo "f /S/${U:-User-Startup} 755 0 3 $O/User-Startup" >> "$M"
+		echo "f /S/ibtest 755 0 3 $T/amiga/ibrowse/ibtest" >> "$M"
+		echo "f /ibtest.html 755 0 3 $T/amiga/ibrowse/ibtest.html" >> "$M"
+	fi
+	python3 "$AUX/kernel/mac/diskroot/mkufs.py" -s 32 -m /amiga/sys "$M" "$OUT/sys.img"
 fi
 echo "[ok] guest image, $(ls "$R/etc/amiga" 2>/dev/null | wc -l) ROM"

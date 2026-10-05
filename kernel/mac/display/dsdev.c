@@ -190,7 +190,7 @@ int prot;
 {
 	register struct dssess *s = ds_fbsess(dev);
 
-	if (s == 0 || s->s_dead || off < 0 || off >= ds_disp.d_info.fi_size)
+	if (s == 0 || s->s_dead || off < 0 || off >= s->s_size)
 		return -1;
 	if (s == ds_front)
 		return (ds_disp.d_page + off) >> DS_PGSHIFT;
@@ -306,14 +306,14 @@ struct cred *cr;
 
 	if (copyin(arg, (caddr_t)&a, sizeof a))
 		return EFAULT;
-	if (a.fa_kind != FBK_USER || (a.fa_flags & ~FBA_FRONT))
+	if (a.fa_kind != FBK_USER || (a.fa_flags & ~(FBA_FRONT | FBA_VIDEL)))
 		return EINVAL;
 	if (h->h_sess)
 		return EBUSY;
-	if ((a.fa_flags & FBA_FRONT) && !ds_mayfront(cr))
+	if ((a.fa_flags & (FBA_FRONT | FBA_VIDEL)) && !ds_mayfront(cr))
 		return EPERM;
 	a.fa_name[sizeof a.fa_name - 1] = 0;
-	if ((s = ds_newsess((long)cr->cr_uid, a.fa_name, &err)) == 0)
+	if ((s = ds_mksess((long)cr->cr_uid, a.fa_name, &err, a.fa_flags & FBA_VIDEL)) == 0)
 		return err;
 	h->h_sess = s;
 	a.fa_id = s->s_id;
@@ -334,6 +334,7 @@ int *rvalp;
 	register struct dsfbh *h = ds_fbhandle(dev);
 	register struct dssess *s, *t;
 	struct fbstate st;
+	struct fbinfo fi;
 	unsigned long v;
 
 	if (h == 0)
@@ -344,7 +345,10 @@ int *rvalp;
 		s = 0;
 	switch (cmd) {
 	case FBIOGINFO:
-		if (copyout((caddr_t)&ds_disp.d_info, (caddr_t)arg, sizeof ds_disp.d_info))
+		fi = ds_disp.d_info;
+		if (s)
+			fi.fi_size = s->s_size;
+		if (copyout((caddr_t)&fi, (caddr_t)arg, sizeof fi))
 			return EFAULT;
 		return 0;
 	case FBIOGMODES:
@@ -407,6 +411,12 @@ int *rvalp;
 			return ENXIO;
 		s->s_cache = arg;
 		return 0;
+#ifdef DS_ATARI
+	case FBIOVIDEL:
+		if (s == 0)
+			return EINVAL;
+		return ds_vidpass(s, (unsigned long)arg);
+#endif
 	}
 	return EINVAL;
 }
@@ -589,6 +599,10 @@ int *rvalp;
 	case EVIOCGINFO:
 		bzero((caddr_t)&ei, sizeof ei);
 		ei.ei_kset = EVK_ADB;
+#ifdef DS_ATARI
+		if (e->e_sess && e->e_sess->s_vid)
+			ei.ei_kset = EVK_IKBD;	/* IKBD scancodes */
+#endif
 		ei.ei_flags = EVF_CAPSLATCH;
 		for (i = 0; i < 16; i++)
 			if (adb_dev[i].d_orig == (e->e_mouse ? ADB_ADDR_MOUSE : ADB_ADDR_KBD)) {

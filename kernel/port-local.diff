@@ -45,6 +45,29 @@ index 62ba9e4..43ffc8f 100644
  	clrl	%a3@			| *pte = 0 -> 040 leaf descriptor INVALID (UDT=0)
  	movel	%d3,%d2			| advance to next mapping
  	braw	Lpu_loop
+diff --git a/src/krnxmemflt040.s b/src/krnxmemflt040.s
+index 326ed16..e1cdcc9 100644
+--- a/src/krnxmemflt040.s
++++ b/src/krnxmemflt040.s
+@@ -300,6 +300,18 @@ Lkx_ret:
+ 	andil	&0xfff,%d1
+ 	cmpil	&0xff8,%d1
+ 	bcsw	Lkx_nox			| neither MA nor the window -> nothing to do
++| --- The window is a guess: never cross into the next 8 KiB segkmap slot, which maps
++|     another file, maybe one on an unmounted file system. ---
++	moveal	segkmap,%a0
++	movel	%a0,%d1
++	beqs	Lkx_xp_v1
++	movel	%d2,%d1
++	subl	%a0@(4),%d1		| offset in segkmap (below s_base wraps high)
++	cmpl	%a0@(8),%d1
++	bccs	Lkx_xp_v1		| not in segkmap
++	btst	&12,%d1
++	bnew	Lkx_nox			| second page of its slot: the next page is another slot's
++Lkx_xp_v1:
+ 	movel	%d0,%sp@-		| v1 tier: preserve the return value, discard the far one
+ 	bsrw	Lkx_farfault
+ 	movel	%sp@+,%d0
 diff --git a/src/stamp_buildid.py b/src/stamp_buildid.py
 index b091d9e..dfa67b5 100644
 --- a/src/stamp_buildid.py
@@ -59,6 +82,92 @@ index b091d9e..dfa67b5 100644
      lo, hi = (int(x) for x in r.stdout.split())
      return lo, hi
  
+diff --git a/src/wb040.s b/src/wb040.s
+index a0b2172..5fdc27e 100644
+--- a/src/wb040.s
++++ b/src/wb040.s
+@@ -71,6 +71,11 @@ usrxmemflt:
+ 	.word	0x4e7a,0x0000		| movec %sfc,%d0
+ 	movel	%d0,%fp@(-8)
+ 	moveal	%fp@(8),%a2		| 060-B: fmt-4 frame? synthesize an 040-style
++	addql	&1,wbu_n			| user faults: count, PC, format/EA, SSW, FA
++	movel	%a2@(66),wbu_pc
++	movel	%a2@(70),wbu_fv
++	movel	%a2@(76),wbu_ssw
++	movel	%a2@(84),wbu_fa
+ 	bsrw	wb060_sswsynth		| SSW at +76 BEFORE the stock classifier reads it
+ 	movel	%d0,%d5			| XPAGE unit item 1: the ORIGINAL FSLW, which the
+ 					| synthesis above has just destroyed in the frame.
+@@ -549,6 +554,8 @@ wb060_xpage:
+ 	moveq	&0,%d0
+ 	moveb	%a2@(70),%d0		| format/vector high byte
+ 	lsrb	&4,%d0
++	cmpiw	&7,%d0
++	beqw	Lwx_f7
+ 	cmpiw	&4,%d0			| 060 format-4 frame?
+ 	bnew	Lwx_none
+ 	movel	%d5,%d1
+@@ -698,6 +705,41 @@ Lwx_call:
+ 	jsr	as_fault
+ 	lea	%sp@(20),%sp
+ 	rts
++| 040 format 7, user address space: with SSW MA set, FA is the first byte of a
++| transfer whose fault lies on the next page.  A CPU that restarts the
++| instruction instead of leaving a write-back must have that page resolved
++| here, or the restart faults again forever.  Kernel faults resolve MA in
++| krnxmemflt.
++Lwx_f7:
++	cmpal	&kas,%a1
++	beqs	Lwx_none
++	btst	&3,%a2@(76)		| SSW MA (bit 11)
++	beqs	Lwx_none
++	movel	%a2@(84),%d0		| FA
++	movel	%d0,%d1
++	addql	&7,%d1
++	andib	&0xf8,%d1		| the faulted part starts at the next 8-byte unit,
++					| whether SIZ names the operand or the part
++	eorl	%d1,%d0
++	andil	&0xfffff000,%d0
++	beqs	Lwx_none		| does not cross
++	addql	&1,x40_ma_n
++	movel	%a2@(84),x40_ma_fa
++	movel	%d1,%d0
++	andil	&0xfffff000,%d0		| far page
++	movel	%d0,x60_far_addr	| si_addr on failure
++	moveq	&2,%d1			| S_WRITE
++	btst	&0,%a2@(76)		| SSW RW (bit 8): 1 = read
++	beqs	Lwx_f7go
++	btst	&1,%a2@(76)		| LK: read half of a locked RMW
++	bnes	Lwx_f7go
++	moveq	&1,%d1			| S_READ
++Lwx_f7go:
++	bsrw	Lwx_callp
++	tstl	%d0
++	beqs	Lwx_ret
++	addql	&1,x40_ma_fail_n
++	rts
+ Lwx_none:
+ 	clrl	%d0			| nothing attempted -> nothing to propagate
+ Lwx_ret:
+@@ -1297,6 +1339,18 @@ wb_sfc_changed:
+ 	.globl	x60_fmt4_n
+ x60_fmt4_n:
+ 	.long	0			| format-4 frames seen by the wrappers (user AND kernel)
++	.globl	wbu_n, wbu_pc, wbu_fv, wbu_ssw, wbu_fa, x40_ma_n, x40_ma_fa, x40_ma_fail_n
++wbu_n:	.long	0			| user faults (usrxmemflt calls)
++wbu_pc:	.long	0			| last one: PC
++wbu_fv:	.long	0			| format/vector, EA high word
++wbu_ssw:	.long	0			| fmt 7: SSW, WB3S
++wbu_fa:	.long	0			| fmt 7: FA
++x40_ma_n:
++	.long	0			| fmt-7 MA far pages resolved for user space
++x40_ma_fa:
++	.long	0			| FA of the last one
++x40_ma_fail_n:
++	.long	0			| ... that as_fault refused
+ 	.globl	x60_ma_n
+ x60_ma_n:
+ 	.long	0			| MA tier taken -- the architecture contract
 diff --git a/tools/verify-stock.sh b/tools/verify-stock.sh
 index 8b9f5f0..e29aec6 100644
 --- a/tools/verify-stock.sh

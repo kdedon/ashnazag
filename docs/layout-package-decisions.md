@@ -166,3 +166,7 @@ The forge and `tools/setup.sh` take the AMIX tape the way users have it: usually
 |---|---|---|
 | B11 | Forge time-zone option, defaulting to the browser's zone (`Intl.DateTimeFormat().resolvedOptions().timeZone` mapped to a System V TZ string), recorded in the recipe | The image's `/etc/TIMEZONE` matches the choice |
 | L9 | Mac kernel: TZ from PRAM's GMT offset at boot, when the image leaves it unset | The `date` local time matches the Mac's Map setting |
+
+### Amiga packages: MUI version (2026-10-05)
+
+MUI 3.9 (2015R1) is the Amiga environment's MUI (user; 3.8 dropped). MUI 5 is a forge choice once Amiga package recipes exist. The first packages (MUI 3.9, AmiSSL 5.27, IBrowse 3.0a demo) are installed into the system template by mkamiga.sh from local archives. Each installer's actions are recorded so they can become recipes (B6).

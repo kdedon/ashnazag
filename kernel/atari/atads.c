@@ -6,7 +6,9 @@
  */
 #include "sys/types.h"
 #include "adb.h"
+#include "sys/poll.h"
 #include "fbcons.h"
+#include "ds.h"
 
 extern int ata_spltty();
 extern void ata_splx(), ikbd_dsmode(), ikbd_cons(), ds_relmouse();
@@ -152,6 +154,197 @@ int b;
 	if (c == 0)
 		return;
 	ikbd_cons(c == I_CAPS ? c : c | (b & 0x80));
+}
+
+/* The IKBD scancode of an ADB code, 0 none. */
+int
+ata_vnative(c)
+int c;
+{
+	return ad_toikbd[c & 0x7F];
+}
+
+/* --------------------------------------------------------- Videl state */
+
+#define V8(o)	(*(VOL unsigned char *)(0xFFFF0000 | (o)))
+#define V16(o)	(*(VOL unsigned short *)(0xFFFF0000 | (o)))
+#define V32(o)	(*(VOL unsigned long *)(0xFFFF0000 | (o)))
+#define R16(d, o)	((d)->v_reg[(o) - 0x8200] << 8 | (d)->v_reg[(o) - 0x8200 + 1])
+
+/* the timing registers, $FF8282-$FF828C and $FF82A2-$FF82AC */
+static unsigned short ad_vtime[] = { 0x8282, 0x8284, 0x8286, 0x8288, 0x828A, 0x828C,
+	0x82A2, 0x82A4, 0x82A6, 0x82A8, 0x82AA, 0x82AC, 0 };
+/* the rest that make a mode */
+static unsigned short ad_vword[] = { 0x820E, 0x8210, 0x8266, 0x82C0, 0x82C2, 0 };
+
+/* Waits for the vertical counter to restart, at most about a second. */
+static void
+ad_vsync()
+{
+	register unsigned short v, n;
+	register long i;
+
+	v = V16(0x82A0);
+	for (i = 0; i < 500000; i++) {
+		n = V16(0x82A0);
+		if (n < v)
+			break;
+		v = n;
+	}
+}
+
+/* the Videl's mode and palette into d */
+void
+ata_vsave(d)
+register struct dsvid *d;
+{
+	register int i;
+
+	for (i = 0; i < 0xC4; i += 2)
+		d->v_reg[i] = V8(0x8200 + i), d->v_reg[i + 1] = V8(0x8201 + i);
+	for (i = 0; i < 256; i++)
+		d->v_pal[i] = V32(0x9800 + 4 * i);
+}
+
+/*
+ * d into the Videl, in a frame's blank: timings, then the shift mode
+ * as it was set, with the other one cleared first, then what the
+ * shift write resets.
+ */
+void
+ata_vload(d)
+register struct dsvid *d;
+{
+	register int i, x;
+
+	ad_vsync();
+	x = DS_SPL(7);
+	V8(0x8201) = d->v_reg[0x01];
+	V8(0x8203) = d->v_reg[0x03];
+	V8(0x820D) = d->v_reg[0x0D];
+	V8(0x820A) = d->v_reg[0x0A];
+	for (i = 0; ad_vtime[i]; i++)
+		V16(ad_vtime[i]) = R16(d, ad_vtime[i]);
+	if (d->v_st) {
+		V16(0x8266) = 0;
+		V8(0x8260) = d->v_reg[0x60];
+	} else {
+		V8(0x8260) = 0;
+		V16(0x8266) = R16(d, 0x8266);
+	}
+	V8(0x8265) = d->v_reg[0x65];
+	for (i = 0; ad_vword[i]; i++)
+		if (ad_vword[i] != 0x8266)
+			V16(ad_vword[i]) = R16(d, ad_vword[i]);
+	for (i = 0; i < 16; i++)
+		V16(0x8240 + 2 * i) = R16(d, 0x8240 + 2 * i);
+	for (i = 0; i < 256; i++)
+		V32(0x9800 + 4 * i) = d->v_pal[i];
+	DS_SPLX(x);
+	if (!d->v_st && (R16(d, 0x8266) & 0x400)) {
+		/* 2 colours, toggled across a frame or the picture can distort */
+		ad_vsync();
+		V16(0x8266) = 0;
+		ad_vsync();
+		V16(0x8266) = 0x400;
+	}
+}
+
+/* a byte of the Videl's registers */
+int
+ata_vget(a)
+unsigned long a;
+{
+	return V8(a & 0xFFFF);
+}
+
+/* one guest write, as it was made */
+void
+ata_vput(a, sz, v)
+unsigned long a, v;
+int sz;
+{
+	a &= 0xFFFF;
+	if (sz == 4 && !(a & 3))
+		V32(a) = v;
+	else if (sz == 2 && !(a & 1))
+		V16(a) = v;
+	else
+		while (sz-- > 0)
+			V8(a++) = v >> 8 * sz;
+}
+
+/* ------------------------------------------------------------ blitter */
+
+/* Waits for the blitter to go idle; 0, or -1 if it does not. */
+static int
+ab_idle()
+{
+	register long i;
+
+	for (i = 0; i < 1000000; i++)
+		if (!(V8(0x8A3C) & 0x80))
+			return 0;
+	V8(0x8A3C) = 0;
+	return -1;
+}
+
+/* the blitter's registers, $FF8A00-$FF8A3D, into b once it is idle */
+void
+ata_bsave(b)
+register unsigned char *b;
+{
+	register int i;
+
+	(void)ab_idle();
+	for (i = 0; i < 0x3E; i++)
+		b[i] = V8(0x8A00 + i);
+}
+
+/* b into the blitter, not started */
+void
+ata_bload(b)
+register unsigned char *b;
+{
+	register int i;
+
+	(void)ab_idle();
+	for (i = 0; i < 0x3C; i++)
+		V8(0x8A00 + i) = b[i];
+	V8(0x8A3D) = b[0x3D];
+	V8(0x8A3C) = b[0x3C] & 0x7F;
+}
+
+/*
+ * One line, or part of one, in HOG mode: the CPU waits while the
+ * blitter has the bus.  0, or -1 if it did not finish.
+ */
+int
+ata_brun(r)
+register struct dsbrun *r;
+{
+	register int i;
+
+	if (ab_idle())
+		return -1;
+	for (i = 0; i < 16; i++)
+		V16(0x8A00 + 2 * i) = r->r_ht[i];
+	V16(0x8A20) = r->r_sxi;
+	V16(0x8A22) = r->r_syi;
+	V32(0x8A24) = r->r_sa;
+	V16(0x8A28) = r->r_em[0];
+	V16(0x8A2A) = r->r_em[1];
+	V16(0x8A2C) = r->r_em[2];
+	V16(0x8A2E) = r->r_dxi;
+	V16(0x8A30) = r->r_dyi;
+	V32(0x8A32) = r->r_da;
+	V16(0x8A36) = r->r_xn;
+	V16(0x8A38) = 1;
+	V8(0x8A3A) = r->r_hop;
+	V8(0x8A3B) = r->r_op;
+	V8(0x8A3D) = r->r_skew;
+	V8(0x8A3C) = 0xC0 | r->r_ctl;
+	return ab_idle();
 }
 
 /* The IKBD keyboard has no LEDs. */

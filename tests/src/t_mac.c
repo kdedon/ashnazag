@@ -55,6 +55,8 @@
 #include <time.h>
 #include <termio.h>
 #include <sys/resource.h>
+#include <sys/procfs.h>
+#include <dirent.h>
 #include "sys/mod.h"
 #include "dsio.h"
 #include "t.h"
@@ -856,6 +858,7 @@ screen()
 
 #define	FIDD	"/etc/aux/fidd"
 static pid_t fiddpg;
+static int fiddkill();
 
 /* the File ID daemon, started as A/UX does before the Mac environment */
 static void
@@ -877,6 +880,7 @@ fidd()
 		    (int)(major(sb.st_dev) << 8 | minor(sb.st_dev)));
 		fclose(f);
 	}
+	fiddkill();
 	if ((pid = fork()) == 0) {
 		setpgrp();
 		execl(FIDD, "fidd", "-d", (char *)0);
@@ -900,6 +904,45 @@ deskfolder()
 	    "%s", T_ERR);
 }
 
+/*
+ * Kill every fidd: the daemon forks into its own process group, and one
+ * left over serves the next run's fidop messages.  0 once none is left.
+ */
+static int
+fiddkill()
+{
+	char path[32];
+	prpsinfo_t ps;
+	struct dirent *de;
+	DIR *d;
+	int fd, i, n = 0, left = 1;
+
+	for (i = 0; i < 50 && left; i++) {
+		if (i)
+			pause_ms(100L);
+		left = 0;
+		if ((d = opendir("/proc")) == 0)
+			return -1;
+		while ((de = readdir(d)) != 0) {
+			if (de->d_name[0] == '.')
+				continue;
+			sprintf(path, "/proc/%s", de->d_name);
+			if ((fd = open(path, O_RDONLY)) < 0)
+				continue;
+			if (ioctl(fd, PIOCPSINFO, &ps) == 0 && ps.pr_zomb == 0 &&
+			    strcmp(ps.pr_fname, "fidd") == 0) {
+				kill(ps.pr_pid, SIGKILL);
+				left++;
+				n++;
+			}
+			close(fd);
+		}
+		closedir(d);
+	}
+	t_info("fidd_killed", "%d", n);
+	return left;
+}
+
 static void
 fiddlog()
 {
@@ -909,6 +952,7 @@ fiddlog()
 
 	if (fiddpg > 0)
 		kill(-fiddpg, SIGTERM);
+	t_check("fidd_stopped", fiddkill() == 0, "a fidd outlived SIGKILL");
 	if ((f = fopen("/tmp/fid_log", "r")) == 0)
 		return;
 	while (fgets(b, sizeof b, f) && n++ < 40)
@@ -970,6 +1014,12 @@ startmac()
 	if (macid)
 		screen();
 #endif
+#endif
+#ifdef SYS6
+	/* a hangup, as a closed login line sends; then the kill */
+	kill(-pid, SIGHUP);
+	st = 0;
+	t_info("hup_status", "%d %#x", t_waitchild(pid, &st, 20), st);
 #endif
 	kill(-pid, SIGKILL);
 	close(p[0]);

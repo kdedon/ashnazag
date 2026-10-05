@@ -15,7 +15,8 @@
  * /amiga/sys; host-side access times show DOS reading Startup-Sequence
  * and Workbench loading.  The boot extension binds container.card
  * before any screen opens; the RTG session then shows Workbench, a
- * drag on its backdrop changes the screen and SIGTERM ends the session.
+ * drag on its backdrop changes the screen, IBrowse (when installed)
+ * shows a local page and SIGTERM ends the session.
  * Skips without guest support, the module or the 68040 path.
  */
 #include <sys/types.h>
@@ -608,6 +609,42 @@ near(e, v)
 	return e >= v && e < v + 24;
 }
 
+/*
+ * IBrowse, when SYS: has it: the startup's waiting script starts it on
+ * SYS:ibgo with a local page; its window must change at least 300x200
+ * pixels and the page must be read.
+ */
+static void
+ibrowse()
+{
+	char b[64], *r;
+	time_t t0;
+	int k, v[4];
+
+	sprintf(b, "%s/IBrowse/IBrowse", SYS);
+	if (access(b, 0) != 0) {
+		t_skip("ibrowse", "no IBrowse in SYS:");
+		return;
+	}
+	settle("amiga_ib0");
+	t0 = time((time_t *)0);
+	sprintf(b, "%s/ibgo", SYS);
+	close(creat(b, 0644));
+	for (k = 0; k < 90 && !used("ibtest.html", t0); k++)
+		sleep(1);
+	t_check("ibrowse_start", used("IBrowse/IBrowse", t0), "SYS:IBrowse/IBrowse never read");
+	t_check("ibrowse_page", k < 90, "SYS:ibtest.html never read");
+	track("amiga_ib0", "amiga_ibrowse", 0, 200, v);
+	t_info("ibrowse_window", "changed %d,%d-%d,%d", v[0], v[1], v[2], v[3]);
+	t_check("ibrowse_window", v[2] - v[0] >= 300 && v[3] - v[1] >= 200,
+	    "changed %d,%d-%d,%d", v[0], v[1], v[2], v[3]);
+	/* the demo's notice covers the page until confirmed */
+	host("key ret");
+	settle("amiga_ibpage");
+	r = host("cmp amiga_ibrowse amiga_ibpage");
+	t_info("ibrowse_notice", "after Return: %s", r ? r : "no reply");
+}
+
 static void
 boot()
 {
@@ -717,6 +754,7 @@ boot()
 				break;
 		}
 		t_check("boot_key", r && strncmp(r, "diff", 4) == 0, "screen unchanged by keys");
+		ibrowse();
 	}
 	kill(p, SIGTERM);
 	t_waitchild(p, &st, 10);

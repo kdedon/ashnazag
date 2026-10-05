@@ -29,6 +29,7 @@ struct tosenter {
 
 #define	TEF_MONO	0x01		/* monochrome monitor */
 #define	TEF_NOMACH	0x02		/* a lone program: no machine, ST-RAM is the caller's */
+#define	TEF_FALCON	0x04		/* a Falcon: Videl, its palette, sound and DSP registers */
 
 struct tosowner {
 	long		to_pid;		/* 0: free */
@@ -103,6 +104,7 @@ struct tosstat {
 	unsigned long	ts_slept;	/* clock ticks asleep in stop */
 	unsigned long	ts_idle;	/* input polls slept on */
 	unsigned long	ts_vblheld;	/* ticks the guest ran with a VBL masked */
+	unsigned long	ts_held;	/* requests held at an emulation tail */
 };
 
 /*

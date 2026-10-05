@@ -62,8 +62,11 @@ struct tosctr {
 	struct tosmfp	t_mfp;		/* ST MFP */
 	struct tosmfp	t_mfp2;		/* TT MFP: timers polled, no interrupts */
 	int		t_vblpend;
+	int		t_vblowed;	/* ticks that came while a held VBL waited */
 	int		t_sleeping;	/* in stop, waiting for an interrupt */
 	int		t_paused;	/* in the background: sleeps, no interrupts */
+	int		t_held;		/* requests held at an emulation tail */
+	long		t_heldsince;	/* lbolt when the first was held */
 	pid_t		t_ppid;		/* who paused it */
 	struct proc	*t_pproc;
 
@@ -93,6 +96,10 @@ struct tosctr {
 	unsigned char	t_scsi[32];	/* $FF8700-$FF878F, folded */
 	unsigned char	t_scc[16], t_sccptr[2];
 	unsigned char	t_misc[16];	/* memory controller and such */
+	unsigned char	t_fpal[0x400];	/* Falcon: palette $FF9800 */
+	unsigned char	t_snd[0x44];	/* sound and GPIO $FF8900 */
+	unsigned char	t_blt[0x40];	/* blitter $FF8A00 */
+	unsigned char	t_dsp[8];	/* DSP host port $FFA200 */
 
 	/* 68030 MMU registers, recorded only */
 	unsigned long	t_tc, t_tt0, t_tt1, t_crp[2], t_srp[2];

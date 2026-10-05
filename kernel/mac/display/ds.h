@@ -58,6 +58,29 @@
 #define DS_CPUSHA()	__asm__ __volatile__(".word 0xf478" : : : "memory")	/* cpusha dc */
 #endif
 
+#ifdef DS_ATARI
+/* Videl state: registers $FF8200-$FF82C3 and the palette */
+struct dsvid {
+	unsigned char	v_reg[0xC4];
+	unsigned long	v_pal[256];
+	int		v_st;		/* the ST shift mode was set last */
+	unsigned char	v_blt[0x3E];	/* blitter registers $FF8A00-$FF8A3D */
+};
+
+/* one blitter run: a line or part of one, at physical addresses */
+struct dsbrun {
+	unsigned short	r_ht[16];	/* halftone */
+	short		r_sxi, r_syi, r_dxi, r_dyi;
+	unsigned long	r_sa, r_da;
+	unsigned short	r_em[3];	/* end masks */
+	unsigned short	r_xn;
+	unsigned char	r_hop, r_op;
+	unsigned char	r_ctl;		/* smudge and line number */
+	unsigned char	r_skew;		/* FXSR, NFSR, skew */
+};
+#define DS_VPOOL	0x80000		/* ST-RAM kept for the screen */
+#endif
+
 struct dssess {
 	int		s_used;
 	long		s_id;		/* creation serial; 0 console */
@@ -67,6 +90,7 @@ struct dssess {
 	unsigned long	s_memsize;
 	caddr_t		s_shadow;	/* page-aligned shadow of the mapped region */
 	unsigned long	*s_pfn;		/* its page frames */
+	unsigned long	s_size;		/* bytes mapped */
 	int		s_dead;		/* released: maps fault */
 	int		s_cache;	/* FBC_* */
 	int		s_blank;
@@ -78,6 +102,13 @@ struct dssess {
 	int		s_nput, s_nget;
 	struct pollhead	s_ph;
 	void		(*s_kin)();	/* in-kernel reader: (s, type, code, value) */
+#ifdef DS_ATARI
+	struct dsvid	*s_vid;		/* owns the Videl: its state */
+	struct proc	*s_vproc;	/* passes the guest's Videl writes */
+	pid_t		s_vpid;
+	unsigned long	s_vwin;		/* where s_vproc maps the region */
+	unsigned long	s_vgbase;	/* screen address the guest set */
+#endif
 };
 
 struct dsfbh {			/* one open of /dev/fbN */
@@ -100,6 +131,7 @@ struct dsdisp {
 	int		d_dafb;		/* built-in DAFB: CLUT and VBL */
 	unsigned long	d_base;		/* first pixel */
 	unsigned long	d_page;		/* page-aligned start of the mapped region */
+	unsigned long	d_vsize;	/* VRAM a session may map */
 	struct fbinfo	d_info;
 };
 
@@ -114,6 +146,7 @@ extern unsigned long ds_nhwvbl, ds_nswvbl;
 /* ds.c */
 int	ds_init();		/* () -> errno */
 struct dssess *ds_newsess();	/* (uid, name, errp) */
+struct dssess *ds_mksess();	/* (uid, name, errp, videl) */
 void	ds_endsess();		/* (s) */
 void	ds_sessgc();		/* (s) */
 int	ds_switch();		/* (s) -> errno; safe context only */
@@ -125,6 +158,9 @@ void	ds_now();		/* (sec, usec) */
 void	ds_vblintr();
 #ifdef DS_ATARI
 void	ds_relmouse();		/* (buttons, dx, dy) */
+int	ds_vidpass();		/* (s, window) -> errno */
+void	ds_vidput();		/* (addr, size, value) */
+void	ds_bltgo();		/* (registers) */
 #endif
 
 /* dsseg.c */

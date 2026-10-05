@@ -1,0 +1,24 @@
+diff --git a/src/cpu/cpummu030.c b/src/cpu/cpummu030.c
+index 8e17fc27..e6b424e0 100644
+--- a/src/cpu/cpummu030.c
++++ b/src/cpu/cpummu030.c
+@@ -3640,12 +3640,18 @@ void m68k_do_rte_mmu030c (uaecptr a7)
+ 	}
+ 
+ #ifdef WINUAE_FOR_HATARI
++	/*
++	 * A data cycle the handler completed (DF cleared) resumes the
++	 * instruction with the pipeline from the frame: restarting it would
++	 * run the cycle again.
++	 */
++	bool resume = (ssw & (MMU030_SSW_DF << 1)) && !(ssw & (MMU030_SSW_DF | MMU030_SSW_RM)) && mmu030_opcode != -1;
+ 	/*
+ 	 * [NP] NOTE : there's a bug when restoring cpu state after a "frame B" bus error,
+ 	 * the prefetch values in regs.prefetch020[] are not correct (they match PC+2 or PC+4, not PC)
+ 	 * As a temporary fix we force a full reload of prefetch registers for the current PC
+ 	 */
+-	if (frame == 0xb) {
++	if (frame == 0xb && !resume) {
+ 		mmu030_opcode = -1;
+ 		fill_prefetch_030_ntx();
+ 	}

@@ -12,6 +12,8 @@ OUT=$1
 ISO=${2:-$AUX/AmigaOS3.2CD.iso}
 MODULES=${3:-}
 PICASSO=${4:-$AUX/Picasso96.lha}
+# MUI, AmiSSL and IBrowse, installed as their installers would
+AMIGAAPPS=${AMIGAAPPS-$AUX/media/amiga}
 [ "$#" -lt 4 ] || [ -f "$PICASSO" ] || { echo "missing Picasso96 archive: $PICASSO" >&2; exit 1; }
 [ -f "$ISO" ] || { echo "missing CD: $ISO" >&2; exit 1; }
 if [ -n "$MODULES" ]; then
@@ -70,6 +72,9 @@ if [ -f "$PICASSO" ]; then
 	done
 	cp "$P/Devs/Monitors/Picasso96" "$ROOT/amiga/sys/DEVS/Monitors/Container"
 	rm -rf "$OUT/p96"
+fi
+if [ -n "$AMIGAAPPS" ] && [ -f "$AMIGAAPPS/SHA256SUMS" ]; then
+	nice -n 19 python3 "$AUX/tools/amiga/apps.py" "$AMIGAAPPS" "$ROOT/amiga/sys"
 fi
 if [ -n "$MODULES" ]; then
 	mkdir -p "$ROOT/usr/lib/amiga/mod.d"

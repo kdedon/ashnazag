@@ -57,6 +57,8 @@ struct geom {
 };
 
 int fbpipe = -1;		/* the launcher gets the session through it */
+int vpass;			/* the session owns the video hardware */
+static int native;		/* key codes are IKBD scancodes */
 static struct tosinput in;
 static int mbtn, kbtn, mdx, mdy;
 static volatile struct tospv *pv = (struct tospv *)TOSPV;
@@ -233,9 +235,10 @@ events(fd)
 	for (i = 0; i < n / (int)sizeof ev[0]; i++)
 		switch (ev[i].ie_type) {
 		case IE_KEY:
-			if (ev[i].ie_code >= 128 || (k = adb2ikbd[ev[i].ie_code]) == 0)
+			if (ev[i].ie_code >= 128 ||
+			    (k = native ? ev[i].ie_code : adb2ikbd[ev[i].ie_code]) == 0)
 				break;
-			if (ev[i].ie_code == 0x39) {	/* caps lock latches: each change toggles */
+			if (k == 0x3a) {	/* caps lock latches: each change toggles */
 				key(k);
 				key(k | 0x80);
 			} else
@@ -460,6 +463,22 @@ now()
 	return (tv.tv_sec - t0) * 1000L + tv.tv_usec / 1000;
 }
 
+/* -v with the session owning the video: where the guest is, now and then */
+static void
+vtrace()
+{
+	struct tosstat st;
+	struct tosvideo tv;
+	static int n;
+
+	if (n >= 30 || ioctl(tfd, TOSIOC_STAT, &st) < 0 || ioctl(tfd, TOSIOC_VIDEO, &tv) < 0)
+		return;
+	n++;
+	fprintf(stderr, "starttos: pc %lx vbl %lu held %lu io %lu absent %lu last %lx at %lx, screen %lx mode %x\n",
+	    st.ts_lastpc, st.ts_vbl, st.ts_held, st.ts_io, st.ts_absent, st.ts_lastio,
+	    st.ts_lastiopc, tv.tv_base, tv.tv_stmode);
+}
+
 void
 disp(fd, verbose, ram)
 	int fd, verbose;
@@ -470,6 +489,7 @@ disp(fd, verbose, ram)
 	struct geom g;
 	struct pollfd p[3];
 	struct fbnote fn;
+	struct evinfo ei;
 	int i, k, kfd, mfd, have = 0;
 	long t = -REFRESH;
 
@@ -485,11 +505,18 @@ disp(fd, verbose, ram)
 	}
 	memset((char *)&acq, 0, sizeof acq);
 	acq.fa_kind = FBK_USER;
-	acq.fa_flags = FBA_FRONT;
+	acq.fa_flags = FBA_FRONT | (vpass ? FBA_VIDEL : 0);
 	strcpy(acq.fa_name, "tos");
 	if (ioctl(fbfd, FBIOACQUIRE, &acq) < 0 || ioctl(fbfd, FBIOGINFO, &fi) < 0) {
 		perror("starttos: display session");
 		return;
+	}
+	if (vpass) {
+		if (fbpipe >= 0) {
+			ioctl(fbpipe, I_SENDFD, fbfd);
+			close(fbpipe);
+		}
+		goto input;
 	}
 	if (fi.fi_depth != 8) {
 		fprintf(stderr, "starttos: %lu-bit screens are not supported\n", fi.fi_depth);
@@ -508,10 +535,12 @@ disp(fd, verbose, ram)
 	}
 	shadow = (unsigned char *)malloc(160L * 960);
 	memset(fb + fi.fi_offset, 0, fi.fi_rowbytes * fi.fi_height);
+input:
 	kfd = open("/dev/kbd", O_RDONLY);
 	mfd = open("/dev/mouse", O_RDONLY);
-	if (kfd >= 0)
-		ioctl(kfd, EVIOCBIND, fbfd);
+	if (kfd >= 0 && ioctl(kfd, EVIOCBIND, fbfd) == 0 &&
+	    ioctl(kfd, EVIOCGINFO, &ei) == 0)
+		native = ei.ei_kset == EVK_IKBD;
 	if (mfd >= 0)
 		ioctl(mfd, EVIOCBIND, fbfd);
 	p[0].fd = kfd;
@@ -520,7 +549,7 @@ disp(fd, verbose, ram)
 	p[0].events = p[1].events = p[2].events = POLLIN;
 	for (;;) {
 		i = t + REFRESH - now();
-		if (poll(p, 3L, hidden ? 1000 : i > 0 ? i : 0) > 0) {
+		if (poll(p, 3L, hidden ? 1000 : vpass ? REFRESH : i > 0 ? i : 0) > 0) {
 			for (i = 0; i < 2; i++)
 				if (p[i].revents & POLLIN)
 					events(p[i].fd);
@@ -538,7 +567,11 @@ disp(fd, verbose, ram)
 		if (getppid() == 1)
 			return;
 		pvbeat();
-		if (hidden || now() - t < REFRESH)
+		if (vpass && verbose && !hidden && now() - t >= 10000) {
+			t = now();
+			vtrace();
+		}
+		if (vpass || hidden || now() - t < REFRESH)
 			continue;
 		/* a fixed cadence: the clock moves in ticks, not ms */
 		t = now() - t < 2 * REFRESH ? t + REFRESH : now();

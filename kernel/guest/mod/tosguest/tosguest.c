@@ -109,11 +109,34 @@ tos_stop_insn(gp)
 			break;
 	}
 	t->t_sleeping = 0;
+	gp->gp_flags |= GPF_IDROP;	/* the CPU takes the interrupt that ends stop */
 	t->t_st.ts_slept += lbolt - t0;
 	splx_(s);
 }
 
 /* ---- delivery ---- */
+
+/*
+ * 1: hold the requests at an emulation tail, so they are taken where
+ * the guest runs its own code (the tick, a system call's return), not
+ * mostly on the few instructions that trap.  An IPL just dropped takes
+ * them at once, as on the CPU; so does a wait past a whole tick.
+ */
+static int
+tos_hold(gp)
+	struct guest_proc *gp;
+{
+	struct tosctr *t = &tosc;
+
+	if (!(gp->gp_flags & GPF_ETAIL) || (gp->gp_flags & GPF_IDROP) || t->t_paused)
+		return 0;
+	if (!t->t_held) {
+		t->t_held = 1;
+		t->t_heldsince = lbolt;
+		t->t_st.ts_held++;
+	}
+	return lbolt - t->t_heldsince < 2;
+}
 
 /*
  * Every interrupt the IPL lets through, each frame on top of the last
@@ -129,12 +152,30 @@ tos_intr(gp, r)
 
 	if (t->t_gp != gp)
 		return;
+	/*
+	 * A fault frame resumes its instruction part way through; restarting
+	 * it would repeat its side effects.  The CPU takes interrupts between
+	 * instructions, so these wait for the next tick.
+	 */
+	switch (GR_FV(r) >> 12) {
+	case 9: case 0xa: case 0xb:
+		return;
+	}
 	s = splhi_();
 	while (!t->t_paused && (l = tos_level()) > vipl(gp)) {
+		/* the tick posts the carrier again; meanwhile the gate's fast paths stay open */
+		if (tos_hold(gp)) {
+			sigdelset(&gp->gp_proc->p_sig, TOS_SIG);
+			break;
+		}
+		t->t_held = 0;
 		if (l == 6)
 			vec = mfp_ack();
 		else {
-			t->t_vblpend = 0;
+			if (t->t_vblowed)
+				t->t_vblowed--;
+			else
+				t->t_vblpend = 0;
 			t->t_st.ts_vbl++;
 			vec = 28;
 		}
@@ -156,8 +197,10 @@ tos_intr(gp, r)
 	}
 	l = tos_level();
 	gp->gp_vpend = l << 8;
-	if (!t->t_paused && l <= vipl(gp))
+	if (!t->t_paused && l <= vipl(gp)) {
+		t->t_held = 0;
 		sigdelset(&gp->gp_proc->p_sig, TOS_SIG);
+	}
 	splx_(s);
 }
 
@@ -175,7 +218,7 @@ tos_fsig(p, gp)
 	s = splhi_();
 	h = p->p_hold;
 	sigdelset(&p->p_hold, TOS_SIG);
-	if (tosc.t_gp != gp || (!tosc.t_paused && tos_level() <= vipl(gp)))
+	if (tosc.t_gp != gp || (!tosc.t_paused && (tos_level() <= vipl(gp) || tos_hold(gp))))
 		sigaddset(&p->p_hold, TOS_SIG);
 	n = __amix_fsig(p);
 	p->p_hold = h;
@@ -303,6 +346,8 @@ opword(r)
 	return (int)G16(b);
 }
 
+static int tos_fline();
+
 /* vector 8: user mode reflects; reset is a no-op; the rest guestcore */
 static int
 tos_priv(gp, r, v)
@@ -315,6 +360,10 @@ tos_priv(gp, r, v)
 	TST(gp)->ts_lastpc = GR_PC(r);
 	if (!(gp->gp_vsr & SR_S))
 		return tos_refl(gp, r, v);
+	if ((opword(r) & 0xffc0) == 0xf000)	/* a 68030's MMU instructions */
+		return tos_fline(gp, r, v);
+	if (!fpu_present && (opword(r) & 0xfe00) == 0xf200 && (opword(r) >> 7 & 3) == 2)
+		return tos_refl0(gp, r, 11, GR_PC(r));	/* fsave, frestore: no FPU */
 	TST(gp)->ts_priv++;
 	if (opword(r) == 0x4e70) {		/* reset */
 		GR_PC(r) += 2;
@@ -397,6 +446,8 @@ tos_tick(arg)
 	s = splhi_();
 	if (t->t_vblpend && curproc == t->t_proc && vipl(t->t_gp) >= 4)
 		t->t_st.ts_vblheld++;
+	else if (t->t_vblpend && t->t_held && t->t_vblowed < 2)
+		t->t_vblowed++;		/* goes out after the held one */
 	t->t_vblpend = 1;
 	tos_timers();
 	splx_(s);
