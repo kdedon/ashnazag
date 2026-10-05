@@ -818,6 +818,36 @@ rdready(fd, ms)
 	return sys15(A_SELECT, fd + 1, &rd, 0, 0, tv) == 1 && rd == MASK(fd + 1);
 }
 
+/* a nonblocking connect to a closed port: writable, then the refusal */
+static void
+nbrefused(name, a, how)
+	char *name, *a;
+	int how;
+{
+	long c, n, v, len, wr, tv[2];
+
+	c = sys15(A_SOCKET, 2, 1, 0);
+	v = 1;
+	sys15(A_IOCTL, c, FIONBIO, &v);
+	n = sys15(A_CONNECT, c, a, 16);
+	if (n == -1 && errno == EINPROGRESS) {
+		wr = MASK(c + 1);
+		tv[0] = 5;
+		tv[1] = 0;
+		n = sys15(A_SELECT, c + 1, 0, &wr, 0, tv) == 1 ? 0 : -2;
+		len = 4;
+		v = -1;
+		if (n == 0 && how == 1)
+			n = sys15(A_CONNECT, c, a, 16);
+		else if (n == 0 && how == 2)
+			n = sys15(A_RECV, c, &v, 4, 0);
+		else if (n == 0 && sys15(A_GETSOCKOPT, c, 0xffff, 0x1007, &v, &len) == 0)
+			errno = v, n = v ? -1 : 0;
+	}
+	check(name, n == -1 && errno == ECONNREFUSED, "n, errno", n, errno);
+	sys15(A_CLOSE, c);
+}
+
 static void
 t_sock()
 {
@@ -939,12 +969,15 @@ t_sock()
 	waitpid_(pid, &st, 0L);
 	check("sock_resvport", st == 0, "status", st, 0);
 
-	sys15(A_ALARM, 10);
+	sys15(A_ALARM, 30);
 	c = sys15(A_SOCKET, 2, 1, 0);
 	lo(ca, 1);
 	n = sys15(A_CONNECT, c, ca, 16);
 	check("sock_refused", n == -1 && errno == ECONNREFUSED, "n, errno", n, errno);
 	sys15(A_CLOSE, c);
+	nbrefused("sock_nb_refused", ca, 0);
+	nbrefused("sock_nb_refused_connect", ca, 1);
+	nbrefused("sock_nb_refused_recv", ca, 2);
 	c = sys15(A_SOCKET, 2, 1, 0);
 	ifc[0] = sizeof ifb;
 	ifc[1] = (long)ifb;
@@ -960,6 +993,19 @@ t_sock()
 		    (ifb[20] & 0xff) == 255, "errno, first byte", errno, ifb[20]);
 	}
 	sys15(A_CLOSE, c);
+	if (n == 0 && ifc[0] > 32) {
+		/* the user network's host, port 1 closed */
+		lo(ca, 1);
+		ca[4] = 10;
+		ca[6] = 2;
+		ca[7] = 2;
+		nbrefused("sock_nb_refused_gw", ca, 0);
+		nbrefused("sock_nb_refused_gw_recv", ca, 2);
+		c = sys15(A_SOCKET, 2, 1, 0);
+		n = sys15(A_CONNECT, c, ca, 16);
+		check("sock_refused_gw", n == -1 && errno == ECONNREFUSED, "n, errno", n, errno);
+		sys15(A_CLOSE, c);
+	}
 
 	u1 = sys15(A_SOCKET, 2, 2, 0);
 	u2 = sys15(A_SOCKET, 2, 2, 0);

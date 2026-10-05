@@ -465,6 +465,22 @@ settle(h)
 	return 0;
 }
 
+/* a failed nonblocking connect's error, once */
+static int
+pending(h)
+	struct hs *h;
+{
+	struct hsst *s = st(h->h_fp, 0);
+	int e;
+
+	if (s == 0 || s->s_conn || s->s_err == 0)
+		return 0;
+	e = s->s_err;
+	s->s_err = 0;
+	idle(s);
+	return e;
+}
+
 /*
  * A nonblocking connect's state for select: -1 still pending, else the
  * connect's error, 0 when connected or none was pending.
@@ -657,8 +673,11 @@ hs_connect(h, addr, len)
 		return ENOBUFS;
 	b[0] = T_CONN_REQ; b[1] = len; b[2] = 20; b[3] = 0; b[4] = 0;
 	bcopy(addr, (caddr_t)&b[5], (u_int)len);
-	if ((e = putmsg(h, (caddr_t)b, 20 + len, (caddr_t)0, -1)) != 0 ||
-	    (e = okack(h)) != 0) {
+	/* sockmod reports a refusal as a stream error */
+	if ((e = putmsg(h, (caddr_t)b, 20 + len, (caddr_t)0, -1)) == 0 &&
+	    (e = okack(h)) != 0 && qdead(h) > 0)
+		e = ECONNREFUSED;
+	if (e) {
 		idle(s);
 		return e;
 	}
@@ -670,7 +689,7 @@ hs_connect(h, addr, len)
 		cl = sizeof b;
 		dl = -1;
 		if ((e = getmsg(h, (caddr_t)b, &cl, (caddr_t)0, &dl, 0L, &r)) != 0)
-			return e;
+			return e != EINTR && qdead(h) > 0 ? ECONNREFUSED : e;
 		if (cl >= 4 && b[0] == T_CONN_CON)
 			return udata(h);
 		if (cl >= 8 && b[0] == T_DISCON_IND)
@@ -740,7 +759,7 @@ hs_send(h, ubuf, len, flags, to, tolen, np)
 	long b[(20 + HS_ADDR) / 4], r;
 	int e;
 
-	if ((e = settle(h)) != 0)
+	if ((e = settle(h)) != 0 || (e = pending(h)) != 0)
 		return e;
 	*np = len;
 	if (len < 0)
@@ -784,7 +803,7 @@ hs_recv(h, ubuf, len, flags, from, fromlen, np)
 	mblk_t *dp, *mp;
 	int e, cl, dl, n, alen = 0, waited = 0;
 
-	if ((e = settle(h)) != 0)
+	if ((e = settle(h)) != 0 || (e = pending(h)) != 0)
 		return e;
 	if (flags & MSG_OOB)
 		return EINVAL;

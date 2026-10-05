@@ -1,11 +1,12 @@
 #!/bin/sh
 # build.sh -- t_tos's inputs: starttos, the machine-layer cartridge, the
 # system C: folder with C:\AUTO\UTEST.PRG (checks the host drives),
+# STIKTEST.PRG (checks the STiK transport),
 # EmuTOS and the user's TOS ROM image.
 #
 #   sh tests/tos/build.sh outdir
 #
-# Out: outdir/root/tos/bin/{starttos,maketos}, outdir/root/tos/{sys,fvdi,teradesk}/,
+# Out: outdir/root/tos/bin/{starttos,maketos}, outdir/root/tos/{sys,stik,fvdi,teradesk}/,
 # outdir/root/etc/tos/{emutos.img,rom,tosml.img}.
 # EMUTOS names the EmuTOS 512 KB release zip (default: ref/emutos-release),
 # EMUTOSLANG its image (us).  TOSROM names the user's ROM: an image, or a
@@ -49,8 +50,9 @@ nice -n 19 "$TC/bin/m68k-cbm-sysv4-ld" -o "$R/tos/bin/starttos" "$SYS/usr/ccs/li
 cp "$AUX/images/tosenv/maketos" "$R/tos/bin/maketos"
 XCC="nice -n 19 $TC/bin/m68k-cbm-sysv4-gcc -O -m68020 -Wall -Wno-implicit -fno-builtin"
 $XCC -c "$G/tos/hostfs.c" -o "$O/hostfs.o"
+$XCC -I"$G/mod/tosguest" -c "$G/tos/stik.c" -o "$O/stik.o"
 "$BIN/m68k-elf-as" -m68040 --register-prefix-optional -o "$O/tosml.o" "$G/tos/tosml.s"
-"$BIN/m68k-elf-ld" --no-warn-rwx-segments -N -Ttext=0xfa0000 -o "$O/tosml.elf" "$O/tosml.o" "$O/hostfs.o"
+"$BIN/m68k-elf-ld" --no-warn-rwx-segments -N -Ttext=0xfa0000 -o "$O/tosml.elf" "$O/tosml.o" "$O/hostfs.o" "$O/stik.o"
 end=$("$BIN/m68k-elf-nm" "$O/tosml.elf" | awk '$3 == "_end" { print $1 }')
 [ $((0x$end)) -le $((0xfa0000 + 0x20000)) ] || { echo "[FAIL] cartridge ends at $end" >&2; exit 1; }
 # UTEST.PRG: linked at 0 and 0x10000, the difference gives the relocations
@@ -64,10 +66,22 @@ done
 end=$("$BIN/m68k-elf-nm" "$O/u0.elf" | awk '$3 == "_end" { print $1 }')
 python3 "$T/tos/elf2prg.py" "$O/u0.bin" "$O/u0x10000.bin" \
 	$((0x$end - $(wc -c < "$O/u0.bin"))) "$O/utest.prg"
+# STIKTEST.PRG, the same way: the STiK transport from inside TOS
+$XCC -c "$T/tos/stiktest.c" -o "$O/stiktest.o"
+for base in 0 0x10000; do
+	"$BIN/m68k-elf-ld" --no-warn-rwx-segments -N -Ttext=$base -o "$O/s$base.elf" "$O/gem.o" "$O/stiktest.o"
+	"$BIN/m68k-elf-objcopy" -O binary "$O/s$base.elf" "$O/s$base.bin"
+	[ $(($(wc -c < "$O/s$base.bin") % 2)) = 0 ] || printf '\0' >> "$O/s$base.bin"
+done
+end=$("$BIN/m68k-elf-nm" "$O/s0.elf" | awk '$3 == "_end" { print $1 }')
+python3 "$T/tos/elf2prg.py" "$O/s0.bin" "$O/s0x10000.bin" \
+	$((0x$end - $(wc -c < "$O/s0.bin"))) "$O/stiktest.prg"
 "$BIN/m68k-elf-objcopy" -O binary "$O/tosml.elf" "$R/etc/tos/tosml.img"
 # the system C: folder: C:\AUTO\UTEST.PRG, G: in its drive table
 mkdir -p "$R/tos/sys/AUTO"
 cp "$O/utest.prg" "$R/tos/sys/AUTO/UTEST.PRG"
+mkdir -p "$R/tos/stik"
+cp "$O/stiktest.prg" "$R/tos/stik/STIKTEST.PRG"
 printf 'Drive C: of the TOS container.\r\n' > "$R/tos/sys/README.TXT"
 printf '# system drives\nG /tmp/tosg ro\n' > "$R/tos/sys/drives"
 # fVDI's files for C: (FVDI.SYS, ASHFB.SYS, AUTO\FVDI.PRG): GEM on the frame buffer

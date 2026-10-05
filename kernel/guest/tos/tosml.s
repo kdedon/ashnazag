@@ -4,7 +4,8 @@
 | C: from a disk image through the BIOS hard-disk vectors, reading and
 | writing the image with host system calls (trap #0).  Each VBL it hands the mouse and
 | keyboard events the display process posts in its last page straight
-| to TOS's handlers.
+| to TOS's handlers.  It installs the STiK transport (stik.c) on the
+| host's sockets.
 |
 |   m68k-elf-as -m68040 tosml.s; ld -Ttext=0xfa0000; objcopy -O binary
 
@@ -32,11 +33,14 @@ old_mc:	.long	0
 	.globl	p_tz, p_dtab
 p_tz:	.long	0			| seconds east of UTC
 p_fb:	.space	16			| the frame buffer (tosfb.h), zero for none
+	.globl	p_tfd
+p_tfd:	.long	-1			| /dev/tos, for socket calls
 	.org	0x80
 p_dtab:	.space	0x1000			| host drives: letter, flags, path; ... 0
 
 init:
 	jsr	pvinit
+	jsr	stikinit
 	jsr	hinit
 	tst.l	d0
 	beq.s	2f
@@ -401,6 +405,85 @@ Mfree:	movem.l	d2/a2,-(sp)
 	sys	_fxstat, 125
 	sys	_xmknod, 126
 	sys	sys_rename, 134
+	sys	sys_time, 13
+	sys	sys_ioctl, 54
+	sys	sys_fcntl, 62
+	sys	sys_poll, 87
+
+| STiK: clients call through these tables with cdecl arguments on the
+| stack; the C side gets their address.  d0-d1/a0-a1 are scratch, and
+| pointers come back in d0 and a0.
+	.macro	tc name
+	.long	1f
+	.pushsection .text
+1:	pea	4(sp)
+	jsr	st_\name
+	addq.l	#4,sp
+	move.l	d0,a0
+	rts
+	.popsection
+	.endm
+
+	.data
+	.globl	stik_drv, stik_tpl
+stik_drv:
+	.ascii	"STiKmagic\0"
+	tc	get_dftab
+	tc	housekeep		| ETM_exec: no modules
+	.long	0			| cfg
+	.long	0			| basepage
+	.balign	2
+stik_tpl:
+	.long	tpl_mod, tpl_auth, tpl_ver
+	tc	KRmalloc
+	tc	KRfree
+	tc	KRgetfree
+	tc	KRrealloc
+	tc	get_err_text
+	tc	getvstr
+	tc	carrier_detect
+	tc	TCP_open
+	tc	TCP_close
+	tc	TCP_send
+	tc	TCP_wait_state
+	tc	TCP_ack_wait
+	tc	UDP_open
+	tc	UDP_close
+	tc	UDP_send
+	tc	CNkick
+	tc	CNbyte_count
+	tc	CNget_char
+	tc	CNget_NDB
+	tc	CNget_block
+	tc	housekeep
+	tc	resolve
+	tc	ser_disable
+	tc	ser_disable		| ser_enable
+	tc	set_flag
+	tc	clear_flag
+	tc	CNgetinfo
+	tc	on_port
+	tc	housekeep		| off_port
+	tc	setvstr
+	tc	on_port			| query_port
+	tc	CNgets
+	tc	cntrl_port		| ICMP_send: E_FNAVAIL
+	tc	cntrl_port		| ICMP_handler
+	tc	housekeep		| ICMP_discard
+	tc	TCP_info
+	tc	cntrl_port
+	tc	TCP_info		| UDP_info
+	tc	cntrl_port		| RAW_open
+	tc	cntrl_port		| RAW_close
+	tc	cntrl_port		| RAW_out
+	tc	cntrl_port		| CN_setopt
+	tc	cntrl_port		| CN_getopt
+	tc	CNfree_NDB
+	.long	0, 0, 0, 0
+tpl_mod: .asciz	"TRANSPORT_TCPIP"
+tpl_auth: .asciz "Ash Nazag"
+tpl_ver: .asciz	"01.26"
+	.text
 
 | LONG hdv_bpb(WORD dev)
 bpb:	cmp.w	#2,4(sp)

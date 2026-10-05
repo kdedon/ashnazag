@@ -38,11 +38,13 @@ done
 "$TC/bin/m68k-cbm-sysv4-ld" -o "$OUT/starttos" "$SYS/usr/ccs/lib/crt1.o" \
 	"$SYS/usr/ccs/lib/crti.o" "$O/starttos.o" "$O/tosdisp.o" "$SYS/usr/lib/libc.so.1" \
 	"$O/libextra.a" "$LIBGCC" "$SYS/usr/ccs/lib/crtn.o"
-# cartridge: machine layer plus the U: drive
+# cartridge: machine layer, the U: drive and STiK
 nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -m68020 -Wall -Wno-implicit -fno-builtin \
 	-c "$G/tos/hostfs.c" -o "$O/hostfs.o"
+nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -m68020 -Wall -Wno-implicit -fno-builtin \
+	-I"$G/mod/tosguest" -c "$G/tos/stik.c" -o "$O/stik.o"
 "$BIN/m68k-elf-as" -m68040 --register-prefix-optional -o "$O/tosml.o" "$G/tos/tosml.s"
-"$BIN/m68k-elf-ld" --no-warn-rwx-segments -N -Ttext=0xfa0000 -o "$O/tosml.elf" "$O/tosml.o" "$O/hostfs.o"
+"$BIN/m68k-elf-ld" --no-warn-rwx-segments -N -Ttext=0xfa0000 -o "$O/tosml.elf" "$O/tosml.o" "$O/hostfs.o" "$O/stik.o"
 end=$("$BIN/m68k-elf-nm" "$O/tosml.elf" | awk '$3 == "_end" { print $1 }')
 [ $((0x$end)) -le $((0xfa0000 + 0x20000)) ] || { echo "[FAIL] cartridge ends at $end" >&2; exit 1; }
 "$BIN/m68k-elf-objcopy" -O binary "$O/tosml.elf" "$OUT/tosml.img"

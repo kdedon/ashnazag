@@ -9,7 +9,8 @@
  * over a desktop of one colour); a Shift key reaches TOS's kbshift;
  * the mouse moves the pointer and opens a menu; TeraDesk runs as the
  * desktop; SIGTERM ends TOS and the console comes back.  The kernel's
- * counters are logged.
+ * counters are logged.  On the network root only STIKTEST.PRG runs:
+ * the STiK transport against the network.
  * Skips without guest support, the module or the local ROM.
  */
 #include <sys/types.h>
@@ -303,6 +304,8 @@ static int baller;			/* C: holds it and starts it */
 static char *tdfiles[] = { "DESKTOP.PRG", "DESKTOP.RSC", "ICONS.RSC", "CICONS.RSC", 0 };
 static int teradesk;			/* C: holds it and starts it */
 static int stscreen;			/* fVDI kept off the frame buffer */
+#define	STIKPRG	"/tos/stik/STIKTEST.PRG"
+static int stik;			/* C:\AUTO starts it */
 
 static char *utree[] = {
 	"sub/new.txt", "sub/renamed.txt", "result.txt", "readme.txt", "hello.prg",
@@ -465,6 +468,7 @@ cmake()
 	int i;
 
 	unlink(CDIR "/AUTO/UTEST.PRG");
+	unlink(CDIR "/AUTO/STIKTEST.PRG");
 	for (i = 0; i < 3; i++) {
 		sprintf(b, "%s/%s", CDIR, fvdifiles[i]);
 		unlink(b);
@@ -482,6 +486,8 @@ cmake()
 	mkdir(CDIR, 0755);
 	mkdir(CDIR "/AUTO", 0755);
 	fcopy("/tos/sys/AUTO/UTEST.PRG", CDIR "/AUTO/UTEST.PRG");
+	if (stik)
+		fcopy(STIKPRG, CDIR "/AUTO/STIKTEST.PRG");
 	mkdir(EHOME, 0755);
 	mkdir(EHOME "/TOS", 0755);
 	symlink(CDIR, EHOME "/TOS/c");
@@ -1645,6 +1651,53 @@ terarun()
 		nap(200);
 }
 
+/* STIKTEST.PRG's results, up to 120 s for them */
+static void
+stikrun()
+{
+	char b[2048], n[48], why[40], *l, *e;
+	int fd, len = 0, status;
+	long t0;
+
+	stik = 1;
+	pf = "stik";
+	unlink(UDIR "/stik.txt");
+	start((char *)0);
+	t0 = t_now_ms();
+	b[0] = 0;
+	while (t_now_ms() - t0 < 120000 && strstr(b, "DONE") == 0) {
+		nap(1000);
+		relay();
+		if ((fd = open(UDIR "/stik.txt", O_RDONLY)) >= 0) {
+			len = read(fd, b, sizeof b - 1);
+			close(fd);
+			b[len > 0 ? len : 0] = 0;
+		}
+	}
+	t_check(N("done"), strstr(b, "DONE") != 0, "%d bytes of results after %ld s", len,
+	    (t_now_ms() - t0) / 1000);
+	for (l = b; (e = strchr(l, '\n')) != 0; l = e + 1) {
+		*e = 0;
+		why[0] = 0;
+		if (sscanf(l, "PASS %40s", n) == 1)
+			t_check(N(n), 1, "");
+		else if (sscanf(l, "FAIL %40s %39s", n, why) >= 1)
+			t_check(N(n), 0, "%s", why);
+		else if (sscanf(l, "SKIP %40s %39[^\r]", n, why) >= 1)
+			t_skip(N(n), "%s", why);
+	}
+	relay();
+	kill(tpid, SIGTERM);
+	t0 = t_now_ms();
+	while (waitpid(tpid, &status, WNOHANG) != tpid && t_now_ms() - t0 < 5000)
+		nap(100);
+	t_check(N("ended"), t_now_ms() - t0 < 5000, "starttos still running");
+	relay();
+	close(ofd);
+	ofd = -1;
+	stik = 0;
+}
+
 int
 main()
 {
@@ -1674,6 +1727,15 @@ main()
 		return t_done();
 	if (!t_check("open", (tfd = open("/dev/tos", O_RDWR)) >= 0, "/dev/tos: %s", T_ERR))
 		return t_done();
+	/* the network root */
+	if (stat("/etc/inet/strcf", &sb) == 0) {
+		if (stat(STIKPRG, &sb) < 0 || stat(EMUTOS, &sb) < 0)
+			t_skip("stik", "no STIKTEST.PRG or EmuTOS");
+		else
+			stikrun();
+		return t_done();
+	}
+	t_skip("stik", "no network");
 	hostopen();
 	spin0 = spin();
 	pf = "emutos";
