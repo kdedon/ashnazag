@@ -1,6 +1,7 @@
 # Network additions to the test root: the tape's inet configuration and
 # tools.  @CORE@ = tape segment 02 (the RAM-disk build/core),
 # @NET07@ = segment 07 (getnet.sh).  Device nodes come from root.manifest.
+# @NETDIR@ = tests/net (resolv.conf: the user network's DNS).
 d /usr/sbin	755 2 2
 d /usr/amiga	755 2 2
 d /usr/amiga/bin 755 2 2
@@ -20,6 +21,7 @@ f /etc/inet/strcf	444 0 3 @CORE@/etc/inet/strcf
 l /etc/strcf		/etc/inet/strcf
 f /etc/inet/hosts	444 0 3 @CORE@/etc/inet/hosts
 l /etc/hosts		/etc/inet/hosts
+f /etc/resolv.conf	444 0 3 @NETDIR@/resolv.conf
 f /etc/inet/protocols	444 0 3 @CORE@/etc/inet/protocols
 l /etc/protocols	/etc/inet/protocols
 f /etc/inet/services	444 0 3 @CORE@/etc/inet/services

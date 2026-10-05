@@ -14,6 +14,9 @@
  */
 
 #include "tos.h"
+#include "sys/vnode.h"
+#include "sys/file.h"
+#include "hsock.h"
 
 extern int nodev(), ttimeout(), untimeout();
 extern int runrun;
@@ -491,6 +494,62 @@ enter(arg, cr)
 	return 0;
 }
 
+/* a socket call of the container's (struct tossock); it may block as the descriptor says */
+static int
+tsock(arg)
+	caddr_t arg;
+{
+	struct tossock so;
+	struct hs h;
+	char a[HS_ADDR];
+	int e, v = 0, n = HS_ADDR, sc = u.u_syscall;
+
+	if (copyin(arg, (caddr_t)&so, sizeof so))
+		return EFAULT;
+	if (so.so_alen < 0 || so.so_alen > sizeof so.so_addr)
+		return EINVAL;
+	bcopy(so.so_addr, a, sizeof so.so_addr);
+	if (so.so_op == TSO_SOCKET)
+		e = hs_socket(so.so_gap, 2, (int)so.so_arg, 0, &v);
+	else if ((e = hs_attach(&h, (int)so.so_fd, so.so_gap)) == 0) {
+		switch (so.so_op) {
+		case TSO_BIND:
+			e = hs_bind(&h, a, (int)so.so_alen);
+			break;
+		case TSO_CONNECT:
+			e = hs_connect(&h, a, (int)so.so_alen);
+			break;
+		case TSO_LISTEN:
+			e = hs_listen(&h, (int)so.so_arg);
+			break;
+		case TSO_ACCEPT:
+			e = hs_accept(&h, &v, a, &n);
+			break;
+		case TSO_SEND:
+			e = hs_send(&h, so.so_buf, (int)so.so_len, (int)so.so_arg,
+			    so.so_alen ? a : (char *)0, (int)so.so_alen, &v);
+			break;
+		case TSO_RECV:
+			e = hs_recv(&h, so.so_buf, (int)so.so_len, (int)so.so_arg, a, &n, &v);
+			break;
+		case TSO_CONNWAIT:
+			v = hs_connwait(&h);
+			break;
+		case TSO_NAME:
+			e = hs_name(&h, (int)so.so_arg, a, &n);
+			break;
+		default:
+			e = EINVAL;
+		}
+	}
+	u.u_syscall = sc;
+	if (e)
+		return e;
+	so.so_rv = v;
+	bcopy(a, so.so_addr, sizeof so.so_addr);
+	return copyout((caddr_t)&so, arg, sizeof so) ? EFAULT : 0;
+}
+
 int
 tosioctl(dev, cmd, arg, mode, cr, rvp)
 	dev_t dev;
@@ -554,6 +613,8 @@ tosioctl(dev, cmd, arg, mode, cr, rvp)
 		return 0;
 	case TOSIOC_STAT:
 		return copyout((caddr_t)&t->t_st, arg, sizeof t->t_st) ? EFAULT : 0;
+	case TOSIOC_SOCK:
+		return curproc == t->t_proc ? tsock(arg) : EPERM;
 	}
 	return EINVAL;
 }

@@ -404,6 +404,7 @@ main(argc, argv)
 	/* shared: the display process posts input in its last page */
 	region((unsigned long)CART, (unsigned long)CARTSZ, 1);
 	(void)readall(cart, (char *)CART, TOSPV - CART);
+	put32((unsigned long)CART + 0x78, (unsigned long)tfd);	/* sockets */
 	if (disk)
 		drivec();
 	drives();
@@ -434,6 +435,8 @@ main(argc, argv)
 	sa.sa_handler = nothing;
 	sa.sa_flags = SA_NODEFER;
 	sigaction(TOS_SIG, &sa, (struct sigaction *)0);
+	/* a guest's send on a reset connection fails instead of ending the session */
+	signal(SIGPIPE, SIG_IGN);
 	te.te_ramsize = ramsize;
 	te.te_flags = mono ? TEF_MONO : 0;
 	if (ioctl(tfd, TOSIOC_ENTER, &te) < 0)

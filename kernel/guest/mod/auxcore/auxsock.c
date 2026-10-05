@@ -13,6 +13,7 @@ extern unsigned long aux_sockioc();
 
 #define	SOL_SOCKET	0xffff
 #define	SO_TYPE		0x1008
+#define	SO_ERROR	0x1007
 #define	SIOCGIFCONF	0xc0086914
 #define	AF_INET		2
 
@@ -341,9 +342,9 @@ aux_getsockopt(ap, a, rv, r)
 		return EFAULT;
 	if ((e = hs_getopt(&h, (int)a[1], (int)a[2], b, &n)) != 0)
 		return e;
-	if (a[1] == SOL_SOCKET && a[2] == SO_TYPE) {
+	if (a[1] == SOL_SOCKET && (a[2] == SO_TYPE || a[2] == SO_ERROR)) {
 		bcopy(b, (caddr_t)&v, 4);
-		v = aux_socktype_out(v);
+		v = a[2] == SO_TYPE ? aux_socktype_out(v) : v ? aux_errno_out((int)v, ap) : 0;
 		bcopy((caddr_t)&v, b, 4);
 	}
 	return addrout(b, n, a[3], a[4]);

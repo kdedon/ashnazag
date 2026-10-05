@@ -89,7 +89,7 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 		for f in "$B"/netbin/*; do
 			echo "f /tests/$(basename "$f") 755 0 3 $f"
 		done
-		sed -e "s#@CORE@#$RD/build/core#" -e "s#@NET07@#$B/net07#" "$T/net/net.manifest"
+		sed -e "s#@CORE@#$RD/build/core#" -e "s#@NET07@#$B/net07#" -e "s#@NETDIR@#$T/net#" "$T/net/net.manifest"
 	fi
 	[ -f "$AUXB/mod.d/uinter" ] && echo "c /dev/uinter0 666 0 3 54 0"
 	if [ -d "$AUXB/mod.d" ]; then

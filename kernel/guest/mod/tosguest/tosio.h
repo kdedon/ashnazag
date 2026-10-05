@@ -20,6 +20,7 @@
 #define	TOSIOC_STAT	TOSIOC(4)	/* out struct tosstat */
 #define	TOSIOC_OWNER	TOSIOC(5)	/* out struct tosowner: who runs the container */
 #define	TOSIOC_PAUSE	TOSIOC(6)	/* value: 1 the guest sleeps, 0 it runs */
+#define	TOSIOC_SOCK	TOSIOC(7)	/* in/out struct tossock: the guest's sockets */
 
 struct tosenter {
 	unsigned long	te_ramsize;	/* ST-RAM at 0 */
@@ -32,6 +33,32 @@ struct tosowner {
 	long		to_pid;		/* 0: free */
 	long		to_uid;
 };
+
+/*
+ * A BSD socket call by the container itself, on its own descriptors:
+ * AF_INET, SVR4 errnos, nonblocking as the descriptor's O_NDELAY says.
+ */
+struct tossock {
+	long		so_op;		/* TSO_* */
+	long		so_fd;
+	long		so_arg;		/* type, backlog, flags or peer */
+	char		*so_buf;
+	long		so_len;
+	long		so_rv;		/* descriptor, count or connect state */
+	char		so_addr[16];	/* sockaddr_in, in or out */
+	long		so_alen;	/* 0: no address in */
+	char		*so_gap;	/* 576 bytes of scratch */
+};
+
+#define	TSO_SOCKET	1		/* so_arg type -> so_rv descriptor */
+#define	TSO_BIND	2
+#define	TSO_CONNECT	3
+#define	TSO_LISTEN	4		/* so_arg backlog */
+#define	TSO_ACCEPT	5		/* -> so_rv descriptor, so_addr */
+#define	TSO_SEND	6		/* so_buf, so_len, so_arg flags -> so_rv */
+#define	TSO_RECV	7		/* so_buf, so_len, so_arg flags -> so_rv, so_addr */
+#define	TSO_CONNWAIT	8		/* -> so_rv: -1 pending, else the connect's errno */
+#define	TSO_NAME	9		/* so_arg 1 peer, 0 local -> so_addr */
 
 struct tosinput {
 	int		ti_n;
