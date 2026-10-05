@@ -32,6 +32,11 @@
  * Finder desktop, SysVersion $0761, the About This Computer window,
  * SimpleText opened from the desktop and quit, and the disk window.
  * Built with SYS81 (t_mac81.c), the same with Mac OS 8.1 (/mac/sys/S81).
+ * Built with SYS6 (t_mac6.c), A/UX 2.0.1's startmac runs System 6.0.7
+ * from its own root, /a201, on the IIci's ROM in 4 MB; checks as t_mac's
+ * up to the System file, then the Finder's desktop without an alert,
+ * SysVersion $0607, the Apple and Special menus, and the startup disk's
+ * window opened and closed.
  */
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -64,6 +69,24 @@ extern int getksym();
 #define	PRAMF	"/etc/aux/pram"
 #define	OTHERUID "101"		/* restart's user, group display */
 
+#ifdef SYS6
+#define	ROOT6	"/a201"
+#define	SYSDIR	ROOT6 "/mac/sys/Sys6"
+#define	SYS6DIR	ROOT6 "/mac/sys/System Folder"
+#define	TBSYS	"/mac/sys/System Folder"
+#define	SYSVER	0x0607
+#define	TNAME	"mac6"
+#define	SHOT	"mac6_"
+#define	TBMEM	"TBMEMORY=4M"
+#define	STARTMAC ROOT6 "/mac/bin/startmac"
+#else
+#define	STARTMAC "/mac/bin/startmac"
+#endif
+#ifndef TBSYS
+#define	TBSYS	SYSDIR
+#endif
+#ifdef SYS6
+#else
 #ifdef SYS81
 #define	SYS76
 #define	SYSDIR	"/mac/sys/S81"
@@ -83,9 +106,10 @@ extern int getksym();
 #define	TBMEM	"TBMEMORY=8M"
 #endif
 #endif
+#endif
 static char *macenv[] = {
 	"PATH=/aux/bin:/usr/bin:/sbin", "HOME=/tmp", "TBVERBOSE=1", "TBWARN=1",
-	"TBSYSTEM=" SYSDIR, TBMEM, 0
+	"TBSYSTEM=" TBSYS, TBMEM, 0
 };
 static char out[8192];
 static char klog[LOGMAX + 1];
@@ -531,6 +555,22 @@ int fd, secs;
 
 static pid_t macpid;
 
+/* startmac's output read and dropped after the relay, so its writes never block */
+static pid_t
+drain(fd)
+int fd;
+{
+	char b[512];
+	pid_t p;
+
+	if ((p = fork()) == 0) {
+		while (read(fd, b, sizeof b) > 0)
+			;
+		_exit(0);
+	}
+	return p;
+}
+
 static void
 pause_ms(ms)
 long ms;
@@ -884,13 +924,17 @@ startmac()
 	char pat[80], *q1, *o, *s, *z;
 	int p[2], st, id, fd;
 	long npriv0, npriv;
-	pid_t pid;
+	pid_t pid, dp;
 
 	t_rearm(240);
 	/* opens and commands from here on; the ring keeps the first 8 KB */
 	setsym("aux_tpos", 0L);
 	setsym("uinter_trace", 1L);
+#ifdef SYS6
+	setsym("aux_trace", 4L | 8L | 16L);
+#else
 	setsym("aux_trace", 4L | 16L);
+#endif
 	npriv0 = getsym("guest_npriv");
 	if (pipe(p) < 0)
 		return;
@@ -902,6 +946,10 @@ startmac()
 		close(p[1]);
 		for (fd = 3; fd < 20; fd++)
 			close(fd);
+#ifdef SYS6
+		if (chroot(ROOT6) < 0 || chdir("/") < 0)
+			_exit(126);
+#endif
 		execve(av[0], av, macenv);
 		_exit(127);
 	}
@@ -910,6 +958,11 @@ startmac()
 	printf("INFO mac.startmac_pid %d\n", (int)pid);
 	fflush(stdout);
 	relay(p[0], 90);
+	dp = drain(p[0]);
+#ifdef SYS6
+	if (macid)
+		screen6();
+#else
 #ifdef SYS76
 	if (macid)
 		screen76();
@@ -917,11 +970,16 @@ startmac()
 	if (macid)
 		screen();
 #endif
+#endif
 	kill(-pid, SIGKILL);
 	close(p[0]);
 	st = 0;
 	if (t_waitchild(pid, &st, 20) < 0)
 		st = -1;
+	if (dp > 0) {
+		kill(dp, SIGKILL);
+		waitpid(dp, (int *)0, 0);
+	}
 	setsym("aux_trace", 0L);
 	setsym("uinter_trace", 0L);
 	npriv = getsym("guest_npriv");
@@ -1150,7 +1208,9 @@ patchbox()
 	close(fd);
 	return v;
 }
+#endif
 
+#if defined(SYS76) || defined(SYS6)
 /* pixels changed between two dumps, -1 without an answer */
 static int
 shotdiff(a, b)
@@ -1208,6 +1268,9 @@ int lo, hi, secs;
 	host(req);
 	return shotdiff(ref, name);
 }
+#endif
+
+#ifdef SYS76
 
 /* Special > Shut Down as root: the Mac ends by itself, with no panic */
 static void
@@ -1342,6 +1405,102 @@ screen76()
 }
 #endif
 
+#ifdef SYS6
+/* System 6's Finder: the desktop pattern under a white menu bar, SysVersion */
+static void
+screen6()
+{
+	unsigned char *lm;
+	char *r;
+	int id, n, chk = 0, white = 0, top = 0;
+
+	hostopen();
+	if (hfd < 0) {
+		t_skip("mac_screen", "no host line");
+		return;
+	}
+	for (n = 0; n < 8; n++) {
+		t_rearm(120);
+		host("shot " SHOT "desktop");
+		r = host("mac " SHOT "desktop");
+		if (r)
+			sscanf(r, "checker %d white %d top %d", &chk, &white, &top);
+		if (chk >= 900 && top >= 900)
+			break;
+		pause_ms(10000L);
+	}
+	t_info("mac_screen_stats", "checker %d white %d top %d", chk, white, top);
+	/* the Finder's menu bar over its desktop, no alert */
+	if (!t_check("finder_desktop", chk >= 900 && top >= 900, "checker %d, menu bar %d per mille",
+	    chk, top)) {
+		close(hfd);
+		hfd = -1;
+		return;
+	}
+	id = shmget(TLOW, 0, 0);
+	lm = id < 0 ? 0 : (unsigned char *)shmat(id, (char *)0, SHM_RDONLY);
+	if (lm && lm != (unsigned char *)-1) {
+		t_check("sysversion", (lm[0x15a] << 8 | lm[0x15b]) == SYSVER, "SysVersion %#x",
+		    lm[0x15a] << 8 | lm[0x15b]);
+		shmdt((char *)lm);
+	} else
+		t_check("sysversion", 0, "no low memory");
+	/* the Apple and Special menus held open */
+	if (t_check("mouse", moveto(20, 9), "mouse %#lx", getsym("uin_mouse"))) {
+		host("button 1");
+		pause_ms(800L);
+		host("shot " SHOT "apple");
+		host("button 0");
+		n = shotdiff(SHOT "desktop", SHOT "apple");
+		t_check("apple_menu", n > 1000, "%d pixels changed", n);
+	}
+	pause_ms(1000L);
+	moveto(184, 9);
+	host("button 1");
+	pause_ms(800L);
+	host("shot " SHOT "special");
+	host("button 0");
+	n = shotdiff(SHOT "desktop", SHOT "special");
+	t_check("special_menu", n > 1000, "%d pixels changed", n);
+	/* the startup disk's window, opened from the middle of its icon and closed */
+	t_rearm(120);
+	pause_ms(1000L);
+	moveto(scrw - 40, 51);
+	host("click 2");
+	n = waitshot(SHOT "disk", SHOT "desktop", 20000, 1 << 30, 40);
+	t_check("disk_window", n >= 20000, "%d pixels changed", n);
+	host("key meta_l+w");
+	n = waitshot(SHOT "closed", SHOT "desktop", 0, 1999, 20);
+	t_check("disk_window_closed", n >= 0 && n < 2000, "%d pixels from the desktop", n);
+	t_check("finder_alive", alive76(), "");
+	close(hfd);
+	hfd = -1;
+}
+
+/* the System Folder's names with spaces, which the test root has without */
+static char *sys6sp[] = { "%AUX Resources", "DA Handler", "Key Layout", "Scrapbook File", 0 };
+
+static void
+sys6links(on)
+int on;
+{
+	char a[80], b[80], *s, *d;
+	int i;
+
+	for (i = 0; sys6sp[i]; i++) {
+		sprintf(b, "%s/%s", SYS6DIR, sys6sp[i]);
+		for (s = sys6sp[i], d = a + sprintf(a, "%s/", SYS6DIR); *s; s++)
+			if (*s != ' ')
+				*d++ = *s;
+		*d = 0;
+		if (on)
+			link(a, b);
+		else
+			unlink(b);
+	}
+}
+#endif
+
 int
 main()
 {
@@ -1350,7 +1509,7 @@ main()
 	struct stat sb;
 	int e, mj = UIMAJ;
 
-#ifdef SYS76
+#if defined(SYS76) || defined(SYS6)
 	t_init(TNAME, 330);
 #else
 	t_init("mac", 300);
@@ -1376,7 +1535,7 @@ main()
 	if (!t_check("register_cdev", modadm(MOD_TY_CDEV, MOD_C_MREG, &reg) == 0,
 	    "modadm: %s", T_ERR))
 		return t_done();
-#ifndef SYS76
+#if !defined(SYS76) && !defined(SYS6)
 	native();
 	e = haverom();
 	if (stat("/aux/bin/macabi", &sb) < 0)
@@ -1392,12 +1551,30 @@ main()
 	else
 		macjoin();
 #endif
-	if (stat("/mac/bin/startmac", &sb) < 0 || stat("/etc/aux/rom", &sb) < 0 ||
+#ifdef SYS6
+	if (stat(STARTMAC, &sb) < 0 || stat(ROOT6 "/etc/aux/rom", &sb) < 0 ||
 	    stat(SYSDIR "/System", &sb) < 0)
+#else
+	if (stat(STARTMAC, &sb) < 0 || stat("/etc/aux/rom", &sb) < 0 ||
+	    stat(SYSDIR "/System", &sb) < 0)
+#endif
 		t_skip("startmac", "no startmac, ROM or System file on this root");
 	else {
 		fidd();
 		deskfolder();
+#ifdef SYS6
+		/* its own ROM: the IIci's box flag loads it again */
+		e = open("/dev/uinter0", O_RDWR);
+		t_check("boxflag", setsym("uinter_boxflag", 5L) == 0, "no uinter_boxflag");
+		t_check("sysfolder", rename(SYSDIR, SYS6DIR) == 0, "%s", T_ERR);
+		sys6links(1);
+		startmac();
+		sys6links(0);
+		rename(SYS6DIR, SYSDIR);
+		setsym("uinter_boxflag", -1L);
+		if (e >= 0)
+			close(e);
+#else
 #ifdef SYS76
 		/* made by _AUXDispatch(36, 0); t_mac's run leaves one */
 		system("/usr/bin/rm -rf /tmp/.mac");
@@ -1421,6 +1598,7 @@ main()
 			restart();
 		if (macid > 0 && stat(ENVSH, &sb) == 0)
 			envrun();
+#endif
 #endif
 		fiddlog();
 	}

@@ -362,13 +362,15 @@ aux_flock(ap, a, rv, r)
 /* ---- statfs(path, buf), fstatfs(fd, buf): the 64-byte BSD form ---- */
 
 static int
-vstatfs(vp, ub)
+vstatfs(ap, vp, ub)
+	struct aux_proc *ap;
 	struct vnode *vp;
 	caddr_t ub;
 {
 	struct statvfs sv;
 	char b[64];
 	int e, t = 0;
+	unsigned long bs;
 
 	bzero((caddr_t)&sv, sizeof sv);
 	if ((e = VFS_STATVFS(vp->v_vfsp, &sv)) != 0)
@@ -377,9 +379,18 @@ vstatfs(vp, ub)
 		t = 1;
 	else if (strcmp(sv.f_basetype, "ufs") == 0)
 		t = 3;
+	bs = sv.f_frsize ? sv.f_frsize : sv.f_bsize;
+	/* A/UX 2's File Manager keeps the low 16 bits of the counts */
+	if (ap->ap_flags & APF_AUX2)
+		while (sv.f_blocks > 0xffff) {
+			bs <<= 1;
+			sv.f_blocks >>= 1;
+			sv.f_bfree >>= 1;
+			sv.f_bavail >>= 1;
+		}
 	bzero(b, sizeof b);
 	P32(b, t);
-	P32(b + 4, sv.f_frsize ? sv.f_frsize : sv.f_bsize);
+	P32(b + 4, bs);
 	P32(b + 8, sv.f_blocks);
 	P32(b + 12, sv.f_bfree);
 	P32(b + 16, sv.f_bavail);
@@ -401,7 +412,7 @@ aux_statfs(ap, a, rv, r)
 
 	if ((e = lookupname((caddr_t)a[0], UIO_USERSPACE, FOLLOW, NULLVPP, &vp)) != 0)
 		return e;
-	e = vstatfs(vp, (caddr_t)a[1]);
+	e = vstatfs(ap, vp, (caddr_t)a[1]);
 	VN_RELE(vp);
 	return e;
 }
@@ -418,7 +429,7 @@ aux_fstatfs(ap, a, rv, r)
 
 	if ((e = getf((int)a[0], &fp)) != 0)
 		return e;
-	return vstatfs(fp->f_vnode, (caddr_t)a[1]);
+	return vstatfs(ap, fp->f_vnode, (caddr_t)a[1]);
 }
 
 /* ---- truncate(path, len), ftruncate(fd, len): F_FREESP from len ---- */

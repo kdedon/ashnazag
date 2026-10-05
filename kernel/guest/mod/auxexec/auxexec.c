@@ -22,6 +22,7 @@
 #include "sys/exec.h"
 
 #define	F_EXEC		0x0002
+#define	F_AR16WR	0x0100	/* A/UX 2 tools; A/UX 3 sets F_AR32WR */
 #define	STYP_TEXT	0x0020
 #define	STYP_DATA	0x0040
 #define	STYP_BSS	0x0080
@@ -41,6 +42,7 @@ struct auxlib {
 extern int coffexec(), execmap();
 extern void dlm_cacheflush();
 extern struct guest_profile aux_profile;
+extern int aux_execaux2;
 
 int	aux_coff_default = 1;	/* 0: leave every 0x150 file to the stock loader */
 
@@ -199,6 +201,7 @@ aux_classify(vp, al, np)
 	}
 	if (!aux_coff_default)
 		return ENOEXEC;
+	aux_execaux2 = (G16(h + 18) & F_AR16WR) != 0;
 	return libs(vp, loff, lsize, al, np);
 }
 

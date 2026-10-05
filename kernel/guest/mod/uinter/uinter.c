@@ -98,7 +98,8 @@ uitick(arg)
 		return;
 	ui_evtick();
 	for (t = ui.l_task; t < ui.l_task + UI_NTASK; t++)
-		if (t->t_gp == ui.l_active && t->t_tick) {
+		if ((t->t_gp == ui.l_active && t->t_tick) ||
+		    (t->t_left > 0 && --t->t_left == 0)) {
 			ui_nposted++;
 			psignal(t->t_proc, SIGIOT);
 		}
@@ -267,6 +268,7 @@ uileave(t)
 	t->t_gp = 0;
 	t->t_held = 0;
 	t->t_tick = 0;
+	t->t_left = 0;
 	if (ui.l_active == gp) {
 		ui.l_active = ui.l_gp;
 		wakeup((caddr_t)&ui.l_active);
@@ -406,9 +408,10 @@ uisetup(gp, cmd, arg, b, rvp)
 	int *rvp;
 {
 	struct proc *p = u.u_procp;
+	static long lm030[2] = { 0x12f, 0xcb1 };
 	char f[UI_UIPSIZE / 64];
 	long a, n;
-	int e;
+	int e, i;
 
 	switch (UIOC_NUM(cmd)) {
 	case 1:				/* UI_SET: Mac vectors on */
@@ -417,6 +420,9 @@ uisetup(gp, cmd, arg, b, rvp)
 		gp->gp_vsr = 0x2000;
 		gp->gp_vvbr = 0;
 		gp->gp_flags |= GPF_ALINE | GPF_PRIV | GPF_SPIN;
+		/* A/UX 2's Mac ran on 68030s only */
+		if (AUXP(gp)->ap_flags & APF_AUX2)
+			gp->gp_flags |= GPF_CPU030;
 		return 0;
 	case 2:				/* UI_CLEAR */
 		if (!UIACT(gp))
@@ -486,6 +492,11 @@ uisetup(gp, cmd, arg, b, rvp)
 			return e;
 		e = copyout((caddr_t)ui_rom.r_low + a, (caddr_t)a, n) ? EFAULT : 0;
 		ui_romrel();
+		/* CPUFlag and MMUType of the 68030 an A/UX 2 Mac sees */
+		if (e == 0 && (AUXP(gp)->ap_flags & APF_AUX2))
+			for (i = 0; i < 2; i++)
+				if (a <= lm030[i] && lm030[i] < a + n && subyte((caddr_t)lm030[i], 3))
+					e = EFAULT;
 		return e;
 	case 67:			/* UI_GET_PRODINFO(ptr) */
 		if ((e = ui_romload()) != 0)
@@ -575,6 +586,7 @@ uiattach(gp, rvp)
 	t->t_gp = gp;
 	t->t_held = 0;
 	t->t_tick = 0;
+	t->t_left = 0;
 	AUXP(gp)->ap_mac |= APM_TASK;
 	lim = &u.u_rlimit[RLIMIT_NOFILE];
 	if (lim->rlim_cur < AUX_GFD + AUX_GNOFILE)
@@ -660,6 +672,9 @@ uimisc(gp, cmd, arg, b, rvp)
 	case 34:			/* UI_PHYS_SCREENS */
 		if (ui.l_state != LS_INUSE)
 			return EINVAL;
+		/* A/UX 2: the table follows the slot space's base and shift */
+		if (UIOC_SIZE(cmd) == 6 + 48)
+			b += 6;
 		for (i = 0; i < 6; i++) {
 			P8(b + 8 * i, 0xff);
 			P8(b + 8 * i + 1, 0);
@@ -671,7 +686,13 @@ uimisc(gp, cmd, arg, b, rvp)
 	case 35:			/* UI_TIMER: one tick for the layer */
 		if ((t = ui_task(gp)) == 0)
 			return EINVAL;
-		t->t_tick = 1;
+		/* A/UX 2: one tick after n, 0 none; gives the ticks that were left */
+		if (UIOC_SIZE(cmd) == 4 && (AUXP(gp)->ap_flags & APF_AUX2)) {
+			n = G32(b);
+			P32(b, t->t_left);
+			t->t_left = n > 0 ? n : 0;
+		} else
+			t->t_tick = 1;
 		if (ui.l_tid == 0 && (ui.l_tid = ttimeout(uitick, (caddr_t)0, 1L)) == -1) {
 			ui.l_tid = 0;
 			return EAGAIN;
@@ -811,7 +832,8 @@ uiioctl(dev, cmd, arg, mode, cr, rvp)
 	if ((cmd & 0xff00) != UIOC_GROUP || n > sizeof b)
 		return EINVAL;
 	if (UIOC_NUM(cmd) == 0) {	/* UI_GETVERSION */
-		*rvp = UI_VERSION;
+		/* A/UX 2's Toolbox wants the driver it shipped with */
+		*rvp = gp && (AUXP(gp)->ap_flags & APF_AUX2) ? 4 : UI_VERSION;
 		return 0;
 	}
 	if (gp == 0)

@@ -88,6 +88,7 @@ struct guest_proc {
 #define	GPF_UNOTE	0x80	/* its fatal-fault notice was left out */
 #define	GPF_FTRAP	0x100	/* traps #1-#15 but #13: frame to the guest vector in the gate */
 #define	GPF_FTRAP13	0x200	/* trap #13 too */
+#define	GPF_CPU030	0x400	/* sees a 68030: its bus fault frames, its MMU */
 #define	GPF_PROFILE	0xffff0000	/* profile's own bits */
 #define	GUEST_PRIV(gp)	((char *)((gp) + 1))	/* profile state */
 #define	GUESTP(p)	((struct guest_proc *)(p)->p_evpdp)
@@ -153,6 +154,7 @@ extern int guest_profile_add();		/* (pf) */
 extern void guest_profile_del();	/* (pf) */
 extern int guest_aline();		/* disposition: A-line reflection */
 extern int guest_priv();		/* disposition: privilege emulation */
+extern int guest_fline();		/* the same for 68030 MMU instructions in line F */
 extern int guest_fnote();		/* disposition: note an access fault */
 extern int guest_detach();		/* (pf): curproc leaves its guest */
 extern int guest_attach();		/* (pf): curproc becomes a guest */

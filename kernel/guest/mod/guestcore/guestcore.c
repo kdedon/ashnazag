@@ -152,6 +152,60 @@ gc_exit(p, stat)
 	gc_free(p);
 }
 
+static int gc_nhost;		/* NOTICE lines printed */
+
+/* a jump into low memory: d0-a6 (r0-r14), the stack, the code before each long on it */
+static void
+gc_dump(r)
+	char *r;
+{
+	long sp = GR_USP(r), w, c[4];
+	int i, j;
+
+	for (i = 0; i < 15; i += 5)
+		printf("  r%d %x %x %x %x %x\n", i, (int)GR_D(r, i),
+		    (int)GR_D(r, i + 1), (int)GR_D(r, i + 2), (int)GR_D(r, i + 3),
+		    (int)GR_D(r, i + 4));
+	printf("  sp %x\n", (int)sp);
+	for (i = -4; i < 8; i++) {
+		w = fuword((caddr_t)(sp + 4 * i));
+		printf("  sp+%d %x", 4 * i, (int)w);
+		if (!(w & 1) && w >= 0x100 && copyin((caddr_t)(w - 16), (caddr_t)c, 16) == 0)
+			for (j = 0; j < 4; j++)
+				printf(" %x", (int)c[j]);
+		printf("\n");
+	}
+	printf("  last A-line at %x\n", (int)guest_lineapc);
+}
+
+/*
+ * A guest's exception left to the host, whose default is mostly a fatal
+ * signal: the first few are reported.  Faults, system calls, FPU and
+ * privileged instructions (reported where they are emulated) are not.
+ */
+static int
+gc_host(gp, r, v)
+	struct guest_proc *gp;
+	char *r;
+	int v;
+{
+	int op;
+
+	if (!(gp->gp_flags & GPF_PRIV) || (GR_SR(r) & 0x2000) || v == 2 || v == 8 || v == 32 ||
+	    v == 47)
+		return 1;
+	op = fuword((caddr_t)GR_PC(r)) >> 16 & 0xffff;
+	if (v == 11 && (op >> 9 & 7) == 1)
+		return 1;
+	if (gc_nhost < 10 && ++gc_nhost) {
+		printf("NOTICE: guest pid %d: vector %d at %x (%x) to the host\n",
+		    (int)curproc->p_pid, v, (int)GR_PC(r), op);
+		if ((unsigned long)GR_PC(r) < 0x100)
+			gc_dump(r);
+	}
+	return 1;
+}
+
 static int
 gc_trap(r)
 	char *r;
@@ -161,11 +215,11 @@ gc_trap(r)
 	struct guest_disp *d = &gp->gp_prof->gpf_disp[v];
 
 	if (d->gd_kind == GD_NATIVE || d->gd_fn == 0)
-		return 1;
+		return gc_host(gp, r, v);
 	if ((d->gd_flags & GDF_USER) && (GR_SR(r) & 0x2000))
 		return 1;
 	u.u_ar0 = (struct pcb *)r;	/* for sendsig from the handler's tail */
-	return (*d->gd_fn)(gp, r, v);
+	return (*d->gd_fn)(gp, r, v) ? gc_host(gp, r, v) : 0;
 }
 
 static int
