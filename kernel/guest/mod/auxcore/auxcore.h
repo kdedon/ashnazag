@@ -37,6 +37,7 @@ struct aux_proc {
 	int	ap_alid;	/* alarm callout, 0 = none */
 	long	ap_alexp;	/* its expiry, lbolt */
 };
+#define	APF_AUX2	0x01	/* an A/UX 2 image: COFF flag F_AR16WR */
 #define	APM_TASK	0x01	/* a task of the Mac environment's layer */
 #define	APM_UIP		0x02	/* holds the ui page */
 #define	AUXP(gp)	((struct aux_proc *)GUEST_PRIV(gp))

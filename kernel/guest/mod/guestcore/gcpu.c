@@ -524,6 +524,53 @@ privkind(op)
 }
 
 /*
+ * A 68030 MMU instruction.  The guest's address space is the host's
+ * business: moves to the MMU registers are dropped; moves from them
+ * give an enabled MMU with 4 KB pages (TC) and two 10-bit levels, an
+ * empty root (CRP, SRP), no transparent translation and a clean MMUSR;
+ * flushes, loads and tests do nothing.
+ */
+static int
+pmmu030(pi, op)
+	struct pi *pi;
+	int op;
+{
+	u_short ext;
+	long a, imm, z = 0;
+	int mode = (op >> 3) & 7, reg = op & 7, sz;
+
+	if (iword(pi, &ext))
+		return -2;
+	switch (ext >> 13) {
+	case 0:					/* pmove TT0/TT1 */
+	case 2:					/* pmove TC/SRP/CRP */
+		sz = (ext >> 13) == 2 && ((ext >> 10) & 7) >= 2 ? 8 : 4;
+		if ((ext >> 13) == 2 && ((ext >> 10) & 7) == 0)
+			z = 0x80c0aa00L;
+		break;
+	case 3:					/* pmove MMUSR */
+		sz = 2;
+		break;
+	case 1:					/* pflush, pload */
+		if (((ext >> 10) & 7) != 6 && (ext & 0xfde0) != 0x2000)
+			return 0;
+		/* FALLTHROUGH */
+	case 4:					/* ptest */
+		return mode < 2 || mode == 3 || mode == 4 || eaddr(pi, mode, reg, 1, &a, &imm) <= 0 ?
+		    -1 : 0;
+	default:
+		return -1;
+	}
+	if (sz < 8)
+		return operand(pi, mode, reg, sz, &z, (ext & 0x200) != 0, 1);
+	if (mode < 2 || eaddr(pi, mode, reg, 8, &a, &imm) <= 0)
+		return -1;
+	if ((ext & 0x200) && (suword((caddr_t)a, 0x7fff0002L) || suword((caddr_t)a + 4, 0)))
+		return -2;
+	return 0;
+}
+
+/*
  * One privileged instruction.  0: emulated, PC past it; 1: PC set;
  * -1: not emulated; -2: operand fault.
  */
@@ -612,6 +659,8 @@ priv1(gp, pi)
 		return 0;
 	if ((op & 0xff80) == 0xf300)			/* fsave, frestore */
 		return fpstate(pi, (int)op);
+	if ((op & 0xffc0) == 0xf000 && (gp->gp_flags & GPF_CPU030))	/* 68030 MMU */
+		return pmmu030(pi, (int)op);
 	return -1;
 }
 
@@ -661,6 +710,18 @@ guest_priv(gp, r, v)
 	return 1;			/* stock: SIGILL */
 }
 
+/* vector 11: the 68030's privileged MMU instructions are line F on a 68040 or 68060 */
+int
+guest_fline(gp, r, v)
+	struct guest_proc *gp;
+	char *r;
+	int v;
+{
+	if (!(gp->gp_flags & GPF_CPU030) || (fuword((caddr_t)GR_PC(r)) >> 16 & 0xffc0) != 0xf000)
+		return 1;
+	return guest_priv(gp, r, v);
+}
+
 /*
  * Vector 2 from user mode: note the fault for guest_fault, then the
  * stock handler resolves it or posts the signal.
@@ -683,9 +744,11 @@ guest_fnote(gp, r, v)
 
 /*
  * The signal of an access fault the kernel could not resolve goes to
- * the guest's vector 2 as a 68040 format-7 frame (60 bytes).  Only on
- * the way out of the noted fault: a signal another process sent stays
- * a signal.  0: reflected.
+ * the guest's vector 2 as a 68040 format-7 frame (60 bytes), or for a
+ * guest that sees a 68030 its long bus fault frame (format $B, 92
+ * bytes), whose size its handlers rely on.  Only on the way out of the
+ * noted fault: a signal another process sent stays a signal.
+ * 0: reflected.
  */
 static int
 guest_fault(p, gp, n)
@@ -693,10 +756,10 @@ guest_fault(p, gp, n)
 	struct guest_proc *gp;
 	int n;
 {
-	char *r = (char *)u.u_ar0, f[60];
+	char *r = (char *)u.u_ar0, f[92];
 	sigqueue_t *sq, *q, **pp;
 	long h, usp;
-	int s;
+	int s, n30 = (gp->gp_flags & GPF_CPU030) != 0, fl = n30 ? 92 : 60;
 
 	if (!(gp->gp_flags & GPF_FAULT) || gp->gp_fpc != GR_PC(r) || GR_VEC(r) != 2 ||
 	    (GR_SR(r) & 0x2000))
@@ -708,16 +771,24 @@ guest_fault(p, gp, n)
 	splx_(s);
 	if (h)
 		return 1;
-	usp = GR_USP(r) - sizeof f;
-	bzero(f, sizeof f);
+	usp = GR_USP(r) - fl;
+	bzero(f, fl);
 	P16(f, GR_SR(r) | gp->gp_vsr);
 	P32(f + 2, GR_PC(r));
-	P16(f + 6, 0x7008);
-	P32(f + 8, gp->gp_fea);
-	P16(f + 12, gp->gp_fssw & 0x017f);	/* RW, size, TT, TM */
-	P32(f + 20, gp->gp_fea);
+	if (n30) {
+		P16(f + 6, 0xb008);
+		/* data fault; RW, size and function code from the 68040's SSW */
+		P16(f + 10, 0x100 | (gp->gp_fssw >> 2 & 0x40) | (gp->gp_fssw >> 1 & 0x30) |
+		    (gp->gp_fssw & 7));
+		P32(f + 16, gp->gp_fea);
+	} else {
+		P16(f + 6, 0x7008);
+		P32(f + 8, gp->gp_fea);
+		P16(f + 12, gp->gp_fssw & 0x017f);	/* RW, size, TT, TM */
+		P32(f + 20, gp->gp_fea);
+	}
 	if (copyin((caddr_t)(gp->gp_vvbr + 8), (caddr_t)&h, 4) || h == 0 || (h & 1) ||
-	    copyout(f, (caddr_t)usp, sizeof f))
+	    copyout(f, (caddr_t)usp, fl))
 		return 1;
 	s = splhi_();
 	for (pp = &p->p_sigqueue; *pp && *pp != sq; pp = &(*pp)->sq_next)

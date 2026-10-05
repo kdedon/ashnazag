@@ -126,6 +126,11 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 		(cd "$AUXB/root" && find . -type f | sed 's#^\.##' | sort) | while read -r f; do
 			echo "f $f 755 0 3 $AUXB/root$f"
 		done
+		# A/UX 2.0.1's environment: its devices
+		if [ -d "$AUXB/root/a201" ]; then
+			echo "c /a201/dev/uinter0 666 0 3 54 0"
+			echo "c /a201/dev/console 620 0 7 0 0"
+		fi
 	fi
 	if [ -d "$MINTB/root" ] && [ -f "$AUXB/mod.d/tosguest" ]; then
 		[ -d "$TOSB/root" ] || echo "c /dev/tos 660 0 25 56 0"

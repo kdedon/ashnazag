@@ -34,6 +34,7 @@ struct uitask {
 	k_sigset_t	t_hold;		/* its own mask, while t_held */
 	int		t_held;
 	int		t_tick;		/* takes the tick (UI_TIMER) */
+	long		t_left;		/* A/UX 2: ticks to its one tick, 0 none */
 };
 #define	UI_NTASK	16
 

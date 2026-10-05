@@ -11,7 +11,8 @@
 # /mac/sys/Sys7 with the Finder, the ROM image at /etc/aux/rom, fidd at
 # /etc/aux/fidd; with the Mac OS 7.6.1 CD image, CD761, its System
 # Folder with SimpleText in /mac/sys/S761; with the Mac OS 8.1 CD image,
-# CD81, likewise in /mac/sys/S81).
+# CD81, likewise in /mac/sys/S81; with the A/UX 2.0.1 CD image, CD201,
+# its System 6 environment in /a201).
 # AUXROOT names the A/UX root, AUXROM the Mac ROM image (default: the
 # Quadra 700 ROM beside the repository); both proprietary, never in the
 # repository.
@@ -88,6 +89,23 @@ if [ -f "$OUT/mod.d/uinter" ] && [ -f "$AUXROOT/mac/bin/startmac" ] && [ -f "$SY
 			"$T/net/mtcp/mtcp0.s" "$T/net/mtcp/mtcp.c"
 		"$LX-objcopy" -O binary -j .text -j .rodata "$OUT/obj/mtcp.elf" "$OUT/obj/mtcp.bin"
 		python3 "$T/net/mtcp/mkapp.py" "$OUT/obj/mtcp.bin" "$OUT/root/mac/sys/MTcp/mtcp"
+	fi
+	# A/UX 2.0.1's System 6 environment, a root of its own (chroot), from
+	# its CD, when present; the test root's names have no spaces, t_mac6
+	# links the System Folder's under their own
+	CD201=${CD201:-$AUX/media/AUX_2.0.1_CD_Image.iso}
+	if [ -f "$CD201" ]; then
+		R6=$OUT/root/a201
+		sh "$AUX/images/macenv/mksys6.sh" "$CD201" "$R6"
+		mv "$R6/mac/sys/System Folder" "$R6/mac/sys/Sys6"
+		for n in "%AUX Resources" "DA Handler" "Key Layout" "Scrapbook File"; do
+			mv "$R6/mac/sys/Sys6/$n" "$R6/mac/sys/Sys6/$(echo "$n" | tr -d ' ')"
+		done
+		mkdir -p "$R6/dev" "$R6/etc/aux"
+		# the IIci's ROM, the one System 6.0.7 knows, else the other
+		AUXROM6=${AUXROM6:-$AUX/368CADFE - Mac IIci.ROM}
+		[ -f "$AUXROM6" ] || AUXROM6=$AUXROM
+		cp "$AUXROM6" "$R6/etc/aux/rom"
 	fi
 	CD81=${CD81:-$AUX/media/MacOS8_1.iso}
 	[ ! -f "$CD81" ] ||

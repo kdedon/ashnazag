@@ -45,6 +45,7 @@ static struct {
 	{ "t_aux", 300 },
 	{ "t_mac", 330 },
 	{ "t_mac76", 330 },
+	{ "t_mac6", 330 },
 	{ "t_vtop", 60 },
 	{ "t_display", 360 },
 	{ "t_tos", 700 },

@@ -25,6 +25,7 @@ extern int runrun;
 long aux_nsys, aux_lastsys;	/* Mac task's calls; the last: number << 16 | errno */
 int aux_trace = 0;	/* 1: every call, 2: results, 4: open paths, 8: failures, name changes,
 			   16: keep the first AUX_TBUF bytes */
+int aux_execaux2 = 0;	/* the image being exec'd is an A/UX 2 one */
 void (*aux_macdetach)() = 0;
 int (*aux_slotmgr)() = 0;
 void (*aux_uitick)() = 0;
@@ -251,6 +252,8 @@ aux_systrap(gp, r, vec)
 	if (ae == 0 || (ae->ae_flags & AE_NOSYS)) {
 		if (aux_trace & 3)
 			printf("aux %d: nosys %d\n", (int)p->p_pid, num);
+		if (aux_trace & 8)
+			aux_tlog((int)p->p_pid, "nosys", (long)num);
 		psignal(p, SIGSYS);
 		goto out;
 	}
@@ -348,7 +351,7 @@ aux_pexec(gp)
 	ap->ap_mac = 0;
 	if (!(ap->ap_compat & COMPAT_EXEC))
 		ap->ap_compat = COMPAT_DEFAULT;
-	ap->ap_flags = 0;
+	ap->ap_flags = aux_execaux2 ? APF_AUX2 : 0;
 	ap->ap_sv_onstack = ap->ap_sv_intr = 0;
 	ap->ap_ss_sp = 0;
 	ap->ap_ss_onstack = 0;
@@ -427,6 +430,8 @@ auxcore_load()
 	d->gd_kind = GD_EMULATE;
 	d->gd_flags = GDF_USER;
 	d->gd_fn = guest_priv;
+	aux_profile.gpf_disp[11] = *d;
+	aux_profile.gpf_disp[11].gd_fn = guest_fline;
 	d = &aux_profile.gpf_disp[10];
 	d->gd_kind = GD_REFLECT;
 	d->gd_flags = GDF_USER;

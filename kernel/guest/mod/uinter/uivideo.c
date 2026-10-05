@@ -498,6 +498,9 @@ ui_screens(b)
 	ui_inscreen(uv.v_width, uv.v_height);
 	s->s_kin = ui_kin;
 	(void)ds_switch(s);
+	/* the default video device (XPRAM $80): the only one there is */
+	ui.l_pram[0x80] = UV_SLOT;
+	ui.l_pram[0x81] = UV_MODE;
 	P8(b, UV_SLOT);
 	P8(b + 1, UV_MODE);
 	P8(b + 2, 0);
