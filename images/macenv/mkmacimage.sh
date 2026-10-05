@@ -58,13 +58,31 @@ rm -rf "$P/guest" "$P"/*.o
 sh "$AUX/images/tosenv/mktos.sh" "$P/tos" ||
 	{ echo "[FAIL] TOS container files"; exit 1; }
 
-# the Amiga environment's package, installed once as root with
-# sh /usr/lib/amiga/stage/installmig /usr/lib/amiga/stage
-AMIGASTAGE=${AMIGASTAGE:-}
-mkdir -p "$P/amigapkg/usr/lib/amiga"
-[ -z "$AMIGASTAGE" ] || cp -rp "$AMIGASTAGE" "$P/amigapkg/usr/lib/amiga/stage"
-(cd "$P/amigapkg" && find . -depth -print | cpio -o -H newc -R 0:3 --quiet) > "$P/amiga.cpio"
-rm -rf "$P/amigapkg"
+# the Amiga environment, installed as installmig would from AMIGASTAGE
+# (images/amigaenv/mkamiga.sh's output; proprietary, image only).  The
+# Kickstart ROM and the ADFs are for the display group only.
+A=$P/amigapkg AP=$P/amigaprv
+mkdir -p "$A" "$AP"
+if [ -n "$AMIGASTAGE" ]; then
+	S=$AMIGASTAGE/root
+	mkdir -p "$A/usr/bin" "$A/usr/sbin" "$A/etc/amiga" "$A/amiga" "$AP/etc/amiga" "$AP/amiga/media"
+	cp "$S/usr/bin/startmig" "$S/usr/bin/makeamiga" "$A/usr/bin/"
+	cp "$S/usr/sbin/amigareg" "$A/usr/sbin/"
+	cp "$S/etc/amiga/container-boot.rom" "$A/etc/amiga/"
+	cp -R "$S/amiga/sys" "$A/amiga/"
+	for d in rtg guest; do [ ! -d "$S/amiga/$d" ] || cp -R "$S/amiga/$d" "$A/amiga/"; done
+	cp "$S/etc/amiga/kicka4000.rom" "$AP/etc/amiga/"
+	cp "$S/amiga/media/"*.adf "$S/amiga/media/manifest.json" "$AP/amiga/media/"
+	chmod -R a+rX,go-w "$A"
+	chmod 755 "$A/usr/bin/startmig" "$A/usr/bin/makeamiga" "$A/usr/sbin/amigareg"
+	chmod 750 "$AP/amiga/media"; chmod 640 "$AP/etc/amiga/kicka4000.rom" "$AP/amiga/media/"*
+	# the archive carries its parents: they must not shut others out of /etc
+	chmod 755 "$AP/etc" "$AP/etc/amiga" "$AP/amiga"
+fi
+chmod 755 "$A" "$AP"
+(cd "$A" && find . -depth -print | cpio -o -H newc -R 0:3 --quiet) > "$P/amiga.cpio"
+(cd "$AP" && find . -depth -print | cpio -o -H newc -R 0:25 --quiet) > "$P/amigaprv.cpio"
+rm -rf "$A" "$AP"
 
 cp "$D/S05aux" "$D/startmac" "$D/makemac" "$P/"
 mv "$P/startmac" "$P/startmac.sh"

@@ -11,6 +11,8 @@
 #include "sys/param.h"
 #include "sys/conf.h"
 #include "sys/stream.h"
+#include "sys/strsubr.h"
+#include "sys/callo.h"
 
 extern int nodev(), nulldev();
 #define ND	nodev
@@ -127,10 +129,58 @@ struct cdevsw cdevsw[70] = {
 	C_NONE, C_NONE, C_NONE, C_NONE, C_NONE,		/* 65-69 */
 };
 
+/*
+ * sockmod's service procedures retry a failed allocation with
+ * bufcall(qenable, q) or timeout(qenable, q) and its close leaves them
+ * pending: the freed queue would later be enabled and run.  Its close
+ * also cancels them.
+ */
+extern struct streamtab sockinfo;
+extern struct bclist strbcalls;
+extern int calllimit;
+#undef	splstr
+extern int sockmodclose(), untimeout(), splstr();
+
+static int
+sockclose(q, flag, crp)
+queue_t *q;
+int flag;
+cred_t *crp;
+{
+	register struct strevent *se, *next;
+	register int i;
+	int r, sr;
+
+	r = sockmodclose(q, flag, crp);
+	sr = splstr();
+	for (se = strbcalls.bc_head; se; se = next) {
+		next = se->se_next;
+		if (se->se_func == qenable && (se->se_arg == (long)q || se->se_arg == (long)WR(q)))
+			unbufcall((int)se);
+	}
+	/* untimeout reorders the table: rescan after each removal */
+	for (i = 0; i <= calllimit; i++)
+		if (callout[i].c_func == qenable &&
+		    (callout[i].c_arg == (caddr_t)q || callout[i].c_arg == (caddr_t)WR(q))) {
+			untimeout(callout[i].c_id);
+			i = -1;
+		}
+	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (sr) : "memory");
+	return r;
+}
+
+static int
+mac_sockfix()
+{
+	sockinfo.st_rdinit->qi_qclose = sockclose;
+	return 0;
+}
+
 /* Called by main() after init_tbl, before the root mount. */
 extern void mac_diskprobe();
 
 int (*io_start[])() = {
 	(int (*)())mac_diskprobe,
+	mac_sockfix,
 	0
 };

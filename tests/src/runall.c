@@ -48,6 +48,7 @@ static struct {
 	{ "t_vtop", 60 },
 	{ "t_display", 360 },
 	{ "t_tos", 700 },
+	{ "t_mint", 300 },
 	{ "t_amiga", 520 },
 	{ "t_env", 240 },
 	{ 0, 0 }

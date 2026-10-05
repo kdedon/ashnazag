@@ -11,7 +11,8 @@
 # override bound to our object, validates, then links.  Root is the RAM
 # disk with the image from mac/ramdisk/build/root.img; the console tty
 # is the screen and the IKBD keyboard; the display service (majors 51-53)
-# shares that screen and keyboard.
+# shares that screen and keyboard; loadable modules and guest processes
+# as on the Mac.
 set -e
 
 A=$(cd "$(dirname "$0")" && pwd)
@@ -107,7 +108,11 @@ fi
 [ -s "$RDB/rdimage.bin" ] || { echo "[FAIL] no root image: $RDB/root.img"; exit 1; }
 echo "[OK] root image $(wc -c < "$RDB/rdimage.bin") bytes"
 
-OBJS="$W/ataentry.o $W/ataintr.o $W/ataconf.o $W/ikbd.o $W/fbcons.o $W/fbfont.o
+echo "[*] loadable modules and guest processes"
+sh "$K/dlm/build.sh" -k "$W/dlm"
+sh "$K/guest/build.sh" -k "$BASE" "$W/guest"
+
+OBJS="$W/dlm/dlm.o $W/guest/guest.o $W/ataentry.o $W/ataintr.o $W/ataconf.o $W/ikbd.o $W/fbcons.o $W/fbfont.o
 $W/atadevsw.o $W/atacons.o $W/ds.o $W/dsdev.o $W/dsseg.o $W/atads.o $W/ataide.o $W/ahdi.o $W/atartc.o $W/rd.o $RDB/rdimage.o
 $W/fpe030.o $FPEOBJS $W/fpe-obj/fpe_glue.o $W/fpe040.o"
 
@@ -115,11 +120,13 @@ OVR="config putchar getchar callrom sysdump haltsys rtnfirm hw_clkstart clkreld
 p1int p2int p3int p4int p5int p6int parinit qlintr slpoll autocon delayus
 ramopen ramclose ramstrategy ramprint ramsize backtrace fpu_setup inituname
 sdopen sdqueue sdhardwarename sdpartition sdvalid sdblkno sddevsize
-prhasfp fpuinit fpu_save fpu_restore setregs clkset"
-# Amiga data replaced: the console streamtab and the device switches.
-OVRD="coinfo cdevsw bdevsw"
+prhasfp fpuinit fpu_save fpu_restore setregs clkset
+dmainit ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig mdboot"
+# Amiga data replaced: the console streamtab, the device switches and the
+# exec and STREAMS module switches.
+OVRD="coinfo cdevsw bdevsw execsw fmodsw"
 # Stock bodies kept under __amix_<name> for the wrappers.
-ALIAS="fpu_setup inituname"
+ALIAS="fpu_setup:T inituname:T sendsig:T valid_usr_range:T fsig:T execsw:D fmodsw:D"
 # Stock bodies the emulator chains to, as <name>_fpe_orig.
 FPEORIG="fpuinit fpu_save fpu_restore setregs"
 
@@ -135,9 +142,12 @@ for s in $OVRD; do
 		echo "[FAIL] $s is not global data in the base"; exit 1; }
 	WEAK="$WEAK --weaken-symbol $s"
 done
-for s in $ALIAS; do
-	off=$(m68k-linux-gnu-nm "$BASE" | awk -v s="$s" '$3==s && $2=="T"{print $1}')
-	WEAK="$WEAK --add-symbol __amix_$s=.text:0x$off,function,global"
+for a in $ALIAS; do
+	s=${a%:*} t=${a#*:}
+	off=$(m68k-linux-gnu-nm "$BASE" | awk -v s="$s" -v t="$t" '$3==s && $2==t{print $1}')
+	[ -n "$off" ] || { echo "[FAIL] no $s to alias"; exit 1; }
+	if [ "$t" = T ]; then sec=.text kind=function; else sec=.data kind=object; fi
+	WEAK="$WEAK --add-symbol __amix_$s=$sec:0x$off,$kind,global"
 done
 for t in c b; do
 	want=$(m68k-linux-gnu-nm "$BASE" | awk -v s=shadow${t}sw '$3==s{print $1}')
@@ -149,12 +159,16 @@ for s in $FPEORIG; do
 	off=$(m68k-linux-gnu-nm "$BASE" | awk -v s="$s" '$3==s && $2=="T"{print $1}')
 	WEAK="$WEAK --add-symbol ${s}_fpe_orig=.text:0x$off,function,global"
 done
+# the base has no unt_latch: the guest filter's fallback is cmn_err
+off=$(m68k-linux-gnu-nm "$BASE" | awk '$3=="cmn_err" && $2=="T"{print $1}')
+WEAK="$WEAK --add-symbol __amix_unt_latch=.text:0x$off,function,global"
 WEAK="$WEAK --globalize-symbol trapsig"
 m68k-linux-gnu-objcopy $WEAK "$BASE" "$W/base.weak"
 python3 "$A/patch_spl.py" -p "$W/base.weak" $SPL_SITES
 
 echo "[*] linking the Atari overrides over the base"
 m68k-cbm-sysv4-ld -r -o "$OUT" "$W/base.weak" $OBJS
+python3 "$K/guest/patch_vec.py" "$OUT" "$W/guest/gates.lst"
 
 btext=$(m68k-linux-gnu-size -A "$BASE" | awk '$1==".text"{print $2}')
 bad=0
@@ -188,6 +202,8 @@ tail -1 "$W/validator.log"
 echo "[*] final link at 0x1000"
 m68k-elf-ld -T "$A/atari.ld" -Map "$OUT.map" -o "$OUT.elf" "$W/ataboot.o" "$OUT"
 python3 "$A/patch_spl.py" -c "$OUT.elf" $SPL_SITES
+"$W/dlm/mkksym" "$OUT.elf"
+"$W/dlm/mkksym" -c "$OUT.elf"
 m68k-elf-readelf -h "$OUT.elf" | grep -E 'Type|Entry'
 m68k-elf-size "$OUT.elf"
 echo "[OK] built $OUT and $OUT.elf"

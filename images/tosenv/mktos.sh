@@ -89,6 +89,9 @@ elif AUX=$AUX MINT=$O/mint sh "$G/tos/teradesk/build.sh" "$O/teradesk" > "$O/ter
 	mkdir -p "$T/tos/src"
 	cp -r "$O/teradesk/TERADESK" "$T/tos/sys/"
 	cp "$O/teradesk/teradesk.tar.gz" "$T/tos/src/"
+	# EmuDesk's saved desktop: TeraDesk starts at boot, text files open in Qed
+	if [ -d "$T/tos/sys/APPS/QED" ]; then cat "$D/emudesk.inf"; else grep -v QED "$D/emudesk.inf"; fi |
+		sed 's/$/\r/' > "$T/tos/sys/EMUDESK.INF"
 else
 	echo "[FAIL] TeraDesk: $(tail -1 "$O/teradesk.log"); NOTERADESK=1 builds without it"
 	exit 1

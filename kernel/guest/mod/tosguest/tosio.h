@@ -28,6 +28,7 @@ struct tosenter {
 };
 
 #define	TEF_MONO	0x01		/* monochrome monitor */
+#define	TEF_NOMACH	0x02		/* a lone program: no machine, ST-RAM is the caller's */
 
 struct tosowner {
 	long		to_pid;		/* 0: free */
@@ -59,6 +60,9 @@ struct tossock {
 #define	TSO_RECV	7		/* so_buf, so_len, so_arg flags -> so_rv, so_addr */
 #define	TSO_CONNWAIT	8		/* -> so_rv: -1 pending, else the connect's errno */
 #define	TSO_NAME	9		/* so_arg 1 peer, 0 local -> so_addr */
+#define	TSO_GETOPT	10		/* so_arg level << 16 | name, so_buf, so_len -> so_rv length */
+#define	TSO_SETOPT	11		/* so_arg level << 16 | name, so_buf, so_len */
+#define	TSO_SHUTDOWN	12		/* so_arg how */
 
 struct tosinput {
 	int		ti_n;

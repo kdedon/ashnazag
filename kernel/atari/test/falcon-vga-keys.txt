@@ -1,0 +1,46 @@
+wait login:
+sleep 2
+debug screenshot OUT/1-login.png
+type root\n
+wait # 
+type echo uname=`uname -n`; mount | grep proc; echo ps-lines=`ps -ef | wc -l`\n
+wait ps-lines=
+type ps -ef\n
+wait # 
+sleep 2
+debug screenshot OUT/2-ps.png
+type dstest draw -t 600 &\n
+wait drawn
+sleep 3
+debug screenshot OUT/3-draw.png
+event keydown 0x1d
+event keydown 0x38
+event keypress 0x01
+event keyup 0x38
+event keyup 0x1d
+wait hidden, serial
+sleep 3
+debug screenshot OUT/4-console.png
+event keydown 0x1d
+event keydown 0x38
+event keypress 0x02
+event keyup 0x38
+event keyup 0x1d
+wait shown, serial
+sleep 3
+debug screenshot OUT/5-shown.png
+event keydown 0x1d
+event keydown 0x38
+event keypress 0x01
+event keyup 0x38
+event keyup 0x1d
+wait hidden, serial
+type kill $!; exit\n
+wait login:
+type guest\n
+wait $ 
+type echo guest-id=`id`\n
+wait guest-id=
+sleep 2
+debug screenshot OUT/6-guest.png
+debug quit 0

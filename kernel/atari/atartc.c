@@ -190,3 +190,17 @@ char *cr;
 		return e;
 	return rtc_settime(t) ? EINVAL : 0;
 }
+
+/* uadmin(A_SHUTDOWN or A_REBOOT, fcn): AD_HALT halts, the rest restart
+ * through the ROM's reset entry, which boots the disk again. */
+extern void dhalt(), haltsys(), ata_restart();
+
+void
+mdboot(fcn, mdep)
+int fcn, mdep;
+{
+	dhalt();
+	if (fcn == 0)
+		haltsys(0);
+	ata_restart();
+}

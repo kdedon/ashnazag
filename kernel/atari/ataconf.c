@@ -87,6 +87,7 @@ unsigned long ata_pool = 1;		/* ST-RAM pool base */
 unsigned long ata_screen = 1;
 unsigned long ata_nf = 1;		/* debug channel id, 0 off */
 int ata_nfwant = 1;
+long mac_socktrace = 1;		/* socktrace: log A/UX socket calls */
 long ata_rootarg = 1;			/* dd minor from root=, -1 none */
 
 void ata_puts();
@@ -414,6 +415,7 @@ bi_parse()
 	ata_nchunk = 0;
 	ata_machtype = ata_cputype = ata_fputype = ata_mmutype = ata_mch = 0;
 	ata_nfwant = 0;
+	mac_socktrace = 0;
 	ata_rootarg = -1;
 	ata_vmon = -1;
 	ata_vh = ata_vhz = ata_vbad = 0;
@@ -440,6 +442,7 @@ bi_parse()
 			break;
 		case BI_COMMAND_LINE:
 			ata_nfwant = ata_word((char *)p, "nfcons");
+			mac_socktrace = ata_word((char *)p, "socktrace");
 			ata_rootparse((char *)p);
 			ata_vparse((char *)p);
 			break;

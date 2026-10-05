@@ -6,7 +6,7 @@
 #
 #   sh tests/tos/build.sh outdir
 #
-# Out: outdir/root/tos/bin/{starttos,maketos}, outdir/root/tos/{sys,stik,fvdi,teradesk}/,
+# Out: outdir/root/tos/bin/{starttos,maketos}, outdir/root/tos/{sys,stik,fvdi,teradesk,qed}/,
 # outdir/root/etc/tos/{emutos.img,rom,tosml.img}.
 # EMUTOS names the EmuTOS 512 KB release zip (default: ref/emutos-release),
 # EMUTOSLANG its image (us).  TOSROM names the user's ROM: an image, or a
@@ -99,10 +99,16 @@ fi
 if AUX=$AUX MINT=$O/mint sh "$G/tos/teradesk/build.sh" "$O/teradesk" > "$O/teradesk.log" 2>&1; then
 	mkdir -p "$R/tos/teradesk"
 	cp -r "$O/teradesk/TERADESK" "$R/tos/teradesk/"
+	sed 's/$/\r/' "$AUX/images/tosenv/emudesk.inf" > "$R/tos/teradesk/EMUDESK.INF"
 else
 	echo "[skip] TeraDesk: $(tail -1 "$O/teradesk.log")"
 fi
 rm -rf "$O/mint"
+# Qed, the desktop's text viewer, when its files are at hand
+if [ -f "$AUX/ref/tosapps/qed/qed/qed.app" ]; then
+	mkdir -p "$R/tos/qed"
+	(cd "$AUX/ref/tosapps/qed/qed" && cp qed.app qed.rsc icons.rsc qed.cfg "$R/tos/qed/")
+fi
 # Ballerburg, when its files are at hand: GEM, plus direct screen writes
 if [ -f "$AUX/ref/tosapps/baller/BALLER.PRG" ]; then
 	mkdir -p "$R/tos/baller"

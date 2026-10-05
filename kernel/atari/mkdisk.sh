@@ -12,9 +12,12 @@
 # DISKMB (default 512), ROOTMB (default 128), SWAPMB (default 64, all
 # of it used); /home gets the rest, from 4 MB on.  GEM=1: the
 # rest (at most 508 MB) is a TOS FAT partition (BGM, s4) instead of /home.
+# ZONE: /etc/TIMEZONE's TZ (default CST6CDT); not TZ, which the host's shell sets.
 # BOOTARGS: kernel command line (default root=c?d0s1, ? = boot unit).
 # TESTS: programs from tests/build/bin to put in /tests, with /tests/ksyms
-# (e.g. TESTS=t_page).
+# (e.g. TESTS=t_page).  MODS: a module directory (guest/build.sh -m's
+# mod.d) to put in /tests/mod.d, with /tests/auxreg, /dev/uinter0 and
+# /dev/tos.
 # The tape segments come from the Mac build or $AMIX_TAPE.
 set -e
 
@@ -29,6 +32,7 @@ ROOTMB=${ROOTMB:-128}
 SWAPMB=${SWAPMB:-64}
 BOOTARGS=${BOOTARGS:-root=c?d0s1}
 GEM=${GEM:-0}
+ZONE=${ZONE:-CST6CDT}
 PY="nice -n 19 python3"
 
 case $KERNEL in /*) ;; *) KERNEL=$PWD/$KERNEL ;; esac
@@ -39,13 +43,28 @@ ln -sfn "$A/etc" "$W/src/atari"
 	cp -r "$DR/build/tape" "$W/src/build/tape"
 (. "$K/../toolchain/src/gcc-cross-amix/build/env.sh"
  m68k-cbm-sysv4-gcc -O -o "$W/src/build/setclk" "$A/setclk.c")
-# no Mac display test; Atari node name; the RTC through /dev/clock
-{ grep -v -e '^f /usr/bin/dstest' -e '^r /dev/clock$' "$DR/root.manifest"
+nice -n 19 sh "$K/mac/display/build.sh" "$W/display" > "$W/display.log"
+# the display test built here; Atari node name; the RTC through /dev/clock
+printf 'TZ=%s\nexport TZ\n' "$ZONE" > "$W/src/build/TIMEZONE"
+{ grep -v -e '^f /usr/bin/dstest' -e '^r /dev/clock$' -e '^f /etc/TIMEZONE' "$DR/root.manifest"
+  echo 'f /etc/TIMEZONE	444 0 3 build/TIMEZONE'
+  echo "f /usr/bin/dstest	755 2 2 $W/display/dstest"
   echo 'f /etc/nodename	644 0 3 atari/nodename'
   echo 'f /etc/sysinit	744 0 3 atari/sysinit'
   echo 'f /usr/amiga/bin/setclk 755 0 3 build/setclk'
   echo 'd /home 755 0 3'
   echo 'f /etc/vfstab 744 0 3 vfstab'; } > "$W/root.manifest"
+if [ -n "$MODS" ]; then
+	TC=$K/../toolchain/amix SYS=$K/../toolchain/amix/m68k-cbm-sysv4/sysroot
+	for f in "$K"/dlm/libmod/*.s; do
+		"$TC/bin/m68k-cbm-sysv4-as" -o "$W/src/build/lm_${f##*/}.o" "$f"
+	done
+	nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -w -D__STDC__=0 -I"$K/dlm/include" \
+		-c "$DR/pkg/auxreg.c" -o "$W/src/build/auxreg.o"
+	"$TC/bin/m68k-cbm-sysv4-ld" -o "$W/src/build/auxreg" "$SYS/usr/ccs/lib/crt1.o" \
+		"$SYS/usr/ccs/lib/crti.o" "$W/src/build/auxreg.o" "$W"/src/build/lm_*.o \
+		"$SYS/usr/lib/libc.so.1" "$SYS/usr/ccs/lib/crtn.o"
+fi
 if [ -n "$TESTS" ]; then
 	TB=$K/../tests/build
 	"$K/../toolchain/linux/bin/m68k-linux-gnu-nm" "$KERNEL" | awk '$3 ~ /^(freemem|availrmem|availsmem|lbolt|fpu_present|anoninfo)$/ { print $3, $1 }' \
@@ -55,7 +74,14 @@ if [ -n "$TESTS" ]; then
 	  for t in $TESTS; do
 		[ -x "$TB/bin/$t" ] || { echo "[FAIL] no $TB/bin/$t (run tests/build.sh)" >&2; exit 1; }
 		echo "f /tests/$t 755 0 3 $TB/bin/$t"
-	  done; } >> "$W/root.manifest"
+	  done
+	  if [ -n "$MODS" ]; then
+		echo 'd /tests/mod.d 755 0 3'
+		echo 'f /tests/auxreg 755 0 3 build/auxreg'
+		echo 'c /dev/uinter0 666 0 3 54 0'
+		echo 'c /dev/tos 660 0 25 56 0'
+		for m in "$MODS"/*; do echo "f /tests/mod.d/${m##*/} 644 0 3 $m"; done
+	  fi; } >> "$W/root.manifest"
 fi
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
 	/dev/dsk/c0d0s1 /dev/rdsk/c0d0s1 / ${ROOTFS:-ufs} 1 no - \
