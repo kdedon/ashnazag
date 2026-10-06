@@ -11,7 +11,7 @@
 # IMAGE defaults to kernel/build/atari/disk/falcon-disk.img; it is copied.
 # TOSROM: the TOS 4.04 image or its zip (default: tos404*.zip in the
 # repo root).  Skips (exit 0) without the ROM or Hatari.
-# STAGES: any of vga rgb mod tos tosloop x xtos (mod, tos and tosloop need an
+# STAGES: any of vga rgb mod tos tosloop x xtos xdm xdmboots (mod, tos and tosloop need an
 # image made with TESTS=modadmin MODS=<mod.d>; x one made with X11=<pkg>)
 # (default "vga rgb").  x: startx in 256 colours, typing into xterm, the
 # server stopped and the console back; then in 2 colours with the German
@@ -20,6 +20,13 @@
 # session and checks each desktop.  xtos (an image made with X11=<pkg>
 # TOSENV=1): guest starts X, then starttos -P from the console; the hot
 # keys switch between X, the GEM desktop and the console; each ends.
+# xdm (an image made with X11=<pkg> TOSENV=1 BOOTX=1 XPKGS=xview): guest
+# logs in on xdm and picks Console, twm, XView and TOS in turn, each
+# ending back at the login; Ctrl-C goes to TOS, Ctrl-C on the console
+# ends it; root lists the sessions; 2 colours with German keys; TOS last,
+# Ctrl-C to TOS, Ctrl-C on the console ends it and the login comes back.
+# xdmboots (the same image): BOOTS (default 5) boots, each to the xdm
+# login without a crash; root logs in and restarts the machine.
 set -e
 T=$(cd "$(dirname "$0")" && pwd)
 A=$(cd "$T/.." && pwd)
@@ -90,6 +97,32 @@ for s in $STAGES; do
 		python3 "$T/tosshot.py" desktop "$OUT/xtos-3-tos.png" || fail=1
 		python3 "$T/tosshot.py" same "$OUT/xtos-1-x.png" "$OUT/xtos-4-x.png" || fail=1
 		python3 "$T/tosshot.py" same "$OUT/xtos-3-tos.png" "$OUT/xtos-5-tos.png" || fail=1 ;;
+	xdm)	run xdm vga 2400
+		check "$OUT/xdm.log.out" 'xdm-9-done' 'xsession console' 'xsession twm' 'xsession xview' \
+			'fb: /dev/fb0 Videl 640x480 depth 8'
+		! grep -q 'BUS ERROR\|Fatal\|PANIC\|panic' "$OUT/xdm.log.out" || { echo "[FAIL] xdm: client, server or kernel error"; fail=1; }
+		python3 "$T/tosshot.py" desktop "$OUT/xdm-9-tos.png" || fail=1
+		# Ctrl-C is a key for TOS: the session stays until the console's Ctrl-C
+		python3 "$T/tosshot.py" differ "$OUT/xdm-11-console.png" "$OUT/xdm-10-tos-ctrlc.png" || fail=1
+		# the login is back after TOS ends
+		python3 "$T/tosshot.py" same "$OUT/xdm-7-mono-greeter.png" "$OUT/xdm-12-greeter.png" || fail=1 ;;
+	xdmboots)
+		n=${BOOTS:-5}
+		{ i=1; while [ $i -le $n ]; do
+			printf 'wait The system is ready.\nsleep 90\ndebug screenshot %s\n' "$OUT/xdmboots-$i.png"
+			printf 'type root\\n\nsleep 3\ntype \\n\n'
+			j=0; while [ $j -lt 12 ]; do printf 'sleep 1.5\ntype 4\n'; j=$((j + 1)); done
+			printf 'sleep 30\ntype \\necho xdmboot-`expr %s + 0`-up > /dev/console\\n\nwait xdmboot-%s-up\n' $i $i
+			[ $i -lt $n ] && printf '%s\n' 'type /etc/init 6\n'
+			i=$((i + 1))
+		done
+		echo "debug quit 0"; } > "$OUT/xdmboots-keys.txt"
+		run xdmboots vga $((n * 400 + 300))
+		i=1; while [ $i -le $n ]; do
+			check "$OUT/xdmboots.log.out" "xdmboot-$i-up"
+			i=$((i + 1))
+		done
+		! grep -q 'BUS ERROR\|PANIC\|panic' "$OUT/xdmboots.log.out" || { echo "[FAIL] xdmboots: client or kernel error"; fail=1; } ;;
 	tosloop)
 		n=${BOOTS:-15}
 		{ sed -n '1,/^wait mods-done/p' "$T/falcon-tos-keys.txt"

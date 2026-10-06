@@ -16,6 +16,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <sys/mman.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -567,7 +568,7 @@ ucheck()
 		"cwd", "attrib", "dfree", "pexec", "links_inside", "escape_dotdot",
 		"escape_link", "escape_uplink", "escape_cwd", "long_path", "c_auto", "drive_g",
 		"drive_cwd", "c_rw", "drive_d", "drive_h", "irq_rte", "irq_movesr", "irq_mask",
-		"irq_nest", "env_hidden", 0
+		"irq_nest", "trap9", "trap10", "trap0", "env_hidden", 0
 	};
 	char b[2048], n[40], why[40], *l, *nm;
 	int fd, i, ok, len = 0;
@@ -812,6 +813,40 @@ owner()
 	e = ioctl(tfd, TOSIOC_ENTER, &te) < 0 ? errno : 0;
 	t_check(N("owner"), to.to_pid == tpid && e == EBUSY, "owner pid %ld (starttos %ld), enter %d",
 	    to.to_pid, (long)tpid, e);
+}
+
+/* a lone guest's trap or line A with empty vectors dies of its exception, not SIGSYS */
+static void
+solotraps()
+{
+	static char *nm[] = { "trap9", "trap15", "linea" };
+	struct tosenter te;
+	int k, z, status;
+	pid_t p;
+
+	for (k = 0; k < 3; k++) {
+		if ((p = fork()) == 0) {
+			if ((z = open("/dev/zero", O_RDWR)) < 0 || mmap((caddr_t)0, 0x80000,
+			    PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_FIXED, z, 0) ==
+			    (caddr_t)-1)
+				_exit(90);
+			te.te_ramsize = 0x80000;
+			te.te_flags = TEF_NOMACH;
+			if (ioctl(tfd, TOSIOC_ENTER, &te) < 0)
+				_exit(91);
+			if (k == 0)
+				__asm__ __volatile__("trap &9");
+			else if (k == 1)
+				__asm__ __volatile__("trap &15");
+			else
+				__asm__ __volatile__(".short 0xa000");
+			_exit(92);
+		}
+		if (p < 0 || waitpid(p, &status, 0) != p)
+			status = -1;
+		t_check(N(nm[k]), WIFSIGNALED(status) && WTERMSIG(status) != SIGSYS,
+		    "status %x", status);
+	}
 }
 
 /* the host's TOS ROM, else ENODEV */
@@ -1501,6 +1536,7 @@ run(rom)
 		else {
 			owner();
 			maprom();
+			solotraps();
 			ucheck();
 			timers();
 		}

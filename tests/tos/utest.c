@@ -5,7 +5,7 @@
  * G: read-only and I: on one directory, H: on U:\SUB.
  */
 
-extern long trap1(), trap13(), irqtest();
+extern long trap1(), trap13(), irqtest(), traptest9(), traptest10(), traptest0();
 
 static short w[8];
 static int nw;
@@ -105,6 +105,17 @@ check(name, ok, v)
 		put(n + i);
 	}
 	put("\r\n");
+}
+
+static void
+result()
+{
+	long h = Fcreate("U:\\RESULT.TXT", 0);
+
+	if (h >= 0) {
+		Fwrite((int)h, (long)on, out);
+		Fclose((int)h);
+	}
 }
 
 /* in directory pattern p, a subdirectory whose name starts with s: its path into o */
@@ -320,10 +331,9 @@ main()
 	check("irq_mask", (r = irqtest(3)) == 0, r);
 	check("irq_nest", (r = irqtest(4)) == 0, r);
 
-	h = Fcreate("U:\\RESULT.TXT", 0);
-	if (h >= 0) {
-		Fwrite((int)h, (long)on, out);
-		Fclose((int)h);
-	}
+	check("trap9", (r = traptest9()) == 0, r);
+	check("trap10", (r = traptest10()) == 0, r);
+	check("trap0", (r = traptest0()) == 0, r);
+	result();
 	return 0;
 }

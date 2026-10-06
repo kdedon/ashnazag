@@ -1,0 +1,216 @@
+wait The system is ready.
+sleep 90
+debug screenshot OUT/1-greeter.png
+type guest\n
+sleep 3
+type \n
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 30
+type \nid; ls /usr/x11r6/bin\n
+sleep 10
+debug screenshot OUT/2-console.png
+type exit\n
+sleep 45
+type guest\n
+sleep 3
+type \n
+sleep 1.5
+type 1
+sleep 1.5
+type 1
+sleep 1.5
+type 1
+sleep 1.5
+type 1
+sleep 1.5
+type 1
+sleep 1.5
+type 1
+sleep 1.5
+type 1
+sleep 1.5
+type 1
+sleep 1.5
+type 1
+sleep 1.5
+type 1
+sleep 1.5
+type 1
+sleep 1.5
+type 1
+sleep 40
+debug screenshot OUT/3-twm.png
+type \nps -e | grep twm | while read p r; do kill $p; done\n
+sleep 45
+debug screenshot OUT/4-greeter.png
+type guest\n
+sleep 3
+type \n
+sleep 1.5
+type 2
+sleep 1.5
+type 2
+sleep 1.5
+type 2
+sleep 1.5
+type 2
+sleep 1.5
+type 2
+sleep 1.5
+type 2
+sleep 1.5
+type 2
+sleep 1.5
+type 2
+sleep 1.5
+type 2
+sleep 1.5
+type 2
+sleep 1.5
+type 2
+sleep 1.5
+type 2
+sleep 120
+event leftdown
+event leftup
+sleep 3
+debug screenshot OUT/5-xview.png
+type \nps -e | grep olvwm | while read p r; do kill $p; done\n
+sleep 60
+type root\n
+sleep 3
+type \n
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 30
+type \n(ps -ejf; swap -s; cat /home/guest/.xsession-log /usr/x11r6/lib/X11/xdm/xdm-errors) > /dev/console 2>&1; echo xdm-`expr 4 + 5`-done > /dev/console\n
+wait xdm-9-done
+debug screenshot OUT/6-root.png
+type echo -depth 1 -kbd de > /usr/x11r6/lib/X11/xserver/options; ps -e | grep Xamix | while read p r; do kill $p; done\n
+sleep 60
+debug screenshot OUT/7-mono-greeter.png
+type guest\n
+sleep 3
+type \n
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 1.5
+type 4
+sleep 30
+type \necho kezy\n
+sleep 10
+debug screenshot OUT/8-mono-de.png
+type exit\n
+sleep 45
+type guest\n
+sleep 3
+type \n
+sleep 1.5
+type 3
+sleep 1.5
+type 3
+sleep 1.5
+type 3
+sleep 1.5
+type 3
+sleep 1.5
+type 3
+sleep 1.5
+type 3
+sleep 1.5
+type 3
+sleep 1.5
+type 3
+sleep 1.5
+type 3
+sleep 1.5
+type 3
+sleep 1.5
+type 3
+sleep 1.5
+type 3
+sleep 150
+debug screenshot OUT/9-tos.png
+event keydown 0x1d
+event keypress 0x2e
+event keyup 0x1d
+sleep 10
+debug screenshot OUT/10-tos-ctrlc.png
+event keydown 0x1d
+event keydown 0x38
+event keypress 0x01
+event keyup 0x38
+event keyup 0x1d
+sleep 8
+debug screenshot OUT/11-console.png
+event keydown 0x1d
+event keypress 0x2e
+event keyup 0x1d
+sleep 60
+debug screenshot OUT/12-greeter.png
+debug quit 0

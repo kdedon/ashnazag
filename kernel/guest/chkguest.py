@@ -4,8 +4,8 @@
 #
 #   chkguest.py image.elf gates.lst
 #
-# - every gated M68Kvec slot holds its guest_gate_N, vector 42 (the
-#   ungated reference trap) still holds nullvect;
+# - every gated M68Kvec slot holds its guest_gate_N, every trap
+#   vector is gated;
 # - guest_chain[N] is the handler the slot had before (gates.lst);
 # - each gate sends supervisor faults and native processes to that
 #   handler and reaches guest_gate_c only after testing p_evpdp;
@@ -76,7 +76,6 @@ chain = sym['guest_chain'][0]
 gated = [(int(v), t) for v, t in (l.split() for l in open(lst))]
 wrong = [v for v, t in gated if L(vec + 4 * v) != sym['guest_gate_%d' % v][0]]
 check(not wrong, '%d gated slots hold their gates' % len(gated) + (' (not: %s)' % wrong if wrong else ''))
-check(L(vec + 4 * 42) == sym['nullvect'][0], 'vector 42 (trap #10) is still nullvect')
 wrong = [v for v, t in gated if L(chain + 4 * v) != sym[t][0]]
 check(not wrong, 'guest_chain holds the previous handlers' + (' (not: %s)' % wrong if wrong else ''))
 

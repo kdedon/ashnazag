@@ -33,7 +33,7 @@ fi
 [ -f "$RD/build/core/sbin/init" ] || { echo "[FAIL] no $RD/build/core (run mkroot.sh)"; exit 1; }
 [ -x "$B/bin/runall" ] || { echo "[FAIL] no tests/build/bin (run build.sh)"; exit 1; }
 
-nm "$KERNEL" | awk '$3 ~ /^(freemem|availrmem|availsmem|lbolt|fpu_present|anoninfo|ticks_til_clock|mac_ticks|dlm_inited|sn_nintr|sn_nslot|guest_loading|guest_nftrap|guest_nfpriv|rd_unit|adb_nintr|adb_nsrq|segmapcnt)$/ { print $3, $1 }' \
+nm "$KERNEL" | awk '$3 ~ /^(freemem|availrmem|availsmem|lbolt|fpu_present|anoninfo|ticks_til_clock|mac_ticks|dlm_inited|sn_nintr|sn_nslot|guest_loading|M68Kvec|guest_chain|guest_nftrap|guest_nfpriv|rd_unit|adb_nintr|adb_nsrq|segmapcnt)$/ { print $3, $1 }' \
 	> "$B/ksyms"
 # t_dlm's modules, built against this kernel (none without module support)
 KDIR=$KDIR sh "$T/dlm/build.sh" "$KERNEL" "$B/dlm"
