@@ -164,7 +164,7 @@ for t in ('io_init', 'io_start', 'io_halt', 'io_poll', 'init_tbl'):
     print('%-8s %s' % (t, ' '.join(nm(x) for x in v) or '(empty)'))
     if t != 'init_tbl':
         check(all(x >= bt_end for x in v), '%s entries are Mac code' % t)
-check([nm(x) for x in tbl('io_start')] == ['mac_diskprobe'], 'io_start = { mac_diskprobe }')
+check([nm(x) for x in tbl('io_start')] == ['mac_diskprobe', 'mac_sockfix'], 'io_start = { mac_diskprobe, mac_sockfix }')
 fm = []
 for i in range(L(byname['fmodcnt'])):
     a = byname.get('__amix_fmodsw', byname['fmodsw']) + 20 * i   # stock rows
@@ -202,7 +202,7 @@ def node(v):
     i = bisect.bisect_right(addrs, v) - 1
     return addrs[i] if i >= 0 else None
 edges = dict((a, set()) for a in addrs)
-# string literals (LC%n) disassemble as noise: no outgoing references
+# string literals (LC%n) decode as noise: no outgoing references
 strings = set(a for a in addrs if a in names and all(n.startswith('LC%') for _, _, n in names[a]))
 # the exception vector table lives in .text: scanned as words below
 vtab = byname['M68Kvec']
@@ -235,7 +235,7 @@ for l in dis.splitlines():
     # immediates: addresses when loaded into an address register or pushed
     for x, dst in re.findall(r'#(-?\d+),(%a\d(?![@\w])|%sp@-)', args):
         v = int(x) & 0xffffffff
-        if 0xA00000 <= v < 0x1000000 and dst != '%sp@-':
+        if 0xA00000 <= v < 0x1000000 and dst != '%sp@-' and not op.startswith('cmp'):
             hw.setdefault(n, set()).add('%s %s' % (op, args))
         elif T0 <= v < B0 + BSZ and v in nodes:
             edges[n].add(v)

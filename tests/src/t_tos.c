@@ -8,8 +8,11 @@
  * the GEM desktop is on screen (host screen dump: a white menu bar
  * over a desktop of one colour); a Shift key reaches TOS's kbshift;
  * the mouse moves the pointer and opens a menu; TeraDesk runs as the
- * desktop; SIGTERM ends TOS and the console comes back.  The kernel's
- * counters are logged.  On the network root only STIKTEST.PRG runs:
+ * desktop; SIGTERM ends TOS and the console comes back.  The session's
+ * host calls: a halt asked for by a user's session is refused, root's
+ * reaches uadmin (recorded, not run), and the exit ends the session;
+ * Desk > Session... then Return logs out.  The kernel's counters are
+ * logged.  On the network root only STIKTEST.PRG runs:
  * the STiK transport against the network.
  * Skips without guest support, the module or the local ROM.
  */
@@ -35,6 +38,8 @@
 #include "dsio.h"
 #include "tosio.h"
 #include "t.h"
+
+extern int getksym();
 
 #define	MD	"/tests/aux/mod.d"
 #define	EMUTOS	"/etc/tos/emutos.img"
@@ -311,6 +316,10 @@ static int textopen;			/* C: holds Qed and the template's desktop, no autorun */
 static int stscreen;			/* fVDI kept off the frame buffer */
 #define	STIKPRG	"/tos/stik/STIKTEST.PRG"
 static int stik;			/* C:\AUTO starts it */
+#define	ACCPRG	"/tos/acc/SESSION.ACC"
+static int acc;				/* C: holds the session accessory */
+#define	EXITPRG	"/tos/exit/EXITTEST.PRG"
+#define	XDIR	"/tmp/tosx"		/* C: for EXITTEST.PRG, any user's */
 
 static char *utree[] = {
 	"sub/new.txt", "sub/renamed.txt", "result.txt", "readme.txt", "hello.prg",
@@ -495,6 +504,7 @@ cmake()
 
 	unlink(CDIR "/AUTO/UTEST.PRG");
 	unlink(CDIR "/AUTO/STIKTEST.PRG");
+	unlink(CDIR "/SESSION.ACC");
 	for (i = 0; i < 3; i++) {
 		sprintf(b, "%s/%s", CDIR, fvdifiles[i]);
 		unlink(b);
@@ -517,6 +527,8 @@ cmake()
 	fcopy("/tos/sys/AUTO/UTEST.PRG", CDIR "/AUTO/UTEST.PRG");
 	if (stik)
 		fcopy(STIKPRG, CDIR "/AUTO/STIKTEST.PRG");
+	if (acc)
+		fcopy(ACCPRG, CDIR "/SESSION.ACC");
 	mkdir(EHOME, 0755);
 	mkdir(EHOME "/TOS", 0755);
 	symlink(CDIR, EHOME "/TOS/c");
@@ -1820,6 +1832,156 @@ textrun()
 		nap(200);
 }
 
+/* a kernel or module long through /dev/kmem */
+static int
+kmemrw(addr, val, wr)
+	unsigned long addr;
+	long *val;
+	int wr;
+{
+	int fd = open("/dev/kmem", wr ? O_RDWR : O_RDONLY), ok;
+
+	if (fd < 0)
+		return -1;
+	ok = lseek(fd, (off_t)addr, 0) != -1 &&
+	    (wr ? write(fd, (char *)val, 4) : read(fd, (char *)val, 4)) == 4;
+	close(fd);
+	return ok ? 0 : -1;
+}
+
+static int
+setsym(name, v)
+	char *name;
+	long v;
+{
+	unsigned long a = 0, info;
+
+	if (getksym(name, &a, &info) < 0)
+		return -1;
+	return kmemrw(a, &v, 1);
+}
+
+static long
+getsym(name)
+	char *name;
+{
+	unsigned long a = 0, info;
+	long v;
+
+	if (getksym(name, &a, &info) < 0 || kmemrw(a, &v, 0) < 0)
+		return -1;
+	return v;
+}
+
+/* EmuTOS with C:\AUTO\EXITTEST.PRG as uid (in the display group); its status, -1 if it ran on */
+static int
+exitprg(uid)
+	int uid;
+{
+	int st, fd;
+	pid_t p;
+	long t0;
+
+	unlink(XDIR "/AUTO/EXITTEST.PRG");
+	rmdir(XDIR "/AUTO");
+	rmdir(XDIR);
+	mkdir(XDIR, 0755);
+	mkdir(XDIR "/AUTO", 0755);
+	fcopy(EXITPRG, XDIR "/AUTO/EXITTEST.PRG");
+	if ((p = fork()) == 0) {
+		setpgrp();
+		if ((fd = open("/dev/null", O_RDWR)) >= 0) {
+			dup2(fd, 1);
+			dup2(fd, 2);
+		}
+		if (uid && (setgid(25) < 0 || setuid(uid) < 0))
+			_exit(126);
+		putenv("HOME=" XDIR);
+		execl("/tos/bin/starttos", "starttos", "-C", XDIR, "-U", (char *)0);
+		_exit(127);
+	}
+	if (t_waitchild(p, &st, 60) < 0)
+		st = -1;
+	t0 = t_now_ms();
+	while (front() != 0 && t_now_ms() - t0 < 10000)
+		nap(200);
+	return st;
+}
+
+/*
+ * The session's host calls, as the accessory makes them: a halt asked
+ * for by a user is refused and the exit ends the session; root's halt
+ * is recorded in place of running, the session killed instead.
+ */
+static void
+exitrun()
+{
+	int st;
+
+	st = exitprg(100);
+	t_check("exit_user_refused", st != -1 && WIFEXITED(st) && WEXITSTATUS(st) == 10 + EPERM,
+	    "status %#x", st);
+	t_check("exit_user_no_halt", getsym("guest_adcall") == 0, "uadmin %#lx",
+	    getsym("guest_adcall"));
+	st = exitprg(0);
+	t_check("exit_root_halt", st != -1 && WIFSIGNALED(st) && WTERMSIG(st) == SIGKILL &&
+	    getsym("guest_adcall") == 0x200, "status %#x, uadmin %#lx", st, getsym("guest_adcall"));
+	setsym("guest_adcall", 0L);
+}
+
+/* Desk > Session... under EmuDesk, then Return: the default, Log Out */
+static void
+accrun()
+{
+	int i, up = 0, st = 0;
+	pid_t r = 0;
+	long t0;
+
+	outn = 0;
+	start((char *)0);
+	t0 = t_now_ms();
+	while (t_now_ms() - t0 < 10000 && (sess = front()) <= 0) {
+		relay();
+		nap(200);
+	}
+	for (i = 0; i < 30 && !up; i++) {
+		nap(2000);
+		relay();
+		up = desktop(S("desk"), 0);
+	}
+	t_check(N("desktop"), up, "no desktop after %ld s", (t_now_ms() - t0) / 1000);
+	if (up) {
+		/* the Desk menu drops; its third row, below Desktop info and a rule */
+		ptrto(30, 8);
+		nap(1000);
+		host("move 0 51");
+		nap(800);
+		shot(S("menu"));
+		host("click 1");
+		nap(2000);
+		shot(S("alert"));
+		host("key ret");
+	}
+	t0 = t_now_ms();
+	while ((r = waitpid(tpid, &st, WNOHANG)) != tpid && t_now_ms() - t0 < 30000) {
+		relay();
+		nap(200);
+	}
+	t_check(N("logout"), r == tpid && WIFEXITED(st) && WEXITSTATUS(st) == 0,
+	    "status %#x after %ld ms", st, t_now_ms() - t0);
+	t_check(N("no_halt"), getsym("guest_adcall") == 0, "uadmin %#lx", getsym("guest_adcall"));
+	if (r != tpid) {
+		kill(tpid, SIGKILL);
+		waitpid(tpid, &st, 0);
+	}
+	relay();
+	close(ofd);
+	ofd = -1;
+	t0 = t_now_ms();
+	while (front() != 0 && t_now_ms() - t0 < 10000)
+		nap(200);
+}
+
 /* STIKTEST.PRG's results, up to 120 s for them */
 static void
 stikrun()
@@ -1874,7 +2036,7 @@ main()
 	struct stat sb;
 	int mj = TOS_MAJOR;
 
-	t_init("tos", 700);
+	t_init("tos", 900);
 	if (t_kmem("guest_loading") == -1) {
 		t_skip("all", "kernel has no guest support");
 		return t_done();
@@ -1958,6 +2120,24 @@ main()
 		pf = "baller_st";
 		stscreen = 1;
 		ballerburg();
+	}
+	baller = stscreen = fvdi = 0;
+	/* a halt that slips through is recorded, never run */
+	if (stat(EXITPRG, &sb) < 0 || stat(EMUTOS, &sb) < 0)
+		t_skip("exit", "no EXITTEST.PRG or EmuTOS");
+	else if (setsym("guest_adcall", 0L) < 0 || setsym("guest_adtest", 1L) < 0 ||
+	    getsym("guest_adtest") != 1)
+		t_skip("exit", "no guest_adtest in guestcore");
+	else {
+		exitrun();
+		acc = 1;
+		pf = "acc";
+		if (stat(ACCPRG, &sb) < 0 || hfd < 0)
+			t_skip("acc", "no SESSION.ACC or host line");
+		else
+			accrun();
+		acc = 0;
+		setsym("guest_adtest", 0L);
 	}
 	return t_done();
 }

@@ -7,7 +7,9 @@
  * then run without Kickstart: enter and leave, SR and stack changes
  * through RTE, privilege and trap reflection, the interrupt mask with
  * VERTB, STOP, exit, exec, fork, two guests at once and unload while a
- * guest holds the module.  With the local A4000 ROM, Kickstart runs
+ * guest holds the module.  The session's host calls: a user's halt is
+ * refused, root's reaches uadmin (recorded, not run) and the exit ends
+ * the session.  With the local A4000 ROM, Kickstart runs
  * unpatched in a guest with AMIGAF_CENSUS for 40 s; the kernel logs
  * each custom-chip, CIA and other I/O register it touched at exit
  * ("amiga census" lines) and the guest's last fault.
@@ -43,6 +45,8 @@
 #include "amigaio.h"
 #include "t.h"
 
+extern int getksym();
+
 #define	MD	"/tests/aux/mod.d"
 #define	GUEST	"/tests/amiga/guest.bin"
 #define	ROM	"/etc/amiga/kicka4000.rom"
@@ -64,6 +68,8 @@ typedef long (*gfn)();
 #define	vblcount (*(volatile long *)((long *)LOAD)[7])
 #define	dis	G(8)
 #define	trp	G(9)
+#define	hexit	G(10)
+#define	hhalt	G(11)
 
 static int afd = -1;
 
@@ -313,6 +319,105 @@ guests()
 			t_check(gname[i], WIFEXITED(st) && WEXITSTATUS(st) == gwant[i],
 			    "status 0x%x", st);
 	}
+}
+
+/* a kernel or module long through /dev/kmem */
+static int
+kmemrw(addr, val, wr)
+	unsigned long addr;
+	long *val;
+	int wr;
+{
+	int fd = open("/dev/kmem", wr ? O_RDWR : O_RDONLY), ok;
+
+	if (fd < 0)
+		return -1;
+	ok = lseek(fd, (off_t)addr, 0) != -1 &&
+	    (wr ? write(fd, (char *)val, 4) : read(fd, (char *)val, 4)) == 4;
+	close(fd);
+	return ok ? 0 : -1;
+}
+
+static int
+setsym(name, v)
+	char *name;
+	long v;
+{
+	unsigned long a = 0, info;
+
+	if (getksym(name, &a, &info) < 0)
+		return -1;
+	return kmemrw(a, &v, 1);
+}
+
+static long
+getsym(name)
+	char *name;
+{
+	unsigned long a = 0, info;
+	long v;
+
+	if (getksym(name, &a, &info) < 0 || kmemrw(a, &v, 0) < 0)
+		return -1;
+	return v;
+}
+
+/* a guest as uid (in the display group) asks for a halt: 0 refused, else a code */
+static int
+g_halt(uid)
+	int uid;
+{
+	int e;
+
+	if (uid && (setgid(25) < 0 || setuid(uid) < 0))
+		return 80;
+	if ((e = enter()) != 0)
+		return e;
+	if ((e = hhalt((long)afd)) != EPERM)
+		return 10 + e;
+	return 0;
+}
+
+/*
+ * The session's host calls, as its Tools menu makes them: Log Out's exit
+ * ends the guest, a user's Shut Down is refused, and root's is recorded
+ * in place of a halt, the guest killed instead.
+ */
+static void
+exits()
+{
+	int st, e;
+	pid_t p;
+
+	if (setsym("guest_adcall", 0L) < 0 || setsym("guest_adtest", 1L) < 0 ||
+	    getsym("guest_adtest") != 1) {
+		t_skip("exit", "no guest_adtest in guestcore");
+		return;
+	}
+	if ((p = fork()) == 0)
+		_exit((e = enter()) != 0 ? e : (hexit(0L), 99));
+	if (t_waitchild(p, &st, 20) < 0)
+		t_fail("exit_logout", "timed out");
+	else
+		t_check("exit_logout", WIFEXITED(st) && WEXITSTATUS(st) == 0, "status 0x%x", st);
+	if ((p = fork()) == 0)
+		_exit(g_halt(100));
+	if (t_waitchild(p, &st, 20) < 0)
+		t_fail("exit_user_refused", "timed out");
+	else
+		t_check("exit_user_refused", WIFEXITED(st) && WEXITSTATUS(st) == 0 &&
+		    getsym("guest_adcall") == 0, "status 0x%x, uadmin %#lx", st,
+		    getsym("guest_adcall"));
+	if ((p = fork()) == 0)
+		_exit(g_halt(0) == 10 ? 98 : 97);
+	if (t_waitchild(p, &st, 20) < 0)
+		t_fail("exit_root_halt", "timed out");
+	else
+		t_check("exit_root_halt", WIFSIGNALED(st) && WTERMSIG(st) == SIGKILL &&
+		    getsym("guest_adcall") == 0x200, "status 0x%x, uadmin %#lx", st,
+		    getsym("guest_adcall"));
+	setsym("guest_adcall", 0L);
+	setsym("guest_adtest", 0L);
 }
 
 /* microseconds per INTENA write and per reflected trap */
@@ -830,6 +935,90 @@ drag(p)
 	    "changed %d,%d-%d,%d", v[0], v[1], v[2], v[3]);
 }
 
+/*
+ * Tools > Log Out, Control-click being the menu button: the session's
+ * exit ends startmig with status 0.  Tools is the last menu title and
+ * Log Out the item above root's Shut Down; positions come from the
+ * screen.  o is the screen's origin.  0 if startmig is still running.
+ */
+static int
+logout(p, stp, o)
+	pid_t p;
+	int *stp, o[2];
+{
+	char b[48];
+	int r = 1, x, y, h, v[4], m[4];
+
+	setsym("guest_adcall", 0L);
+	setsym("guest_adtest", 1L);		/* a Shut Down picked by mistake only records */
+	/* a click on the Workbench window makes its menus current */
+	host("move -2000 -2000 50");
+	host("move 100 400 50");
+	host("click 1");
+	/* along the menu bar with the button held: the last menu to drop is Tools */
+	host("move -2000 -2000 50");
+	host("move 2 4 50");
+	nap(500);
+	host("shot amiga_m0");
+	host("down ctrl");
+	host("button 1");
+	m[0] = m[1] = m[2] = m[3] = -1;
+	for (x = 2, h = 0; x < 400; x += 12) {
+		if (x > 2)
+			host("move 12 0 50");
+		nap(300);
+		host("shot amiga_scan");
+		if (!pbox("amiga_m0", "amiga_scan", o[1] + 24, v) || v[3] - v[1] < 10) {
+			if (m[0] >= 0)
+				break;
+			continue;
+		}
+		if (v[0] != m[0]) {
+			memcpy(m, v, sizeof m);
+			h = x;
+		}
+	}
+	if (x >= 400)
+		x -= 12;
+	sprintf(b, "move %d 0 50", h + 4 - x);
+	host(b);
+	x = h + 4;
+	nap(800);
+	host("shot amiga_menu");
+	if (m[0] >= 0) {
+		/*
+		 * Down onto the bottom item: its highlight's top, against the
+		 * menu's bottom, gives the item height.  Then one item up.
+		 */
+		y = m[3] - o[1] - 5;
+		sprintf(b, "move 0 %d 50", y - 4);
+		host(b);
+		nap(500);
+		host("shot amiga_last");
+		h = pbox("amiga_menu", "amiga_last", o[1] + 24, v) ? m[3] - 2 - v[1] : 0;
+		t_info("boot_logout", "Tools at %d, menu %d,%d-%d,%d, item height %d", x,
+		    m[0] - o[0], m[1] - o[1], m[2] - o[0], m[3] - o[1], h);
+		if (h >= 6 && h <= 24) {
+			sprintf(b, "move 0 %d 50", v[1] - o[1] - h / 2 - y);
+			host(b);
+			nap(500);
+			host("shot amiga_tools");
+		} else
+			host("move 0 -100 50");		/* off the menu: nothing picked */
+	} else
+		t_info("boot_logout", "no menu below the bar");
+	host("button 0");
+	host("up ctrl");
+	if (t_waitchild(p, stp, 20) < 0)
+		r = 0;
+	else
+		t_check("boot_logout", WIFEXITED(*stp) && WEXITSTATUS(*stp) == 0 &&
+		    getsym("guest_adcall") == 0, "startmig status 0x%x, uadmin %#lx", *stp,
+		    getsym("guest_adcall"));
+	setsym("guest_adtest", 0L);
+	setsym("guest_adcall", 0L);
+	return r;
+}
 
 static void
 boot()
@@ -944,9 +1133,14 @@ boot()
 		pointer(p);
 		drag(p);
 	}
-	kill(p, SIGTERM);
-	t_waitchild(p, &st, 10);
-	t_check("boot_exit", WIFSIGNALED(st) && WTERMSIG(st) == SIGTERM, "startmig status 0x%x", st);
+	if (!w || !logout(p, &st, o)) {
+		if (w)
+			t_fail("boot_logout", "startmig still running");
+		kill(p, SIGTERM);
+		t_waitchild(p, &st, 10);
+		t_check("boot_exit", WIFSIGNALED(st) && WTERMSIG(st) == SIGTERM,
+		    "startmig status 0x%x", st);
+	}
 
 	if (w) {
 		sleep(2);
@@ -1030,6 +1224,7 @@ main(argc, argv)
 		return t_done();
 	}
 	guests();
+	exits();
 	cost();
 	two();
 	unloadbusy();

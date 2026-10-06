@@ -55,6 +55,11 @@ if [ -f "$AMIGAROM" ] && [ -f "$AMIGASYS/S/Startup-Sequence" ]; then
 	echo S/Startup-Sequence >> "$O/p96gen.list"
 	sh "$KDIR/guest/amiga/input/build.sh" "$O/input" > /dev/null
 	echo C/container-input >> "$O/p96gen.list"
+	sh "$KDIR/guest/amiga/session/build.sh" "$O/session" > /dev/null
+	python3 -c 'import sys; sys.path[0] = sys.argv[1]; from template import donotwait
+sys.stdout.buffer.write(donotwait(open(sys.argv[2], "rb").read()))' \
+	    "$AUX/tools/amiga" "$AMIGASYS/Prefs/Env-Archive/Sys/def_tool.info" > "$O/session/Session.info"
+	printf 'WBStartup/Session\nWBStartup/Session.info\n' >> "$O/p96gen.list"
 	awk 'NR == FNR { drop["/" tolower($0)]; next } !(tolower($2) in drop)' "$O/p96gen.list" "$M" > "$M.new"
 	mv "$M.new" "$M"
 	grep -q -i '^d /Prefs/Env-Archive/Picasso96 ' "$M" || echo "d /Prefs/Env-Archive/Picasso96 755 0 3" >> "$M"
@@ -62,6 +67,8 @@ if [ -f "$AMIGAROM" ] && [ -f "$AMIGASYS/S/Startup-Sequence" ]; then
 		case $f in
 		S/*) echo "f /$f 755 0 3 $G/Startup-Sequence" ;;
 		C/container-input) echo "f /$f 755 0 3 $O/input/container-input" ;;
+		WBStartup/Session) echo "f /$f 755 0 3 $O/session/Session" ;;
+		WBStartup/Session.info) echo "f /$f 755 0 3 $O/session/Session.info" ;;
 		DEVS/*) echo "f /$f 755 0 3 $G/Devs/${f#DEVS/}" ;;
 		*) echo "f /$f 755 0 3 $G/$f" ;;
 		esac

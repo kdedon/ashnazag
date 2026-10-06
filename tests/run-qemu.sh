@@ -14,7 +14,7 @@
 # (display/hostio.py: keys, mouse, screen dumps in results/.../display/).
 # Out: results/<time>-<mode>/ with serial.log, serial.ts (host time of each
 # line), screen.png, summary.txt.
-# GROUP=smoke|core|mac|tos|mint|amiga|display runs that set only.
+# GROUP=smoke|core|mac|tos|mint|cpm|amiga|display runs that set only.
 # Exit: 0 all PASS, 1 any FAIL, 2 timeout, panic or no TESTS DONE.
 # up to QSLOTS QEMUs at once (tools/qslot.sh)
 # one run per checkout at a time: they share tests/build
@@ -51,9 +51,10 @@ core)	G="t_arith t_file t_mem t_pipe t_proc t_sig t_streams t_sys t_time t_tty t
 mac)	G="t_aux t_mac t_mac6 t_mac76 t_mac81 t_env" ;;
 tos)	G="t_tos t_env" ;;
 mint)	G="t_mint" ;;
+cpm)	G="t_cpm" ;;
 amiga)	G="t_amiga t_env" ;;
 display) G="t_display" ;;
-*)	echo "GROUP: smoke core mac tos mint amiga display"; exit 2 ;;
+*)	echo "GROUP: smoke core mac tos mint cpm amiga display"; exit 2 ;;
 esac
 if [ -n "${G:-}" ]; then
 	ONLY="$T/src/runall.c"

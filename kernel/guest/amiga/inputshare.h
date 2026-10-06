@@ -21,6 +21,7 @@ struct mig_input_state {
     unsigned int generation;
     unsigned char keys[128], sources[128];
     unsigned short qualifier;
+    unsigned char menubtn;      /* button 1 is down as the menu button */
 };
 void mig_input_init(struct mig_input *);
 void mig_input_reset(struct mig_input *, struct mig_input_state *);

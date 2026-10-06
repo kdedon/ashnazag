@@ -26,6 +26,7 @@
 #define AMIGAIOC_KICK AMIGAIOC(5)
 #define AMIGAIOC_WAIT AMIGAIOC(6)
 #define AMIGAIOC_MAPROM AMIGAIOC(7)	/* the machine's Kickstart, read-only at AMIGA_ROM_BASE */
+#define AMIGAIOC_HALT AMIGAIOC(8)	/* the guest: halt the machine, root only */
 
 struct amigaenter {
 	unsigned long ae_version, ae_chipsize, ae_fastsize, ae_flags;

@@ -55,12 +55,14 @@ mkdir -p "$ROOT/amiga/rtg"
 cp "$OUT/rtg/container.card" "$OUT/rtg/README.md" "$OUT/rtg/NOTICE" "$ROOT/amiga/rtg/"
 sh "$AUX/kernel/guest/amiga/dos/build.sh" "$ROOT/amiga/guest/dos"
 sh "$AUX/kernel/guest/amiga/input/build.sh" "$ROOT/amiga/guest/input"
+sh "$AUX/kernel/guest/amiga/session/build.sh" "$ROOT/amiga/guest/session"
 cp "$AUX/kernel/guest/amiga/dos/README.md" "$ROOT/amiga/guest/dos/"
 cp "$AUX/kernel/guest/amiga/dos/CONTAINER" "$ROOT/amiga/guest/dos/"
 cp "$AUX/kernel/guest/amiga/input/README.md" "$ROOT/amiga/guest/input/"
 cp "$ROOT/amiga/guest/dos/container-boot.rom" "$ROOT/etc/amiga/"
 nice -n 19 python3 "$AUX/tools/amiga/template.py" "$OUT/media/ADF" "$ROOT/amiga/sys" \
-	--input "$ROOT/amiga/guest/input/container-input" --card "$ROOT/amiga/rtg/container.card"
+	--input "$ROOT/amiga/guest/input/container-input" --card "$ROOT/amiga/rtg/container.card" \
+	--session "$ROOT/amiga/guest/session/Session"
 if [ -f "$PICASSO" ]; then
 	cp "$PICASSO" "$ROOT/amiga/rtg/Picasso96.lha"
 	(cd "$ROOT/amiga/rtg" && sha256sum Picasso96.lha > Picasso96.sha256)

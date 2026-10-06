@@ -18,6 +18,7 @@ static int image;
 void mac_puts(s) char *s; { }
 void putkv(k, v) char *k; unsigned long v; { }
 static int halted;
+long mac_nofpu;
 void mac_halt(s) char *s; { halted = 1; }
 int mac_rd_config(want) int want;
 {

@@ -247,6 +247,31 @@ gc_vur(a, len)
 	return __amix_valid_usr_range(a, len);
 }
 
+int	guest_adtest = 0;	/* 1: record a Shut Down instead of halting */
+int	guest_adcall = 0;	/* the uadmin call recorded: cmd << 8 | fcn */
+
+/* a session's Shut Down: only for a real uid of root; sync, then halt */
+int
+guest_halt()
+{
+	extern int sync(), uadmin();
+	struct { int cmd, fcn, mdep; } a;
+	int rv[2];
+
+	if (u.u_cred->cr_ruid != 0 || !suser(u.u_cred))
+		return EPERM;
+	if (guest_adtest) {
+		guest_adcall = 2 << 8;
+		psignal(curproc, SIGKILL);
+		return 0;
+	}
+	sync();
+	a.cmd = 2;
+	a.fcn = 0;
+	a.mdep = 0;
+	return uadmin(&a, rv);
+}
+
 static int
 guestcore_unload()
 {

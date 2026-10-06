@@ -10,11 +10,14 @@
 |   stopit()            STOP #$2000, then IPL 7
 |   vblon()             VERTB handler at level 3
 |   &vblcount
+|   hexit(code)         exit through a host call, as the session's Log Out
+|   hhalt(fd)           AMIGAIOC_HALT through a host call, as Shut Down: errno
 
 	.text
 	.globl	start
 start:
 	.long	getsr, setsr, wr16, rd16, urte, stopit, vblon, vblcount, dis, trp
+	.long	hexit, hhalt
 
 getsr:
 	moveq	#0,d0
@@ -112,6 +115,29 @@ trp:
 	rts
 trpret:
 	rte
+
+hexit:
+	move.l	4(sp),-(sp)
+	clr.l	-(sp)
+	moveq	#1,d0
+	trap	#0
+	addq.l	#8,sp
+	rts
+
+hhalt:
+	clr.l	-(sp)
+	move.l	#0x4108,-(sp)
+	move.l	12(sp),-(sp)
+	clr.l	-(sp)
+1:	moveq	#54,d0
+	trap	#0
+	bcc.s	2f
+	cmp.l	#4,d0			| EINTR: an interrupt's signal
+	beq.s	1b
+	bra.s	3f
+2:	moveq	#0,d0
+3:	lea	16(sp),sp
+	rts
 
 stopit:
 	stop	#0x2000

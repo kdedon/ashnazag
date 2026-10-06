@@ -38,7 +38,21 @@ EndCLI >NIL:
 '''
 
 
-def prepare(adfs, output, input_binary, card):
+def donotwait(info):
+    """A plain tool icon with the DONOTWAIT tool type: Workbench does not
+    wait for its WBStartup program to return."""
+    import struct
+    if len(info) < 98 or info[:4] != b'\xe3\x10\x00\x01' or info[48] != 3 \
+            or any(info[o:o + 4] != bytes(4) for o in (26, 50, 54, 66, 70)):
+        raise ValueError('not a plain tool icon')
+    width, height, depth = struct.unpack('>HHH', info[82:88])
+    if 98 + (width + 15) // 16 * 2 * height * depth != len(info):
+        raise ValueError('tool icon has data after its image')
+    tool = b'DONOTWAIT\0'
+    return (info[:54] + b'\0\0\0\1' + info[58:] + struct.pack('>LL', 8, len(tool)) + tool)
+
+
+def prepare(adfs, output, input_binary, card, session):
     sources = {}
     disks = {}
     for name in ('Install3.2', 'Workbench3.2', 'Extras3.2', 'Classes3.2', 'Fonts', 'Storage3.2', 'Locale', 'ModulesA4000D_3.2'):
@@ -93,6 +107,9 @@ def prepare(adfs, output, input_binary, card):
     put('S/Startup-Sequence', STARTUP.encode('ascii'), 'container')
     put('C/container-input', input_binary.read_bytes(), 'container')
     put('Libs/Picasso96/container.card', card.read_bytes(), 'container')
+    # Workbench's Tools menu: Log Out, and Shut Down for root
+    put('WBStartup/Session', session.read_bytes(), 'container')
+    put('WBStartup/Session.info', donotwait(payloads['prefs/env-archive/sys/def_tool.info'][1]), 'container')
     for path, make in P96FILES.items():
         put(path, make(), 'container')
     required = ('c/assign', 'c/loadwb', 'c/loadmondrvs', 'l/con-handler', 'l/ram-handler',
@@ -140,8 +157,9 @@ def main():
     parser.add_argument('output', type=Path)
     parser.add_argument('--input', type=Path, required=True, dest='input_binary')
     parser.add_argument('--card', type=Path, required=True)
+    parser.add_argument('--session', type=Path, required=True)
     args = parser.parse_args()
-    manifest = prepare(args.adfs, args.output, args.input_binary, args.card)
+    manifest = prepare(args.adfs, args.output, args.input_binary, args.card, args.session)
     print('Prepared', len(manifest['files']), 'files in', args.output)
 
 
