@@ -53,6 +53,7 @@ done
 (cd "$D" && cp -a addparts.py fstree.py mkdiskimage.sh mkdiskroot.sh mks5fs.py \
 	mkufs.py root.manifest s5check.py ufscheck.py etc test "$WD/")
 cp -a "$D/build/tape" "$WD/build/tape"
+cp -a "$D/build/net07" "$WD/build/net07"
 
 # guest modules against this kernel; auxreg
 sh "$AUX/kernel/guest/build.sh" -m "$KERNEL" "$X/guest" > "$X/guest.log" 2>&1 ||

@@ -23,6 +23,13 @@ r /dev/par
 r /dev/tiga*
 r /dev/res*
 
+# on-board Ethernet and the tape's network tools
+c /dev/aen0	600 0 3 18 0
+f /usr/sbin/ping	4555 0 3 build/net07/usr/sbin/ping
+f /usr/sbin/route	555 2 2 build/net07/usr/sbin/route
+f /usr/sbin/arp		2555 2 3 build/net07/usr/sbin/arp
+f /usr/bin/netstat	4555 0 3 build/net07/usr/bin/netstat
+
 # SCC printer port (the modem port is the console)
 c /dev/term/b	620 0 7 0 1
 
@@ -48,6 +55,7 @@ c /dev/snd/raw	666 0 3 47 6
 c /dev/snd/reset	666 0 3 47 255
 c /dev/snd/srv	600 0 3 47 128
 f /usr/lib/sndd 755 0 3 ../../build/mac/sound/sndd
+f /usr/lib/sndaux 755 0 3 ../../build/mac/sound/sndaux
 
 # console: ldterm and ttcompat by autopush, Mac key bindings
 d /etc/ap	755 0 3
@@ -71,9 +79,10 @@ f /usr/sbin/swap	2755 2 3 build/swap
 # date(1) runs setclk -s after stime(2); the kernel keeps the RTC
 f /usr/amiga/bin/setclk 755 0 3 etc/setclk
 
-# no Amiga port monitors (screens, serial boards) or Ethernet board
+# no Amiga port monitors (screens, serial boards)
 f /etc/saf/_sactab 644 0 3 etc/_sactab
 f /etc/inet/network-config 444 0 3 etc/network-config
+f /etc/resolv.conf 444 0 3 etc/resolv.conf
 r /etc/saf/screens
 r /etc/saf/serial
 r /etc/saf/xdm

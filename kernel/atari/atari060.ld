@@ -19,7 +19,7 @@ SECTIONS
 	.text : { *ataboot.o(.text) *(.text) . = ALIGN(4); } :text
 	etext = .;
 	. = ALIGN(16);
-	.data : { *(.data) } :data
+	.data : { *(.data) . = ALIGN(4); } :data
 	.reltab : { *(.reltab) . = ALIGN(4); } :data
 	edata = .;
 	.bss : { *(.bss) *(COMMON) } :data

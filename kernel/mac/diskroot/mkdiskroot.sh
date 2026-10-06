@@ -1,6 +1,6 @@
 #!/bin/sh
 # mkdiskroot.sh -- build the disk root filesystem (ufs, 8 KB blocks, 1 KB
-# fragments) from the AMIX 2.1 tape: core (02), bsd (03) and terminfo (10),
+# fragments) from the AMIX 2.1 tape: core (02), bsd (03), net (07) and terminfo (10),
 # adapted by root.manifest.
 #
 #   sh mkdiskroot.sh [tape-dir]
@@ -28,11 +28,16 @@ STAMP=723000000		# 1992-11-29, fixed for reproducible images
 PY="nice -n 19 python3"
 
 mkdir -p "$B/tape"
-for s in 02 03 10; do
+for s in 02 03 07 10; do
 	[ -f "$B/tape/$s" ] && continue
 	[ -f "$TAPE/$s" ] || { echo "[FAIL] no tape segment $s in '$TAPE'"; exit 1; }
 	cp "$TAPE/$s" "$B/tape/$s"
 done
+
+# network tools
+rm -rf "$B/net07"; mkdir -p "$B/net07"
+(cd "$B/net07" && cpio -idm --no-absolute-filenames --quiet \
+	usr/sbin/ping usr/sbin/route usr/sbin/arp usr/bin/netstat < ../tape/07)
 
 [ -f "$KERNEL" ] || { echo "[FAIL] no kernel $KERNEL"; exit 1; }
 cp "$KERNEL" "$B/unix"

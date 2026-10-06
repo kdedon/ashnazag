@@ -1,1 +1,4 @@
-# Interfaces beyond loopback, as "slink" and "ifconfig" lines.
+# Interfaces beyond loopback. Default: QEMU user networking; on real hardware set your own address, netmask and gateway.
+/usr/sbin/slink addaen /dev/aen0 aen0 &&
+	/usr/sbin/ifconfig aen0 10.0.2.15 netmask 255.255.255.0 up -trailers &&
+	/usr/sbin/route add default 10.0.2.2 1 >/dev/null
