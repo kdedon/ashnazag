@@ -68,7 +68,7 @@ async function main() {
   const nativePresets = spawnSync(path.join(build, 'ashforge'), ['presets'], { encoding: 'utf8', timeout: 10000 });
   assert.equal(nativePresets.status, 0, nativePresets.stderr);
   assert.deepEqual(presets.presets, JSON.parse(nativePresets.stdout));
-  assert.deepEqual(presets.presets.filter((preset) => preset.status === 'available').map((preset) => preset.id), ['quadra800']);
+  assert.deepEqual(presets.presets.filter((preset) => preset.status === 'available').map((preset) => preset.id), ['quadra800', 'falcon030']);
   for (const [recipe, expected] of [['{', /not a forge recipe/], [JSON.stringify({ formatVersion: 3 }), /newer than this forge/], [JSON.stringify({ formatVersion: 1 }), /invalid recipe/]]) {
     const result = JSON.parse(globalThis.auxForge(JSON.stringify({ action: 'import', recipe })));
     assert.equal(result.ok, false);
