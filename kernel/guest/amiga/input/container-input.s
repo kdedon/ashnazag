@@ -6,6 +6,7 @@
 .equ ack, 20
 .equ ready, 24
 .equ events, 32
+.equ doorbell, 3104
 .text
 .globl _start
 _start:
@@ -26,7 +27,7 @@ _start:
  sub.l %a3,%a3
  sub.l %a4,%a4
  lea vars(%pc),%a0
- moveq #2,%d0
+ moveq #4,%d0
 1: clr.l (%a0)+
  dbra %d0,1b
  lea dosname(%pc),%a1
@@ -67,6 +68,24 @@ _start:
  tst.l %d0
  bne cleanup
  st inputopen
+ moveq #-1,%d0
+ jsr -330(%a6)
+ tst.l %d0
+ bmi cleanup
+ move.b %d0,sigbit
+ moveq #0,%d1
+ bset %d0,%d1
+ move.l %d1,sigmask
+ sub.l %a1,%a1
+ jsr -294(%a6)
+ move.l %d0,sigtask
+ lea ports(%pc),%a1
+ moveq #3,%d0
+ jsr -168(%a6)
+ lea vertb(%pc),%a1
+ moveq #5,%d0
+ jsr -168(%a6)
+ st servers
  move.l head(%a5),tail(%a5)
  move.l reset(%a5),ack(%a5)
  addq.l #1,28(%a5)
@@ -134,13 +153,13 @@ tracked:
  tst.l %d0
  bne stop
  dbra %d6,next
+| until the servers see events or a reset, or a break
 sleep:
- move.l %a6,-(%sp)
- move.l %a4,%a6
- moveq #1,%d1
- jsr -198(%a6)
- move.l (%sp)+,%a6
- bra loop
+ move.l sigmask,%d0
+ bset #12,%d0
+ jsr -318(%a6)
+ btst #12,%d0
+ beq loop
 interrupted:
  moveq #0,%d7
 stop:
@@ -148,7 +167,20 @@ stop:
  bsr release_all
 cleanup:
  clr.l ready(%a5)
- tst.b inputopen
+ tst.b servers
+ beq 1f
+ lea ports(%pc),%a1
+ moveq #3,%d0
+ jsr -174(%a6)
+ lea vertb(%pc),%a1
+ moveq #5,%d0
+ jsr -174(%a6)
+1: tst.l sigmask
+ beq 3f
+ moveq #0,%d0
+ move.b sigbit,%d0
+ jsr -336(%a6)
+3: tst.b inputopen
  beq 1f
  move.l %a2,%a1
  jsr -450(%a6)
@@ -178,6 +210,34 @@ occupied:
 done:
  move.l %d7,%d0
  movem.l (%sp)+,%d2-%d7/%a2-%a6
+ rts
+| Interrupt servers, first in their chains.  The VERTB one signals the
+| task while events or a reset wait; the PORTS one when the host rang the
+| doorbell. Both let the chain go on: a CIA or IDE interrupt may share it.
+vserver:
+ move.l #BASE,%a5
+ move.l head(%a5),%d0
+ cmp.l tail(%a5),%d0
+ bne 1f
+ move.l reset(%a5),%d0
+ cmp.l ack(%a5),%d0
+ beq 2f
+1: move.l (%a1),%d0
+ move.l 4(%a1),%a1
+ jsr -324(%a6)
+ lea 0xdff000,%a0
+2: moveq #0,%d0
+ rts
+pserver:
+ move.l #BASE,%a5
+ tst.l doorbell(%a5)
+ beq 1f
+ clr.l doorbell(%a5)
+ move.l (%a1),%d0
+ move.l 4(%a1),%a1
+ jsr -324(%a6)
+ lea 0xdff000,%a0
+1: moveq #0,%d0
  rts
 | one event to input.device, stamped with the system time
 send:
@@ -222,12 +282,25 @@ release_all:
 inputname: .asciz "input.device"
 timername: .asciz "timer.device"
 dosname: .asciz "dos.library"
- .asciz "$VER: container-input 1.1 (04.10.2026)"
+servername: .asciz "container-input"
+ .asciz "$VER: container-input 1.2 (05.10.2026)"
+ .balign 4
+ports: .long 0, 0
+ .byte 2, 127
+ .long servername, sigmask, pserver
+ .balign 4
+vertb: .long 0, 0
+ .byte 2, 127
+ .long servername, sigmask, vserver
  .balign 4
 vars:
 tioreq: .long 0
 timerbase: .long 0
+sigmask: .long 0
+sigtask: .long 0
 inputopen: .byte 0
+servers: .byte 0
+sigbit: .byte 0
  .balign 4
 event: .space 22
 held: .space 128

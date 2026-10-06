@@ -38,6 +38,10 @@ __asm__(".weak cputype\n.weak mac_model\n.weak mac_romva");
 extern long ui_cputype __asm__("cputype");	/* 40, 60; absent: 68020/030 */
 extern unsigned long mac_model;		/* a Mac host's Gestalt machine ID */
 extern unsigned long mac_romva();	/* a Mac host's ROM in kernel space */
+/* read at run time: the compiler takes a declared symbol's address as nonzero */
+static unsigned long (*volatile romva)() = mac_romva;
+static long *volatile cpup = &ui_cputype;
+static unsigned long *volatile modelp = &mac_model;
 
 char	uinter_rom[64] = "";		/* a ROM image file to use instead */
 #define	ROMFILE	"/etc/aux/rom"		/* the file without a usable host ROM */
@@ -134,8 +138,8 @@ static int
 pickbox(sum)
 	unsigned long sum;
 {
-	int cpu = &ui_cputype ? (int)ui_cputype : 30;
-	int host = &mac_model ? (int)mac_model : 0;
+	int cpu = cpup ? (int)*cpup : 30;
+	int host = modelp ? (int)*modelp : 0;
 
 	switch (sum) {
 	case 0x420dbff3:		/* Quadra 700, 900, 950 */
@@ -201,10 +205,10 @@ hwrom()
 	unsigned char *b;
 	unsigned long size, sum = 0, i;
 
-	if (!&mac_romva || (b = (unsigned char *)mac_romva(0x10000L)) == 0)
+	if (romva == 0 || (b = (unsigned char *)(*romva)(0x10000L)) == 0)
 		return 0;
 	size = G32(b + 0x40);
-	if (G16(b + 8) < 0x067c || size < 0x10000 || mac_romva(size) == 0)
+	if (G16(b + 8) < 0x067c || size < 0x10000 || (*romva)(size) == 0)
 		size = 0;
 	for (i = 4; i + 1 < size; i += 2)
 		sum += G16(b + i);
@@ -288,7 +292,7 @@ romload1()
 	}
 	lowset(0xd00L, 0x2000L, 2);		/* TimeDBRA */
 	lowset(0xd02L, 0x0600L, 2);		/* TimeSCCDB */
-	i = &ui_cputype && ui_cputype >= 40;
+	i = cpup && *cpup >= 40;
 	lowset(0x12fL, i ? 4L : 3L, 1);		/* CPUFlag: 68040, 68030 */
 	lowset(0x21eL, 2L, 1);			/* KbdType: ADB extended */
 	lowset(0xcb1L, i ? 4L : 3L, 1);		/* MMUType: 68040, 68030 */

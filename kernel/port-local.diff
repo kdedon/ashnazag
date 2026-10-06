@@ -1,9 +1,69 @@
 # Local changes to https://github.com/asokero/amix-040-060-port at 54fba4d
 diff --git a/src/hat040.s b/src/hat040.s
-index 62ba9e4..43ffc8f 100644
+index 62ba9e4..c8f80a3 100644
 --- a/src/hat040.s
 +++ b/src/hat040.s
-@@ -860,7 +860,7 @@ Lhu_done:
+@@ -672,6 +672,16 @@ Lcm_nc:
+ | bit-for-bit what it was before this change.
+ Lcm_dev:
+ 	movel	%fp@(20),%d0		| pfn being mapped
++	cmpl	hat_cm_rom+0,%d0
++	bcs	Lcm_r1
++	cmpl	hat_cm_rom+4,%d0
++	bcs	Lcm_rom			| a registered ROM: cacheable
++Lcm_r1:
++	cmpl	hat_cm_rom+8,%d0
++	bcs	Lcm_r2
++	cmpl	hat_cm_rom+12,%d0
++	bcs	Lcm_rom
++Lcm_r2:
+ 	cmpl	hat_cm_fb+0,%d0
+ 	bcs	Lcm_d1			| pfn < lo0 -> not in slot 0
+ 	cmpl	hat_cm_fb+4,%d0
+@@ -691,6 +701,8 @@ Lcm_fb:
+ 	addql	&1,cmf_fb_n
+ 	movel	%a4,cmf_fb_leaf
+ 	rts
++Lcm_rom:
++	rts				| CM=00 write-through; ROM maps are read-only
+ 
+ | ===========================================================================
+ | hat_cm_fb_add(lo_pfn, hi_pfn) -- register one half-open framebuffer PFN
+@@ -726,13 +738,14 @@ Lcm_fb:
+ hat_cm_fb_add:
+ 	linkw	%fp,&0
+ 	moveml	%d2-%d3/%a2,%sp@-
++	lea	hat_cm_fb,%a2
++Lfa_args:
++	moveq	&2,%d1			| slot count
+ 	movel	%fp@(8),%d2		| lo
+ 	movel	%fp@(12),%d3		| hi
+ 	clrl	%d0
+ 	cmpl	%d2,%d3
+ 	blsw	Lfa_out			| hi <= lo: empty or inverted -> refuse
+-	lea	hat_cm_fb,%a2
+-	moveq	&2,%d1			| slot count
+ Lfa_loop:
+ 	movel	%a2@(0),%d0
+ 	orl	%a2@(4),%d0
+@@ -758,6 +771,16 @@ Lfa_out:
+ 	unlk	%fp
+ 	rts
+ 
++| hat_cm_rom_add(lo_pfn, hi_pfn) -- register a read-only ROM PFN interval,
++| mapped cacheable (CM=00) instead of NCS.  Same contract as hat_cm_fb_add:
++| two slots, immutable once installed, installed before the first fault.
++	.globl	hat_cm_rom_add
++hat_cm_rom_add:
++	linkw	%fp,&0
++	moveml	%d2-%d3/%a2,%sp@-
++	lea	hat_cm_rom,%a2
++	braw	Lfa_args
++
+ | ===========================================================================
+ | hat_unlock (orig 0xb5d1e, GLOBAL T) -- 040 port.
+ | Decrements the lock count on the page-table page holding va's leaf PTE, and
+@@ -860,7 +883,7 @@ Lhu_done:
  | THIS port: the 040 leaf PTE address is ALREADY in p_mapping (hat_pteload set pp->p_mapping=&PTE),
  | so just clrl each PTE (UDT->0 invalid) directly -- no tree walk -- then cpusha+pflusha so the HW
  | walker reloads the invalid descriptor and the next access faults & re-maps.  CONSERVATIVE: does
@@ -12,7 +72,7 @@ index 62ba9e4..43ffc8f 100644
  | philosophy as hat_free040) -- correctness (no stale resident PTE on a freed page) comes first.
  |
  | 2026-07-18 ISSUE-10 PRODUCER FIX: harvest each PTE's HW U/M bits into pp->p_ref/p_mod BEFORE
-@@ -898,6 +898,32 @@ Lpu_loop:
+@@ -898,6 +921,32 @@ Lpu_loop:
  	bfextu	%a0@{&3:&1},%d1
  	orl	%d1,%d0
  	bfins	%d0,%a2@{&5:&1}		| pp->p_mod |= PTE M
@@ -45,6 +105,20 @@ index 62ba9e4..43ffc8f 100644
  	clrl	%a3@			| *pte = 0 -> 040 leaf descriptor INVALID (UDT=0)
  	movel	%d3,%d2			| advance to next mapping
  	braw	Lpu_loop
+@@ -2060,6 +2109,13 @@ hat_cm_fb:
+ 	.balign 4
+ hat_cm_ram:
+ 	.long	0x00000020		| B2: CM=01 copyback for managed RAM (default since 2026-07-30)
++
++| hat_cm_rom: registered ROM PFN intervals, {lo, hi} half-open, two slots;
++| written only by hat_cm_rom_add, read only by Lcm_dev.
++	.globl	hat_cm_rom
++	.balign 4
++hat_cm_rom:
++	.long	0, 0, 0, 0
+ 	.balign 4
+ Lbt_ptl_done:
+ 	.long	0			| btrace 'P' one-shot guard (first hat_pteload)
 diff --git a/src/krnxmemflt040.s b/src/krnxmemflt040.s
 index 326ed16..e1cdcc9 100644
 --- a/src/krnxmemflt040.s

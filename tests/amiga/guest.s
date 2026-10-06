@@ -14,7 +14,7 @@
 	.text
 	.globl	start
 start:
-	.long	getsr, setsr, wr16, rd16, urte, stopit, vblon, vblcount
+	.long	getsr, setsr, wr16, rd16, urte, stopit, vblon, vblcount, dis, trp
 
 getsr:
 	moveq	#0,d0
@@ -93,6 +93,25 @@ utrap:
 	move.l	d6,d0
 	movem.l	(sp)+,d2-d7/a2-a6
 	rts
+
+| dis(n): n Disable/Enable pairs; trp(n): n trap #2 round trips
+dis:
+	move.l	4(sp),d0
+1:	move.w	#0x4000,0xdff09a
+	move.w	#0xc000,0xdff09a
+	subq.l	#1,d0
+	bne.s	1b
+	rts
+
+trp:
+	move.l	#trpret,0x88
+	move.l	4(sp),d0
+1:	trap	#2
+	subq.l	#1,d0
+	bne.s	1b
+	rts
+trpret:
+	rte
 
 stopit:
 	stop	#0x2000

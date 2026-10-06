@@ -22,7 +22,7 @@ monitor icon tooltypes:
 
 ```text
 BOARDTYPE=container
-SOFTSPRITE=Yes
+SOFTSPRITE=No
 NOBLITTER=Yes
 DISPLAYCHAIN=Yes
 ```
@@ -58,8 +58,11 @@ the matching launcher. P96 and AmigaOS are user-supplied dependencies.
 - Four MiB of linear, indexed 8-bit video RAM; rows align to four bytes.
 - Virtual bitmap rows up to 4096 pixels, subject to video RAM capacity.
 - Palette, viewport panning, screen switching, and display blanking.
-- P96's CPU drawing and software pointer; direct bitmap writes are visible
-  to the host display refresh.
+- P96's CPU drawing; direct bitmap writes are visible to the host display
+  refresh.
+- A hardware sprite when the host offers one: the card publishes the
+  pointer's image, colours and position and the host draws it, so pointer
+  moves change no screen memory. Otherwise P96's software pointer.
 - A bounded delay implements the documented fallback for absent retrace
   hardware. Refresh is unsynchronized and may tear.
 

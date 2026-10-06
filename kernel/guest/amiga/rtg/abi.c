@@ -11,6 +11,7 @@ int main(void)
     FIELD(magic); FIELD(version); FIELD(header_size); FIELD(memory_size);
     FIELD(max_width); FIELD(max_height); FIELD(format); FIELD(seq);
     FIELD(on); FIELD(width); FIELD(height); FIELD(stride); FIELD(offset);
-    FIELD(palette);
+    FIELD(palette); FIELD(cursor); FIELD(cseq); FIELD(con); FIELD(cx); FIELD(cy);
+    FIELD(cw); FIELD(ch); FIELD(crgb); FIELD(cimg);
     return 0;
 }

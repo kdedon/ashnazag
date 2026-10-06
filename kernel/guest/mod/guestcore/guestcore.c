@@ -250,7 +250,9 @@ gc_vur(a, len)
 static int
 guestcore_unload()
 {
-	return gc_profiles || gc_nproc ? EBUSY : 0;
+	extern int guest_romheld();
+
+	return gc_profiles || gc_nproc || guest_romheld() ? EBUSY : 0;
 }
 
 struct mod_hook_data guestcore_hookdata[] = {

@@ -13,6 +13,7 @@
 .equ state_switch, gbi_CardData
 .equ state_display, gbi_CardData+4
 .equ state_format, gbi_CardData+8
+.equ state_vsync, gbi_CardData+12
 
 .text
 .globl _start
@@ -119,6 +120,13 @@ init_card:
  or.l #0x05100000,gbi_Flags(%a0)
  move.w #2,gbi_RGBFormats(%a0)
  move.w #2,gbi_SoftSpriteFlags(%a0)
+ | The host draws the pointer when it offers to: a hardware sprite.
+ move.l #RTG_BASE,%a1
+ tst.l rtg_cursor(%a1)
+ beq 3f
+ or.l #1,gbi_Flags(%a0)
+ clr.w gbi_SoftSpriteFlags(%a0)
+3:
  move.w #8192,gbi_MaxHorValue+2(%a0)
  move.w #8192,gbi_MaxVerValue+2(%a0)
  move.l #RTG_BASE,%a1
@@ -153,13 +161,13 @@ init_card:
  callback gbi_SetClearMask, noop
  callback gbi_SetReadPlane, noop
  callback gbi_WaitVerticalSync, wait_vsync
- callback gbi_GetVSyncState, noop
+ callback gbi_GetVSyncState, vsync_state
  callback gbi_SetInterrupt, return_zero
  callback gbi_WaitBlitter, noop
- callback gbi_SetSprite, return_zero
- callback gbi_SetSpritePosition, noop
- callback gbi_SetSpriteImage, noop
- callback gbi_SetSpriteColor, noop
+ callback gbi_SetSprite, set_sprite
+ callback gbi_SetSpritePosition, set_sprite_position
+ callback gbi_SetSpriteImage, set_sprite_image
+ callback gbi_SetSpriteColor, set_sprite_color
  moveq #1,%d0
  rts
 noop:
@@ -316,6 +324,103 @@ get_clock:
  bhs return_zero
  lea clocks(%pc),%a1
  move.l (%a1,%d0.l*4),%d0
+ rts
+| Sprite updates publish an odd cseq, the state, then an even one.
+set_sprite:
+ move.l #RTG_BASE,%a1
+ tst.l rtg_cursor(%a1)
+ beq return_zero
+ addq.l #1,rtg_cseq(%a1)
+ tst.w %d0
+ sne %d0
+ and.l #1,%d0
+ move.l %d0,rtg_con(%a1)
+ addq.l #1,rtg_cseq(%a1)
+ moveq #1,%d0
+ rts
+set_sprite_position:
+ move.l #RTG_BASE,%a1
+ addq.l #1,rtg_cseq(%a1)
+ bsr sprite_xy
+ addq.l #1,rtg_cseq(%a1)
+ rts
+| top left: the pointer position on the visible screen plus the hot spot
+sprite_xy:
+ move.w gbi_MouseX(%a0),%d0
+ sub.w gbi_XOffset(%a0),%d0
+ move.b gbi_MouseXOffset(%a0),%d1
+ ext.w %d1
+ add.w %d1,%d0
+ ext.l %d0
+ move.l %d0,rtg_cx(%a1)
+ move.w gbi_MouseY(%a0),%d0
+ sub.w gbi_YOffset(%a0),%d0
+ move.b gbi_MouseYOffset(%a0),%d1
+ ext.w %d1
+ add.w %d1,%d0
+ ext.l %d0
+ move.l %d0,rtg_cy(%a1)
+ rts
+| MouseImage: two header words, then per row plane 0 and plane 1 words
+set_sprite_image:
+ movem.l %d2-%d5/%a2-%a3,-(%sp)
+ move.l #RTG_BASE,%a1
+ addq.l #1,rtg_cseq(%a1)
+ bsr sprite_xy
+ moveq #0,%d2
+ move.b gbi_MouseWidth(%a0),%d2
+ cmp.l #16,%d2
+ bls 1f
+ moveq #16,%d2
+1: moveq #0,%d3
+ move.b gbi_MouseHeight(%a0),%d3
+ cmp.l #48,%d3
+ bls 2f
+ moveq #48,%d3
+2: move.l gbi_MouseImage(%a0),%d0
+ bne 3f
+ moveq #0,%d3
+3: move.l %d2,rtg_cw(%a1)
+ move.l %d3,rtg_ch(%a1)
+ move.l %d0,%a2
+ addq.l #4,%a2
+ lea rtg_cimg(%a1),%a3
+ bra 6f
+4: move.w (%a2)+,%d4
+ move.w (%a2)+,%d5
+ moveq #15,%d1
+5: moveq #0,%d0
+ add.w %d5,%d5
+ addx.b %d0,%d0
+ add.w %d4,%d4
+ addx.b %d0,%d0
+ move.b %d0,(%a3)+
+ dbra %d1,5b
+6: dbra %d3,4b
+ addq.l #1,rtg_cseq(%a1)
+ movem.l (%sp)+,%d2-%d5/%a2-%a3
+ rts
+| colours 1 to 3 as index 0 to 2, each component repeated in a word
+set_sprite_color:
+ move.l #RTG_BASE,%a1
+ and.l #255,%d0
+ cmp.l #3,%d0
+ bhs noop
+ addq.l #1,rtg_cseq(%a1)
+ mulu.w #6,%d0
+ lea rtg_crgb+6(%a1,%d0.l),%a1
+ move.b %d1,(%a1)+
+ move.b %d1,(%a1)+
+ move.b %d2,(%a1)+
+ move.b %d2,(%a1)+
+ move.b %d3,(%a1)+
+ move.b %d3,(%a1)+
+ addq.l #1,RTG_BASE+rtg_cseq
+ rts
+| No beam: in and out of the blank on alternate calls, so polls end.
+vsync_state:
+ eor.l #1,state_vsync(%a0)
+ move.l state_vsync(%a0),%d0
  rts
 wait_vsync:
  tst.w %d0

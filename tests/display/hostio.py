@@ -24,7 +24,7 @@
 #                       render the dspat.h pattern (table rotated by K)
 #                       at SHOT's size, compare: "same" or "diff N"
 # Log: OUTDIR/display/hostio.log.  Ends when the guest side closes.
-import json, os, socket, struct, sys, threading, time, zlib
+import json, os, re, socket, struct, sys, threading, time, zlib
 
 OUT = sys.argv[1]
 SK = sys.argv[2] if len(sys.argv) > 2 else OUT
@@ -224,6 +224,27 @@ def serve(q, cmd, a):
                 q.hmp('mouse_move %d %d' % (dx, dy))
                 time.sleep(gap)
         threading.Thread(target=go).start()
+        return 'started'
+    if cmd == 'prof':
+        # PC and SR samples for SECS s on the main monitor -> display/NAME.prof
+        secs, name = float(a[0]), os.path.basename(a[1])
+
+        def run():
+            m = QMP(os.path.join(SK, 'qmp.sock'))
+            n = {}
+            end = time.time() + secs
+            while time.time() < end:
+                r = m.hmp('info registers').get('return', '')
+                pc = re.search(r'PC = ([0-9a-fA-F]+)', r)
+                sr = re.search(r'SR = ([0-9a-fA-F]+)', r)
+                if pc and sr:
+                    k = (int(pc.group(1), 16), int(sr.group(1), 16) >> 13 & 1)
+                    n[k] = n.get(k, 0) + 1
+            m.s.close()
+            with open(os.path.join(D, name + '.prof'), 'w') as f:
+                for (pc, sup), c in sorted(n.items(), key=lambda x: -x[1]):
+                    f.write('%08x %d %d\n' % (pc, sup, c))
+        threading.Thread(target=run).start()
         return 'started'
     if cmd == 'button':
         q.hmp('mouse_button %d' % int(a[0]))

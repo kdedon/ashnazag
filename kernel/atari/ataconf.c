@@ -762,6 +762,20 @@ backtrace()
 	printf("\n");
 }
 
+/*
+ * The kernel address of the first n bytes of the machine's ROM, 0 if
+ * beyond it.  DTT0 maps it one to one.  A CT60's flash is 1 MB, a
+ * Falcon's TOS 512 KB.
+ */
+unsigned long
+ata_romva(n)
+unsigned long n;
+{
+	if (ata_machtype != MACH_ATARI || n > (ata_cputype == 8 ? 0x100000 : 0x80000))
+		return 0;
+	return 0xe00000;
+}
+
 /* ------------------------------------------------------ halt, monitor */
 
 void

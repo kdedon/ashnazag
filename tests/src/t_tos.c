@@ -814,6 +814,16 @@ owner()
 	    to.to_pid, (long)tpid, e);
 }
 
+/* the host's TOS ROM, else ENODEV */
+static void
+maprom()
+{
+	int r = ioctl(tfd, TOSIOC_MAPROM, 0), e = errno;
+
+	t_check(N("maprom"), r < 0 ? e == ENODEV : r == 0x80000 || r == 0x100000,
+	    "TOSIOC_MAPROM %d errno %d", r, e);
+}
+
 static void
 timers()
 {
@@ -1490,6 +1500,7 @@ run(rom)
 			fvdichecks();
 		else {
 			owner();
+			maprom();
 			ucheck();
 			timers();
 		}

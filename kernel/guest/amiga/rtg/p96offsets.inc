@@ -48,6 +48,13 @@
 .equ gbi_Depth, 570
 .equ gbi_Border, 572
 .equ gbi_CLUT, 578
+.equ gbi_MouseX, 1382
+.equ gbi_MouseY, 1384
+.equ gbi_MouseWidth, 1386
+.equ gbi_MouseHeight, 1387
+.equ gbi_MouseXOffset, 1388
+.equ gbi_MouseYOffset, 1389
+.equ gbi_MouseImage, 1390
 .equ gbi_CardData, 1482
 .equ gbi_MemorySpaceBase, 1546
 .equ gbi_MemorySpaceSize, 1550

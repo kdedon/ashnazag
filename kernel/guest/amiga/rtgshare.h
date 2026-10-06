@@ -20,6 +20,18 @@ struct mig_rtg {
     volatile unsigned int seq;
     unsigned int on, width, height, stride, offset;
     unsigned short palette[256][3];
+    /*
+     * The pointer as a hardware sprite: the host sets cursor and draws it
+     * over the screen; the card writes the rest between odd and even cseq.
+     * cimg holds colour numbers 0 (clear) to 3, crgb colours 1 to 3.
+     */
+    unsigned int cursor;
+    volatile unsigned int cseq;
+    unsigned int con;
+    int cx, cy;
+    unsigned int cw, ch;
+    unsigned short crgb[4][3];
+    unsigned char cimg[48][16];
 };
 
 /* Writers publish an odd sequence, update controls, then publish an even one. */

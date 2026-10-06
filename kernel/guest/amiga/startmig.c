@@ -31,11 +31,12 @@
 #define BOOTSIZE 0x80000UL
 
 extern int mprotect();
-extern int migdisp();
+extern int migdisp(), migkick;
 
 static unsigned char rombuf[ROMSIZE];
 static int displaylife = -1;
 static void fail(char *);
+static int romok();
 static unsigned long get32(unsigned char *);
 
 static void
@@ -86,8 +87,8 @@ static int
 readrom(path)
 	char *path;
 {
-	unsigned long n = 0, sum = 0, prev, crc = 0xffffffffUL, i;
-	int fd, count, bit;
+	unsigned long n = 0;
+	int fd, count;
 	unsigned char extra;
 
 	fd = open(path, O_RDONLY);
@@ -111,20 +112,32 @@ readrom(path)
 		miglog(1, "%.500s: ROM must be exactly 512 KiB", path);
 		return 0;
 	}
+	return romok(rombuf, path);
+}
+
+/* the A4000 Kickstart 3.2 (47.96), by sum, CRC and header */
+static int
+romok(b, name)
+	unsigned char *b;
+	char *name;
+{
+	unsigned long sum = 0, prev, crc = 0xffffffffUL, i;
+	int bit;
+
 	for (i = 0; i < ROMSIZE; i += 4) {
 		prev = sum;
-		sum = (sum + get32(rombuf + i)) & 0xffffffffUL;
+		sum = (sum + get32(b + i)) & 0xffffffffUL;
 		if (sum < prev)
 			sum++;
 	}
 	for (i = 0; i < ROMSIZE; i++) {
-		crc ^= rombuf[i];
+		crc ^= b[i];
 		for (bit = 0; bit < 8; bit++)
 			crc = (crc >> 1) ^ ((crc & 1) ? 0xedb88320UL : 0);
 	}
 	if (sum != 0xffffffffUL || (crc ^ 0xffffffffUL) != 0x9bb8fc93UL ||
-	    get32(rombuf) != 0x11144ef9UL || get32(rombuf + 4) != 0xf800d2UL) {
-		miglog(1, "%.500s: expected the A4000 Kickstart 3.2 (47.96) ROM", path);
+	    get32(b) != 0x11144ef9UL || get32(b + 4) != 0xf800d2UL) {
+		miglog(1, "%.500s: expected the A4000 Kickstart 3.2 (47.96) ROM", name);
 		return 0;
 	}
 	return 1;
@@ -283,7 +296,7 @@ main(argc, argv)
 	char sysroot[1024], *home, *env = 0;
 	struct stat sb;
 	struct passwd *pw;
-	int readonly = 0, rootreadonly = 0, census = 0;
+	int readonly = 0, rootreadonly = 0, census = 0, kick = 1, romarg = 0, hostrom = 0;
 	unsigned long fastmb = 8;
 	struct amigaenter ae;
 	struct amigainfo info;
@@ -298,8 +311,9 @@ main(argc, argv)
 		else if (!strcmp(argv[i], "--probe")) probe = 1;
 		else if (!strcmp(argv[i], "--readonly")) readonly = 1;
 		else if (!strcmp(argv[i], "--census")) census = 1;
+		else if (!strcmp(argv[i], "--nokick")) kick = 0;
 		else if ((!strcmp(argv[i], "-r") || !strcmp(argv[i], "-rom")) && i + 1 < argc)
-			rom = argv[++i];
+			rom = argv[++i], romarg = 1;
 		else if (!strcmp(argv[i], "-e") && i + 1 < argc)
 			env = argv[++i];
 		else if (!strcmp(argv[i], "-boot") && i + 1 < argc)
@@ -335,9 +349,12 @@ main(argc, argv)
 		openlog(sysroot, !readonly);
 		miglog(0, "SYS: is %.500s%s", sysroot, readonly ? ", read-only" : "");
 	}
-	if (!readrom(rom))
-		return 1;
-	miglog(0, "Kickstart %.500s verified", rom);
+	/* the file now if named; else after the machine's own Kickstart is tried */
+	if (romarg || check) {
+		if (!readrom(rom))
+			return 1;
+		miglog(0, "Kickstart %.500s verified", rom);
+	}
 	if (check) {
 		printf("A4000 Kickstart 3.2 (47.96): checksum and CRC verified\n");
 		return 0;
@@ -370,11 +387,24 @@ main(argc, argv)
 		miglog(1, "Amiga environment needs a 68040");
 		return 1;
 	}
+	if (!romarg) {
+		if (ioctl(fd, AMIGAIOC_MAPROM, 0) > 0 && romok((unsigned char *)ROMBASE, "the machine's Kickstart")) {
+			hostrom = 1;
+			miglog(0, "Kickstart: the machine's own");
+		} else {
+			if (!readrom(rom))
+				return 1;
+			miglog(0, "Kickstart %.500s verified", rom);
+		}
+	}
 	/* the guest's memory exceeds the default soft limit on mappings */
 	if (getrlimit(RLIMIT_VMEM, &rl) == 0 && rl.rlim_cur < rl.rlim_max) {
 		rl.rlim_cur = rl.rlim_max;
 		setrlimit(RLIMIT_VMEM, &rl);
 	}
+	/* helpers ring the guest on input; the guest rings the SYS: helper */
+	if (kick && (info.ai_features & AMIGA_FEAT_KICK))
+		migkick = mig_fs_bell = fd;
 	region(0UL, CHIPSIZE, 1);
 	/* helpers fork before the private regions, which each fork would reserve again */
 	if (!probe) {
@@ -389,10 +419,12 @@ main(argc, argv)
 	}
 	if (fastmb)
 		region(FASTBASE, fastmb << 20, 0);
-	region(ROMBASE, ROMSIZE, 0);
-	memcpy((char *)ROMBASE, rombuf, ROMSIZE);
-	if (mprotect((caddr_t)ROMBASE, ROMSIZE, PROT_READ | PROT_EXEC) < 0)
-		fail("mprotect");
+	if (!hostrom) {
+		region(ROMBASE, ROMSIZE, 0);
+		memcpy((char *)ROMBASE, rombuf, ROMSIZE);
+		if (mprotect((caddr_t)ROMBASE, ROMSIZE, PROT_READ | PROT_EXEC) < 0)
+			fail("mprotect");
+	}
 	if (!probe) {
 		region(BOOTBASE, BOOTSIZE, 0);
 		loadboot(boot);
@@ -419,13 +451,13 @@ main(argc, argv)
 		return 0;
 	}
 #ifdef __m68k__
-	__asm__ __volatile__("mov.l %0,%%sp\n\tjmp (%1)" : : "d" (0x400L), "a" (get32(rombuf + 4)));
+	__asm__ __volatile__("mov.l %0,%%sp\n\tjmp (%1)" : : "d" (0x400L), "a" (get32((unsigned char *)ROMBASE + 4)));
 #else
 	fprintf(stderr, "startmig: ROM execution requires m68k\n");
 	return 1;
 #endif
 	return 0;
 usage:
-	fprintf(stderr, "usage: startmig [-rom file] [-boot file] [-e env] [-m fast-MB] [--readonly] [--census] [--check | --probe]\n");
+	fprintf(stderr, "usage: startmig [-rom file] [-boot file] [-e env] [-m fast-MB] [--readonly] [--census] [--nokick] [--check | --probe]\n");
 	return 2;
 }

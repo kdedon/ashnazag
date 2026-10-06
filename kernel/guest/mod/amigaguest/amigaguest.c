@@ -3,10 +3,18 @@
 extern int nodev(), ttimeout(), untimeout(), fpu_present;
 extern void dlm_cacheflush();
 extern struct modwrapper amigaguest_wrapper;
+extern int amiga_maprom();
 __asm__(".weak cputype");
 extern long amiga_cpu __asm__("cputype");
+/* read at run time: the compiler takes a declared object's address as nonzero */
+static long *volatile amiga_cpup = &amiga_cpu;
 static struct guest_profile amiga_profile;
 static int amiga_nopen, amiga_devflag[1];
+/* entered guests, for the doorbell */
+#define AMIGA_NGUEST 8
+static struct guest_proc *amiga_guests[AMIGA_NGUEST];
+/* doorbell writes per slot, and those AMIGAIOC_WAIT has returned for */
+static unsigned long amiga_rung[AMIGA_NGUEST], amiga_heard[AMIGA_NGUEST];
 
 int
 amiga_spl()
@@ -82,6 +90,32 @@ amiga_sendsig(gp, sig, sip, hdlr)
 	amiga_intr(gp, (char *)u.u_ar0);
 	return 1;
 }
+/* raised by the tick or a helper's doorbell: wake or signal the guest */
+static void
+amiga_post(gp)
+	struct guest_proc *gp;
+{
+	struct amigactr *a = AMIGAP(gp);
+	gp->gp_vpend = amiga_level(gp) << 8;
+	if (gp->gp_vpend > (gp->gp_vsr & 0x700)) {
+		if (a->ac_sleeping)
+			wakeup((caddr_t)&a->ac_sleeping);
+		else
+			psignal(gp->gp_proc, AMIGA_SIG);
+	}
+}
+void
+amiga_ring(gp)
+	struct guest_proc *gp;
+{
+	int i, s = amiga_spl();
+	for (i = 0; i < AMIGA_NGUEST; i++)
+		if (amiga_guests[i] == gp) {
+			amiga_rung[i]++;
+			wakeup((caddr_t)&amiga_rung[i]);
+		}
+	amiga_splx(s);
+}
 static void
 amiga_tick(arg)
 	caddr_t arg;
@@ -96,13 +130,7 @@ amiga_tick(arg)
 	a->ac_fraction %= HZ;
 	amigadev_tick(&a->ac_dev, clocks);
 	a->ac_epoch++;
-	gp->gp_vpend = amiga_level(gp) << 8;
-	if (gp->gp_vpend > (gp->gp_vsr & 0x700)) {
-		if (a->ac_sleeping)
-			wakeup((caddr_t)&a->ac_sleeping);
-		else
-			psignal(gp->gp_proc, AMIGA_SIG);
-	}
+	amiga_post(gp);
 	a->ac_timer = ttimeout(amiga_tick, arg, 1L);
 	if (a->ac_timer == -1) {
 		psignal(gp->gp_proc, SIGTERM);
@@ -116,6 +144,7 @@ amiga_census(a)
 {
 	struct amigacensus *c = &a->ac_census;
 	int i, j;
+	printf("amiga census: fast INTENA writes %d\n", (int)amiga_nfast);
 	printf("amiga census: faults %d intr %d stop %d last pc %x addr %x\n",
 	    (int)a->ac_stat.as_fault, (int)a->ac_stat.as_intr, (int)a->ac_stat.as_stop,
 	    (int)a->ac_stat.as_lastpc, (int)a->ac_stat.as_lastaddr);
@@ -138,7 +167,7 @@ amiga_exit(gp)
 	struct guest_proc *gp;
 {
 	struct amigactr *a = AMIGAP(gp);
-	int s;
+	int s, i;
 	if (a->ac_gp == gp && (a->ac_config.ae_flags & AMIGAF_CENSUS))
 		amiga_census(a);
 	s = amiga_spl();
@@ -146,6 +175,11 @@ amiga_exit(gp)
 		untimeout(a->ac_timer);
 	if (a->ac_gp == gp)
 		sigdelset(&gp->gp_proc->p_sig, AMIGA_SIG);
+	for (i = 0; i < AMIGA_NGUEST; i++)
+		if (amiga_guests[i] == gp) {
+			amiga_guests[i] = 0;
+			wakeup((caddr_t)&amiga_rung[i]);
+		}
 	amiga_splx(s);
 }
 static int
@@ -237,7 +271,7 @@ amiga_priv(gp, r, v)
 			if (op & 1) {
 				value = *rp;
 				if (c == 2) {
-					value &= (&amiga_cpu && amiga_cpu >= 40) ? 0x80008000UL : 0x00003f1fUL;
+					value &= (amiga_cpup && *amiga_cpup >= 40) ? 0x80008000UL : 0x00003f1fUL;
 					dlm_cacheflush();
 				}
 				*cp = value;
@@ -294,13 +328,41 @@ amigaioctl(dev, cmd, arg, mode, cr, rvp)
 	struct amigainfo ai;
 	struct guest_proc *gp;
 	struct amigactr *a;
-	int e;
+	int e, i, s;
+	if (cmd == AMIGAIOC_KICK || cmd == AMIGAIOC_WAIT) {
+		s = amiga_spl();
+		for (i = 0; i < AMIGA_NGUEST; i++) {
+			gp = amiga_guests[i];
+			if (gp && gp->gp_proc->p_pid == (pid_t)arg &&
+			    (gp->gp_proc->p_cred->cr_uid == cr->cr_uid || cr->cr_uid == 0))
+				break;
+		}
+		e = i < AMIGA_NGUEST ? 0 : ESRCH;
+		if (!e && cmd == AMIGAIOC_KICK) {
+			/* a helper's doorbell: PORTS, as an expansion board raises it */
+			AMIGAP(gp)->ac_dev.intreq |= 0x0008;
+			AMIGAP(gp)->ac_epoch++;
+			amiga_post(gp);
+		} else if (!e) {
+			/* the slot may be reused while asleep: the caller asks again */
+			if (amiga_rung[i] == amiga_heard[i] &&
+			    sleep((caddr_t)&amiga_rung[i], (PZERO + 1) | PCATCH))
+				e = EINTR;
+			else
+				amiga_heard[i] = amiga_rung[i];
+		}
+		amiga_splx(s);
+		return e;
+	}
 	if (cmd == AMIGAIOC_INFO) {
 		ai.ai_version = AMIGA_ABI_VERSION;
-		ai.ai_features = AMIGA_FEAT_BASE;
-		if (&amiga_cpu && amiga_cpu == 40) ai.ai_features |= AMIGA_FEAT_EXPERIMENTAL;
+		ai.ai_features = AMIGA_FEAT_BASE | AMIGA_FEAT_KICK;
+		if (amiga_cpup && *amiga_cpup == 40) ai.ai_features |= AMIGA_FEAT_EXPERIMENTAL;
 		return copyout((caddr_t)&ai, arg, sizeof ai) ? EFAULT : 0;
 	}
+	if (cmd == AMIGAIOC_MAPROM)
+		return GUESTP(curproc) && GUESTP(curproc)->gp_prof != &amiga_profile ?
+		    EPERM : amiga_maprom(dev, rvp);
 	if (cmd == AMIGAIOC_ENTER) {
 		if (copyin(arg, (caddr_t)&ae, sizeof ae)) return EFAULT;
 		if (ae.ae_version != AMIGA_ABI_VERSION || ae.ae_chipsize != AMIGA_CHIP_SIZE ||
@@ -323,6 +385,14 @@ amigaioctl(dev, cmd, arg, mode, cr, rvp)
 			guest_detach(&amiga_profile);
 			return EAGAIN;
 		}
+		s = amiga_spl();
+		for (i = 0; i < AMIGA_NGUEST && amiga_guests[i]; i++)
+			;
+		if (i < AMIGA_NGUEST) {
+			amiga_guests[i] = gp;
+			amiga_heard[i] = amiga_rung[i];
+		}
+		amiga_splx(s);
 		return 0;
 	}
 	gp = GUESTP(curproc);

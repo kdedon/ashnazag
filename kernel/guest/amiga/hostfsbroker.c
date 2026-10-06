@@ -1,3 +1,5 @@
+#include <sys/types.h>
+#include <sys/ioctl.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -5,6 +7,9 @@
 #include <poll.h>
 #include "hostfswire.h"
 #include "miglog.h"
+#include "amigaio.h"
+
+int mig_fs_bell = -1;   /* /dev/amiga, for the guest's doorbell */
 
 static volatile struct mig_fs_status *progress;
 static unsigned long requests, bytes, ops[16];
@@ -53,7 +58,8 @@ mig_fs_broker_at(int ready, int life, const char *root, int readonly,
     struct mig_hostfs *fs;
     struct mig_fs_request request;
     struct pollfd p;
-    int n, status = 0, quiet = 0;
+    int n, status = 0, quiet = 0, bell = mig_fs_bell >= 0;
+    pid_t guest = getppid();
     char success = 1;
     fs = mig_hostfs_create();
     if (!fs) return 1;
@@ -73,8 +79,11 @@ mig_fs_broker_at(int ready, int life, const char *root, int readonly,
     close(ready);
     p.fd = life; p.events = POLLIN;
     for (;;) {
-        /* every tick while the guest uses SYS:, so a request waits one */
-        n = poll(&p, 1, quiet > 500 ? 20 : 1);
+        /*
+         * With the doorbell, sleeps until the guest rings; without, polls
+         * every tick while the guest uses SYS:, so a request waits one.
+         */
+        n = poll(&p, 1, bell ? 0 : quiet > 500 ? 20 : 1);
         if (n < 0 && errno == EINTR) continue;
         if (n < 0) { status = 1; break; }
         if (p.revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) break;
@@ -82,7 +91,15 @@ mig_fs_broker_at(int ready, int life, const char *root, int readonly,
             box->state > MIG_FS_REPLY) {
             status = 1; break;
         }
-        if (box->state != MIG_FS_REQUEST) { quiet++; continue; }
+        if (box->state != MIG_FS_REQUEST) {
+            quiet++;
+            /* before the guest starts and after it exits: ESRCH */
+            if (bell && ioctl(mig_fs_bell, AMIGAIOC_WAIT, guest) < 0 && errno != EINTR) {
+                if (errno != ESRCH) bell = 0;
+                else poll(&p, 1, 20);
+            }
+            continue;
+        }
         quiet = 0;
         MIG_FS_BARRIER();
         memcpy(&request, &box->request, sizeof request);

@@ -22,4 +22,8 @@ struct amigactr {
 extern int amiga_spl();
 extern void amiga_splx();
 extern int amiga_fault();
+extern long amiga_nfast;
+extern void amiga_ring();
+/* a guest write here wakes the helper in AMIGAIOC_WAIT: the SYS: broker */
+#define AMIGA_BELL 0xf7fffcUL
 #endif

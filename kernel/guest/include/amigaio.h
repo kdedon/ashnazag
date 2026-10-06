@@ -13,11 +13,19 @@
 #define AMIGA_FEAT_BOOT 1
 #define AMIGA_FEAT_BASE 2
 #define AMIGA_FEAT_EXPERIMENTAL 4
+/*
+ * AMIGAIOC_KICK(pid) raises the guest's INTREQ PORTS; AMIGAIOC_WAIT(pid)
+ * sleeps until the guest writes its doorbell (ESRCH: no such guest).
+ */
+#define AMIGA_FEAT_KICK 8
 #define AMIGAIOC(n) (('A' << 8) | (n))
 #define AMIGAIOC_ENTER AMIGAIOC(1)
 #define AMIGAIOC_LEAVE AMIGAIOC(2)
 #define AMIGAIOC_STAT AMIGAIOC(3)
 #define AMIGAIOC_INFO AMIGAIOC(4)
+#define AMIGAIOC_KICK AMIGAIOC(5)
+#define AMIGAIOC_WAIT AMIGAIOC(6)
+#define AMIGAIOC_MAPROM AMIGAIOC(7)	/* the machine's Kickstart, read-only at AMIGA_ROM_BASE */
 
 struct amigaenter {
 	unsigned long ae_version, ae_chipsize, ae_fastsize, ae_flags;

@@ -38,6 +38,7 @@
 #include <sys/fault.h>
 #include <sys/syscall.h>
 #include <sys/procfs.h>
+#include <dirent.h>
 #include "sys/mod.h"
 #include "amigaio.h"
 #include "t.h"
@@ -61,6 +62,8 @@ typedef long (*gfn)();
 #define	stopit	G(5)
 #define	vblon	G(6)
 #define	vblcount (*(volatile long *)((long *)LOAD)[7])
+#define	dis	G(8)
+#define	trp	G(9)
 
 static int afd = -1;
 
@@ -310,6 +313,30 @@ guests()
 			t_check(gname[i], WIFEXITED(st) && WEXITSTATUS(st) == gwant[i],
 			    "status 0x%x", st);
 	}
+}
+
+/* microseconds per INTENA write and per reflected trap */
+static void
+cost()
+{
+	long t0, t1, t2;
+	int st;
+	pid_t p;
+
+	if ((p = fork()) == 0) {
+		if (enter() != 0)
+			_exit(1);
+		t0 = t_now_ms();
+		dis(2000L);
+		t1 = t_now_ms();
+		trp(4000L);
+		t2 = t_now_ms();
+		printf("INFO amiga.cost: INTENA write %ld us, trap round trip %ld us\n",
+		    (t1 - t0) / 4, (t2 - t1) / 4);
+		fflush(stdout);
+		_exit(0);
+	}
+	t_waitchild(p, &st, 60);
 }
 
 /* one byte, or 0 after 10 s: a guest that failed to enter never writes */
@@ -645,6 +672,165 @@ ibrowse()
 	t_info("ibrowse_notice", "after Return: %s", r ? r : "no reply");
 }
 
+static time_t migt0;
+static void cpu();
+
+/*
+ * CPU samples while idle and while the pointer moves; a click on the
+ * Amiga disk icon timed until its highlight shows.
+ */
+static void
+pointer(p)
+	pid_t p;
+{
+	char *r;
+	long t0, g0[2], g1[2], h0[2], h1[2];
+	int k;
+
+	settle("amiga_p0");
+	t_info("phase", "idle profile at %ld s", (long)(time((time_t *)0) - migt0));
+	host("prof 3 idle");
+	nap(3500);
+	t_info("phase", "pointer profile at %ld s", (long)(time((time_t *)0) - migt0));
+	cpu(p, 0, g0);
+	cpu(p, 1, h0);
+	t0 = t_now_ms();
+	host("prof 3 point");
+	host("glide 60 3 2 16");
+	nap(3500);
+	cpu(p, 0, g1);
+	cpu(p, 1, h1);
+	t_info("point_cpu", "in %ld ms: guest user %ld sys %ld, helpers user %ld sys %ld",
+	    t_now_ms() - t0, g1[0] - g0[0], g1[1] - g0[1], h1[0] - h0[0], h1[1] - h0[1]);
+	host("move -2000 -2000 50");
+	host("move 50 77 50");
+	settle("amiga_c0");
+	t_info("phase", "click at %ld s", (long)(time((time_t *)0) - migt0));
+	t0 = t_now_ms();
+	host("button 1 50");
+	host("button 0 0");
+	for (k = 0; k < 30; k++) {
+		host("shot amiga_c1");
+		if ((r = host("cmp amiga_c0 amiga_c1")) != 0 && strncmp(r, "diff", 4) == 0)
+			break;
+	}
+	t_info("click_time", "icon changed after %ld ms (%s)", t_now_ms() - t0, r ? r : "no reply");
+	host("move 400 300 50");
+	host("click 1");
+	settle("amiga_c2");
+}
+
+/* the user and system CPU ms of P, or with KIDS of its children */
+static void
+cpu(p, kids, v)
+	pid_t p;
+	int kids;
+	long v[2];
+{
+	char path[64];
+	prstatus_t s;
+	prpsinfo_t ps;
+	DIR *d;
+	struct dirent *e;
+	int fd;
+
+	v[0] = v[1] = 0;
+	if ((d = opendir("/proc")) == 0)
+		return;
+	while ((e = readdir(d)) != 0) {
+		if (e->d_name[0] == '.')
+			continue;
+		sprintf(path, "/proc/%s", e->d_name);
+		if ((fd = open(path, O_RDONLY)) < 0)
+			continue;
+		if (ioctl(fd, PIOCPSINFO, &ps) == 0 && (kids ? ps.pr_ppid : ps.pr_pid) == p &&
+		    ioctl(fd, PIOCSTATUS, &s) == 0) {
+			v[0] += s.pr_utime.tv_sec * 1000L + s.pr_utime.tv_nsec / 1000000;
+			v[1] += s.pr_stime.tv_sec * 1000L + s.pr_stime.tv_nsec / 1000000;
+		}
+		close(fd);
+	}
+	closedir(d);
+}
+
+/*
+ * Drags a shell window's title bar 200,150 up and left and times the
+ * screen settling after the button is released, with the CPU time the
+ * guest (user, system) and its helpers used meanwhile.
+ */
+static void
+drag(p)
+	pid_t p;
+{
+	char b[64], *r, prev[16], cur[16];
+	long t0, t1, t2, g0[2], g1[2], h0[2], h1[2];
+	int k, v[4];
+
+	sprintf(b, "%s/draggo", SYS);
+	close(creat(b, 0644));
+	sleep(5);
+	host("move -2000 -2000 50");
+	host("move 400 204 50");
+	settle("amiga_d0");
+	cpu(p, 0, g0);
+	cpu(p, 1, h0);
+	t0 = t_now_ms();
+	host("button 1");
+	host("move -200 -150 50");
+	host("button 0");
+	t1 = t2 = t_now_ms();
+	strcpy(prev, "amiga_d0");
+	for (k = 0; k < 40; k++) {
+		sprintf(cur, "amiga_d%d", k + 1);
+		sprintf(b, "shot %s", cur);
+		host(b);
+		sprintf(b, "cmp %s %s", prev, cur);
+		if (k && (r = host(b)) != 0 && strcmp(r, "same") == 0)
+			break;
+		t2 = t_now_ms();
+		strcpy(prev, cur);
+	}
+	cpu(p, 0, g1);
+	cpu(p, 1, h1);
+	pbox("amiga_d0", prev, 0, v);
+	t_info("drag_time", "press to release %ld ms, release to settled %ld ms", t1 - t0, t2 - t1);
+	t_info("drag_cpu", "in %ld ms: guest user %ld sys %ld, helpers user %ld sys %ld",
+	    t_now_ms() - t0, g1[0] - g0[0], g1[1] - g0[1], h1[0] - h0[0], h1[1] - h0[1]);
+	t_check("drag_moved", v[2] - v[0] >= 400 && v[3] - v[1] >= 250,
+	    "changed %d,%d-%d,%d", v[0], v[1], v[2], v[3]);
+	/* back down in 60 small moves 16 ms apart, as a hand drags */
+	settle("amiga_g0");
+	cpu(p, 0, g0);
+	cpu(p, 1, h0);
+	t0 = t_now_ms();
+	host("prof 3 glide");
+	host("button 1");
+	host("glide 60 3 2 16");
+	nap(1800);
+	host("button 0");
+	t1 = t2 = t_now_ms();
+	strcpy(prev, "amiga_g0");
+	for (k = 0; k < 40; k++) {
+		sprintf(cur, "amiga_g%d", k + 1);
+		sprintf(b, "shot %s", cur);
+		host(b);
+		sprintf(b, "cmp %s %s", prev, cur);
+		if (k && (r = host(b)) != 0 && strcmp(r, "same") == 0)
+			break;
+		t2 = t_now_ms();
+		strcpy(prev, cur);
+	}
+	cpu(p, 0, g1);
+	cpu(p, 1, h1);
+	pbox("amiga_g0", prev, 0, v);
+	t_info("glide_time", "press to release %ld ms, release to settled %ld ms", t1 - t0, t2 - t1);
+	t_info("glide_cpu", "in %ld ms: guest user %ld sys %ld, helpers user %ld sys %ld",
+	    t_now_ms() - t0, g1[0] - g0[0], g1[1] - g0[1], h1[0] - h0[0], h1[1] - h0[1]);
+	t_check("glide_moved", v[2] - v[0] >= 400 && v[3] - v[1] >= 250,
+	    "changed %d,%d-%d,%d", v[0], v[1], v[2], v[3]);
+}
+
+
 static void
 boot()
 {
@@ -668,7 +854,7 @@ boot()
 	if (!t_check("boot_mount", system("/sbin/mount -F ufs " SYSDEV " " SYS) == 0,
 	    "mount " SYSDEV " failed"))
 		return;
-	t0 = time((time_t *)0);
+	t0 = migt0 = time((time_t *)0);
 	if ((p = fork()) == 0) {
 		fd = open("/tmp/startmig.log", O_WRONLY | O_CREAT | O_TRUNC, 0644);
 		dup2(fd, 1);
@@ -755,10 +941,13 @@ boot()
 		}
 		t_check("boot_key", r && strncmp(r, "diff", 4) == 0, "screen unchanged by keys");
 		ibrowse();
+		pointer(p);
+		drag(p);
 	}
 	kill(p, SIGTERM);
 	t_waitchild(p, &st, 10);
 	t_check("boot_exit", WIFSIGNALED(st) && WTERMSIG(st) == SIGTERM, "startmig status 0x%x", st);
+
 	if (w) {
 		sleep(2);
 		host("shot amiga_exit");
@@ -769,6 +958,15 @@ boot()
 	/* the helpers drop their files when they see the exit */
 	for (i = 0; i < 10 && (sleep(1), system("/sbin/umount " SYS) != 0); i++)
 		;
+	/* the display's input-to-screen times, a line per 2 s with input, and its pointer */
+	if ((f = fopen("/tmp/startmig.0.log", "r")) != 0) {
+		while (fgets(line, sizeof line, f) != 0)
+			if (strstr(line, "input to screen") || strstr(line, "pointer drawn")) {
+				fputs(line, stdout);
+				fflush(stdout);
+			}
+		fclose(f);
+	}
 	/* line by line: the console takes at most 256 bytes per write */
 	if ((f = fopen("/tmp/startmig.log", "r")) != 0) {
 		while (fgets(line, sizeof line, f) != 0) {
@@ -796,7 +994,7 @@ main(argc, argv)
 		/* after exec: a plain process again */
 		exit(fd >= 0 && E(ioctl(fd, AMIGAIOC_STAT, &st)) == ENXIO ? 0 : 1);
 	}
-	t_init("amiga", 500);
+	t_init("amiga", 900);
 	if (t_kmem("guest_loading") == -1) {
 		t_skip("all", "kernel has no guest support");
 		return t_done();
@@ -815,6 +1013,16 @@ main(argc, argv)
 	if (!t_check("open", (afd = open("/dev/amiga", O_RDWR)) >= 0, "/dev/amiga: %s", T_ERR))
 		return t_done();
 	ioctls();
+	{
+		struct modstatus ms;
+		int id = 1;
+
+		while (modstat(id, &ms, 1) == 0) {
+			printf("module %s base %lx size %x\n", ms.ms_name, (long)ms.ms_base, ms.ms_size);
+			id = ms.ms_id + 1;
+		}
+		fflush(stdout);
+	}
 	if (afd < 0)
 		return t_done();
 	if (ioctl(afd, AMIGAIOC_INFO, &ai) < 0 || !(ai.ai_features & AMIGA_FEAT_EXPERIMENTAL)) {
@@ -822,6 +1030,7 @@ main(argc, argv)
 		return t_done();
 	}
 	guests();
+	cost();
 	two();
 	unloadbusy();
 	if (stat(ROM, &sb) < 0) {
