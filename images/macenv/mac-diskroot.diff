@@ -1,6 +1,26 @@
+--- a/kernel/mac/diskroot/mkdiskroot.sh
++++ b/kernel/mac/diskroot/mkdiskroot.sh
+@@ -43,7 +43,7 @@
+ 	> "$B/profile"
+ x usr/sbin/shutdown | sed -e 's,^if /usr/amiga/bin/sioc &&,if false \&\&,' > "$B/shutdown"
+ x etc/screendefs | grep '^#' > "$B/screendefs"
+-{ x etc/group | grep -v '^display:'; echo "display::25:"; } > "$B/group"
++{ x etc/group | grep -v '^display:'; echo "display::25:guest"; } > "$B/group"
+ x etc/vfstab | sed -e "s,^\(/dev/dsk/c0d0s1[	 ].*[	 ]/[	 ]*\)s5,\1$ROOTFS," > "$B/vfstab"
+ grep -q "^/dev/dsk/c0d0s1.*$ROOTFS" "$B/vfstab" || { echo "[FAIL] tape vfstab changed"; exit 1; }
+ # flush the file systems before uadmin halts
 --- a/kernel/mac/diskroot/root.manifest
 +++ b/kernel/mac/diskroot/root.manifest
-@@ -55,6 +55,52 @@
+@@ -45,7 +45,7 @@
+ f /etc/vfstab	744 0 3 build/vfstab
+ f /etc/profile	644 0 3 build/profile
+ f /etc/screendefs 644 2 2 build/screendefs
+-f /etc/motd	644 2 2 build/motd
++f /etc/motd	644 2 2 macpkg/motd
+ f /sbin/shutdown 755 0 3 build/shutdown
+ h /usr/sbin/shutdown /sbin/shutdown
+ f /sbin/rc0	744 0 3 build/rc0
+@@ -56,6 +56,63 @@
  # date(1) runs setclk -s after stime(2); the kernel keeps the RTC
  f /usr/amiga/bin/setclk 755 0 3 etc/setclk
  
@@ -30,10 +50,19 @@
 +a macpkg/mac.cpio
 +f /usr/bin/startmac 755 0 3 macpkg/startmac.sh
 +f /usr/bin/makemac 755 0 3 macpkg/makemac
++# System 6: A/UX 2.0.1's root, guest's System Folder there
++f /usr/bin/startmac6 755 0 3 macpkg/startmac6
++f /usr/aux/lib/mac6 4750 0 25 macpkg/mac6
++a macpkg/a201.cpio
++a macpkg/a201guest.cpio
++c /a201/dev/uinter0 660 0 25 54 0
++c /a201/dev/console 622 0 3 0 0
 +# guest's ~/System Folder, as makemac makes it
 +a macpkg/macguest.cpio
 +a macpkg/amiga.cpio
 +a macpkg/amigaprv.cpio
++# guest's ~/Amiga, as makeamiga makes it
++a macpkg/amigaguest.cpio
 +f /usr/bin/macdiag 750 0 3 macpkg/macdiag
 +f /usr/bin/macscrn 755 0 3 macpkg/macscrn
 +f /usr/bin/envlock 755 0 3 macpkg/envlock
@@ -48,19 +77,10 @@
 +a macpkg/tos/sys.cpio
 +a macpkg/tos/games.cpio
 +a macpkg/tos/guest.cpio
++# CP/M-68K: startcpm, CPM.SYS and the files for each user's new A:
++a macpkg/cpm/cpm.cpio
 +c /dev/kmem	640 0 3 3 1	# macdiag relies on root-only kernel memory
 +
  # no Amiga port monitors (screens, serial boards) or Ethernet board
  f /etc/saf/_sactab 644 0 3 etc/_sactab
  f /etc/inet/network-config 444 0 3 etc/network-config
---- a/kernel/mac/diskroot/mkdiskroot.sh
-+++ b/kernel/mac/diskroot/mkdiskroot.sh
-@@ -40,7 +40,7 @@
- 	> "$B/profile"
- x usr/sbin/shutdown | sed -e 's,^if /usr/amiga/bin/sioc &&,if false \&\&,' > "$B/shutdown"
- x etc/screendefs | grep '^#' > "$B/screendefs"
--{ x etc/group | grep -v '^display:'; echo "display::25:"; } > "$B/group"
-+{ x etc/group | grep -v '^display:'; echo "display::25:guest"; } > "$B/group"
- x etc/vfstab | sed -e "s,^\(/dev/dsk/c0d0s1[	 ].*[	 ]/[	 ]*\)s5,\1$ROOTFS," > "$B/vfstab"
- grep -q "^/dev/dsk/c0d0s1.*$ROOTFS" "$B/vfstab" || { echo "[FAIL] tape vfstab changed"; exit 1; }
- # flush the file systems before uadmin halts

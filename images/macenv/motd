@@ -1,0 +1,16 @@
+	System V Release 4.0		Ash Nazag
+
+ Mac    startmac        System 7.6.1; leave with Special > Log Out
+        startmac6       System 6.0.7; leave with Special > Logout
+ TOS    starttos        EmuTOS and TeraDesk; -M TT mono, -m MB ST-RAM
+        Cubase:  starttos -M -C ~/TOS/CUBASE/CUBASE31   (or SCORE, CAF)
+ Amiga  startmig        Workbench; -m MB fast RAM (or fastmb=MB in .env)
+ CP/M   startcpm        CP/M-68K in this terminal; EXIT ends it
+ X      startx          twm; or  xsession  for a menu of sessions, or
+        xsession twm|xview|mac|tos|amiga|console|cpm
+
+ Ctrl-Option-Command-0 shows the console, -1 to -9 the sessions.
+ Ctrl-C on the console ends TOS or the Amiga.
+ makemac, maketos, makeamiga make ~/System Folder, ~/TOS, ~/Amiga;
+ -f refreshes one from the system's copy, keeping your files.
+ exit logs out; root shuts down with  shutdown -y -g0 -i0

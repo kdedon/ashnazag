@@ -6,6 +6,8 @@
  */
 
 extern long trap1(), trap13(), irqtest(), traptest9(), traptest10(), traptest0();
+extern long trap14(), sndend(), supcookie(), suphz();
+extern volatile long sndends;
 
 static short w[8];
 static int nw;
@@ -56,6 +58,29 @@ static long Dsetdrv(d) { pw(0x0e); pw(d); return go(); }
 static long Dgetdrv() { pw(0x19); return go(); }
 static long Dfree(b, d) char *b; { pw(0x36); pl((long)b); pw(d); return go(); }
 static long Pexec(m, n, c, e) char *n, *c, *e; { pw(0x4b); pw(m); pl((long)n); pl((long)c); pl((long)e); return go(); }
+
+static long
+go14()
+{
+	int n = nw;
+
+	nw = 0;
+	return trap14(w, n);
+}
+
+static long Supexec(f) long (*f)(); { pw(38); pl((long)f); return go14(); }
+static long Xbtimer(t, c, d, v) long (*v)(); { pw(31); pw(t); pw(c); pw(d); pl((long)v); return go14(); }
+static long Jdisint(n) { pw(26); pw(n); return go14(); }
+static long Locksnd() { pw(128); return go14(); }
+static long Unlocksnd() { pw(129); return go14(); }
+static long Setbuffer(r, b, e) char *b, *e; { pw(131); pw(r); pl((long)b); pl((long)e); return go14(); }
+static long Setmode(m) { pw(132); pw(m); return go14(); }
+static long Settracks(p, r) { pw(133); pw(p); pw(r); return go14(); }
+static long Setmontracks(t) { pw(134); pw(t); return go14(); }
+static long Setinterrupt(s, c) { pw(135); pw(s); pw(c); return go14(); }
+static long Buffoper(m) { pw(136); pw(m); return go14(); }
+static long Devconnect(s, d, c, p, h) { pw(139); pw(s); pw(d); pw(c); pw(p); pw(h); return go14(); }
+static long Sndstatus(r) { pw(140); pw(r); return go14(); }
 
 static long
 Drvmap()
@@ -163,6 +188,48 @@ slurp(n)
 	Fclose((int)h);
 	buf[r > 0 ? r : 0] = 0;
 	return r;
+}
+
+/*
+ * Falcon XBIOS sound: 0.1 s of 16-bit stereo at 49170 Hz played once,
+ * its end counted by Timer A in event mode.
+ */
+#define	NPCM	4917
+
+static void
+sound()
+{
+	static short pcm[2 * NPCM];
+	long r, t0, t;
+	int i;
+
+	r = Locksnd();
+	check("snd_lock", r == 1 && Locksnd() == -129, r);
+	r = Supexec(supcookie);
+	check("snd_cookie", r != -1 && (r & 4), r);
+	for (i = 0; i < 2 * NPCM; i++)
+		pcm[i] = i & 64 ? 8000 : -8000;
+	Sndstatus(1);
+	Setmode(1);
+	Settracks(0, 0);
+	Setmontracks(0);
+	Devconnect(0, 8, 0, 1, 1);
+	sndends = 0;
+	Xbtimer(0, 8, 1, sndend);
+	Setinterrupt(0, 1);
+	Setbuffer(0, (char *)pcm, (char *)(pcm + 2 * NPCM));
+	t0 = Supexec(suphz);
+	Buffoper(1);
+	r = Buffoper(-1);
+	check("snd_play", (r & 1) != 0, r);
+	do
+		t = Supexec(suphz);
+	while (sndends == 0 && t - t0 < 400);
+	check("snd_end", sndends == 1 && t - t0 >= 10 && t - t0 < 200, t - t0);
+	r = Buffoper(-1);
+	check("snd_stopped", (r & 1) == 0 && sndends == 1, r);
+	Jdisint(13);
+	check("snd_unlock", Unlocksnd() == 0 && Unlocksnd() == -128, 0L);
 }
 
 int
@@ -334,6 +401,7 @@ main()
 	check("trap9", (r = traptest9()) == 0, r);
 	check("trap10", (r = traptest10()) == 0, r);
 	check("trap0", (r = traptest0()) == 0, r);
+	sound();
 	result();
 	return 0;
 }

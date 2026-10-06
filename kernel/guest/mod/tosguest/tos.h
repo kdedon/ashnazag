@@ -100,6 +100,9 @@ struct tosctr {
 	unsigned char	t_snd[0x44];	/* sound and GPIO $FF8900 */
 	unsigned char	t_blt[0x40];	/* blitter $FF8A00 */
 	unsigned char	t_dsp[8];	/* DSP host port $FFA200 */
+	pid_t		t_spid;		/* the sound pump */
+	struct proc	*t_sproc;
+	unsigned long	t_sgen;		/* $FF8901 writes */
 
 	/* 68030 MMU registers, recorded only */
 	unsigned long	t_tc, t_tt0, t_tt1, t_crp[2], t_srp[2];
@@ -126,3 +129,4 @@ extern void tos_timers();
 extern int mfp_level();
 extern int mfp_ack();
 extern void mfp_unack();
+extern void tos_snd(), tos_sndend();

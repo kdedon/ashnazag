@@ -58,10 +58,10 @@ for s in "$KDIR"/dlm/libmod/*.s; do
 done
 for s in ${ONLY:-"$T"/src/t_*.c "$T/src/runall.c"}; do
 	n=$(basename "$s" .c)
-	cc "$s" "$O/$n.o" $XA -I"$KDIR/dlm/include" -I"$KDIR/mac/display" \
-		-I"$KDIR/guest/mod/tosguest" -I"$KDIR/guest/include"
+	cc "$s" "$O/$n.o" $XA -I"$KDIR/dlm/include" -I"$KDIR/mac/display" -I"$KDIR/mac/sound" \
+		-I"$KDIR/guest/mod/tosguest" -I"$KDIR/guest/include" -I"$KDIR/guest/amiga"
 	extra=
-	case $n in t_dlm|t_aux|t_mac|t_mac6|t_mac76|t_mac81|t_tos|t_mint|t_cpm|t_amiga) extra=$MODO ;; esac
+	case $n in t_dlm|t_aux|t_mac|t_mac6|t_mac76|t_mac81|t_tos|t_mint|t_cpm|t_amiga|t_sound) extra=$MODO ;; esac
 	link "$BIN/$n" "$O/$n.o" "$O/t.o" $extra
 	echo "[ok] $n"
 done

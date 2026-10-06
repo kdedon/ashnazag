@@ -18,17 +18,20 @@
 #define COOKIES	(*(unsigned long **)0x5a0)
 #define RAMTOP	(*(unsigned long *)0x5a4)
 #define RAMVALID (*(unsigned long *)0x5a8)
+#define SYSBASE	(*(unsigned long **)0x4f2)
 #define TTRAM	0x01000000UL
 
 struct go {
 	unsigned long cpu, entry, stack, bidst, bisrc, bilen, nseg;
 	struct { unsigned long dst, src, filesz, memsz; } seg[4];
+	unsigned long osfix;
 };
 
 extern long trap_frame(long trap, unsigned char *frame, long size);
 extern char go_kernel[], go_end[];
 extern void go(char *, struct go *);
 extern unsigned long ax_timeout, ax_ksum;
+extern unsigned long peek(unsigned long a, int *ok);
 
 static unsigned char frame[16];
 static int nframe;
@@ -174,6 +177,52 @@ mfree(unsigned long p)
 	sys(1);
 }
 
+/* Line-A init: the VDI's screen variables, as $A000 returns them in a0 */
+static short *
+linea(void)
+{
+	register short *a0 __asm__("a0");
+
+	__asm__ __volatile__(".word 0xa000" : "=r" (a0) : : "d0", "d1", "d2", "a1", "a2", "memory");
+	return a0;
+}
+
+/*
+ * SuperVidel: firmware version, then screen, width, height, depth and
+ * bytes per line of a native mode its XBIOS left (screen 0 if none).
+ * Without the SupV cookie (its driver not run yet), the card shows by
+ * a status register with reserved bits 31-23 clear and both Videl
+ * input clocks (bits 11, 10) running.
+ */
+static void
+svidel(void)
+{
+	unsigned long sv[6];
+	short *la;
+	int ok;
+
+	sv[0] = peek(0x80010000, &ok);
+	if (!ok || (cookie(0x53757056, 0) == 0 && (sv[0] & 0xff800c00) != 0xc00))	/* SupV */
+		return;
+	sv[0] = peek(0x8001007c, &ok) & 0x3ff;
+	if (!ok)
+		return;
+	w16(2);						/* Physbase */
+	sv[1] = sys(14);
+	sv[2] = sv[3] = sv[4] = sv[5] = 0;
+	if (sv[1] < 0xa1000000) {
+		sv[1] = 0;
+		birec(0x8f01, sv, sizeof sv);
+		return;
+	}
+	la = linea();
+	sv[2] = (unsigned short)la[-6];
+	sv[3] = (unsigned short)la[-2];
+	sv[4] = (unsigned short)la[0];
+	sv[5] = (unsigned short)la[-1];
+	birec(0x8f01, sv, sizeof sv);
+}
+
 static long
 fail(const char *s)
 {
@@ -190,7 +239,7 @@ loader(long dev, unsigned long axb, unsigned char *root)
 	static struct go gk;
 	unsigned char *ph;
 	unsigned long cpu, fpu, kend, fend, fsz, n, i, blk, size, buf, mem[2];
-	unsigned long off, va, fs, ms, sum;
+	unsigned long off, va, fs, ms, sum, osoff;
 	int ent = 0;
 	struct go *g;
 	char *p, *base;
@@ -294,6 +343,11 @@ loader(long dev, unsigned long axb, unsigned char *root)
 	birec(7, cmd, n + 1);
 	bilong(0x8000, cookie(0x5f4d4348, 0));		/* _MCH */
 	bilong(0x8001, 0);
+	/* the running TOS image, logical here: go() makes it physical */
+	osoff = nbi + 4;
+	bilong(0x8f00, (unsigned long)SYSBASE);
+	if (cpu >= 60)
+		svidel();
 	nbi += 2;					/* BI_LAST */
 
 	/* hand-off code, its parameters and the boot record below the file */
@@ -311,6 +365,7 @@ loader(long dev, unsigned long axb, unsigned char *root)
 	g->bisrc = (unsigned long)(g + 1);
 	g->bilen = nbi;
 	g->nseg = gk.nseg;
+	g->osfix = g->cpu >= 40 ? (unsigned long)(g + 1) + osoff : 0;
 	for (i = 0; i < gk.nseg; i++) {
 		g->seg[i].dst = gk.seg[i].dst;
 		g->seg[i].src = gk.seg[i].src + buf;

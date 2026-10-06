@@ -310,6 +310,20 @@ plaindev(fd)
 	    cdevsw[getmajor(vp->v_rdev)].d_str == 0;
 }
 
+/* fd is character major m */
+static int
+majdev(fd, m)
+	int fd, m;
+{
+	file_t *fp;
+	struct vnode *vp;
+
+	if (getf(fd, &fp))
+		return 0;
+	vp = fp->f_vnode;
+	return vp->v_type == VCHR && getmajor(vp->v_rdev) == m;
+}
+
 /* fd is /dev/otbridge (character major 55) */
 static int
 otbdev(fd)
@@ -379,6 +393,8 @@ aux_ioctl(ap, a, rv, r)
 		return aux_amix(54, a, rv);	/* 'Q': /dev/uinter0, unchanged */
 	if ((cmd & 0xff00) == ('o' << 8) && otbdev((int)a[0]))
 		return aux_amix(54, a, rv);	/* 'o': /dev/otbridge, unchanged */
+	if ((cmd & 0xff00) == ('w' << 8) && majdev((int)a[0], 47))
+		return aux_amix(54, a, rv);	/* 'w': /dev/snd, unchanged */
 	for (i = 0; iocmap[i][0]; i++)
 		if (iocmap[i][0] == cmd) {
 			a[1] = iocmap[i][1];

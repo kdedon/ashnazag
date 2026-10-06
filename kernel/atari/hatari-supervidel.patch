@@ -1,0 +1,719 @@
+diff --git a/src/configuration.c b/src/configuration.c
+index ffe225b5..b7f3f0bd 100644
+--- a/src/configuration.c
++++ b/src/configuration.c
+@@ -571,6 +571,7 @@ static const struct Config_Tag configs_System[] =
+ /* JIT	{ "bCompatibleFPU", Bool_Tag, &ConfigureParams.System.bCompatibleFPU }, */
+ 	{ "bSoftFloatFPU", Bool_Tag, &ConfigureParams.System.bSoftFloatFPU },
+ 	{ "bMMU", Bool_Tag, &ConfigureParams.System.bMMU },
++	{ "bSuperVidel", Bool_Tag, &ConfigureParams.System.bSuperVidel },
+ 	{ "VideoTiming", Int_Tag, &ConfigureParams.System.VideoTimingMode },
+ 	{ NULL , Error_Tag, NULL }
+ };
+@@ -838,6 +839,7 @@ void Configuration_SetDefault(void)
+ 	ConfigureParams.System.bCompatibleFPU = true; /* JIT */
+ 	ConfigureParams.System.bSoftFloatFPU = false;
+ 	ConfigureParams.System.bMMU = false;
++	ConfigureParams.System.bSuperVidel = false;
+ 	ConfigureParams.System.bCpuDataCache = true;
+ 	ConfigureParams.System.bCycleExactCpu = true;
+ 	ConfigureParams.System.VideoTimingMode = VIDEO_TIMING_MODE_WS3;
+diff --git a/src/cpu/memory.c b/src/cpu/memory.c
+index 4c86ee53..10720b91 100644
+--- a/src/cpu/memory.c
++++ b/src/cpu/memory.c
+@@ -21,6 +21,7 @@ const char Memory_fileid[] = "Hatari memory.c";
+ #include "conv_st.h"
+ #include "tos.h"
+ #include "ide.h"
++#include "supervidel.h"
+ #include "ioMem.h"
+ #include "reset.h"
+ #include "stMemory.h"
+@@ -1850,6 +1851,8 @@ void memory_init(uae_u32 NewSTMemSize, uae_u32 NewTTMemSize, uae_u32 NewRomMemSt
+ 		}
+ 	}
+ 
++	SuperVidel_MapMemory();
++
+ 	illegal_count = 0;
+ }
+ 
+diff --git a/src/falcon/CMakeLists.txt b/src/falcon/CMakeLists.txt
+index a83ee55e..de8789b2 100644
+--- a/src/falcon/CMakeLists.txt
++++ b/src/falcon/CMakeLists.txt
+@@ -3,7 +3,7 @@ if(ENABLE_DSP_EMU)
+ 	set(DSP_SOURCES dsp_core.c dsp_cpu.c dsp_disasm.c)
+ endif(ENABLE_DSP_EMU)
+ 
+-add_library(Falcon OBJECT crossbar.c nvram.c videl.c dsp.c ${DSP_SOURCES})
++add_library(Falcon OBJECT crossbar.c nvram.c videl.c supervidel.c dsp.c ${DSP_SOURCES})
+ 
+ if(ENABLE_LIBRETRO)
+ 	set_target_properties(Falcon PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
+diff --git a/src/falcon/supervidel.c b/src/falcon/supervidel.c
+new file mode 100644
+index 00000000..7e60c1e5
+--- /dev/null
++++ b/src/falcon/supervidel.c
+@@ -0,0 +1,510 @@
++/*
++  Hatari - supervidel.c
++
++  This file is distributed under the GNU General Public License, version 2
++  or at your option any later version. Read the file gpl.txt for details.
++
++  SuperVidel graphics card for 68060 Falcons. Register map:
++  https://nature.atari.org/Self/SuperVidelMemoryMap.pdf
++
++	0xA0000000  128 MB DDR, the first 16 MB alias ST-RAM
++	0x80010000  registers (+0x00 .. +0x7C), I2C master (+0x1100), the rest
++	            of the 64 KB bus errors
++	0xFFFF9800  256 entry palette shared with the Videl, R 31:24 G 23:16 B 7:0
++
++  Writing any SuperVidel video register switches the display to the
++  SuperVidel timing; writing a Videl timing or mode register switches every
++  unprotected output back to the Videl. The blitter's copy mode completes
++  at once, so it never reads busy.
++*/
++
++const char SuperVidel_fileid[] = "Hatari supervidel.c";
++
++#include "main.h"
++#include "configuration.h"
++#include "conv_gen.h"
++#include "conv_st.h"
++#include "ioMem.h"
++#include "log.h"
++#include "m68000.h"
++#include "memory.h"
++#include "screen.h"
++#include "stMemory.h"
++#include "video.h"
++#include "supervidel.h"
++
++#define SV_DDR_BASE	0xA0000000
++#define SV_DDR_SIZE	0x08000000
++#define SV_DDR_MASK	(SV_DDR_SIZE - 1)
++#define SV_SHADOW_SIZE	0x01000000
++#define SV_REG_BASE	0x80010000
++#define SV_REG_SIZE	0x80
++#define SV_I2C		0x1100		/* I2C master, byte registers on a 4-byte stride */
++#define SV_I2C_SIZE	0x20
++
++/* +0x00 */
++#define SV_VGA_RESET	0x00001
++#define SV_DVI_RESET	0x00002
++#define SV_VGA_VSYNC	0x00004
++#define SV_DVI_VSYNC	0x00010
++#define SV_MODE		0x00040
++#define SV_MON_VGA	0x00200
++#define SV_CLK_VALID	0x00c00		/* Videl 25.175 and 32 MHz inputs running */
++#define SV_VGA_PROTECT	0x10000
++#define SV_DVI_PROTECT	0x20000
++#define SV_CTRL_WMASK	0x7b0303
++
++#define R(off)		sv.reg[(off) >> 2]
++
++bool bSuperVidelOn;
++
++static struct {
++	uint32_t reg[SV_REG_SIZE / 4];
++	bool svout[2];		/* VGA, DVI: driven by SuperVidel registers */
++	uint8_t *ddr;
++	int w, h;		/* size last rendered, 0 while the Videl drives the display */
++} sv;
++
++static uint32_t sv_st_size;	/* ST-RAM part of the alias */
++
++
++static uint8_t sv_rb(uint32_t off)
++{
++	off &= SV_DDR_MASK;
++	return off < sv_st_size ? STRam[off] : sv.ddr[off];
++}
++
++static void sv_wb(uint32_t off, uint8_t v)
++{
++	off &= SV_DDR_MASK;
++	if (off < sv_st_size)
++		STRam[off] = v;
++	else
++		sv.ddr[off] = v;
++}
++
++/* Contiguous host memory for a DDR range, NULL if it straddles the alias */
++static const uint8_t *sv_span(uint32_t off, uint32_t len)
++{
++	if (off + len <= sv_st_size)
++		return STRam + off;
++	if (off >= sv_st_size && off + len <= SV_DDR_SIZE)
++		return sv.ddr + off;
++	return NULL;
++}
++
++/* Line offsets are 27-bit two's complement */
++static int32_t sv_offset(uint32_t v)
++{
++	return (int32_t)(v << 5) >> 5;
++}
++
++/* Mode 0 (dest = src1) only */
++static void SuperVidel_Blit(void)
++{
++	static uint8_t line[2048];
++	uint32_t src = R(0x58), dst = R(0x60);
++	uint32_t len = (R(0x64) & 0x7ff) + 1;
++	int32_t soff = sv_offset(R(0x68)), doff = sv_offset(R(0x70));
++	int lines = R(0x74) & 0xfff;
++	int mode = (R(0x78) >> 1) & 0xf;
++	uint32_t i;
++
++	if (mode != 0)
++	{
++		Log_Printf(LOG_WARN, "SuperVidel: blitter mode %d ignored\n", mode);
++		return;
++	}
++	while (lines-- > 0)
++	{
++		for (i = 0; i < len; i++)
++			line[i] = sv_rb(src + i);
++		for (i = 0; i < len; i++)
++			sv_wb(dst + i, line[i]);
++		src += soff;
++		dst += doff;
++	}
++}
++
++/* Log the CDCE9xx PLL setting; the card's reference is 16 MHz */
++static void SuperVidel_PllInfo(int pll, uint32_t r1, uint32_t r2)
++{
++	unsigned pdiv = (r1 >> 24) & 0x7f;
++	unsigned n = ((r1 >> 16) & 0xff) << 4 | ((r1 >> 12) & 0xf);
++	unsigned r = ((r1 >> 8) & 0xf) << 5 | ((r1 >> 3) & 0x1f);
++	unsigned q = ((r1 & 7) << 3) | ((r2 >> 5) & 7);
++	unsigned p = (r2 >> 2) & 7;
++	double m;
++
++	if (!q || !pdiv || !n)
++		return;
++	m = ((double)n * (1u << p) - r) / q;
++	if (m <= 0)
++		return;
++	Log_Printf(LOG_INFO, "SuperVidel: PLL%d %.3f MHz (VCO %.3f MHz)\n",
++	           pll, 16.0 * n / m / pdiv, 16.0 * n / m);
++}
++
++static uint32_t SuperVidel_ReadReg(uint32_t off)
++{
++	uint32_t v = R(off);
++
++	switch (off)
++	{
++	case 0x00:
++		v &= SV_CTRL_WMASK;
++		v |= SV_CLK_VALID;
++		if (sv.svout[0] || sv.svout[1])
++			v |= SV_MODE;
++		/* vertical sync during the first lines of each Videl frame */
++		if (nHBL < 4)
++			v |= SV_VGA_VSYNC | SV_DVI_VSYNC;
++		return v;
++	case 0x54:
++		return v & 0x8000000e;
++	case 0x78:
++		return v & 0x7e;
++	}
++	return v;
++}
++
++static void SuperVidel_WriteReg(uint32_t off, uint32_t v)
++{
++	if (off == 0x00)
++	{
++		R(0) = (R(0) & ~SV_CTRL_WMASK) | (v & SV_CTRL_WMASK);
++		return;
++	}
++	if (off <= 0x50)
++	{
++		R(off) = v;
++		sv.svout[0] = sv.svout[1] = true;
++		if (off == 0x08 || off == 0x10)
++			SuperVidel_PllInfo(off == 0x08 ? 1 : 2, R(off - 4), v);
++		return;
++	}
++	if (off == 0x54)
++	{
++		/* JTAG bits change only with the 0x5555 key */
++		if (((v >> 16) & 0x7fff) == 0x5555)
++			R(off) = v;
++		return;
++	}
++	if (off == 0x7c)
++		return;
++	R(off) = v;
++	if (off == 0x78 && (v & 1))
++		SuperVidel_Blit();
++}
++
++
++static uae_u32 sv_reg_get(uaecptr addr, int size)
++{
++	uint32_t off = addr & 0xffff, v = 0;
++	int i;
++
++	/* idle and acknowledged: the DVI transmitter setup completes */
++	if (off >= SV_I2C && off + size <= SV_I2C + SV_I2C_SIZE)
++		return 0;
++	if (off + size > SV_REG_SIZE)
++	{
++		M68000_BusError(addr, BUS_ERROR_READ, size, BUS_ERROR_ACCESS_DATA, 0);
++		return 0;
++	}
++	if (size == 4 && !(off & 3))
++		return SuperVidel_ReadReg(off);
++	for (i = 0; i < size; i++, off++)
++		v = v << 8 | ((SuperVidel_ReadReg(off & ~3) >> (8 * (3 - (off & 3)))) & 0xff);
++	return v;
++}
++
++static void sv_reg_put(uaecptr addr, uae_u32 val, int size)
++{
++	uint32_t off = addr & 0xffff, sh;
++	int i;
++
++	if (off >= SV_I2C && off + size <= SV_I2C + SV_I2C_SIZE)
++		return;
++	if (off + size > SV_REG_SIZE)
++	{
++		M68000_BusError(addr, BUS_ERROR_WRITE, size, BUS_ERROR_ACCESS_DATA, val);
++		return;
++	}
++	if (size == 4 && !(off & 3))
++	{
++		SuperVidel_WriteReg(off, val);
++		return;
++	}
++	for (i = 0; i < size; i++, off++)
++	{
++		sh = 8 * (3 - (off & 3));
++		SuperVidel_WriteReg(off & ~3, (R(off & ~3) & ~(0xffu << sh))
++		                    | (((val >> (8 * (size - 1 - i))) & 0xff) << sh));
++	}
++}
++
++static uae_u32 REGPARAM3 sv_reg_lget(uaecptr a) { return sv_reg_get(a, 4); }
++static uae_u32 REGPARAM3 sv_reg_wget(uaecptr a) { return sv_reg_get(a, 2); }
++static uae_u32 REGPARAM3 sv_reg_bget(uaecptr a) { return sv_reg_get(a, 1); }
++static void REGPARAM3 sv_reg_lput(uaecptr a, uae_u32 v) { sv_reg_put(a, v, 4); }
++static void REGPARAM3 sv_reg_wput(uaecptr a, uae_u32 v) { sv_reg_put(a, v, 2); }
++static void REGPARAM3 sv_reg_bput(uaecptr a, uae_u32 v) { sv_reg_put(a, v, 1); }
++static int REGPARAM3 sv_reg_check(uaecptr a, uae_u32 size) { return 0; }
++static uae_u8 *REGPARAM3 sv_reg_xlate(uaecptr a)
++{
++	static uae_u8 none[4];
++	return none;
++}
++
++static uae_u32 REGPARAM3 sv_ddr_lget(uaecptr a) { return do_get_mem_long(sv.ddr + (a & SV_DDR_MASK)); }
++static uae_u32 REGPARAM3 sv_ddr_wget(uaecptr a) { return do_get_mem_word(sv.ddr + (a & SV_DDR_MASK)); }
++static uae_u32 REGPARAM3 sv_ddr_bget(uaecptr a) { return sv.ddr[a & SV_DDR_MASK]; }
++static void REGPARAM3 sv_ddr_lput(uaecptr a, uae_u32 v) { do_put_mem_long(sv.ddr + (a & SV_DDR_MASK), v); }
++static void REGPARAM3 sv_ddr_wput(uaecptr a, uae_u32 v) { do_put_mem_word(sv.ddr + (a & SV_DDR_MASK), v); }
++static void REGPARAM3 sv_ddr_bput(uaecptr a, uae_u32 v) { sv.ddr[a & SV_DDR_MASK] = v; }
++static int REGPARAM3 sv_ddr_check(uaecptr a, uae_u32 size) { return (a & SV_DDR_MASK) + size <= SV_DDR_SIZE; }
++static uae_u8 *REGPARAM3 sv_ddr_xlate(uaecptr a) { return sv.ddr + (a & SV_DDR_MASK); }
++
++static addrbank sv_reg_bank =
++{
++	sv_reg_lget, sv_reg_wget, sv_reg_bget,
++	sv_reg_lput, sv_reg_wput, sv_reg_bput,
++	sv_reg_xlate, sv_reg_check, NULL, "sv_reg", "SuperVidel registers",
++	sv_reg_lget, sv_reg_wget, ABFLAG_IO
++};
++
++static addrbank sv_ddr_bank =
++{
++	sv_ddr_lget, sv_ddr_wget, sv_ddr_bget,
++	sv_ddr_lput, sv_ddr_wput, sv_ddr_bput,
++	sv_ddr_xlate, sv_ddr_check, NULL, "sv_ddr", "SuperVidel DDR",
++	sv_ddr_lget, sv_ddr_wget, ABFLAG_RAM
++};
++
++
++/**
++ * Map the card's DDR and registers; called after the other banks are set up.
++ */
++void SuperVidel_MapMemory(void)
++{
++	uint32_t a;
++
++	bSuperVidelOn = false;
++	if (!ConfigureParams.System.bSuperVidel)
++		return;
++	if (!Config_IsMachineFalcon() || ConfigureParams.System.nCpuLevel != 5
++	    || ConfigureParams.System.bAddressSpace24)
++	{
++		Log_AlertDlg(LOG_ERROR, "SuperVidel needs a Falcon with a 68060 and 32-bit addressing, disabled.\n");
++		return;
++	}
++	if (!sv.ddr)
++		sv.ddr = calloc(SV_DDR_SIZE + 4, 1);	/* + 4: long access at the last byte */
++	if (!sv.ddr)
++	{
++		Log_AlertDlg(LOG_ERROR, "Can't allocate SuperVidel DDR, disabled.\n");
++		return;
++	}
++
++	sv_st_size = (STRamEnd + 0xffff) & ~0xffff;
++	if (sv_st_size > SV_SHADOW_SIZE)
++		sv_st_size = SV_SHADOW_SIZE;
++
++	map_banks_ce(&sv_ddr_bank, SV_DDR_BASE >> 16, SV_DDR_SIZE >> 16, 0, CE_MEMBANK_FAST32, CACHE_ENABLE_ALL);
++	for (a = 0; a < sv_st_size; a += 0x10000)
++	{
++		put_mem_bank(SV_DDR_BASE | a, &get_mem_bank(a), 0);
++		ce_banktype[(SV_DDR_BASE | a) >> 16] = ce_banktype[a >> 16];
++		ce_cachable[(SV_DDR_BASE | a) >> 16] = ce_cachable[a >> 16];
++	}
++	/* a 32-bit bus: long writes must arrive whole */
++	map_banks_ce(&sv_reg_bank, SV_REG_BASE >> 16, 1, 0, CE_MEMBANK_FAST32, CE_MEMBANK_NOT_CACHABLE);
++
++	bSuperVidelOn = true;
++}
++
++void SuperVidel_Reset(void)
++{
++	memset(sv.reg, 0, sizeof(sv.reg));
++	R(0x00) = SV_MON_VGA | SV_VGA_RESET | SV_DVI_RESET;
++	sv.svout[0] = sv.svout[1] = true;
++	R(0x04) = 0x01069013;
++	R(0x08) = 0x47;
++	R(0x1c) = R(0x24) = R(0x3c) = R(0x44) = 0x80000000;
++	R(0x54) = 0x6;
++	R(0x7c) = 11;			/* firmware revision */
++	sv.w = sv.h = 0;
++}
++
++static bool sv_videl_reg(uint32_t a)
++{
++	return a == 0xff820a || (a >= 0xff820e && a <= 0xff8211)
++	    || a == 0xff8260 || a == 0xff8266 || a == 0xff8267
++	    || (a >= 0xff8282 && a <= 0xff82c3);
++}
++
++/**
++ * Called on every IO write: a Videl timing or mode register hands the
++ * unprotected outputs back to the Videl.
++ */
++void SuperVidel_VidelWrite(uint32_t addr, int size)
++{
++	int i;
++
++	for (i = 0; i < size; i++)
++	{
++		if (sv_videl_reg(addr + i))
++		{
++			if (sv.svout[0] || sv.svout[1])
++				Log_Printf(LOG_DEBUG, "SuperVidel: Videl write $%x at pc $%x, display back to the Videl\n",
++				           addr, M68000_GetPC());
++			if (!(R(0) & SV_VGA_PROTECT))
++				sv.svout[0] = false;
++			if (!(R(0) & SV_DVI_PROTECT))
++				sv.svout[1] = false;
++			return;
++		}
++	}
++}
++
++
++static uint32_t sv_ste_color(int i)
++{
++	uint16_t c = IoMem_ReadWord(0xff8240 + 2 * i);
++	int r = (c >> 8) & 0xf, g = (c >> 4) & 0xf, b = c & 0xf;
++
++	r = ((r & 7) << 1) | (r >> 3);
++	g = ((g & 7) << 1) | (g >> 3);
++	b = ((b & 7) << 1) | (b >> 3);
++	return Screen_MapRGB(r * 0x11, g * 0x11, b * 0x11);
++}
++
++/**
++ * Draw the frame of the active output if the SuperVidel drives it.
++ * Returns false when the Videl picture is to be shown.
++ */
++bool SuperVidel_Render(void)
++{
++	static const int bits[8] = { 1, 2, 4, 8, 8, 16, 24, 32 };
++	static uint32_t row[4096], pal[256];
++	const uint32_t *o;
++	const uint8_t *p;
++	uint32_t *hvram, *dst, addr, stride, mode, bytes;
++	int out, w, h, x, y, i, k, planes, depth, sw, sh, pitch, zx, zy, dw, dh;
++
++	if (!bSuperVidelOn)
++		return false;
++
++	out = !(R(0) & SV_VGA_RESET) ? 0 : !(R(0) & SV_DVI_RESET) ? 1 : -1;
++	if (out < 0 || !sv.svout[out])
++	{
++		sv.w = 0;
++		return false;
++	}
++
++	/* screen address, h data, h sync, v data, v sync, last pos, data amount, mode */
++	o = &sv.reg[out ? 0x34 / 4 : 0x14 / 4];
++	addr = o[0] & 0x07fffffe;
++	w = 2 * ((o[1] & 0x7ff) - ((o[1] >> 16) & 0x7ff));
++	h = (o[3] & 0x7ff) - ((o[3] >> 16) & 0x7ff);
++	mode = o[7];
++	if (mode & 0x10)		/* double pixel width */
++		w /= 2;
++	if (mode & 0x20)		/* line doubling */
++		h /= 2;
++	stride = (o[6] >> 16) & 0x3ffe;
++	if (!stride)
++		stride = o[6] & 0x3ff0;
++	depth = mode & 7;
++	planes = depth < 4 ? bits[depth] : 0;
++	if (w < 16 || h < 16 || w > (int)ARRAY_SIZE(row) || h > 4096)
++	{
++		sv.w = 0;
++		return false;
++	}
++	bytes = planes ? (uint32_t)(w + 15) / 16 * planes * 2 : (uint32_t)w * bits[depth] / 8;
++
++	if (w != sv.w || h != sv.h)
++	{
++		sv.w = w;
++		sv.h = h;
++		ConvGen_SetSize(w, h, false);
++	}
++	if (!Screen_Lock())
++		return true;
++
++	if (depth == 1)
++	{
++		for (i = 0; i < 4; i++)
++			pal[i] = sv_ste_color(i);
++	}
++	else if (depth != 5 && depth != 6 && depth != 7)
++	{
++		for (i = 0; i < 256; i++)
++			pal[i] = Screen_MapRGB(IoMem_ReadByte(0xff9800 + 4 * i),
++			                       IoMem_ReadByte(0xff9801 + 4 * i),
++			                       IoMem_ReadByte(0xff9803 + 4 * i));
++	}
++
++	Screen_GetDimension(&hvram, &sw, NULL, &pitch);
++	sh = Screen_GetGenConvHeight();
++	pitch /= sizeof(uint32_t);
++	zx = nScreenZoomX > 0 ? nScreenZoomX : 1;
++	zy = nScreenZoomY > 0 ? nScreenZoomY : 1;
++	dw = w * zx <= sw ? w : sw / zx;
++	dh = h * zy <= sh ? h : sh / zy;
++	hvram += (sh - dh * zy) / 2 * pitch + (sw - dw * zx) / 2;
++
++	for (y = 0; y < dh; y++, addr += stride)
++	{
++		p = sv_span(addr & SV_DDR_MASK, bytes);
++		for (x = 0; x < dw; x++)
++		{
++			uint32_t c;
++
++			if (!p)
++				c = 0;
++			else if (planes)
++			{
++				const uint8_t *g = p + (x >> 4) * planes * 2;
++				int bit = 15 - (x & 15), idx = 0;
++
++				for (k = 0; k < planes; k++)
++					idx |= ((((g[2 * k] << 8) | g[2 * k + 1]) >> bit) & 1) << k;
++				c = pal[idx];
++			}
++			else switch (depth)
++			{
++			case 4:
++				c = pal[p[x]];
++				break;
++			case 5:
++			{
++				int v = (p[2 * x] << 8) | p[2 * x + 1];
++				int r = (v >> 8) & 0xf8, gr = (v >> 3) & 0xfc, b = (v << 3) & 0xf8;
++
++				c = Screen_MapRGB(r | r >> 5, gr | gr >> 6, b | b >> 5);
++				break;
++			}
++			case 6:
++				c = Screen_MapRGB(p[3 * x], p[3 * x + 1], p[3 * x + 2]);
++				break;
++			default:	/* R, G, B, alpha */
++				c = Screen_MapRGB(p[4 * x], p[4 * x + 1], p[4 * x + 2]);
++				break;
++			}
++			row[x] = c;
++		}
++		for (k = 0; k < zy; k++)
++		{
++			dst = hvram + (y * zy + k) * pitch;
++			for (x = 0; x < dw; x++)
++				for (i = 0; i < zx; i++)
++					*dst++ = row[x];
++		}
++	}
++
++	Screen_UnLock();
++	Screen_GenConvUpdate(true);
++	return true;
++}
+diff --git a/src/falcon/supervidel.h b/src/falcon/supervidel.h
+new file mode 100644
+index 00000000..eb6420d7
+--- /dev/null
++++ b/src/falcon/supervidel.h
+@@ -0,0 +1,18 @@
++/*
++  Hatari - supervidel.h
++
++  This file is distributed under the GNU General Public License, version 2
++  or at your option any later version. Read the file gpl.txt for details.
++*/
++
++#ifndef HATARI_SUPERVIDEL_H
++#define HATARI_SUPERVIDEL_H
++
++extern bool bSuperVidelOn;
++
++extern void SuperVidel_MapMemory(void);
++extern void SuperVidel_Reset(void);
++extern void SuperVidel_VidelWrite(uint32_t addr, int size);
++extern bool SuperVidel_Render(void);
++
++#endif
+diff --git a/src/falcon/videl.c b/src/falcon/videl.c
+index d8e3575e..a1927e32 100644
+--- a/src/falcon/videl.c
++++ b/src/falcon/videl.c
+@@ -76,6 +76,7 @@ const char VIDEL_fileid[] = "Hatari videl.c";
+ #include "stMemory.h"
+ #include "tos.h"
+ #include "videl.h"
++#include "supervidel.h"
+ #include "video.h"				/* for bUseHighRes variable */
+ #include "vdi.h"				/* for bUseVDIRes variable */
+ 
+@@ -128,6 +129,7 @@ void Videl_Init(void)
+  */
+ void VIDEL_reset(void)
+ {
++	SuperVidel_Reset();
+ 	Videl_Init();
+ 	ConvGen_SetSize(videl.save_scrWidth, videl.save_scrHeight, false);
+ 
+@@ -255,7 +257,7 @@ bool VIDEL_Use_STShifter(void)
+ void VIDEL_FalconColorRegsWrite(void)
+ {
+ 	uint32_t color = IoMem_ReadLong(IoAccessBaseAddress & ~3);
+-	color &= 0xfcfc00fc;	/* Unused bits have to be set to 0 */
++	color &= bSuperVidelOn ? 0xffff00ff : 0xfcfc00fc;	/* Unused bits have to be set to 0 */
+ 	IoMem_WriteLong(IoAccessBaseAddress & ~3, color);
+ 	videl.hostColorsSync = false;
+ }
+@@ -982,6 +984,11 @@ bool VIDEL_renderScreen(void)
+ 
+ 	uint32_t videoBase = Video_GetScreenBaseAddr();
+ 
++	if (SuperVidel_Render()) {
++		videl.save_scrWidth = 0;	/* resize when the Videl takes over again */
++		return true;
++	}
++
+ 	if (vw > 0 && vw != videl.save_scrWidth) {
+ 		LOG_TRACE(TRACE_VIDEL, "Videl : width change from %d to %d\n", videl.save_scrWidth, vw);
+ 		videl.save_scrWidth = vw;
+diff --git a/src/includes/configuration.h b/src/includes/configuration.h
+index 5dd931ba..90aead66 100644
+--- a/src/includes/configuration.h
++++ b/src/includes/configuration.h
+@@ -412,6 +412,7 @@ typedef struct
+   bool bCompatibleFPU;            /* More compatible FPU */
+   bool bSoftFloatFPU;
+   bool bMMU;                      /* TRUE if MMU is enabled */
++  bool bSuperVidel;               /* SuperVidel card (Falcon 060) */
+ } CNF_SYSTEM;
+ 
+ typedef struct
+diff --git a/src/ioMem.c b/src/ioMem.c
+index 5a08caf2..92b13589 100644
+--- a/src/ioMem.c
++++ b/src/ioMem.c
+@@ -42,6 +42,7 @@ const char IoMem_fileid[] = "Hatari ioMem.c";
+ #include "scc.h"
+ #include "fdc.h"
+ #include "scu_vme.h"
++#include "supervidel.h"
+ 
+ 
+ #define	IO_MEM_INTERCEPT_START		0xff8000
+@@ -664,6 +665,8 @@ void REGPARAM3 IoMem_bput(uaecptr addr, uae_u32 val)
+ 
+ 	IoAccessCurrentAddress = addr;
+ 	pInterceptWriteTable[addr-IO_MEM_INTERCEPT_START]();	/* Call handler */
++	if (bSuperVidelOn)
++		SuperVidel_VidelWrite(addr, 1);
+ 
+ 	/* Check if we wrote to a bus-error region */
+ 	if (nBusErrorAccesses == 1)
+@@ -727,6 +730,8 @@ void REGPARAM3 IoMem_wput(uaecptr addr, uae_u32 val)
+ 		IoAccessCurrentAddress = addr + 1;
+ 		pInterceptWriteTable[idx+1]();            /* Call 2nd handler */
+ 	}
++	if (bSuperVidelOn)
++		SuperVidel_VidelWrite(addr, 2);
+ 
+ 	/* Check if we wrote to a bus-error region */
+ 	if (nBusErrorAccesses == 2)
+@@ -793,6 +798,8 @@ void REGPARAM3 IoMem_lput(uaecptr addr, uae_u32 val)
+ 			pInterceptWriteTable[idx+n]();   /* Call n-th handler */
+ 		}
+ 	}
++	if (bSuperVidelOn)
++		SuperVidel_VidelWrite(addr, 4);
+ 
+ 	/* Check if we wrote to a bus-error region */
+ 	if (nBusErrorAccesses == 4)
+diff --git a/src/options.c b/src/options.c
+index f638c5d0..991e4392 100644
+--- a/src/options.c
++++ b/src/options.c
+@@ -198,6 +198,7 @@ typedef enum {
+ 	OPT_MACHINE,		/* system options */
+ 	OPT_BLITTER,
+ 	OPT_DSP,
++	OPT_SUPERVIDEL,
+ 	OPT_RTC_YEAR,
+ 	OPT_TIMERD,
+ 	OPT_FASTBOOT,
+@@ -497,6 +498,8 @@ static const opt_t HatariOptions[] = {
+ 	  "<bool>", "Use blitter emulation (ST only)" },
+ 	{ OPT_DSP,       NULL, "--dsp",
+ 	  "<x>", "DSP emulation (x = none/dummy/emu, Falcon only)" },
++	{ OPT_SUPERVIDEL, NULL, "--supervidel",
++	  "<bool>", "SuperVidel card (Falcon with --cpulevel 6 only)" },
+ 	{ OPT_RTC_YEAR,   NULL, "--rtc-year",
+ 	  "<int>", "Set initial year for RTC (0/1980-2079, 0=use host)" },
+ 	{ OPT_TIMERD,    NULL, "--timer-d",
+@@ -2153,6 +2156,11 @@ bool Opt_ParseParameters(int argc, const char * const argv[], int *exitval)
+ 			break;
+ 		}
+ 
++		case OPT_SUPERVIDEL:
++			ok = Opt_Bool(arg, OPT_SUPERVIDEL, &ConfigureParams.System.bSuperVidel);
++			bLoadAutoSave = false;
++			break;
++
+ 		case OPT_RTC_YEAR:
+ 			if (!Opt_Int(arg, OPT_RTC_YEAR, &val, 0, 2079, 0))
+ 			{

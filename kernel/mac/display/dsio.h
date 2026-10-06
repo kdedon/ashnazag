@@ -36,6 +36,7 @@
 #define FBT_DAFB	1
 #define FBT_NUBUS	2
 #define FBT_VIDEL	6
+#define FBT_SVIDEL	7
 /* fi_layout */
 #define FBL_PACKED	1
 #define FBL_IPLAN2	4	/* interleaved bitplanes, 16-pixel words */

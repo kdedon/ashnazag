@@ -20,12 +20,15 @@ BKILL = {16: 'fd', 17: 'hd'}
 # Rows that must name a Mac object rather than the base's.
 CMAC = {0: 'coinfo'}
 BMAC = {20: 'ramopen'}
-# Rows the Mac gives a new driver: exactly these non-nodev entries.
+# Rows the Mac gives a new driver: exactly these non-nodev entries (over a
+# CKILL row, whose Amiga entries must stay unreachable).
 CNEW = {18: ['sninfo'],
         51: ['ds_fbopen', 'ds_fbclose', 'ds_fbread', 'ds_fbioctl', 'ds_fbmmap',
              'ds_segmap', 'ds_fbpoll'],
         52: ['ds_evopen', 'ds_evclose', 'ds_evread', 'ds_evioctl', 'ds_evpoll'],
-        53: ['ds_evopen', 'ds_evclose', 'ds_evread', 'ds_evioctl', 'ds_evpoll']}
+        53: ['ds_evopen', 'ds_evclose', 'ds_evread', 'ds_evioctl', 'ds_evpoll'],
+        46: ['snd_open', 'snd_close', 'snd_read', 'snd_mmap', 'spec_segmap', 'snd_poll'],
+        47: ['sa_open', 'sa_close', 'sa_read', 'sa_write', 'sa_ioctl', 'sa_poll']}
 CF = 'open close read write ioctl mmap segmap poll xpoll xhalt ttys str flag'.split()
 BF = 'open close strat print size xpoll xhalt flag'.split()
 

@@ -11,7 +11,7 @@ $B-as -m68030 -o "$O/bootsec.o" "$A/bootsec.s"
 $LD -o "$O/bootsec.elf" "$O/bootsec.o"
 $B-objcopy -O binary -j .text "$O/bootsec.elf" "$O/bootsec.bin"
 $B-as -m68030 -o "$O/axbstart.o" "$A/axbstart.s"
-$B-gcc -m68030 -Os -mpcrel -ffreestanding -fno-builtin \
+$B-gcc -m68030 -mtune=68060 -Os -mpcrel -ffreestanding -fno-builtin \
 	-fno-tree-loop-distribute-patterns -fomit-frame-pointer \
 	-Wall -Wno-array-bounds -Werror -c -o "$O/axbload.o" "$A/axbload.c"
 $LD -e _start -o "$O/axbload.elf" "$O/axbstart.o" "$O/axbload.o"

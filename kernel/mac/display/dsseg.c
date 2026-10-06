@@ -35,7 +35,7 @@ extern struct dssess *ds_fbsess();
 
 /* 040 root table of an address space; 0 once hat_free ran */
 #define AS_ROOT(as)	(*(unsigned long **)((char *)(as) + 20))
-#ifdef DS_ATARI
+#if defined(DS_ATARI) && !defined(ATA060)
 /*
  * 030: the root table lives in the address space; hat_free marks its
  * descriptors invalid and hat_unload checks them, so unloading a freed

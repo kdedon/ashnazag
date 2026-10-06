@@ -7,7 +7,7 @@ struct ix {
 	struct amigadev dev;
 	unsigned char gary[4];
 	unsigned long fault;
-	int hit, read, bell;
+	int hit, read, bell, sbell;
 	char	*r;		/* saved frame */
 	long	pc;		/* of the instruction */
 	int	len;
@@ -178,11 +178,26 @@ census(x, a, wr)
 	struct amigacensus *c = &x->ctr->ac_census;
 	unsigned long fast = AMIGA_FAST_BASE;
 	int i;
-	if (a >= 0xdff000 && a < 0xdff200) { c->custom[(a & 0x1fe) / 2][wr]++; return; }
+	if (a >= 0xdff000 && a < 0xdff200) {
+		c->custom[(a & 0x1fe) / 2][wr]++;
+		if (wr && (a == 0xdff058 || a == 0xdff05e)) {
+			for (i = 0; i < AMIGA_NOTHER && c->blit[i][1]; i++)
+				if (c->blit[i][0] == x->pc) break;
+			if (i < AMIGA_NOTHER) {
+				c->blit[i][0] = x->pc;
+				c->blit[i][1]++;
+			}
+		}
+		return;
+	}
 	if ((a & ~0xf00UL) == 0xbfe001) { c->cia[0][(a >> 8) & 15][wr]++; return; }
 	if ((a & ~0xf00UL) == 0xbfd000) { c->cia[1][(a >> 8) & 15][wr]++; return; }
-	if (a < x->ctr->ac_config.ae_chipsize ||
-	    (a >= fast && a < fast + x->ctr->ac_config.ae_fastsize)) return;
+	if (a < x->ctr->ac_config.ae_chipsize) {
+		if (a < 0x10000) c->low[a >> 12]++;
+		c->nchip++;
+		return;
+	}
+	if (a >= fast && a < fast + x->ctr->ac_config.ae_fastsize) { c->nfastram++; return; }
 	for (i = 0; i < AMIGA_NOTHER && c->other[i][1]; i++)
 		if (c->other[i][0] == a) break;
 	if (i == AMIGA_NOTHER) return;
@@ -201,7 +216,8 @@ ioaccess(x, a, sz, vp, wr)
 	if (a <= x->fault && x->fault - a < (unsigned long)sz) x->hit = 1;
 	if (x->ctr->ac_config.ae_flags & AMIGAF_CENSUS) census(x, a, wr);
 	if (a >= 0xbfa000 && a < 0xbfb000) a += 0x4000;
-	if (wr && a == AMIGA_BELL) x->bell = 1;
+	if (wr && a == AMIGA_BELL) x->bell = *vp == 1 ? 1 : 2;
+	if (wr && a == AMIGA_SNDBELL) x->sbell = 1;
 	if (openbus(x, a, sz)) {
 		if (!wr) *vp = sz == 1 ? 0xffUL : sz == 2 ? 0xffffUL : 0xffffffffUL;
 		return 0;
@@ -715,15 +731,21 @@ amiga_fault(gp, r, v)
 	struct ix x;
 	unsigned long saved[16], epoch, fa;
 	unsigned char b[4];
-	int i, j, sr = GR_SR(r), ssw, s, e, wb, tries, w, n;
+	int i, j, sr = GR_SR(r), ssw, s, e, wb, tries, w, n, m, nm;
 	unsigned long value;
 	unsigned char op[8];
 	a->ac_stat.as_fault++;
 	a->ac_stat.as_lastpc = GR_PC(r);
-	if ((GR_FV(r) >> 12) != 7) return 1;
+	if ((GR_FV(r) >> 12) != 7) {
+		a->ac_census.nfmt++;
+		return 1;
+	}
 	fa = G32(r + 84); a->ac_stat.as_lastaddr = fa;
 	ssw = G16(r + 76);
-	if ((ssw & 7) == 2 || (ssw & 7) == 6) return 1;
+	if ((ssw & 7) == 2 || (ssw & 7) == 6) {
+		a->ac_census.nssw++;
+		return 1;
+	}
 	/*
 	 * Disable and Enable, a third of all faults, without the decoder:
 	 * a word write to INTENA as the only writeback, or before the
@@ -736,23 +758,32 @@ amiga_fault(gp, r, v)
 		value = G32(r + 108) & 0xffff;
 		P16(r + 82, w & ~0x80);
 	} else if (fa == 0xdff09a && !(ssw & 0x100) && !((G16(r + 78) | G16(r + 80) | w) & 0x80) &&
-	    copyin((caddr_t)GR_PC(r), (caddr_t)op, 8) == 0 && G16(op) == 0x33fc &&
+	    copyin((caddr_t)(unsigned long)GR_PC(r), (caddr_t)op, 8) == 0 && G16(op) == 0x33fc &&
 	    G32(op + 4) == 0xdff09a) {
 		value = G16(op + 2);
 		n = 8;
+		GR_SR(r) = (GR_SR(r) & ~0xf) | (value & 0x8000 ? 8 : 0) | (value ? 0 : 4);
 	} else
 		value = 0x10000;
 	if (value < 0x10000) {
 		if (a->ac_config.ae_flags & AMIGAF_CENSUS)
 			a->ac_census.custom[0x9a / 2][1]++;
 		amiga_nfast++;
+		m = amiga_pvget(gp);
 		s = amiga_spl();
+		if (m >= 0)
+			a->ac_dev.intena = (a->ac_dev.intena & ~0x4000) | m;
 		if (value & 0x8000)
 			a->ac_dev.intena |= value & 0x7fff;
 		else
 			a->ac_dev.intena &= ~value;
+		nm = a->ac_dev.intena & 0x4000;
 		a->ac_epoch++;
 		amiga_splx(s);
+		if (m >= 0 && (nm || m))
+			amiga_pvput(gp, nm);
+		amiga_repost(gp);
+		amiga_pvclock(gp);
 		GR_PC(r) += n;
 		u.u_sigflag |= USTKCLEAR;
 		guest_trapret();
@@ -761,10 +792,13 @@ amiga_fault(gp, r, v)
 	for (i = 0; i < 8; i++) saved[i] = GR_D(r, i);
 	for (i = 0; i < 7; i++) saved[i + 8] = GR_A(r, i);
 	saved[15] = GR_USP(r);
+	m = amiga_pvget(gp);
 	for (tries = 0; tries < 3; tries++) {
 		x.r = r; x.pc = GR_PC(r); x.len = 0; x.ba = 0;
-		x.ctr = a; x.fault = fa; x.hit = 0; x.read = ssw & 0x100; x.nst = 0; x.bell = 0;
+		x.ctr = a; x.fault = fa; x.hit = 0; x.read = ssw & 0x100; x.nst = 0; x.bell = 0; x.sbell = 0;
 		s = amiga_spl();
+		if (m >= 0)
+			a->ac_dev.intena = (a->ac_dev.intena & ~0x4000) | m;
 		epoch = a->ac_epoch; x.dev = a->ac_dev;
 		for (i = 0; i < 4; i++) x.gary[i] = a->ac_gary[i];
 		amiga_splx(s);
@@ -777,9 +811,18 @@ amiga_fault(gp, r, v)
 				a->ac_dev = x.dev;
 				for (i = 0; i < 4; i++) a->ac_gary[i] = x.gary[i];
 				a->ac_epoch++;
+				nm = a->ac_dev.intena & 0x4000;
 				amiga_splx(s);
+				if (m >= 0 && nm != m) {
+					amiga_pvput(gp, nm);
+					amiga_repost(gp);
+				}
 				if (x.bell)
-					amiga_ring(gp);
+					amiga_ring(gp, 0);
+				if (x.sbell)
+					amiga_ring(gp, 1);
+				if (x.bell == 1)
+					amiga_await(gp);
 				for (i = 0; i < x.nst; i++) {
 					for (j = 0; j < x.st[i].sz; j++)
 						b[j] = x.st[i].v >> (8 * (x.st[i].sz - 1 - j));
@@ -791,6 +834,7 @@ amiga_fault(gp, r, v)
 					P16(r + 80, G16(r + 80) & ~0x80);
 					P16(r + 82, G16(r + 82) & ~0x80);
 				} else GR_PC(r) = x.pc + x.len;
+				amiga_pvclock(gp);
 				u.u_sigflag |= USTKCLEAR;
 				guest_trapret();
 				return 0;
@@ -801,6 +845,18 @@ amiga_fault(gp, r, v)
 		for (i = 0; i < 7; i++) GR_A(r, i) = saved[i + 8];
 		GR_USP(r) = saved[15]; GR_SR(r) = sr;
 		if (e < 0 || !x.hit) break;
+	}
+	if (a->ac_config.ae_flags & AMIGAF_CENSUS) {
+		a->ac_census.nfail++;
+		for (i = 0; i < AMIGA_NOTHER && a->ac_census.miss[i][1]; i++)
+			if (a->ac_census.miss[i][0] == GR_PC(r)) break;
+		if (i < AMIGA_NOTHER) {
+			if (!a->ac_census.miss[i][1]) {
+				a->ac_census.miss[i][0] = GR_PC(r);
+				a->ac_census.miss[i][2] = fa;
+			}
+			a->ac_census.miss[i][1]++;
+		}
 	}
 	return 1;
 }

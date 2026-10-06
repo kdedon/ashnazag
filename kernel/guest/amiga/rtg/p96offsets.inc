@@ -36,6 +36,16 @@
 .equ gbi_WaitVerticalSync, 346
 .equ gbi_SetInterrupt, 350
 .equ gbi_WaitBlitter, 354
+.equ gbi_FillRect, 382
+.equ gbi_FillRectDefault, 386
+.equ gbi_InvertRect, 390
+.equ gbi_InvertRectDefault, 394
+.equ gbi_BlitRect, 398
+.equ gbi_BlitRectDefault, 402
+.equ gbi_BlitTemplate, 406
+.equ gbi_BlitTemplateDefault, 410
+.equ gbi_BlitRectNoMaskComplete, 430
+.equ gbi_BlitRectNoMaskCompleteDefault, 434
 .equ gbi_GetVSyncState, 486
 .equ gbi_SetSprite, 518
 .equ gbi_SetSpritePosition, 522

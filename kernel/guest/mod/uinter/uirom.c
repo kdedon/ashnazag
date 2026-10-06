@@ -6,7 +6,8 @@
  * the ROM's ProductInfo table.
  *
  * The machine's ROM is used unless uinter_rom names a file or the ROM
- * fails the checks; then the file, by default /etc/aux/rom.
+ * fails the checks; then the file, by default /etc/aux/rom.  An A/UX 2
+ * Mac, which knows only 68030 Macs, takes the file first.
  * Accepted: a universal ROM (version word at +8 >= $067C), size from
  * the header long at +$40 matching the image, checksum (the first long:
  * the sum of the words from offset 4) correct.
@@ -260,19 +261,23 @@ romfile(name, b, head)
 
 /* the host's ROM or the file, checked, and its low memory; 0 or an errno */
 static int
-romload1()
+romload1(aux2)
+	int aux2;
 {
 	unsigned char *b = 0;
 	char *name = "ROMBase";
 	long head = 0x10000;	/* ProductInfo lives in the first 64 KB */
 	int e = 0, i;
 
-	if (uinter_rom[0] || (ui_hwrom = hwrom()) == 0) {
+	if (uinter_rom[0] || aux2 || (ui_hwrom = hwrom()) == 0) {
 		name = uinter_rom[0] ? uinter_rom : ROMFILE;
 		b = (unsigned char *)kmem_alloc(head, KM_SLEEP);
 		if ((e = romfile(name, b, head)) != 0) {
 			kmem_free((_VOID *)b, head);
-			return e;
+			if (!aux2 || uinter_rom[0] || (ui_hwrom = hwrom()) == 0)
+				return e;
+			b = 0;
+			name = "ROMBase";
 		}
 	}
 	if (ui_box < 0)
@@ -309,14 +314,15 @@ romload1()
  * uinter_boxflag reads it again once its users are done.  Each
  * successful call is paired with ui_romrel. */
 int
-ui_romload()
+ui_romload(aux2)
+	int aux2;
 {
 	int e, box;
 
 	while (busy)
 		sleep((caddr_t)&busy, PZERO);
 	box = uinter_boxflag >= 0 ? uinter_boxflag : modelfile();
-	if ((ui_rom.r_vp || ui_hwrom) && ui_rom.r_box == box) {
+	if ((ui_rom.r_vp || ui_hwrom) && ui_rom.r_box == box && ui_rom.r_aux2 == aux2) {
 		inuse++;
 		return 0;
 	}
@@ -325,8 +331,9 @@ ui_romload()
 		sleep((caddr_t)&inuse, PZERO);
 	ui_romfree();
 	ui_box = box > 255 ? -1 : box;	/* BoxFlag is a byte */
-	e = romload1();
+	e = romload1(aux2);
 	ui_rom.r_box = box;
+	ui_rom.r_aux2 = aux2;
 	if (e == 0)
 		inuse++;
 	busy = 0;
@@ -369,12 +376,13 @@ ui_romfree()
  * stays in the task's own copy.
  */
 int
-ui_rommap(a)
+ui_rommap(a, aux2)
 	caddr_t a;
+	int aux2;
 {
 	int e;
 
-	if ((e = ui_romload()) != 0)
+	if ((e = ui_romload(aux2)) != 0)
 		return e;
 	if (((u_long)a & 0xfff) || !valid_usr_range(a, ui_rom.r_size))
 		e = EINVAL;

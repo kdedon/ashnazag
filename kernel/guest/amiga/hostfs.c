@@ -33,6 +33,22 @@ struct volume { char root[HPATH], name[32]; int mounted, ro; };
 struct handle { unsigned int id, volume; int fd, exclusive, writable; dev_t dev; ino_t ino; DIR *dir; char rel[MIG_FS_PATH]; };
 struct mig_hostfs { struct volume volumes[MIG_FS_VOLUMES]; struct handle handles[MIG_FS_HANDLES]; unsigned int serial; };
 
+/*
+ * Files SYS: shows changed: while a file on volume 0 still holds orig, its
+ * reads return view, of the same size.
+ */
+static struct overlay { const char *rel; const unsigned char *orig, *view; unsigned long size; } overlays[2];
+
+int mig_hostfs_overlay(const char *rel, const unsigned char *orig, const unsigned char *view, unsigned long size)
+{
+    unsigned int i;
+    for (i=0;i<sizeof overlays/sizeof overlays[0];i++) if (!overlays[i].rel) {
+        overlays[i].rel=rel; overlays[i].orig=orig; overlays[i].view=view; overlays[i].size=size;
+        return 0;
+    }
+    return -1;
+}
+
 static int doserr(int e)
 {
     switch (e) {
@@ -159,6 +175,13 @@ static int busy_tree(struct mig_hostfs *fs,unsigned int v,const char *rel)
     }
     return 0;
 }
+static struct overlay *overlaid(struct handle *h)
+{
+    unsigned int i;
+    for (i=0;i<sizeof overlays/sizeof overlays[0];i++)
+        if (overlays[i].rel && !h->volume && same(h->rel,overlays[i].rel)) return &overlays[i];
+    return 0;
+}
 static void info(struct mig_fs_request *r,const struct stat *s,const char *name)
 {
     r->type=S_ISDIR(s->st_mode)?2:-3;
@@ -182,7 +205,7 @@ int mig_hostfs_mount(struct mig_hostfs *fs,unsigned int n,const char *name,const
 }
 void mig_hostfs_dispatch(struct mig_hostfs *fs,struct mig_fs_request *r)
 {
-    struct handle *h,*nh; struct volume *v; struct stat st; struct dirent *de;
+    struct handle *h,*nh; struct volume *v; struct stat st; struct dirent *de; struct overlay *ov;
     char rel[MIG_FS_PATH],rel2[MIG_FS_PATH],path[HPATH],path2[HPATH];
     int e,fd,mode; long count; off_t old,pos;
     struct statvfs sv; unsigned long total,used,unit;
@@ -252,8 +275,13 @@ void mig_hostfs_dispatch(struct mig_hostfs *fs,struct mig_fs_request *r)
             old=lseek(h->fd,0,SEEK_CUR); pos=lseek(h->fd,(off_t)r->offset,(int)r->flags);
             if(old<0 || pos<0) e=doserr(errno); else if(old>2147483647L || pos>2147483647L) {lseek(h->fd,old,SEEK_SET);e=E_BADNUM;} else r->result=(int)old;
         } else {
+            ov=r->op==MIG_FS_READ?overlaid(h):0;
+            pos=ov?lseek(h->fd,0,SEEK_CUR):0;
             do { count=r->op==MIG_FS_READ?read(h->fd,r->data,r->length):write(h->fd,r->data,r->length); } while(count<0 && errno==EINTR);
             if(count<0) e=doserr(errno); else r->result=(int)count;
+            if(ov && count>0 && pos>=0 && fstat(h->fd,&st)==0 && (unsigned long)st.st_size==ov->size &&
+               (unsigned long)pos+count<=ov->size && !memcmp(r->data,ov->orig+pos,count))
+                memcpy(r->data,ov->view+pos,count);
         }
         break;
     case MIG_FS_EXAMINE: case MIG_FS_NEXT:

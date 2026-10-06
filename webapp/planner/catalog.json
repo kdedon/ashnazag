@@ -150,8 +150,16 @@
       "label": "Falcon \u00b7 CT60 / CT63 68060",
       "status": "planned",
       "description": "Planned Falcon accelerator target; the 68060 machine layer remains to be qualified.",
-      "deviceIds": [],
-      "defaultDevices": [],
+      "deviceIds": [
+        "falcon-ide",
+        "ikbd",
+        "falcon-video"
+      ],
+      "defaultDevices": [
+        "falcon-ide",
+        "ikbd",
+        "falcon-video"
+      ],
       "memoryBanks": [
         {
           "id": "st",
@@ -411,7 +419,8 @@
       "status": "existing",
       "description": "Statically linked IDE driver and AHDI partition support.",
       "machineIds": [
-        "falcon030"
+        "falcon030",
+        "falcon060"
       ],
       "builtIn": true,
       "required": true,
@@ -423,7 +432,8 @@
       "status": "existing",
       "description": "Statically linked keyboard and console input.",
       "machineIds": [
-        "falcon030"
+        "falcon030",
+        "falcon060"
       ],
       "builtIn": true,
       "required": true,
@@ -435,7 +445,8 @@
       "status": "existing",
       "description": "Statically linked console and display service.",
       "machineIds": [
-        "falcon030"
+        "falcon030",
+        "falcon060"
       ],
       "builtIn": true,
       "required": true,

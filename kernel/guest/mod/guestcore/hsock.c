@@ -634,8 +634,13 @@ hs_listen(h, n)
 	return udata(h);
 }
 
-int
-hs_connect(h, addr, len)
+/*
+ * The handshake and the wait for its answer run with the guest's virtual
+ * interrupts held: one arriving in them would fail the call with EINTR
+ * after the request went out.
+ */
+static int
+connect1(h, addr, len)
 	struct hs *h;
 	caddr_t addr;
 	int len;
@@ -695,6 +700,25 @@ hs_connect(h, addr, len)
 		if (cl >= 8 && b[0] == T_DISCON_IND)
 			return b[1] <= 0 || b[1] == ENXIO ? ECONNREFUSED : (int)b[1];
 	}
+}
+
+int
+hs_connect(h, addr, len)
+	struct hs *h;
+	caddr_t addr;
+	int len;
+{
+	struct guest_proc *gp = GUESTP(u.u_procp);
+	unsigned int q;
+	int e;
+
+	if (gp == 0)
+		return connect1(h, addr, len);
+	q = gp->gp_flags & GPF_QUIET;
+	gp->gp_flags |= GPF_QUIET;
+	e = connect1(h, addr, len);
+	gp->gp_flags = (gp->gp_flags & ~GPF_QUIET) | q;
+	return e;
 }
 
 int

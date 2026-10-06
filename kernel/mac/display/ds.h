@@ -11,7 +11,7 @@
 
 #include "dsio.h"
 
-#ifdef DS_ATARI
+#if defined(DS_ATARI) && !defined(ATA060)
 #define DS_PGSHIFT	11	/* 68030 kernel: 2 KB pages */
 #else
 #define DS_PGSHIFT	12
@@ -50,11 +50,14 @@
 #define DS_SPLX(s)	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (s) : "memory")
 #ifdef DS_ATARI
 #define DS_HI		6	/* IKBD and the MFP */
+#else
+#define DS_HI		2	/* ADB and clock (1), VBL (2) */
+#endif
+#if defined(DS_ATARI) && !defined(ATA060)
 /* 68030: clear the logically addressed data cache */
 #define DS_CPUSHA()	__asm__ __volatile__(".word 0x4e7a,0x0002,0x0040,0x0800,0x4e7b,0x0002" \
 	: : : "d0", "memory")
 #else
-#define DS_HI		2	/* ADB and clock (1), VBL (2) */
 #define DS_CPUSHA()	__asm__ __volatile__(".word 0xf478" : : : "memory")	/* cpusha dc */
 #endif
 
@@ -65,6 +68,12 @@ struct dsvid {
 	unsigned long	v_pal[256];
 	int		v_st;		/* the ST shift mode was set last */
 	unsigned char	v_blt[0x3E];	/* blitter registers $FF8A00-$FF8A3D */
+	unsigned char	v_snd[0x44];	/* sound, codec and matrix registers $FF8900-$FF8943 as written */
+	unsigned char	v_sw[0x44];	/* which of them were written */
+	unsigned long	v_spb;		/* physical start of the buffer the hardware plays */
+	unsigned long	v_spos;		/* where to resume after a switch, 0 none */
+	int		v_sedge;	/* the guest's AER bits 7 and 4: edges for input 7 and Timer A */
+	int		v_scur;		/* the edge the host's input 7 is set to */
 };
 
 /* one blitter run: a line or part of one, at physical addresses */
@@ -108,6 +117,7 @@ struct dssess {
 	pid_t		s_vpid;
 	unsigned long	s_vwin;		/* where s_vproc maps the region */
 	unsigned long	s_vgbase;	/* screen address the guest set */
+	unsigned long	s_gpa, s_gtop;	/* guest addresses [0, s_gtop) are physical s_gpa + address */
 	int		s_vmode;	/* FBIOSMODE's mode, index + 1; 0 a guest's or none */
 #endif
 };
@@ -143,6 +153,7 @@ extern struct dsfbh ds_fbh[];
 extern struct dsevh ds_evh[];
 extern unsigned long ds_gen, ds_serial, ds_vblcount;
 extern unsigned long ds_nhwvbl, ds_nswvbl;
+extern void (*ds_frontfn)();	/* (s): s came to the front; at DS_HI */
 
 /* ds.c */
 int	ds_init();		/* () -> errno */
@@ -166,7 +177,16 @@ int	ds_setmode();		/* (s, id) -> errno */
 /* a guest's Videl session: its own mode and palette, IKBD key codes */
 #define DS_GUEST(s)	((s)->s_vid && !(s)->s_vmode)
 void	ds_vidput();		/* (addr, size, value) */
+void	ds_sndput();		/* (addr, size, value) */
+int	ds_sndget();		/* (addr) -> the hardware's byte, or -1 */
+void	ds_sndedge();		/* (aer): the guest's MFP edges */
+void	ds_sndexit();		/* (proc): the owner exits: DMA off */
+void	ds_sndintr();		/* the DMA sound end, from the MFP */
+extern void (*ds_sndcb)();	/* (events): bit 0 input 7, bit 2 Timer A */
 void	ds_bltgo();		/* (registers) */
+int	ds_gralloc();		/* (bytes) -> errno: the caller's contiguous ST-RAM */
+void	ds_grfree();
+int	ds_grmmap();		/* (offset) -> its page frame, or -1 */
 #endif
 
 /* dsseg.c */

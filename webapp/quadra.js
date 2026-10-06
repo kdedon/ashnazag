@@ -6,7 +6,7 @@
     <p class="field-help">This recipe installs the Quadra console system with its default devices. Packages, guests, graphical login and custom drivers are not included. Supply a prebuilt Quadra kernel; kernel compilation is not yet available in the browser.</p>
     <form id="quadra-form" aria-label="Complete Quadra image build">
       <div class="media-fields">
-        <label class="media-field">AMIX 2.1 tape archive (one or more parts)<input id="quadra-tape" type="file" multiple required><span class="field-help">Select every part, such as both <code>.tar.bz2</code> archives, or a <code>.tap</code> image or the segment files. Missing segments are named.</span></label>
+        <label class="media-field">AMIX 2.1 tape<input id="quadra-tape" type="file" multiple required><span class="field-help">Choose the whole tape: a <code>.tap</code> image, or both <code>.tar.bz2</code> parts together. They are joined here. Missing segments are named.</span></label>
         <label class="media-field">Prebuilt Quadra kernel (m68k ELF)<input id="quadra-kernel" type="file" required></label>
         <label class="media-field">A/UX boot donor disk<input id="quadra-donor" type="file" accept=".img,.dsk,application/octet-stream" required><span class="field-help">Supplies the Apple partition map and disk drivers. The builder creates a new HFS boot partition for the selected kernel.</span></label>
       </div>

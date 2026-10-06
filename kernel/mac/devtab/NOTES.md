@@ -60,7 +60,7 @@ Mac table.
 | 40 | dd (raw) | kept | SCSI disk over the Mac `sd.h` layer |
 | 41 | ben | **empty** | battery clock at 0xDC0000 |
 | 42 | — | empty statically | `mac_rd_config()` installs the raw RAM disk at boot |
-| 46 | audio (`audioinfo`) | **empty** | Paula audio |
+| 46 | audio (`audioinfo`) | **new**: asc | Paula audio; on the Mac the sound chip for the sound service (`sound/SOUND.md`) |
 | 50 | sad | kept | generic |
 | 51, 52, 53 | — | **new**: fb, kbd, mouse | display service (`display/NOTES.md`) |
 | 55 | — | empty statically | `modadm` registers it for the loadable `otbridge` module, `/dev/otbridge` (`otbridge/NOTES.md`) |

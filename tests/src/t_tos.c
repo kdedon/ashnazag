@@ -580,7 +580,8 @@ ucheck()
 		"cwd", "attrib", "dfree", "pexec", "links_inside", "escape_dotdot",
 		"escape_link", "escape_uplink", "escape_cwd", "long_path", "c_auto", "drive_g",
 		"drive_cwd", "c_rw", "drive_d", "drive_h", "irq_rte", "irq_movesr", "irq_mask",
-		"irq_nest", "trap9", "trap10", "trap0", "env_hidden", 0
+		"irq_nest", "trap9", "trap10", "trap0", "env_hidden", "snd_lock", "snd_cookie",
+		"snd_play", "snd_end", "snd_stopped", "snd_unlock", 0
 	};
 	char b[2048], n[40], why[40], *l, *nm;
 	int fd, i, ok, len = 0;
@@ -1635,6 +1636,21 @@ running(prg)
 	return peek(bp + 12, 4) == tlen;
 }
 
+/* 1 when a dump fills the guest screen under a white menu bar: a program's own screen, past the AES's launch fill */
+static int
+fullmenu(name)
+	char *name;
+{
+	char req[48], *r;
+	int x, y, w = 0, h = 0, menu = 0;
+
+	sprintf(req, "tos %s", name);
+	if ((r = host(req)) == 0)
+		return 0;
+	sscanf(r, "box %d %d %d %d menu %d", &x, &y, &w, &h, &menu);
+	return w >= 600 && h >= 380 && menu >= 650;
+}
+
 /*
  * Ballerburg, started by the desktop: a 640x400 monochrome game that
  * clears, saves and restores the screen itself.  On the ST screen (-S)
@@ -1663,9 +1679,10 @@ ballerburg()
 		sprintf(b, "%s_g%d", pf, i & 1);
 		if ((r = shot(b)) == 0)
 			break;
-		/* both dumps taken while it runs: not the desktop before its first draw */
-		if ((now = running(BALLERDIR "/BALLER.PRG")) && was)
-			n = diff(a, b);
+		/* both dumps taken while it runs, and its own screen: the launch fill can hold still too */
+		if ((now = running(BALLERDIR "/BALLER.PRG")) && was && (n = diff(a, b)) == 0 &&
+		    !fullmenu(b))
+			n = -1;
 		was = now;
 		strcpy(a, b);
 	}

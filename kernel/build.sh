@@ -8,7 +8,8 @@
 # without it an existing mac/ramdisk/build/root.img is checked and used.
 #
 # PLATFORM=atari builds the Falcon030 kernel (build/unix-atari030.elf)
-# from the stage-1 base instead of the Mac kernel.
+# from the stage-1 base instead of the Mac kernel; PLATFORM=atari060 the
+# Falcon 040/060 kernel (build/unix-atari060.elf) from the stage-2 base.
 #
 # Logs go to kernel/build/logs/.  One PASS/FAIL line per stage; stops at
 # the first failure with a non-zero exit.
@@ -47,11 +48,19 @@ sh "$PORT/relink-040.sh" > "$LOG/port.log" 2>&1 || fail port "relink-040.sh fail
 grep -q 'TOTAL complaints: 0 ' "$LOG/port.log" || fail port "validator complaints"
 pass port
 
+if [ "${PLATFORM:-mac}" = atari060 ]; then
+	sh "$K/atari/relink-atari060.sh" > "$LOG/atari060.log" 2>&1 ||
+		fail atari060 "relink-atari060.sh failed"
+	pass atari060
+	exit 0
+fi
+
 # 3. RAM-disk root image (linked in by stage 4 when present)
 IMG="$K/mac/ramdisk/build/root.img"
 : > "$LOG/root.log"
 if [ -f "${AMIX_TAPE:-/nonexistent}/02" ]; then
 	sh "$K/mac/display/build.sh" > "$LOG/root.log" 2>&1 || fail root "display build (dstest) failed"
+	sh "$K/mac/sound/build.sh" >> "$LOG/root.log" 2>&1 || fail root "sound build (sndd) failed"
 	sh "$K/mac/ramdisk/mkroot.sh" >> "$LOG/root.log" 2>&1 || fail root "mkroot.sh failed"
 fi
 if [ -f "$IMG" ]; then

@@ -274,6 +274,40 @@ int sz;
 			V8(a++) = v >> 8 * sz;
 }
 
+/* a byte of the sound, codec and matrix registers */
+int
+ata_sget(a)
+unsigned long a;
+{
+	return V8(a & 0xFFFF);
+}
+
+void
+ata_sput(a, v)
+unsigned long a, v;
+{
+	V8(a & 0xFFFF) = v;
+}
+
+/* MFP input 7, the DMA sound end: on or off, on the given edge; any pending one dropped */
+void
+ata_sirq(on, rise)
+int on, rise;
+{
+	register int x = DS_SPL(7);
+
+	V8(0xFA07) &= 0x7F;
+	V8(0xFA13) &= 0x7F;
+	if (on)
+		V8(0xFA03) = (V8(0xFA03) & 0x7F) | (rise ? 0x80 : 0);
+	V8(0xFA0B) = 0x7F;
+	if (on) {
+		V8(0xFA07) |= 0x80;
+		V8(0xFA13) |= 0x80;
+	}
+	DS_SPLX(x);
+}
+
 /* ------------------------------------------------------ session modes */
 
 /*
@@ -296,10 +330,18 @@ static struct advm {
 #define AD_NVM	(sizeof ad_vm / sizeof ad_vm[0])
 #define PUT16(d, o, v)	((d)->v_reg[(o) - 0x8200] = (v) >> 8, (d)->v_reg[(o) - 0x8200 + 1] = (v) & 0xFF)
 
+#ifdef ATA060
+extern int ata_svfb;
+#endif
+
 /* the number of session modes: none unless the monitor is VGA */
 int
 ata_nvmode()
 {
+#ifdef ATA060
+	if (ata_svfb)
+		return 0;	/* Videl modes would end the SuperVidel's */
+#endif
 	return (V8(0x8006) >> 6) == 2 ? AD_NVM : 0;
 }
 
@@ -415,6 +457,10 @@ register unsigned char *b;
  * One line, or part of one, in HOG mode: the CPU waits while the
  * blitter has the bus.  0, or -1 if it did not finish.
  */
+#ifdef ATA060
+extern void ata_dmasync();
+#endif
+
 int
 ata_brun(r)
 register struct dsbrun *r;
@@ -440,7 +486,13 @@ register struct dsbrun *r;
 	V8(0x8A3B) = r->r_op;
 	V8(0x8A3D) = r->r_skew;
 	V8(0x8A3C) = 0xC0 | r->r_ctl;
+#ifdef ATA060
+	i = ab_idle();
+	ata_dmasync();
+	return i;
+#else
 	return ab_idle();
+#endif
 }
 
 /* The IKBD keyboard has no LEDs. */

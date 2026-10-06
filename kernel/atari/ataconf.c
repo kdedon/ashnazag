@@ -25,6 +25,24 @@
 #define MAXCHUNK	4
 #define BISIZE		1024
 #define POOLSIZE	0x80000		/* ST-RAM kept from the VM: screen, DMA */
+#ifdef ATA060
+#define BI_ATARI_OSBASE	0x8f00		/* ours: physical start of the TOS image */
+#define BI_ATARI_SVIDEL	0x8f01		/* ours: SuperVidel native mode */
+#define SV_CTRL		0x80010000
+#define SV_MODE		0x40		/* SV_CTRL: the SuperVidel registers set the mode */
+#define SV_RESET	0x3		/* SV_CTRL: hold VGA and DVI output in reset */
+#define SV_REG(o)	IO32(SV_CTRL + (o))
+#define SV_VERSION	0x8001007C	/* low 10 bits: firmware */
+#define SV_RAM		0xA1000000	/* graphics DDR; below it mirrors ST-RAM */
+#define SV_RAMEND	0xA8000000
+#define FASTRAM		0x01000000
+#define ATA_MAXRAM	0x8000000	/* kvsegmap holds 512 segments of 256 KB */
+#define RAM_VA		0x60000000
+#define RAM_WIN		0x1000000
+#define CM_CB		0x20		/* page descriptor cache modes */
+#define CM_NCS		0x40
+#define PTE_SUP		0x99		/* resident, used, modified, supervisor */
+#endif
 
 /* Videl, MFP 68901, SCC */
 #define IO8(a)		(*(VOL unsigned char *)(a))
@@ -53,6 +71,7 @@
 #define MFP_VBASE	0x40		/* vectors 64-79 */
 #define MFP_TIMERA	13		/* channel numbers */
 #define MFP_GPIP4	6
+#define MFP_GPIP7	15
 #define SCC_CTLA	IO8(0xFFFF8C81)
 
 extern char end[], stext[];
@@ -60,7 +79,7 @@ extern unsigned long boot_arg0, boot_arg1;
 extern unsigned long MAINSTORE, VSIZOFMEM, chipmem;
 extern int kernel_load_address;
 extern unsigned long M68Kvec[];
-extern void ata_clkint(), ata_aciaint(), ata_mfpstray(), ata_fline();
+extern void ata_clkint(), ata_aciaint(), ata_sndint(), ata_mfpstray(), ata_fline();
 extern void ata_stop();
 extern unsigned long ata_nfid();
 extern void ata_nfcall();
@@ -89,6 +108,17 @@ unsigned long ata_nf = 1;		/* debug channel id, 0 off */
 int ata_nfwant = 1;
 long mac_socktrace = 1;		/* socktrace: log A/UX socket calls */
 long ata_rootarg = 1;			/* dd minor from root=, -1 none */
+#ifdef ATA060
+unsigned long ata_osbase = 1;
+unsigned long ata_sv[6] = { 1 };	/* firmware, screen, width, height, depth, row */
+int ata_svfb = 1;			/* the console is on the SuperVidel */
+static int ata_nosv = 1;
+static int ata_svhw = 1;		/* the loader found the card */
+static unsigned long ata_svmode[3] = { 1 };	/* sv=: width, height, depth */
+extern long cputype;
+extern unsigned long hat_cm_ram;
+extern void ata_isp61();
+#endif
 
 void ata_puts();
 void ata_puthex();
@@ -311,6 +341,190 @@ register char *s;
 	}
 }
 
+#ifdef ATA060
+static void
+ata_putdec(v)
+unsigned long v;
+{
+	char b[11];
+	register int i = 0;
+
+	do
+		b[i++] = '0' + v % 10;
+	while ((v /= 10) != 0);
+	while (i)
+		putchar(b[--i]);
+}
+
+/*
+ * 60 Hz timings; horizontal values in pixels.  Each line and frame
+ * starts with the sync pulse, then the back porch.  pll is clock chip
+ * PLL2 bytes 0x27-0x2A (Y5 divider, N, R, Q), pll2 byte 0x2B (Q, P, VCO
+ * range), for a 16 MHz reference.
+ */
+static struct svtim {
+	unsigned short st_w, st_h, st_hs, st_hbp, st_ht, st_vs, st_vbp, st_vt;
+	unsigned long st_pos;		/* 1 hsync, 2 vsync active high */
+	unsigned long st_pll, st_pll2;
+} ata_svtim[] = {
+	{ 640, 480, 96, 48, 800, 2, 33, 525, 0, 0x04C382BB, 0x28 },	/* 25.175 MHz */
+	{ 800, 600, 128, 88, 1056, 4, 23, 628, 3, 0x0400A002, 0x86 },	/* 40 */
+	{ 1024, 768, 136, 160, 1344, 6, 29, 806, 0, 0x02082022, 0x05 },	/* 65 */
+	{ 1280, 1024, 112, 248, 1688, 3, 38, 1066, 3, 0x0101B003, 0x68 },	/* 108 */
+	{ 1920, 1080, 32, 400, 2400, 5, 23, 1112, 1, 0x0100A002, 0x86 },	/* 160 */
+};
+#define NSVTIM	(sizeof ata_svtim / sizeof ata_svtim[0])
+
+/*
+ * Sets a mode on both outputs, screen at SV_RAM.  Any Videl write takes
+ * the outputs back to the Videl, so a Videl VGA mode goes first; the
+ * clock changes while the outputs are in reset.  Horizontal registers
+ * count pairs of pixels.  1 if the SuperVidel took it.
+ */
+static int
+ata_svset(t, d)
+register struct svtim *t;
+unsigned long d;
+{
+	register unsigned long hb, vb, row;
+	register int o;
+
+	row = t->st_w * d / 8;
+	hb = t->st_hs + t->st_hbp;
+	vb = t->st_vs + t->st_vbp;
+	videl_set(ata_screen, MON_VGA, &ata_vmodes[0]);
+	if (d == 8) {
+		/* 8 planes, bit 12 chunky: the Videl mode under 8-bit chunky */
+		IO16(0xFFFF8210) = 0x140;
+		IO16(0xFFFF8266) = 0x1010;
+	}
+	IO32(SV_CTRL) |= SV_RESET;
+	SV_REG(0x0C) = t->st_pll;
+	SV_REG(0x10) = t->st_pll2;	/* starts the clock chip update */
+	for (o = 0x34; o >= 0x14; o -= 0x20) {	/* DVI, then VGA */
+		SV_REG(o + 0x04) = hb / 2 << 16 | (hb + t->st_w) / 2;
+		SV_REG(o + 0x08) = (t->st_pos & 1) << 31 | t->st_hs / 2;
+		SV_REG(o + 0x0C) = vb << 16 | (vb + t->st_h);
+		SV_REG(o + 0x10) = (t->st_pos & 2) << 30 | t->st_vs;
+		SV_REG(o + 0x14) = (t->st_ht - 1) / 2 << 16 | (t->st_vt - 1);
+		SV_REG(o + 0x18) = row << 16 | (row + 15);
+		SV_REG(o + 0x1C) = d == 8 ? 4 : d == 16 ? 5 : 7;	/* chunky, RGB565, xRGB */
+	}
+	IO32(SV_CTRL) &= ~SV_RESET;
+	if (!(IO32(SV_CTRL) & SV_MODE))
+		return 0;
+	SV_REG(0x14) = SV_RAM;
+	SV_REG(0x34) = SV_RAM;
+	return 1;
+}
+
+/* An sv= the card can't show: say so; 0, the Videl console */
+static int
+ata_svbad()
+{
+	if (ata_svmode[0])
+		ata_puts("video: sv= not a SuperVidel mode, Videl console\n");
+	return 0;
+}
+
+/* sv=WxHxD: one of ata_svtim at depth 8, 16 or 32; else the geometry of the TOS mode */
+static void
+ata_svparse(s)
+register char *s;
+{
+	register char *p;
+	register int i;
+	unsigned long v[3];
+
+	for (p = s; *p; p++) {
+		if ((p != s && p[-1] != ' ') || p[0] != 's' || p[1] != 'v' || p[2] != '=')
+			continue;
+		p += 3;
+		for (i = 0; i < 3; i++, p++) {
+			for (v[i] = 0; *p >= '0' && *p <= '9'; p++)
+				v[i] = v[i] * 10 + *p - '0';
+			if (v[i] == 0 || *p != (i < 2 ? 'x' : *p == ' ' ? ' ' : 0)) {
+				ata_svmode[0] = 1;	/* malformed: matches no mode */
+				return;
+			}
+		}
+		for (i = 0; i < 3; i++)
+			ata_svmode[i] = v[i];
+		return;
+	}
+}
+
+/*
+ * Console in SuperVidel RAM: the sv= mode if the table has it, else the
+ * native mode the SuperVidel's XBIOS left; otherwise the Videl keeps it.
+ * 8 bpp is chunky through the Falcon palette, 16 RGB565, 32 xRGB.  1 if
+ * the console is there.
+ */
+static int
+ata_svidel()
+{
+	struct fbmode m;
+	register unsigned long *v = ata_sv;
+	register struct svtim *t;
+	register unsigned long d;
+
+	if (ata_nosv || !ata_svhw || (IO32(SV_VERSION) & 0x3FF) != v[0])
+		return 0;
+	d = ata_svmode[2];
+	for (t = ata_svtim; t < ata_svtim + NSVTIM; t++)
+		if (t->st_w == ata_svmode[0] && t->st_h == ata_svmode[1] &&
+		    (d == 8 || d == 16 || d == 32))
+			break;
+	if (t == ata_svtim + NSVTIM) {
+		/* the Videl keeps the console unless TOS left the card in a mode */
+		t = 0;
+		if (v[1] == 0 || !(IO32(SV_CTRL) & SV_MODE))
+			return ata_svbad();
+	}
+	if (t) {
+		if (!ata_svset(t, d))
+			return 0;
+		v[1] = SV_RAM;
+		v[2] = t->st_w;
+		v[3] = t->st_h;
+		v[4] = d;
+		v[5] = t->st_w * d / 8;
+	} else if (ata_svmode[0]) {
+		v[2] = ata_svmode[0];
+		v[3] = ata_svmode[1];
+		v[4] = ata_svmode[2];
+		v[5] = v[2] * v[4] / 8;
+	}
+	if ((v[4] != 8 && v[4] != 16 && v[4] != 32) || v[1] < SV_RAM ||
+	    v[1] >= SV_RAMEND || v[3] == 0 || v[5] < v[2] * v[4] / 8 ||
+	    v[5] > (SV_RAMEND - v[1]) / v[3])
+		return ata_svbad();
+	if (v[4] == 8) {
+		FAL_PAL(0) = 0xFFFF00FF;
+		FAL_PAL(255) = 0;
+	}
+	m.fm_base = v[1];
+	m.fm_row = v[5];
+	m.fm_depth = v[4];
+	m.fm_width = v[2];
+	m.fm_height = v[3];
+	if (!fbcons_attach(&m))
+		return 0;
+	ata_svfb = 1;
+	ata_puts("video: SuperVidel firmware ");
+	ata_putdec(v[0]);
+	ata_puts(t ? ", set " : ", ");
+	ata_putdec(v[2]);
+	putchar('x');
+	ata_putdec(v[3]);
+	putchar('x');
+	ata_putdec(v[4]);
+	putkv(" at ", v[1]);
+	ata_puts("\n");
+	return 1;
+}
+#endif
+
 static void
 ata_video()
 {
@@ -327,6 +541,10 @@ ata_video()
 		return;
 	ata_pool = top - POOLSIZE;
 	ata_screen = ata_pool;
+#ifdef ATA060
+	if (ata_svidel())
+		return;
+#endif
 	for (;;) {
 		mon = ata_vmon >= 0 ? ata_vmon : MONTYPE >> 6;
 		cls = mon == MON_TV ? MON_RGB : mon;
@@ -419,6 +637,12 @@ bi_parse()
 	ata_rootarg = -1;
 	ata_vmon = -1;
 	ata_vh = ata_vhz = ata_vbad = 0;
+#ifdef ATA060
+	ata_osbase = 0;
+	ata_sv[0] = ata_sv[1] = 0;
+	ata_svfb = ata_nosv = ata_svhw = 0;
+	ata_svmode[0] = 0;
+#endif
 	for (n = 0; n + 4 <= ata_bilen; n += size) {
 		tag = *(unsigned short *)(ata_bi + n);
 		size = *(unsigned short *)(ata_bi + n + 2);
@@ -433,6 +657,18 @@ bi_parse()
 		case BI_FPUTYPE:	ata_fputype = p[0]; break;
 		case BI_MMUTYPE:	ata_mmutype = p[0]; break;
 		case BI_ATARI_MCH:	ata_mch = p[0]; break;
+#ifdef ATA060
+		case BI_ATARI_OSBASE:	ata_osbase = p[0]; break;
+		case BI_ATARI_SVIDEL:
+			if (size >= 4 + sizeof ata_sv) {
+				register int i;
+
+				for (i = 0; i < 6; i++)
+					ata_sv[i] = p[i];
+				ata_svhw = 1;
+			}
+			break;
+#endif
 		case BI_MEMCHUNK:
 			if (ata_nchunk < MAXCHUNK) {
 				ata_chunk[ata_nchunk][0] = p[0];
@@ -445,6 +681,10 @@ bi_parse()
 			mac_socktrace = ata_word((char *)p, "socktrace");
 			ata_rootparse((char *)p);
 			ata_vparse((char *)p);
+#ifdef ATA060
+			ata_nosv = ata_word((char *)p, "nosv");
+			ata_svparse((char *)p);
+#endif
 			break;
 		}
 	}
@@ -532,7 +772,12 @@ ata_vectors()
 		M68Kvec[MFP_VBASE + i] = (unsigned long)ata_mfpstray;
 	M68Kvec[MFP_VBASE + MFP_TIMERA] = (unsigned long)ata_clkint;
 	M68Kvec[MFP_VBASE + MFP_GPIP4] = (unsigned long)ata_aciaint;
+	M68Kvec[MFP_VBASE + MFP_GPIP7] = (unsigned long)ata_sndint;
+#ifndef ATA060
 	M68Kvec[11] = (unsigned long)ata_fline;
+#else
+	M68Kvec[61] = (unsigned long)ata_isp61;
+#endif
 }
 
 /*
@@ -567,6 +812,11 @@ unsigned long arg0, arg1;
 	ata_puts("\n");
 	if (ata_machtype != MACH_ATARI)
 		ata_halt("config: boot record is not for an Atari");
+#ifdef ATA060
+	if (ata_cputype != 4 && ata_cputype != 8)
+		ata_halt("config: this kernel needs a 68040 or 68060");
+	cputype = ata_cputype == 8 ? 60 : 40;
+#endif
 
 	k = (unsigned long)end;
 	MAINSTORE = VSIZOFMEM = 0;
@@ -585,6 +835,21 @@ unsigned long arg0, arg1;
 		ata_halt("config: no memory chunk holds the kernel");
 	if (MAINSTORE == 0 && VSIZOFMEM == ata_pool + POOLSIZE)
 		VSIZOFMEM = ata_pool;
+#ifdef ATA060
+	/* VM in FastRAM: ST-RAM is device memory */
+	for (i = 0; i < ata_nchunk; i++)
+		if (MAINSTORE && ata_chunk[i][0] == 0)
+			chipmem = ata_chunk[i][1];
+	/* VM in ST-RAM: uncached like the rest of ST-RAM, so no alias differs */
+	if (MAINSTORE < FASTRAM)
+		hat_cm_ram = CM_NCS;
+	if (MAINSTORE + VSIZOFMEM > ATA_MAXRAM) {
+		VSIZOFMEM = ATA_MAXRAM - MAINSTORE;
+		ata_puts("config: memory limited to 128 MB\n");
+	}
+	if (ata_osbase < MAINSTORE + VSIZOFMEM && ata_osbase + 0x100000 > MAINSTORE)
+		ata_osbase = 0;
+#endif
 	if (ata_rootarg >= 0) {
 		(void)ata_rd_config(0);
 		rootdev = DD_BMAJ << 18 | ata_rootarg;
@@ -596,6 +861,11 @@ unsigned long arg0, arg1;
 	putkv(" VSIZOFMEM ", VSIZOFMEM);
 	putkv(" end ", k);
 	putkv(" pool ", ata_pool);
+#ifdef ATA060
+	putkv(" chipmem ", chipmem);
+	putkv(" TOS ", ata_osbase);
+	putkv(" cm ", hat_cm_ram);
+#endif
 	ata_puts("\n");
 	putkv("config: rootdev ", rootdev);
 	putkv(" dumpdev ", dumpdev);
@@ -696,6 +966,7 @@ int n;
 extern int fpu_present;
 extern void __amix_fpu_setup();
 
+#ifndef ATA060
 /*
  * sendsig resets the FPU state without asking whether there is one.
  * The emulator's fpu_setup handles the emulated case and chains here.
@@ -706,6 +977,7 @@ fpu_setup_fpe_orig()
 	if (fpu_present)
 		__amix_fpu_setup();
 }
+#endif
 
 /* ---------------------------------------------------------- backtrace */
 
@@ -765,7 +1037,8 @@ backtrace()
 /*
  * The kernel address of the first n bytes of the machine's ROM, 0 if
  * beyond it.  DTT0 maps it one to one.  A CT60's flash is 1 MB, a
- * Falcon's TOS 512 KB.
+ * Falcon's TOS 512 KB.  A CT60 runs TOS from a copy in FastRAM; the
+ * loader passes where that copy is.
  */
 unsigned long
 ata_romva(n)
@@ -773,6 +1046,10 @@ unsigned long n;
 {
 	if (ata_machtype != MACH_ATARI || n > (ata_cputype == 8 ? 0x100000 : 0x80000))
 		return 0;
+#ifdef ATA060
+	if (ata_osbase)
+		return ata_osbase;
+#endif
 	return 0xe00000;
 }
 
@@ -793,6 +1070,12 @@ void
 haltsys(how)
 int how;
 {
+#ifdef ATA060
+	extern unsigned long ata_isp61_n;
+
+	if (ata_isp61_n)
+		putkv("isp: 64-bit multiplies emulated in the kernel: ", ata_isp61_n);
+#endif
 	if (how == 0)
 		ata_stop("The system is halted; you may turn off power.\n");
 	else if (how == 1)
@@ -851,7 +1134,210 @@ inituname()
 
 	r = __amix_inituname();
 	d = utsname + UTS_MACHINE;
+#ifdef ATA060
+	for (s = "Atari Falcon"; (*d++ = *s++) != 0; )
+#else
 	for (s = "Atari Falcon030"; (*d++ = *s++) != 0; )
+#endif
 		;
 	return r;
 }
+
+#ifdef ATA060
+/* ------------------------------------------------- FastRAM, RAM window */
+
+#define ATA_LOAD	0x1000		/* link address of the image */
+#define RELTAB_MAGIC	0x52544142	/* 'RTAB' */
+
+extern char edata[];
+
+/*
+ * Called by the shim before ata_shim_main.  The VM region is the RAM
+ * chunk holding the kernel, so with FastRAM present the image moves
+ * there: copy it and the boot record, clear BSS, add the distance at
+ * every site in the relocation table.  Returns the distance, 0 to stay.
+ *
+ * The table ends at edata: its bytes, padding to a long, their count,
+ * 'RTAB'.  Per site, the gap from the previous one in words, one byte
+ * (1-127) or three (0x80 | high 7 bits, then 16 bits); 0 ends it.
+ */
+unsigned long
+ata_reloc(bi)
+unsigned char *bi;
+{
+	register unsigned char *s, *d, *t;
+	register unsigned long n, o, delta;
+	unsigned long base, size, e, *p;
+	unsigned short tag, sz;
+
+	p = (unsigned long *)edata;
+	if (bi == 0 || (unsigned long)end >= FASTRAM || p[-1] != RELTAB_MAGIC)
+		return 0;
+	t = (unsigned char *)(p - 2) - ((p[-2] + 3) & ~3UL);
+	base = size = 0;
+	for (n = 0; ; n += sz) {
+		if (n + 4 > BISIZE)
+			return 0;
+		tag = *(unsigned short *)(bi + n);
+		sz = *(unsigned short *)(bi + n + 2);
+		if (tag == BI_LAST) {
+			n += 4;
+			break;
+		}
+		if (sz < 4 || (sz & 1))
+			return 0;
+		p = (unsigned long *)(bi + n + 4);
+		if (tag == BI_MEMCHUNK && sz >= 12 && p[0] >= FASTRAM
+		&& p[1] > size) {
+			base = p[0];
+			size = p[1];
+		}
+	}
+	delta = base;
+	e = (((unsigned long)end + 1) & ~1UL) + delta;
+	if (size < 0x400000 || (base & 0xfff) || e + n + 0x100000 > base + size)
+		return 0;
+	for (s = (unsigned char *)ATA_LOAD, d = s + delta; s < (unsigned char *)edata; )
+		*d++ = *s++;
+	while (d < (unsigned char *)e)
+		*d++ = 0;
+	for (s = bi; n; n--)
+		*d++ = *s++;
+	d = (unsigned char *)ATA_LOAD + delta;
+	for (o = 0; (n = *t++) != 0; ) {
+		if (n & 0x80) {
+			n = (n & 0x7f) << 16 | t[0] << 8 | t[1];
+			t += 2;
+		}
+		o += n << 1;
+		*(unsigned long *)(d + o) += delta;
+	}
+	return delta;
+}
+
+/* 64 page tables of 64 entries, 256-byte aligned */
+unsigned long ata_rampt[(RAM_WIN >> 18) * 64 + 64] = { 1 };
+extern unsigned long kptr040, kroot040, kptbl;
+extern char ata_mmu_buf[];
+extern void ata_idcm(), bzero();
+
+/* FastRAM identity map: leaf tables for [ata_idlo, ata_idhi) at ata_idpt */
+unsigned long *ata_idpt = (unsigned long *)1;
+unsigned long ata_idlo = 1, ata_idhi = 1;
+static unsigned long ata_idptr = 1, ata_idleaf = 1;
+
+/* Leaf entry for supervisor address a, adding tables from the pool. */
+static unsigned long *
+ata_idpte(a)
+unsigned long a;
+{
+	register unsigned long *d;
+
+	d = (unsigned long *)kroot040 + (a >> 25);
+	if (!(*d & 2)) {
+		*d = ata_idptr | 0x0a;
+		ata_idptr += 512;
+	}
+	d = (unsigned long *)(*d & ~0x1ffUL) + (a >> 18 & 0x7f);
+	if (!(*d & 2)) {
+		*d = ata_idleaf | 0x0a;
+		ata_idleaf += 256;
+	}
+	return (unsigned long *)(*d & ~0xffUL) + (a >> 12 & 0x3f);
+}
+
+static void
+ata_idnc(a, e)
+register unsigned long a, e;
+{
+	register unsigned long *pte;
+
+	for (; a < e; a += 0x1000) {
+		pte = ata_idpte(a);
+		*pte = (*pte & ~0x60UL) | CM_NCS;
+	}
+}
+
+/*
+ * Supervisor page tables for FastRAM below 1 GB, built in the pool at p
+ * by pstart with the MMU off; returns the end of the pool.  The VM
+ * region is copyback, like every other mapping of its pages; the pool,
+ * the boot tables and the TOS copy are noncacheable.  Used and modified
+ * are preset, so the table walk never writes these entries.  ST-RAM is
+ * left to DTT0.
+ */
+unsigned long
+ata_idmap_build(p)
+unsigned long p;
+{
+	register unsigned long a;
+	unsigned long os, n;
+
+	p = (p + 0xfff) & ~0xfffUL;
+	ata_idpt = 0;
+	if (MAINSTORE < FASTRAM)
+		return p;
+	ata_idlo = MAINSTORE & ~0x3ffffUL;
+	ata_idhi = (MAINSTORE + VSIZOFMEM + 0x3ffff) & ~0x3ffffUL;
+	os = ata_osbase >= FASTRAM && ata_osbase < 0x3ff00000 ?
+	    ata_osbase & ~0xfffUL : 0;
+	/* one page of pointer tables, then the leaf tables */
+	n = 0x1000 + ((ata_idhi - ata_idlo) >> 10) + (os ? 0x500 : 0);
+	bzero(p, n);
+	ata_idptr = p;
+	ata_idleaf = p + 0x1000;
+	ata_idpt = (unsigned long *)ata_idleaf;
+	for (a = ata_idlo; a < ata_idhi; a += 0x1000)
+		*ata_idpte(a) = a >= MAINSTORE && a < MAINSTORE + VSIZOFMEM ?
+		    a | PTE_SUP | CM_CB : 0;
+	for (a = os; a && a < os + 0x100000; a += 0x1000)
+		*ata_idpte(a) = a | PTE_SUP | CM_NCS;
+	a = (ata_idleaf + 0xfff) & ~0xfffUL;
+	ata_idnc(p, a);
+	ata_idnc((unsigned long)ata_mmu_buf, (unsigned long)ata_mmu_buf + 0x8000);
+	return a;
+}
+
+/*
+ * Window onto the first RAM_WIN bytes of the VM region, VA = PA |
+ * RAM_VA, for the page array.  With FastRAM it shares the identity
+ * leaf tables, so both see the same cache mode.  Called by pstart with
+ * kptr040 set, MMU off.
+ */
+void
+ata_iomap_build()
+{
+	register unsigned long *pt, *kp;
+	register unsigned long i, pa;
+
+	pt = (unsigned long *)(((unsigned long)ata_rampt + 255) & ~255);
+	kp = (unsigned long *)kptr040;
+	for (pa = MAINSTORE; pa < MAINSTORE + RAM_WIN; pa += 1 << 18) {
+		if (ata_idpt) {
+			if (pa < ata_idhi)
+				kp[((RAM_VA | pa) - 0x40000000) >> 18] =
+				    (unsigned long)(ata_idpt + ((pa - ata_idlo) >> 12)) | 2;
+			continue;
+		}
+		for (i = 0; i < 64; i++)
+			pt[i] = (pa + (i << 12)) | PTE_SUP | hat_cm_ram;
+		kp[((RAM_VA | pa) - 0x40000000) >> 18] = (unsigned long)pt | 2;
+		pt += 64;
+	}
+}
+
+extern char *page_hash;
+extern int page_hashsz;
+
+/* Called by pstart after mlsetup: the page array must fit the window. */
+void
+ata_ramwin_check()
+{
+	unsigned long e;
+
+	e = (unsigned long)(page_hash + page_hashsz * sizeof (char *));
+	if (page_hash < (char *)(RAM_VA | MAINSTORE) || e > (RAM_VA | MAINSTORE) + RAM_WIN)
+		ata_halt("kvm: page array outside the cached RAM window");
+	ata_idcm(kptbl, CM_NCS);		/* kernel leaf tables */
+}
+#endif

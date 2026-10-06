@@ -9,7 +9,8 @@
 set -e
 
 D=$(cd "$(dirname "$0")" && pwd)
-X11W=${X11W:-$D/../images/work/x11}
+PLATFORM=${PLATFORM:-mac}
+X11W=${X11W:-$D/../images/work/x11-$PLATFORM}
 XC=$X11W/src/xc
 P=$X11W/pkg
 STRIP=$D/../toolchain/bin/m68k-elf-strip

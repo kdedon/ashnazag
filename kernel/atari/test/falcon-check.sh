@@ -11,7 +11,7 @@
 # IMAGE defaults to kernel/build/atari/disk/falcon-disk.img; it is copied.
 # TOSROM: the TOS 4.04 image or its zip (default: tos404*.zip in the
 # repo root).  Skips (exit 0) without the ROM or Hatari.
-# STAGES: any of vga rgb mod tos tosloop x xtos xdm xdmboots (mod, tos and tosloop need an
+# STAGES: any of vga rgb mod tos tosloop x xtos xdm xdmboots mac6 (mod, tos and tosloop need an
 # image made with TESTS=modadmin MODS=<mod.d>; x one made with X11=<pkg>)
 # (default "vga rgb").  x: startx in 256 colours, typing into xterm, the
 # server stopped and the console back; then in 2 colours with the German
@@ -27,6 +27,9 @@
 # Ctrl-C to TOS, Ctrl-C on the console ends it and the login comes back.
 # xdmboots (the same image): BOOTS (default 5) boots, each to the xdm
 # login without a crash; root logs in and restarts the machine.
+# mac6 (an image made with MACENV=1): System 6's Finder desktop; Command-A
+# and Command-O open its windows; the hot key to the console, whose
+# Ctrl-C ends it.
 set -e
 T=$(cd "$(dirname "$0")" && pwd)
 A=$(cd "$T/.." && pwd)
@@ -62,7 +65,7 @@ run() {		# stage monitor
 	python3 "$A/instboot.py" "$OUT/disk.img" "$B/bootsec.bin" "$B/axbload.bin" \
 		"${KERNEL:-$AUX/kernel/build/unix-atari030.elf}" "root=c?d0s1 nfcons" > /dev/null
 	# tosloop writes its own
-	[ ! -f "$T/falcon-$1-keys.txt" ] || sed "s|OUT/|$OUT/$1-|" "$T/falcon-$1-keys.txt" > "$OUT/$1-keys.txt"
+	[ ! -f "$T/falcon-$1-keys.txt" ] || sed "s|OUT/|$OUT/$1-|g" "$T/falcon-$1-keys.txt" > "$OUT/$1-keys.txt"
 	WAIT=${WAIT:-600} sh "$A/run-hatari.sh" -r "$ROM" -d "$OUT/disk.img" -f 400000 -T ${3:-1500} \
 		-o "$OUT/$1-final.png" -l "$OUT/$1.log" -K "$OUT/$1-keys.txt" -- \
 		--natfeats yes --monitor "$2" > "$OUT/$1-run.txt" 2>&1 || true
@@ -123,6 +126,11 @@ for s in $STAGES; do
 			i=$((i + 1))
 		done
 		! grep -q 'BUS ERROR\|PANIC\|panic' "$OUT/xdmboots.log.out" || { echo "[FAIL] xdmboots: client or kernel error"; fail=1; } ;;
+	mac6)	run mac6 vga
+		check "$OUT/mac6.log.out" 'uinter: ROM /etc/aux/rom, 512 KB, version 67C' 'startmac-left=0'
+		! grep -q 'BUS ERROR\|PANIC\|panic' "$OUT/mac6.log.out" || { echo "[FAIL] mac6: fault notice or kernel error"; fail=1; }
+		python3 "$T/tosshot.py" differ "$OUT/mac6-1-desktop.png" "$OUT/mac6-2-open.png" || fail=1
+		python3 "$T/tosshot.py" differ "$OUT/mac6-2-open.png" "$OUT/mac6-3-console.png" || fail=1 ;;
 	tosloop)
 		n=${BOOTS:-15}
 		{ sed -n '1,/^wait mods-done/p' "$T/falcon-tos-keys.txt"

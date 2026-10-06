@@ -44,14 +44,16 @@ type Settings struct {
 }
 
 type Preset struct {
-	ID          string   `json:"id"`
-	Revision    int      `json:"revision"`
-	Label       string   `json:"label"`
-	Description string   `json:"description"`
-	Status      string   `json:"status"`
-	Machine     string   `json:"machine"`
-	Recipe      string   `json:"recipe,omitempty"`
-	Settings    Settings `json:"settings"`
+	ID          string `json:"id"`
+	Revision    int    `json:"revision"`
+	Label       string `json:"label"`
+	Description string `json:"description"`
+	Status      string `json:"status"`
+	// Runnable is set once the machine boots from a forge-built image.
+	Runnable bool     `json:"runnable"`
+	Machine  string   `json:"machine"`
+	Recipe   string   `json:"recipe,omitempty"`
+	Settings Settings `json:"settings"`
 }
 
 type PresetRef struct {
@@ -116,6 +118,9 @@ func init() {
 		if err := checkDevices(p.Machine, p.Settings.Devices); err != nil {
 			panic("preset " + p.ID + ": " + err.Error())
 		}
+		if p.Status == "available" && !p.Runnable {
+			panic("preset " + p.ID + ": available presets must be runnable")
+		}
 		if (p.Status == "available") != (p.Recipe != "") {
 			panic("preset " + p.ID + ": only available presets name a recipe")
 		}
@@ -172,7 +177,10 @@ const TapeRole = "amix-tape"
 
 // Roles lists the inputs a selection consumes, in build order.
 func Roles(s Selection) []string {
-	roles := []string{TapeRole, "kernel", "boot-donor"}
+	roles := []string{TapeRole, "kernel"}
+	if p, _ := Lookup(s.Preset); p.Recipe != "falcon-console" {
+		roles = append(roles, "boot-donor")
+	}
 	for _, p := range s.Provision {
 		roles = append(roles, "package:"+p.ID)
 	}
@@ -229,7 +237,7 @@ func (r Recipe) Selection() (Selection, error) {
 	if err := checkDevices(s.Machine, s.Settings.Devices); err != nil {
 		return s, err
 	}
-	if p.Recipe == "quadra-console" && (s.Settings.RootMiB < 64 || s.Settings.RootMiB > 2048 || s.Settings.RootMiB%4 != 0 || s.Settings.SwapMiB < 4 || s.Settings.SwapMiB > 2048) {
+	if p.Recipe != "" && (s.Settings.RootMiB < 64 || s.Settings.RootMiB > 2048 || s.Settings.RootMiB%4 != 0 || s.Settings.SwapMiB < 4 || s.Settings.SwapMiB > 2048) {
 		return s, fmt.Errorf("root must be 64–2048 MiB in multiples of 4 and swap 4–2048 MiB")
 	}
 	ids := map[string]bool{}
@@ -258,6 +266,9 @@ func (r Recipe) Selection() (Selection, error) {
 func (s Selection) Runnable() error {
 	p, _ := Lookup(s.Preset)
 	if p.Status != "available" {
+		if p.Runnable {
+			return fmt.Errorf("the %s preset preset is planned: it boots, but the forge cannot write its disk layout yet", p.Label)
+		}
 		return fmt.Errorf("the %s preset is planned and cannot build yet", p.Label)
 	}
 	if want := sorted(p.Settings.Devices); !reflect.DeepEqual(s.Settings.Devices, want) {

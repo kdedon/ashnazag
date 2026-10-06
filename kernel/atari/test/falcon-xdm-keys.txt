@@ -132,8 +132,7 @@ type \n(ps -ejf; swap -s; cat /home/guest/.xsession-log /usr/x11r6/lib/X11/xdm/x
 wait xdm-9-done
 debug screenshot OUT/6-root.png
 type echo -depth 1 -kbd de > /usr/x11r6/lib/X11/xserver/options; ps -e | grep Xamix | while read p r; do kill $p; done\n
-sleep 60
-debug screenshot OUT/7-mono-greeter.png
+shot OUT/7-mono-greeter.png greeter OUT/6-root.png
 type guest\n
 sleep 3
 type \n
@@ -194,8 +193,7 @@ sleep 1.5
 type 3
 sleep 1.5
 type 3
-sleep 150
-debug screenshot OUT/9-tos.png
+shot OUT/9-tos.png desktop
 event keydown 0x1d
 event keypress 0x2e
 event keyup 0x1d
@@ -211,6 +209,5 @@ debug screenshot OUT/11-console.png
 event keydown 0x1d
 event keypress 0x2e
 event keyup 0x1d
-sleep 60
-debug screenshot OUT/12-greeter.png
+shot OUT/12-greeter.png same OUT/7-mono-greeter.png
 debug quit 0

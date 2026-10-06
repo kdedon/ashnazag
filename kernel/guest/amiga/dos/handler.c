@@ -34,7 +34,7 @@ static void request(void *timer,volatile U *box) {
  box[2]=MIG_FS_REQUEST;
  /* the host usually replies before this write returns; the timer is the fallback */
  *(volatile U *)MIG_FS_BELL=1;
- while(box[2]!=2) { *(unsigned short *)((B *)timer+28)=9; *(U *)((B *)timer+32)=0; *(U *)((B *)timer+36)=10000; doio(timer); }
+ while(box[2]!=2) { ((volatile struct mig_fs_status *)MIG_FS_STATUS)->waits++; *(unsigned short *)((B *)timer+28)=9; *(U *)((B *)timer+32)=0; *(U *)((B *)timer+36)=10000; doio(timer); }
  MIG_FS_BARRIER();
  box[2]=MIG_FS_IDLE;
 }

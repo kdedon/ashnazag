@@ -1,0 +1,21 @@
+#!/sbin/sh
+# startmac6 -- System 6: A/UX 2.0.1's startmac in its own root, /a201,
+# on the ROM file /a201/etc/aux/rom.  Root only (chroot).
+#   TBMEMORY  Mac memory (default 4M)
+PATH=/usr/bin:/sbin:/usr/sbin
+TBMEMORY=${TBMEMORY:-4M}
+TBSYSTEM="/mac/sys/System Folder"
+HOME=/tmp
+export TBMEMORY TBSYSTEM HOME
+[ -t 0 ] || exec chroot /a201 /mac/bin/startmac "$@"
+# the Mac has the keyboard; what the tty got meanwhile is dropped
+t=`stty -g`
+trap : 2 3
+trap 'stty $t; exit 1' 1 15
+stty -echo
+chroot /a201 /mac/bin/startmac "$@"
+r=$?
+stty -icanon min 0 time 0
+cat > /dev/null
+stty $t
+exit $r

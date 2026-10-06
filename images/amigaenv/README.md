@@ -30,6 +30,12 @@ An optional fourth argument selects a local Picasso96 archive, otherwise
 `Picasso96.lha` at the repository root is used if present. Its original archive
 and checksum are retained under `root/amiga/rtg/`.
 
+Sound: the template carries `DEVS:AHI/container.audio`, its audio mode and
+an AHI preferences default selecting it. AHI itself is user-supplied: an
+AHI user archive (`ahi*.lha`, from Aminet or the AHI releases) listed in
+`media/amiga/SHA256SUMS` adds `ahi.device`, the AHI prefs editor and
+`AddAudioModes`.
+
 With the archives in `media/amiga` (or `AMIGAAPPS`; empty disables),
 MUI 3.9, AmiSSL 5.27 and the IBrowse 3.0a demo are added to the template as
 their installers would install them: `SYS:MUI`, `SYS:AmiSSL`, `SYS:IBrowse`
@@ -77,6 +83,9 @@ startmig
 ```
 
 The current execution path requires a 68040 and a packed 8-bit display.
+Fast RAM is 64 MB unless `-m MB` (0 to 128), `fastmb=MB` in an
+environment's `.env` or `FAST_MB=MB` in `/etc/default/amiga` says
+otherwise; startmig exits if it cannot reserve that much.
 `--readonly` protects the selected tree. `--check` validates Kickstart without
 opening a device; `--probe` exercises guest attachment without ROM execution.
 

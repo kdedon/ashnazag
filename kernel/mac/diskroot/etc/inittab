@@ -11,3 +11,5 @@ s5:5:wait:/sbin/rc0 firmware >/dev/console 2>&1 </dev/console
 s6:6:wait:/sbin/rc6 reboot >/dev/console 2>&1 </dev/console
 sac:234:respawn:/usr/lib/saf/sac -t 300
 co:234:respawn:/etc/getty console console
+sd:234:respawn:/usr/lib/sndd -f
+sa:234:respawn:/usr/lib/sndaux -f

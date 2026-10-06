@@ -437,7 +437,7 @@ uisetup(gp, cmd, arg, b, rvp)
 	case 5:				/* UI_ROM(addr) */
 		if (ui.l_gp != gp || ui.l_romaddr)
 			return EINVAL;
-		if ((e = ui_rommap((caddr_t)arg)) != 0)
+		if ((e = ui_rommap((caddr_t)arg, AUXP(gp)->ap_flags & APF_AUX2)) != 0)
 			return e;
 		ui.l_romaddr = (caddr_t)arg;
 		ui.l_romproc = p;
@@ -494,7 +494,7 @@ uisetup(gp, cmd, arg, b, rvp)
 		n = G32(b + 4);
 		if (a < 0 || n < 0 || a > UI_LOWSIZE || n > UI_LOWSIZE - a)
 			return EINVAL;
-		if ((e = ui_romload()) != 0)
+		if ((e = ui_romload(AUXP(gp)->ap_flags & APF_AUX2)) != 0)
 			return e;
 		e = copyout((caddr_t)ui_rom.r_low + a, (caddr_t)a, n) ? EFAULT : 0;
 		ui_romrel();
@@ -505,7 +505,7 @@ uisetup(gp, cmd, arg, b, rvp)
 					e = EFAULT;
 		return e;
 	case 67:			/* UI_GET_PRODINFO(ptr) */
-		if ((e = ui_romload()) != 0)
+		if ((e = ui_romload(AUXP(gp)->ap_flags & APF_AUX2)) != 0)
 			return e;
 		if (ui_rom.r_prodoff < 0)
 			e = EINVAL;
@@ -700,7 +700,7 @@ uiattach(gp, rvp)
 		return EAGAIN;
 	if (copyin(ui.l_uip, w, sizeof w))
 		return EFAULT;
-	if ((e = ui_rommap(rom)) != 0)
+	if ((e = ui_rommap(rom, AUXP(gp)->ap_flags & APF_AUX2)) != 0)
 		return e;
 	t->t_proc = u.u_procp;
 	t->t_gp = gp;

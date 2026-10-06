@@ -18,12 +18,17 @@
 # (e.g. TESTS=t_page).  MODS: a module directory (guest/build.sh -m's
 # mod.d) to put in /tests/mod.d, with /tests/auxreg, /dev/uinter0 and
 # /dev/tos.  TOSOUT: mktos.sh's outdir; starttos and the cartridge go in /tests.
-# X11: x11/package.sh's pkg directory; X goes on the root with the AMIX
+# X11: x11/package.sh's pkg directory, or 1 for the Atari X work tree
+# (images/work/x11-atari), built or refreshed here; X goes on the root with the AMIX
 # clients (tape segments 13, 14) and the server options in etc/xoptions.
 # BOOTX=1 boots to xdm.  XPKGS="xview": packages built next to X11 (x11/NAME/build.sh).
 # TOSENV=1: the TOS environment (images/tosenv/mktos.sh) with starttos,
-# and the guest modules built for this kernel, registered at boot.
-# With X11 or TOSENV, guest is in group display.
+# and the guest modules built for this kernel, registered at boot; with
+# DRI's release (CPMZIP), CP/M-68K too (images/cpmenv/mkcpm.sh).
+# MACENV=1: System 6 (A/UX 2.0.1's startmac, System 6.0.7, from CD201,
+# default media/AUX_2.0.1_CD_Image.iso) in its own root /a201 on the ROM
+# file ROM6 (default the IIci's), with startmac6 and the guest modules.
+# With X11, TOSENV or MACENV, guest is in group display.
 # The tape segments come from the Mac build or $AMIX_TAPE.
 set -e
 
@@ -60,6 +65,17 @@ printf 'TZ=%s\nexport TZ\n' "$ZONE" > "$W/src/build/TIMEZONE"
   echo 'f /usr/amiga/bin/setclk 755 0 3 build/setclk'
   echo 'd /home 755 0 3'
   echo 'f /etc/vfstab 744 0 3 vfstab'; } > "$W/root.manifest"
+if [ "$X11" = 1 ]; then
+	X11W=${X11W:-$(cd "$K/.." && pwd)/images/work/x11-atari}
+	[ -f "$X11W/src/xc/programs/Xserver/Xamix" ] || PLATFORM=atari X11W=$X11W sh "$K/../x11/build.sh"
+	PLATFORM=atari X11W=$X11W sh "$K/../x11/build.sh" clibs clients
+	for p in $XPKGS; do
+		[ -f "$X11W/$p/$(echo "$p" | tr a-z A-Z).pkg" ] ||
+			PLATFORM=atari X11W=$X11W sh "$K/../x11/$p/build.sh"
+	done
+	PLATFORM=atari X11W=$X11W sh "$K/../x11/package.sh"
+	X11=$X11W/pkg
+fi
 if [ -n "$X11" ]; then
 	ln -sfn "$(cd "$X11" && pwd)" "$W/src/x11pkg"
 	mkdir -p "$W/src/build/tape"
@@ -90,19 +106,12 @@ if [ -n "$X11" ]; then
 	done
 	[ -z "$pk" ] || $PY "$DR/pkg/pkginst.py" "$W/xpkgs" $pk >> "$W/root.manifest"
 fi
-if [ "$TOSENV" = 1 ]; then
-	E=$W/env
+E=$W/env
+if [ -n "$TOSENV$MACENV" ]; then
 	rm -rf "$E"
 	mkdir -p "$E"
 	sh "$K/guest/build.sh" -m "$KERNEL" "$E/guest" > "$E/guest.log" 2>&1 ||
 		{ tail "$E/guest.log"; exit 1; }
-	sh "$K/../images/tosenv/mktos.sh" "$E/tos" > "$E/tos.log" 2>&1 ||
-		{ tail "$E/tos.log"; exit 1; }
-	# guest's TOS folder goes on /home, which is mounted over the root's
-	mkdir -p "$E/gt"
-	(cd "$E/gt" && cpio -id --quiet < "$E/tos/guest.cpio")
-	(cd "$E/gt/home" && find guest/TOS | cpio -o -H newc -R 100:1 --quiet) > "$E/homeguest.cpio"
-	rm -rf "$E/gt"
 	{ echo 'd /usr/aux 755 0 3'
 	  echo 'd /usr/aux/lib 755 0 3'
 	  echo 'd /usr/aux/lib/mod.d 755 0 3'
@@ -112,22 +121,49 @@ if [ "$TOSENV" = 1 ]; then
 	  echo 'f /usr/aux/lib/auxreg 755 0 3 build/auxreg'
 	  echo 'f /etc/rc2.d/S05aux 744 0 3 atari/S05aux'
 	  echo 'c /dev/uinter0 660 0 25 54 0'
-	  echo 'c /dev/tos 660 0 25 56 0'
-	  echo 'd /etc/tos 755 0 3'
+	  echo 'c /dev/tos 660 0 25 56 0'; } >> "$W/root.manifest"
+fi
+if [ "$TOSENV" = 1 ]; then
+	sh "$K/../images/tosenv/mktos.sh" "$E/tos" > "$E/tos.log" 2>&1 ||
+		{ tail "$E/tos.log"; exit 1; }
+	sh "$K/../images/cpmenv/mkcpm.sh" "$E/cpm" > "$E/cpm.log" 2>&1 ||
+		{ tail "$E/cpm.log"; exit 1; }
+	# guest's TOS folder goes on /home, which is mounted over the root's
+	mkdir -p "$E/gt"
+	(cd "$E/gt" && cpio -id --quiet < "$E/tos/guest.cpio")
+	(cd "$E/gt/home" && find guest/TOS | cpio -o -H newc -R 100:1 --quiet) > "$E/homeguest.cpio"
+	rm -rf "$E/gt"
+	{ echo 'd /etc/tos 755 0 3'
 	  echo "f /etc/tos/emutos.img 444 0 3 $E/tos/emutos.img"
 	  echo "f /etc/tos/tosml.img 444 0 3 $E/tos/tosml.img"
 	  for f in starttos maketos tosdrive; do echo "f /usr/bin/$f 755 0 3 $E/tos/$f"; done
 	  echo "a $E/tos/sys.cpio"
-	  echo "a $E/tos/games.cpio"; } >> "$W/root.manifest"
+	  echo "a $E/tos/games.cpio"
+	  echo "a $E/cpm/cpm.cpio"; } >> "$W/root.manifest"
 fi
-if [ -n "$X11$TOSENV" ]; then
+if [ "$MACENV" = 1 ]; then
+	R6=$E/mac6/a201
+	sh "$K/../images/macenv/mksys6.sh" "${CD201:-$K/../media/AUX_2.0.1_CD_Image.iso}" "$R6" \
+		> "$E/mac6.log" 2>&1 || { tail "$E/mac6.log"; exit 1; }
+	mkdir -p "$R6/dev" "$R6/etc/aux"
+	cp "${ROM6:-$K/../368CADFE - Mac IIci.ROM}" "$R6/etc/aux/rom"
+	# root runs the Mac: nothing in its root writable by others
+	chmod -R go-w "$R6"
+	chmod 1777 "$R6/tmp"
+	(cd "$E/mac6" && find a201 | LC_ALL=C sort | cpio -o -H newc -R 0:3 --quiet) > "$E/a201.cpio"
+	{ echo "a $E/a201.cpio"
+	  echo 'c /a201/dev/uinter0 660 0 25 54 0'
+	  echo 'c /a201/dev/console 620 0 7 0 0'
+	  echo 'f /usr/bin/startmac6 755 0 3 atari/startmac6'; } >> "$W/root.manifest"
+fi
+if [ -n "$X11$TOSENV$MACENV" ]; then
 	T2=${AMIX_TAPE:-$W/src/build/tape}
 	{ (cd "$W/src/build" && cpio -i --quiet --to-stdout etc/group < "$T2/02") | grep -v '^display:'
 	  echo 'display::25:guest'; } > "$W/src/build/group.display"
 	grep -q '^other:' "$W/src/build/group.display" || { echo "[FAIL] no group file on tape 02"; exit 1; }
 	echo 'f /etc/group 444 0 3 build/group.display' >> "$W/root.manifest"
 fi
-if [ -n "$MODS$TOSENV" ]; then
+if [ -n "$MODS$TOSENV$MACENV" ]; then
 	TC=$K/../toolchain/amix SYS=$K/../toolchain/amix/m68k-cbm-sysv4/sysroot
 	for f in "$K"/dlm/libmod/*.s; do
 		"$TC/bin/m68k-cbm-sysv4-as" -o "$W/src/build/lm_${f##*/}.o" "$f"

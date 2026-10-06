@@ -6,14 +6,18 @@
 #    halts through the kernel; the System's goes on to the ROM's
 #    power-off code.  A group that goes on with other modules is split
 #    after them, the rest keeping the group's condition.
+#  - With -s the Sound Manager's group loses notAUX: it plays through
+#    SoundOut's output component, which hides the hardware's.  Without it
+#    A/UX's own sound traps stay, playing through /dev/snd.
 #  - A 'gpch' that stores a cache routine in the table at $DB8 skips it.
-# usage: auxguard.py [-n] %System     (-n: list only)
+# usage: auxguard.py [-n] [-s] %System     (-n: list only)
 import sys, os, struct
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import rsrcedit
 
 NOTAUX = 0x100
 MM = set(range(0xa01e, 0xa02e)) | {0xa036, 0xa040, 0xa057, 0xa064, 0xa09d}
+SND = {0xa803, 0xa805}	# SndDoCommand, SndPlay
 
 def fork(d):
     n, = struct.unpack('>H', d[24:26])
@@ -73,11 +77,11 @@ def install_table(b):
 
 if __name__ == '__main__':
     a = sys.argv[1:]
-    dry = a[:1] == ['-n']
-    if dry:
-        a = a[1:]
+    dry = '-n' in a
+    snd = '-s' in a
+    a = [x for x in a if x not in ('-n', '-s')]
     if len(a) != 1:
-        sys.exit('usage: auxguard.py [-n] %System')
+        sys.exit('usage: auxguard.py [-n] [-s] %System')
     d = bytearray(open(a[0], 'rb').read())
     base, _ = fork(d)
     n = 0
@@ -89,6 +93,11 @@ if __name__ == '__main__':
         for at, cond, traps in install_table(b):
             # OS trap words carry flag bits 8-10
             mm = traps and all(v & ~0x700 in MM for v in traps)
+            if snd and SND <= set(traps) and cond & NOTAUX:
+                print('lpch %d: Sound Manager' % rid)
+                d[off + at:off + at + 3] = (cond & ~NOTAUX).to_bytes(3, 'big')
+                n += 1
+                continue
             sd = 0
             while sd < len(traps) and traps[sd] == 0xa895:
                 sd += 1

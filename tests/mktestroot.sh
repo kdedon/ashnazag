@@ -1,7 +1,7 @@
 #!/bin/sh
 # mktestroot.sh -- RAM-disk root plus /tests; init runs /tests/runall on the console.
 #
-#   [KDIR=kernel-tree] [KERNEL=elf] [IMG=out] [TESTKB=4096] [NET=1] [NOAUX=1] sh tests/mktestroot.sh
+#   [KDIR=kernel-tree] [KERNEL=elf] [IMG=out] [TESTKB=4096] [NET=1] [AMIGANET=1] [NOAUX=1] sh tests/mktestroot.sh
 #
 # KERNEL supplies the addresses in /tests/ksyms.  Default IMG: build/testroot.img.
 # NOAUX=1 leaves out t_aux's A/UX files and modules (t_aux skips).
@@ -9,8 +9,13 @@
 # several MB).  INITTAB replaces etc/inittab (e.g. to run fewer tests).
 # NET=1: the network root instead (build/netroot.img, 6 MB): net/net.manifest,
 # build/netbin, and init runs only t_net.
+# AMIGANET=1: the test root with TCP/IP (the net files, loopback up) as well
+# as the Amiga SYS: disk, for t_amiga's bsdsocket.library checks (build/
+# amiganetroot.img; run-qemu.sh does this under AMIGANET=1).
 set -e
 
+[ -z "$AMIGANET" ] || NET=1
+IMG0=$IMG
 T=$(cd "$(dirname "$0")" && pwd)
 AUX=$(cd "$T/.." && pwd)
 KDIR=${KDIR:-$AUX/kernel}
@@ -23,6 +28,11 @@ if [ -n "$NET" ]; then
 	M=$B/netroot.manifest
 	IMG=${IMG:-$B/netroot.img}
 	INITTAB=$T/net/inittab
+	if [ -n "$AMIGANET" ]; then
+		M=$B/amiganetroot.manifest
+		IMG=${IMG0:-$B/amiganetroot.img}
+		INITTAB=$T/net/inittab.amiga
+	fi
 	[ -f "$B/net07/usr/sbin/ping" ] || { echo "[FAIL] no build/net07 (run net/getnet.sh)"; exit 1; }
 else
 	M=$B/testroot.manifest
@@ -33,7 +43,7 @@ fi
 [ -f "$RD/build/core/sbin/init" ] || { echo "[FAIL] no $RD/build/core (run mkroot.sh)"; exit 1; }
 [ -x "$B/bin/runall" ] || { echo "[FAIL] no tests/build/bin (run build.sh)"; exit 1; }
 
-nm "$KERNEL" | awk '$3 ~ /^(freemem|availrmem|availsmem|lbolt|fpu_present|anoninfo|ticks_til_clock|mac_ticks|dlm_inited|sn_nintr|sn_nslot|guest_loading|M68Kvec|guest_chain|guest_nftrap|guest_nfpriv|rd_unit|adb_nintr|adb_nsrq|segmapcnt)$/ { print $3, $1 }' \
+nm "$KERNEL" | awk '$3 ~ /^(freemem|availrmem|availsmem|lbolt|fpu_present|anoninfo|ticks_til_clock|mac_ticks|dlm_inited|sn_nintr|sn_nslot|guest_loading|M68Kvec|guest_chain|guest_nftrap|guest_nfpriv|idle|rd_unit|adb_nintr|adb_nsrq|segmapcnt|snd_ev)$/ && ($3 != "idle" || $2 == "T") { print $3, $1 }' \
 	> "$B/ksyms"
 # t_dlm's modules, built against this kernel (none without module support)
 KDIR=$KDIR sh "$T/dlm/build.sh" "$KERNEL" "$B/dlm"
@@ -116,7 +126,7 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 		echo "f /tests/$(basename "$f") 755 0 3 $f"
 	done
 	if [ -n "$NET" ]; then
-		for f in "$B"/netbin/*; do
+		[ -n "$AMIGANET" ] || for f in "$B"/netbin/*; do
 			echo "f /tests/$(basename "$f") 755 0 3 $f"
 		done
 		sed -e "s#@CORE@#$RD/build/core#" -e "s#@NET07@#$B/net07#" -e "s#@NETDIR@#$T/net#" "$T/net/net.manifest"
@@ -162,6 +172,10 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 		if [ -d "$AUXB/root/a201" ]; then
 			echo "c /a201/dev/uinter0 666 0 3 54 0"
 			echo "c /a201/dev/console 620 0 7 0 0"
+			echo "d /a201/dev/snd 755 0 3"
+			for m in note:0 wave1:1 wave2:2 wave3:3 wave4:4 samp:5 raw:6; do
+				echo "c /a201/dev/snd/${m%:*} 666 0 3 47 ${m#*:}"
+			done
 		fi
 	fi
 	if [ -d "$MINTB/root" ] && [ -f "$AUXB/mod.d/tosguest" ]; then

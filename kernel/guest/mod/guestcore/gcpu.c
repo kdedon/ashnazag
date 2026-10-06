@@ -846,6 +846,16 @@ guest_fsig1(p, gp)
 	k_sigset_t h, pass = VIPL_PASS;
 	int s, n;
 
+	if (gp->gp_flags & GPF_QUIET) {
+		s = splhi_();
+		h = p->p_hold;
+		p->p_hold = ~(sigmask(SIGKILL) | sigmask(SIGINT) | sigmask(SIGQUIT) |
+		    sigmask(SIGTERM) | sigmask(SIGHUP));
+		n = __amix_fsig(p);
+		p->p_hold = h;
+		splx_(s);
+		return n;
+	}
 	if (gp->gp_prof->gpf_fsig)
 		return (*gp->gp_prof->gpf_fsig)(p, gp);
 	if (!(gp->gp_flags & GPF_PRIV) || (gp->gp_vsr & SR_IPL) == 0)

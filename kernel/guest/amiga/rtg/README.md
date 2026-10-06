@@ -23,7 +23,6 @@ monitor icon tooltypes:
 ```text
 BOARDTYPE=container
 SOFTSPRITE=No
-NOBLITTER=Yes
 DISPLAYCHAIN=Yes
 ```
 
@@ -40,8 +39,8 @@ Echo "Yes" >ENV:Picasso96/DisableAmigaBlitter
 Echo "Yes" >ENVARC:Picasso96/DisableAmigaBlitter
 ```
 
-The card requests CPU drawing itself; this setting also routes native planar
-operations through P96's CPU implementations.
+This setting routes native planar operations through P96's CPU
+implementations.
 
 Choose an 8-bit mode no larger than the host session's display. The driver
 advertises that size to P96, supports 25.175/40/65/108 MHz nominal clocks,
@@ -55,14 +54,17 @@ the matching launcher. P96 and AmigaOS are user-supplied dependencies.
 
 ## Behavior
 
-- Four MiB of linear, indexed 8-bit video RAM; rows align to four bytes.
-- Virtual bitmap rows up to 4096 pixels, subject to video RAM capacity.
+- The display session's own memory as video RAM, mapped by the launcher,
+  when the Workbench mode is display-sized (the template's
+  `Container:Display`, which startmig sizes to the display): the screen is
+  drawn in place, with no copy. Display-wide bitmaps use the display's row
+  length; 4 MiB of RAM after it hold other bitmaps. Other modes draw into
+  RAM, which the launcher copies to the display when the card rings.
 - Palette, viewport panning, screen switching, and display blanking.
-- P96's CPU drawing; direct bitmap writes are visible to the host display
-  refresh.
-- A hardware sprite when the host offers one: the card publishes the
-  pointer's image, colours and position and the host draws it, so pointer
-  moves change no screen memory. Otherwise P96's software pointer.
+- Fills, inversions, copies and text (templates) in 8-bit drawn by the
+  card's own CPU code straight into the display; P96's for the rest.
+- The pointer as a hardware sprite: the host draws it into the display,
+  saving what it covers; the card puts that back before drawing there.
 - A bounded delay implements the documented fallback for absent retrace
   hardware. Refresh is unsynchronized and may tear.
 

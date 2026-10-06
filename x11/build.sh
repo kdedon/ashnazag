@@ -6,13 +6,14 @@
 # Stages (default: all in order): tree, imake, makefiles, libs, server;
 # clibs (client libraries) and clients (xdm, xchoose, xdmenv; after
 # clibs) on request.
-# Work tree: $X11W (default: images/work/x11), sources in
+# Work tree: $X11W (default: images/work/x11-$PLATFORM, PLATFORM mac or atari), sources in
 # $X11W/src/xc.  Out: $X11W/src/xc/programs/Xserver/Xamix.
 set -e
 
 D=$(cd "$(dirname "$0")" && pwd)
 AUX=$(cd "$D/.." && pwd)
-X11W=${X11W:-$AUX/images/work/x11}
+PLATFORM=${PLATFORM:-mac}
+X11W=${X11W:-$AUX/images/work/x11-$PLATFORM}
 XC=$X11W/src/xc
 TC=$AUX/toolchain/amix
 SYS=$TC/m68k-cbm-sysv4/sysroot

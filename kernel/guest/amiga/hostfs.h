@@ -4,7 +4,7 @@
 #define MIG_FS_PATH 512
 #define MIG_FS_DATA 32768
 #define MIG_FS_VOLUMES 8
-#define MIG_FS_HANDLES 64
+#define MIG_FS_HANDLES 256
 #define MIG_FS_LOCK 1
 #define MIG_FS_UNLOCK 2
 #define MIG_FS_DUPLOCK 3
@@ -37,5 +37,6 @@ struct mig_hostfs *mig_hostfs_create(void);
 void mig_hostfs_destroy(struct mig_hostfs *);
 int mig_hostfs_mount(struct mig_hostfs *, unsigned int, const char *, const char *, int);
 void mig_hostfs_dispatch(struct mig_hostfs *, struct mig_fs_request *);
+int mig_hostfs_overlay(const char *, const unsigned char *, const unsigned char *, unsigned long);
 
 #endif

@@ -50,7 +50,7 @@ static struct fbinfo fi;
 static unsigned char *fb;
 static unsigned char *shadow;
 static unsigned long exl[256][2];	/* a byte of one plane as 8 pixels of 0/1 */
-static unsigned char line[1280];
+static unsigned char line[1280], line2[1280];
 
 struct geom {
 	int	w, h, planes, rowb, sx, sy, step;
@@ -294,6 +294,11 @@ palette(tv, g)
 	int n = 1 << g->planes, i, v, mode = (tv->tv_ttmode >> 8) & 7;
 	int bank = mode == 7 ? 0 : (tv->tv_ttmode & 15) * 16;
 
+	if (g->step == 2) {	/* TT high, halved: 0-4 black of each 2x2 as greys on white */
+		n = 5;
+		for (i = 0; i < n; i++)
+			r[i] = gr[i] = b[i] = (4 - i) * 0x3fff;
+	} else
 	for (i = 0; i < n; i++) {
 		if (g->planes == 1)
 			v = (tv->tv_stpal[0] & 1) ^ i ? 0xfff : 0;
@@ -369,9 +374,13 @@ refresh(tv, g, full)
 	if (tv->tv_base >= ramsize || g->rowb * g->h > ramsize - tv->tv_base)
 		return;				/* screen outside ST-RAM */
 	for (y = 0; y < g->h; y += g->step, src += g->rowb * g->step, sh += g->rowb * g->step) {
-		if (!full && same((unsigned long *)src, (unsigned long *)sh, g->rowb))
+		if (!full && same((unsigned long *)src, (unsigned long *)sh, g->rowb * g->step))
 			continue;
-		memcpy(sh, src, g->rowb);
+		memcpy(sh, src, g->rowb * g->step);
+		if (g->step == 2) {
+			chunky(src + g->rowb, g);
+			memcpy(line2, line, g->w);
+		}
 		chunky(src, g);
 		for (k = 0; k < g->sy; k++) {
 			int row = oy + y / g->step * g->sy + k;
@@ -381,6 +390,10 @@ refresh(tv, g, full)
 			d = fb + fi.fi_offset + row * fi.fi_rowbytes + ox;
 			if (g->sx == 1 && g->step == 1)
 				memcpy(d, line, ow < (int)fi.fi_width ? ow : fi.fi_width);
+			else if (g->step == 2)
+				for (x = 0; x < ow && ox + x < (int)fi.fi_width; x++)
+					d[x] = line[2 * x] + line[2 * x + 1] + line2[2 * x] +
+					    line2[2 * x + 1];
 			else
 				for (x = 0; x < ow && ox + x < (int)fi.fi_width; x++)
 					d[x] = line[x * g->step / g->sx];

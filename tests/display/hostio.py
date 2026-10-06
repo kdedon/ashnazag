@@ -20,6 +20,9 @@
 #                       rows Y0 and below), or "none"
 #   lit NAME            pixels of dump NAME that are not black
 #   tos NAME            TOS screen: guest box, menu-bar white, desktop colour
+#   busy SECS LO HI     PC samples for SECS s: "BUSY END": ms not in the idle
+#                       loop LO-HI (hex), and ms to the end of the last
+#                       100 ms that were at least 20% busy
 #   ref NAME SHOT DEPTH SEED K
 #                       render the dspat.h pattern (table rotated by K)
 #                       at SHOT's size, compare: "same" or "diff N"
@@ -225,6 +228,28 @@ def serve(q, cmd, a):
                 time.sleep(gap)
         threading.Thread(target=go).start()
         return 'started'
+    if cmd == 'busy':
+        secs, lo, hi = float(a[0]), int(a[1], 16), int(a[2], 16)
+        m = QMP(os.path.join(SK, 'qmp.sock'))
+        t0 = time.time()
+        tl = []
+        while time.time() - t0 < secs:
+            r = m.hmp('info registers').get('return', '')
+            pc = re.search(r'PC = ([0-9a-fA-F]+)', r)
+            if pc:
+                tl.append((time.time() - t0, not lo <= int(pc.group(1), 16) < hi))
+        m.s.close()
+        if len(tl) < 2:
+            return '0 0'
+        busy = sum(b for _, b in tl) / len(tl) * secs * 1000
+        end, j = 0.0, 0
+        for i, (t, _) in enumerate(tl):
+            while tl[j][0] < t - 0.1:
+                j += 1
+            w = tl[j:i + 1]
+            if t >= 0.1 and sum(b for _, b in w) >= 0.2 * len(w):
+                end = t
+        return '%d %d' % (busy, end * 1000)
     if cmd == 'prof':
         # PC and SR samples for SECS s on the main monitor -> display/NAME.prof
         secs, name = float(a[0]), os.path.basename(a[1])

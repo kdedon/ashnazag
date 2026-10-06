@@ -25,7 +25,8 @@ D=$B/deps
 # local fixes, every hatari-*.patch here: cycle-exact 030 + MMU consumed a
 # faulted prefetch word; a command fifo with an idle writer was reported as
 # a read error; rte reran a data cycle the bus error handler had completed
-# (DF cleared).  A patch newer than the binary resets the source and
+# (DF cleared); a prefetch fault restarted an instruction that had
+# already moved a register.  A patch newer than the binary resets the source and
 # applies them all again.
 PATCHES=$(ls "$AUX"/kernel/atari/hatari-*.patch)
 stale=
@@ -41,6 +42,7 @@ fi
 git -C "$SRC" cat-file -e "$REV^{commit}" 2>/dev/null || git -C "$SRC" fetch -q origin
 git -C "$SRC" checkout -q -f "$REV"
 git -C "$SRC" checkout -q -- .
+git -C "$SRC" clean -fdq		# files a patch added
 for P in $PATCHES; do
 	git -C "$SRC" apply "$P"
 done

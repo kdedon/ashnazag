@@ -16,6 +16,7 @@ struct amigactr {
 	unsigned long ac_fraction, ac_epoch;
 	unsigned char ac_gary[4];
 	int ac_timer, ac_sleeping;
+	unsigned long ac_pvtb;	/* timer B as last copied to guest memory */
 	struct amigacensus ac_census;
 };
 #define AMIGAP(gp) ((struct amigactr *)GUEST_PRIV(gp))
@@ -26,4 +27,8 @@ extern long amiga_nfast;
 extern void amiga_ring();
 /* a guest write here wakes the helper in AMIGAIOC_WAIT: the SYS: broker */
 #define AMIGA_BELL 0xf7fffcUL
+/* and here the sound helper, in AMIGAIOC_SNDWAIT */
+#define AMIGA_SNDBELL 0xf7fff8UL
+extern int amiga_pvget();
+extern void amiga_pvput(), amiga_repost(), amiga_pvclock(), amiga_await();
 #endif

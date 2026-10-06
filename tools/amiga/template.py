@@ -6,6 +6,7 @@ import json
 from pathlib import Path, PurePosixPath
 from adf import ADF
 from p96prefs import FILES as P96FILES
+from ahiprefs import FILES as AHIFILES
 
 STARTUP = '''; Container startup; original system sequence is Startup-Sequence.amigaos.
 ; Output opens the boot shell window and with it the Workbench screen, so
@@ -52,7 +53,7 @@ def donotwait(info):
     return (info[:54] + b'\0\0\0\1' + info[58:] + struct.pack('>LL', 8, len(tool)) + tool)
 
 
-def prepare(adfs, output, input_binary, card, session):
+def prepare(adfs, output, input_binary, card, session, bsdsocket=None, audio=None):
     sources = {}
     disks = {}
     for name in ('Install3.2', 'Workbench3.2', 'Extras3.2', 'Classes3.2', 'Fonts', 'Storage3.2', 'Locale', 'ModulesA4000D_3.2'):
@@ -107,11 +108,17 @@ def prepare(adfs, output, input_binary, card, session):
     put('S/Startup-Sequence', STARTUP.encode('ascii'), 'container')
     put('C/container-input', input_binary.read_bytes(), 'container')
     put('Libs/Picasso96/container.card', card.read_bytes(), 'container')
+    if bsdsocket:
+        put('Libs/bsdsocket.library', bsdsocket.read_bytes(), 'container')
     # Workbench's Tools menu: Log Out, and Shut Down for root
     put('WBStartup/Session', session.read_bytes(), 'container')
     put('WBStartup/Session.info', donotwait(payloads['prefs/env-archive/sys/def_tool.info'][1]), 'container')
     for path, make in P96FILES.items():
         put(path, make(), 'container')
+    if audio:
+        put('Devs/AHI/container.audio', audio.read_bytes(), 'container')
+        for path, make in AHIFILES.items():
+            put(path, make(), 'container')
     required = ('c/assign', 'c/loadwb', 'c/loadmondrvs', 'l/con-handler', 'l/ram-handler',
                 'libs/workbench.library', 'libs/icon.library', 's/startup-sequence', 'c/container-input')
     if any(name not in payloads for name in required):
@@ -158,8 +165,10 @@ def main():
     parser.add_argument('--input', type=Path, required=True, dest='input_binary')
     parser.add_argument('--card', type=Path, required=True)
     parser.add_argument('--session', type=Path, required=True)
+    parser.add_argument('--bsdsocket', type=Path)
+    parser.add_argument('--audio', type=Path)
     args = parser.parse_args()
-    manifest = prepare(args.adfs, args.output, args.input_binary, args.card, args.session)
+    manifest = prepare(args.adfs, args.output, args.input_binary, args.card, args.session, args.bsdsocket, args.audio)
     print('Prepared', len(manifest['files']), 'files in', args.output)
 
 

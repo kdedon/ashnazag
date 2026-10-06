@@ -18,11 +18,12 @@
         "label": {"type": "string", "minLength": 1, "maxLength": 64},
         "description": {"type": "string", "maxLength": 200},
         "status": {"enum": ["available", "planned"]},
+        "runnable": {"type": "boolean"},
         "machine": {"$ref": "#/$defs/id"},
-        "recipe": {"enum": ["quadra-console"]},
+        "recipe": {"enum": ["quadra-console", "falcon-console"]},
         "settings": {"$ref": "#/$defs/settings"}
       },
-      "required": ["id", "revision", "label", "description", "status", "machine", "settings"],
+      "required": ["id", "revision", "label", "description", "status", "runnable", "machine", "settings"],
       "additionalProperties": false
     },
     "settings": {

@@ -25,10 +25,12 @@ struct mig_fs_mailbox {
 struct mig_fs_status {
     unsigned int requests, kbytes;
     char path[128];
+    volatile unsigned int waits;	/* the guest's timer waits for a reply */
+    volatile unsigned int wakes;	/* the broker's, for tests */
 };
 typedef char mig_fs_fits[(sizeof(struct mig_fs_mailbox) <= MIG_FS_MAP_SIZE - 256) ? 1 : -1];
 
 extern int mig_fs_bell;
-int mig_fs_broker(int, int, const char *, int);
-int mig_fs_broker_at(int, int, const char *, int, struct mig_fs_mailbox *);
+int mig_fs_broker(int, int, int, const char *, int);
+int mig_fs_broker_at(int, int, int, const char *, int, struct mig_fs_mailbox *);
 #endif
