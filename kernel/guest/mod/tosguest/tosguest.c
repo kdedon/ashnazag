@@ -284,6 +284,27 @@ solonull(gp, v)
 	return (gp->gp_flags & TGF_SOLO) && fuword((caddr_t)(gp->gp_vvbr + (v << 2))) == 0;
 }
 
+static int tos_refl0();
+
+/*
+ * A lone guest's empty vector: a trap or line A/F takes the illegal
+ * instruction vector, and the Unix signal when that is empty too.
+ */
+static int
+solotrap(gp, r, v)
+	struct guest_proc *gp;
+	char *r;
+	int v;
+{
+	if (v < 10 || v == 32 || (v > 11 && v < 32))
+		return 1;
+	if (fuword((caddr_t)(gp->gp_vvbr + 16)) != 0)
+		return tos_refl0(gp, r, 4, v > 32 ? GR_PC(r) - 2 : GR_PC(r));
+	psignal(curproc, SIGILL);
+	guest_trapret();
+	return 0;
+}
+
 /* the CPU's own frame, through the guest's vector */
 static int
 tos_refl(gp, r, v)
@@ -294,7 +315,7 @@ tos_refl(gp, r, v)
 	int n;
 
 	if (solonull(gp, v))
-		return 1;
+		return solotrap(gp, r, v);
 	switch (GR_FV(r) >> 12) {
 	case 0: n = 0; break;
 	case 2: case 3: n = 4; break;
@@ -421,13 +442,16 @@ tos_fline(gp, r, v)
 	return tos_refl(gp, r, v);
 }
 
-/* trap #0: a host system call from the machine layer */
+/* trap #0: a host system call from the machine layer; anyone else's goes through the vector */
 static int
 tos_sys(gp, r, v)
 	struct guest_proc *gp;
 	char *r;
 	int v;
 {
+	if (!(gp->gp_flags & TGF_SOLO) && ((unsigned long)GR_PC(r) < 0xfa0000 ||
+	    (unsigned long)GR_PC(r) >= 0xfc0000))
+		return tos_refl(gp, r, v);
 	TST(gp)->ts_sys++;
 	return 1;
 }

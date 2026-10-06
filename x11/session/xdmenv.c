@@ -28,6 +28,7 @@
 #include "dsio.h"
 
 #define CONSUSER "/usr/x11r6/lib/X11/xdm/console-user"
+#define FALCONROM "/etc/tos/rom"	/* copied at boot on a Falcon */
 
 static char *envs[][2] = {
 	{ "mac", "/usr/bin/startmac" },
@@ -115,7 +116,7 @@ main(argc, argv)
 	struct passwd *pw;
 	struct fbstate st;
 	struct termios tio;
-	char *cmd = 0;
+	char *cmd = 0, *av[3];
 	long x;
 	int i, fd, pid, status;
 
@@ -134,9 +135,15 @@ main(argc, argv)
 		fprintf(stderr, "xdmenv: %s is not installed\n", cmd);
 		return 1;
 	}
+	av[0] = cmd;
+	av[1] = 0;
+	av[2] = 0;
+	/* a Falcon runs its own ROM */
+	if (strcmp(argv[1], "tos") == 0 && access(FALCONROM, R_OK) == 0)
+		av[1] = "-P";
 	if (geteuid() != 0 || !consuser(pw->pw_name)) {
 		unset();
-		execl(cmd, cmd, (char *)0);
+		execv(cmd, av);
 		perror(cmd);
 		return 127;
 	}
@@ -179,7 +186,7 @@ main(argc, argv)
 		}
 		drop(pw);
 		chdir(pw->pw_dir);
-		execle(cmd, cmd, (char *)0, newenv(pw));
+		execve(cmd, av, newenv(pw));
 		_exit(127);
 	}
 	while (waitpid(pid, &status, 0) < 0)

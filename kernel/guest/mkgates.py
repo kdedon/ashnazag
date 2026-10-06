@@ -13,14 +13,12 @@
 # gate 8 one with GPF_PRIV to guest_fpriv, the trap gates (but trap #0)
 # one with GPF_FTRAP (trap #13: GPF_FTRAP13) to guest_ftrap.
 # out.lst records "N T"
-# for patch_vec.py.  Vector 42 (trap #10, the same system-call path as
-# trap #0) stays ungated as the reference for the gate-cost test.
-# Fails closed.
+# for patch_vec.py.  Fails closed.
 import sys
 from elfrel import Elf
 
 FAULTS = list(range(2, 12)) + list(range(48, 56)) + [60, 61]
-TRAPS = [v for v in range(32, 48) if v != 42]
+TRAPS = list(range(32, 48))
 GATED = sorted(FAULTS + TRAPS)
 R_68K_32 = 1
 P_EVPDP = 0xc8

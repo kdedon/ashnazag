@@ -711,6 +711,7 @@ register struct dssess *to;
 	x = DS_SPL(DS_HI);
 	ds_front = to;
 	ds_serial++;
+	to->s_blank = 0;		/* the switch key counts as input */
 #ifdef DS_ATARI
 	wakeup((caddr_t)&ds_front);	/* blits waiting for the front */
 #endif

@@ -408,6 +408,20 @@ t_session(int fd, long *ida, unsigned char **fbp)
 			hostref("unblank_ref unblank", 1, 32);
 			t_check("unblank", strcmp(hrep, "same") == 0, "after unblank: %s", hrep);
 		}
+		/* a switch away and back shows a blanked session at once */
+		{
+			long me = front();
+
+			ioctl(fd, FBIOBLANK, 1);
+			if (ioctl(fd, FBIOSWITCH, 0) == 0 &&
+			    ioctl(fd, FBIOSWITCH, me) == 0 && host("shot sw_unblank")) {
+				ioctl(fd, FBIOVBLWAIT, 2);
+				hostref("sw_unblank_ref sw_unblank", 1, 32);
+				t_check("switch_unblank", strcmp(hrep, "same") == 0,
+				    "after switch back: %s", hrep);
+			}
+			ioctl(fd, FBIOBLANK, 0);
+		}
 	}
 }
 

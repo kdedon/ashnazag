@@ -247,3 +247,40 @@ nestpc:	nop
 	.lcomm	nlog, 4
 	.lcomm	nest, 2
 	.lcomm	log, NLOG * 12
+
+| long traptest9(), traptest10(), traptest0(): 0 when a handler at the vector
+| of trap #9 (#10, #0) gets the call: d0 + 1 comes back.
+	.text
+	.macro	tt name, vec, n
+	.globl	\name
+\name:
+	movem.l	d2-d7/a2-a6,-(sp)
+	clr.l	-(sp)			| Super(0)
+	move.w	#0x20,-(sp)
+	trap	#1
+	addq.l	#6,sp
+	move.l	d0,a6
+	move.l	\vec,a5		| the vector, for the restore
+	move.l	#th,\vec
+	moveq	#5,d0
+	trap	#\n
+	moveq	#1,d6
+	cmp.l	#6,d0
+	bne	1f
+	moveq	#0,d6
+1:	move.l	a5,\vec
+	move.l	a6,-(sp)		| Super(old)
+	move.w	#0x20,-(sp)
+	trap	#1
+	addq.l	#6,sp
+	move.l	d6,d0
+	movem.l	(sp)+,d2-d7/a2-a6
+	rts
+	.endm
+
+	tt	traptest9, 0xa4, 9
+	tt	traptest0, 0x80, 0
+	tt	traptest10, 0xa8, 10
+
+th:	addq.l	#1,d0
+	rte

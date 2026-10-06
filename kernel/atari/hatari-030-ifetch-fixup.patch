@@ -1,0 +1,58 @@
+diff --git a/src/cpu/cpummu030.c b/src/cpu/cpummu030.c
+index e6b424e0..7df29b38 100644
+--- a/src/cpu/cpummu030.c
++++ b/src/cpu/cpummu030.c
+@@ -72,6 +72,9 @@ int mmu030_idx, mmu030_idx_done;
+ 
+ uae_u32 mm030_stageb_address;
+ bool mmu030_retry;
++/* An instruction fetch whose fault is held until the word is used:
++ * the current instruction goes on, so its registers stay as they are. */
++bool mmu030_ifetch_deferred;
+ int mmu030_opcode;
+ int mmu030_opcode_stageb;
+ 
+@@ -1843,7 +1846,7 @@ void mmu030_page_fault(uaecptr addr, bool read, int flags, uae_u32 fc)
+ 	} else {
+ 		// only used by data fault but word sounds nice
+ 		flags = MMU030_SSW_SIZE_W;
+-		if (currprefs.cpu_compatible) {
++		if (currprefs.cpu_compatible && !mmu030_ifetch_deferred) {
+ 			regs.wb2_status = mmu030fixupreg(0);
+ 			if (!mmu_debugger) {
+ 				mmu030fixupmod(regs.wb2_status, 0, 0);
+diff --git a/src/cpu/cpummu030.h b/src/cpu/cpummu030.h
+index 7fcf84be..cd106cdd 100644
+--- a/src/cpu/cpummu030.h
++++ b/src/cpu/cpummu030.h
+@@ -18,6 +18,7 @@ extern uae_u16 mmusr_030;
+ extern uae_u32 mm030_stageb_address;
+ extern int mmu030_idx, mmu030_idx_done;
+ extern bool mmu030_retry;
++extern bool mmu030_ifetch_deferred;
+ extern int mmu030_opcode, mmu030_opcode_stageb;
+ extern int mmu030_fake_prefetch;
+ extern uaecptr mmu030_fake_prefetch_addr;
+diff --git a/src/cpu/newcpu.c b/src/cpu/newcpu.c
+index 33f2079f..b9e98de6 100644
+--- a/src/cpu/newcpu.c
++++ b/src/cpu/newcpu.c
+@@ -10007,6 +10007,7 @@ static void fill_icache030(uae_u32 addr)
+ 
+ 	TRY (prb2) {
+ 		// cache miss
++		mmu030_ifetch_deferred = true;
+ 		if (currprefs.cpu_cycle_exact) {
+ 			regs.ce020memcycle_data = false;
+ 			start_020_cycle_prefetch(false);
+@@ -10015,8 +10016,10 @@ static void fill_icache030(uae_u32 addr)
+ 		} else {
+ 			data = icache_fetch(addr);
+ 		}
++		mmu030_ifetch_deferred = false;
+ 	} CATCH (prb2) {
+ 		// Bus error/MMU access fault: Delayed exception.
++		mmu030_ifetch_deferred = false;
+ 		regs.cacheholdingdata_valid = 0;
+ 		regs.cacheholdingaddr020 = 0xffffffff;
+ 		regs.cacheholdingdata020 = 0xffffffff;

@@ -20,6 +20,7 @@
 # /dev/tos.  TOSOUT: mktos.sh's outdir; starttos and the cartridge go in /tests.
 # X11: x11/package.sh's pkg directory; X goes on the root with the AMIX
 # clients (tape segments 13, 14) and the server options in etc/xoptions.
+# BOOTX=1 boots to xdm.  XPKGS="xview": packages built next to X11 (x11/NAME/build.sh).
 # TOSENV=1: the TOS environment (images/tosenv/mktos.sh) with starttos,
 # and the guest modules built for this kernel, registered at boot.
 # With X11 or TOSENV, guest is in group display.
@@ -71,7 +72,23 @@ if [ -n "$X11" ]; then
 	  for f in bin/X bin/X2410 bin/Xdmi bin/loadcoff lib/tigagm.coff; do echo "r /usr/X/$f"; done
 	  echo 'r /usr/lib/dmiexec'
 	  cat "$X11/x11.manifest"
-	  echo 'f /usr/x11r6/lib/X11/xserver/options 644 0 3 atari/xoptions'; } >> "$W/root.manifest"
+	  echo 'f /usr/x11r6/lib/X11/xserver/options 644 0 3 atari/xoptions'
+	  echo 'f /usr/x11r6/lib/X11/xdm/Xserver 755 0 3 atari/xserver'
+	  echo 'f /usr/x11r6/lib/X11/xdm/Xservers 644 0 3 build/Xservers'; } >> "$W/root.manifest"
+	# xdm's server takes the options file too
+	sed 's, /usr/x11r6/bin/Xamix , /usr/x11r6/lib/X11/xdm/Xserver ,' "$X11/xdm/Xservers" > "$W/src/build/Xservers"
+	grep -q xdm/Xserver "$W/src/build/Xservers"
+	if [ "$BOOTX" = 1 ]; then
+		sed 's/^BOOT=.*/BOOT=xdm/' "$X11/xdm/default-x" > "$W/src/build/default-x"
+		echo 'f /etc/default/x 644 0 3 build/default-x' >> "$W/root.manifest"
+	fi
+	pk=
+	for p in $XPKGS; do
+		f=$X11/../$p/$(echo "$p" | tr a-z A-Z).pkg
+		[ -f "$f" ] || { echo "[FAIL] no $f (x11/$p/build.sh)"; exit 1; }
+		pk="$pk $f"
+	done
+	[ -z "$pk" ] || $PY "$DR/pkg/pkginst.py" "$W/xpkgs" $pk >> "$W/root.manifest"
 fi
 if [ "$TOSENV" = 1 ]; then
 	E=$W/env

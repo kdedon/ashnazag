@@ -1,0 +1,3 @@
+#!/bin/sh
+# xdm's X server with the machine's default options
+exec /usr/x11r6/bin/Xamix "$@" `cat /usr/x11r6/lib/X11/xserver/options 2> /dev/null`
