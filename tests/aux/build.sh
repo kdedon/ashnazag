@@ -9,10 +9,10 @@
 # outdir/root/<path> (shared libraries, terminfo, termcap; for t_mac the
 # Mac environment: startmac, libmac1_s, Patch.067C, the System file in
 # /mac/sys/Sys7 with the Finder, the ROM image at /etc/aux/rom, fidd at
-# /etc/aux/fidd; with the Mac OS 7.6.1 CD image, CD761, its System
-# Folder with SimpleText in /mac/sys/S761; with the Mac OS 8.1 CD image,
-# CD81, likewise in /mac/sys/S81; with the A/UX 2.0.1 CD image, CD201,
-# its System 6 environment in /a201).
+# /etc/aux/fidd; with the A/UX 2.0.1 CD image, CD201, its System 6
+# environment in /a201).  With the Mac OS 7.6.1 CD image, CD761, or the
+# Mac OS 8.1 one, CD81, outdir/macsys.img: a ufs volume holding their
+# System Folders with SimpleText (S761, S761u with a user's Finder, S81).
 # AUXROOT names the A/UX root, AUXROM the Mac ROM image (default: the
 # Quadra 700 ROM beside the repository); both proprietary, never in the
 # repository.
@@ -58,27 +58,24 @@ if [ -f "$OUT/mod.d/uinter" ] && [ -f "$AUXROOT/mac/bin/startmac" ] && [ -f "$SY
 	cp "$AUXROOT/mac/bin/startmac" "$OUT/root/mac/bin/"
 	cp "$AUXROOT/shlib/libmac1_s" "$OUT/root/shlib/"
 	cp "$AUXROOT/mac/lib/Patches/Patch.067C" "$OUT/root/mac/lib/Patches/"
+	# Shut Down's dialog resources; the test root's names have no spaces
+	if [ -f "$AUXROOT/mac/lib/Resources/%AUX Resources" ]; then
+		mkdir -p "$OUT/root/mac/lib/Resources"
+		cp "$AUXROOT/mac/lib/Resources/%AUX Resources" "$OUT/root/mac/lib/Resources/%AUXResources"
+	fi
 	cp "$SYSF" "$OUT/root/mac/sys/Sys7/System"
 	cp "$AUXROOT/mac/lib/SystemFiles/shared/Finder" "$OUT/root/mac/sys/Sys7/Finder"
 	cp "$AUXROM" "$OUT/root/etc/aux/rom"
 	# the File ID daemon, which the Mac side needs to create folders
 	cp "$AUXROOT/etc/fidd" "$OUT/root/etc/aux/fidd"
-	# Mac OS 7.6.1 from its CD, when present
+	# Mac OS 7.6.1 and 8.1 from their CDs, when present, on a ufs volume
+	# (long names): S761, S761u with a user's Finder, S81
+	V=$OUT/macsys
 	CD761=${CD761:-$AUX/media/Mac OS 7.6.1.iso}
 	if [ -f "$CD761" ]; then
-		S=$OUT/root/mac/sys/S761
-		sh "$AUX/images/macenv/mksys76.sh" "$CD761" "$S"
-		# the test root is a small s5 file system (14-byte names):
-		# keep only what booting needs
-		mkdir "$S.keep" "$S.keep/Fonts"
-		for f in System Finder SimpleText; do
-			mv "$S/$f" "$S/%$f" "$S.keep/"
-		done
-		for f in Chicago Geneva Monaco Courier Times; do
-			mv "$S/Fonts/$f" "$S/Fonts/%$f" "$S.keep/Fonts/"
-		done
-		rm -rf "$S"
-		mv "$S.keep" "$S"
+		sh "$AUX/images/macenv/mksys76.sh" "$CD761" "$V/S761"
+		cp -rp "$V/S761" "$V/S761u"
+		python3 "$AUX/images/macenv/userfinder.py" "$V/S761u/%Finder"
 	fi
 	# mtcp, t_mactcp's Mac application, a startup item there
 	LX=$AUX/toolchain/linux/bin/m68k-linux-gnu
@@ -108,8 +105,15 @@ if [ -f "$OUT/mod.d/uinter" ] && [ -f "$AUXROOT/mac/bin/startmac" ] && [ -f "$SY
 		cp "$AUXROM6" "$R6/etc/aux/rom"
 	fi
 	CD81=${CD81:-$AUX/media/MacOS8_1.iso}
-	[ ! -f "$CD81" ] ||
-		sh "$AUX/images/macenv/mksys81.sh" "$CD81" "$OUT/root/mac/sys/S81"
+	[ ! -f "$CD81" ] || sh "$AUX/images/macenv/mksys81.sh" "$CD81" "$V/S81"
+	if [ -d "$V" ]; then
+		(cd "$V" && find . -mindepth 1 | LC_ALL=C sort | cpio -o -H newc -R 0:3 --quiet) > "$OUT/macsys.cpio"
+		mb=$(du -sm "$V" | cut -f1)
+		echo "a macsys.cpio" > "$OUT/macsys.manifest"
+		python3 "$KDIR/mac/diskroot/mkufs.py" -s $(((mb * 5 / 4 + 8) / 4 * 4)) -r "$OUT" \
+			-m /macsys "$OUT/macsys.manifest" "$OUT/macsys.img"
+		rm -rf "$V" "$OUT/macsys.cpio" "$OUT/macsys.manifest"
+	fi
 fi
 
 TC=$AUX/toolchain/amix

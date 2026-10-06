@@ -67,5 +67,8 @@ for n in ('System', 'Finder', 'MultiFinder', 'DA Handler', '%AUX Resources',
           'Color', 'Monitors', 'Sound', '+Layers', '+NMgrFix', 'Scrapbook File', '_DTInit'):
     get(sf + '/' + n, sf + '/' + n)
 EOF
+# Log Out in the Apple menu, a desk accessory in the System file
+sh "$D/logout/build.sh" "$OUT/tmp/logout" "$OUT/mac/sys/System Folder/System"
+rm -rf "$OUT/tmp/logout"
 mkdir -p "$OUT/tmp" "$OUT/etc"
 echo "root::0:0:root:/:/bin/sh" > "$OUT/etc/passwd"

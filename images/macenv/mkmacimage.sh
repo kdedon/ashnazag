@@ -98,10 +98,11 @@ mkdir -p "$M/usr/bin" "$M/usr/lib" "$M/.mac/localhost/Desktop Folder" "$M/.mac/l
 cp "$AUXROOT/usr/bin/systemfolder" "$M/usr/bin/"
 cp "$AUXROOT/usr/lib/updtsysfldr" "$M/usr/lib/"
 find "$M" -name '.fs_*' -o -name '%.fs_*' | while read f; do rm -f "$f"; done
-# a user's Shut Down and Restart: Cancel ends the session, so it reads Logout
+# Shut Down's dialog (root's only with other users logged in): Cancel ends
+# the session, so it reads Logout
 python3 -c "import sys; sys.path.insert(0, sys.argv[1]); import rsrcedit
 f = sys.argv[2]; d = bytearray(open(f, 'rb').read())
-for i in (129, 130):
+for i in (128, 129, 130):
 	o, l, a = rsrcedit.resource(d, b'DITL', i)
 	k = d.index(b'\x04\x06Cancel', o, o + l)
 	d[k + 2:k + 8] = b'Logout'
@@ -111,6 +112,8 @@ open(f, 'wb').write(d)" "$AUX/tools" "$M/mac/lib/Resources/%AUX Resources"
 rm -rf "$M/mac/sys/System Folder"
 sh "$D/mksys76.sh" "$CD761" "$M/mac/lib/System Folder" "$AUXROOT"
 cp -rp "$M/mac/lib/System Folder" "$M/mac/sys/"
+# users' Special menu: Log Out in place of Restart and Shut Down
+python3 "$D/userfinder.py" "$M/mac/lib/System Folder/%Finder"
 find "$M" -type d -exec chmod 755 {} +
 find "$M" -type f -perm -u+x -exec chmod 755 {} +
 find "$M" -type f ! -perm -u+x -exec chmod 644 {} +

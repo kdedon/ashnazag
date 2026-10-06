@@ -148,6 +148,11 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 		(cd "$AUXB/root" && find . -type f | sed 's#^\.##' | sort) | while read -r f; do
 			echo "f $f 755 0 3 $AUXB/root$f"
 		done
+		# the Mac System Folders' ufs volume (run-qemu.sh adds it as SCSI disk 1)
+		if [ -f "$AUXB/macsys.img" ]; then
+			echo "b /dev/dsk/c1d0s0 600 0 3 18 1"
+			echo "d /macsys 755 0 3"
+		fi
 		# A/UX 2.0.1's environment: its devices
 		if [ -d "$AUXB/root/a201" ]; then
 			echo "c /a201/dev/uinter0 666 0 3 54 0"
@@ -198,7 +203,7 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 			echo "f $f 755 0 3 $AMIB/root$f"
 		done
 	fi
-	if [ -f "$AMIB/sys.img" ] || [ -f "$UFSB/ufs.img" ]; then
+	if [ -f "$AMIB/sys.img" ] || [ -f "$UFSB/ufs.img" ] || [ -f "$AUXB/macsys.img" ]; then
 		echo "d /usr/lib/fs/ufs 755 0 3"
 		echo "f /usr/lib/fs/ufs/mount 555 0 3 $RD/build/core/usr/lib/fs/ufs/mount"
 	fi

@@ -27,16 +27,21 @@
  * the A/UX and ROM files, which are local only.
  *
  * Built with SYS76 (t_mac76.c), the startmac run uses the Mac OS 7.6.1
- * System Folder /mac/sys/S761 as a Quadra 800 (box flag 29) and checks
- * 'boot' 3's second _AUXDispatch(36) (it makes /tmp/.mac/unix), the
- * Finder desktop, SysVersion $0761, the About This Computer window,
- * SimpleText opened from the desktop and quit, and the disk window.
- * Built with SYS81 (t_mac81.c), the same with Mac OS 8.1 (/mac/sys/S81).
+ * System Folder /macsys/S761, on a ufs volume (SCSI disk 1), as a
+ * Quadra 800 (box flag 29) and checks 'boot' 3's second _AUXDispatch(36)
+ * (it makes /tmp/.mac/unix), the Finder desktop, SysVersion $0761, the
+ * About This Computer window, SimpleText opened from the desktop and
+ * quit, the disk window and root's Shut Down, which halts.  Before it a
+ * user's session (/macsys/S761u) shows Log Out in the Special menu, then
+ * a root session; both end with the Apple menu's Log Out.
+ * Built with SYS81 (t_mac81.c), the same with Mac OS 8.1 (/macsys/S81),
+ * without the user's session.
  * Built with SYS6 (t_mac6.c), A/UX 2.0.1's startmac runs System 6.0.7
  * from its own root, /a201, on the IIci's ROM in 4 MB; checks as t_mac's
  * up to the System file, then the Finder's desktop without an alert,
  * SysVersion $0607, the Apple and Special menus, and the startup disk's
- * window opened and closed.
+ * window opened and closed.  The session ends from the Finder: the first
+ * run in a boot by Special > Logout, the next by the Apple menu's Log Out.
  */
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -87,18 +92,21 @@ extern int getksym();
 #ifndef TBSYS
 #define	TBSYS	SYSDIR
 #endif
+#define	MACVOL	"/macsys"
+#define	MACDEV	"/dev/dsk/c1d0s0"
 #ifdef SYS6
 #else
 #ifdef SYS81
 #define	SYS76
-#define	SYSDIR	"/mac/sys/S81"
+#define	SYSDIR	MACVOL "/S81"
 #define	SYSVER	0x0810
 #define	TNAME	"mac81"
 #define	SHOT	"mac81_"
 #define	TBMEM	"TBMEMORY=16M"
 #else
 #ifdef SYS76
-#define	SYSDIR	"/mac/sys/S761"
+#define	SYSDIR	MACVOL "/S761"
+#define	USERSYS	MACVOL "/S761u"
 #define	SYSVER	0x0761
 #define	TNAME	"mac76"
 #define	SHOT	"mac76_"
@@ -880,6 +888,24 @@ fidd()
 		    (int)(major(sb.st_dev) << 8 | minor(sb.st_dev)));
 		fclose(f);
 	}
+#ifdef SYS76
+	/* the System Folders' volume, once */
+	if (stat(MACVOL "/S81", &sb) == 0 || stat(MACVOL "/S761", &sb) == 0) {
+		char l[120];
+		int on = 0;
+
+		if ((f = fopen("/etc/mtab", "r")) != 0) {
+			while (fgets(l, sizeof l, f))
+				on |= strstr(l, " " MACVOL " ") != 0;
+			fclose(f);
+		}
+		if (!on && (f = fopen("/etc/mtab", "a")) != 0) {
+			fprintf(f, MACDEV " " MACVOL " 4.2 rw,noquota,dev=%x 1 1\n",
+			    (int)(major(sb.st_dev) << 8 | minor(sb.st_dev)));
+			fclose(f);
+		}
+	}
+#endif
 	fiddkill();
 	if ((pid = fork()) == 0) {
 		setpgrp();
@@ -1318,9 +1344,154 @@ int lo, hi, secs;
 	host(req);
 	return shotdiff(ref, name);
 }
+
+/* a menu item chosen: the menu held open at (h, v), released over (ih, iv) */
+static void
+menuitem(h, v, ih, iv, shot)
+int h, v, ih, iv;
+char *shot;
+{
+	char req[40];
+
+	/* a halt recorded, the session killed in its place */
+	setsym("uinter_adcall", 0L);
+	setsym("uinter_adtest", 1L);
+	moveto(h, v);
+	host("button 1");
+	pause_ms(800L);
+	moveto(ih, iv);
+	pause_ms(500L);
+	sprintf(req, "shot %s", shot);
+	host(req);
+	host("button 0");
+}
+
+/* the session ended from the Mac: startmac exits by itself, nothing halts */
+static void
+loggedout(pfx)
+char *pfx;
+{
+	char n[40];
+	long t0;
+	int st = 0;
+	pid_t r = 0;
+
+	t_rearm(120);
+	for (t0 = t_now_ms(); t_now_ms() - t0 < 60000L; pause_ms(500L))
+		if ((r = waitpid(macpid, &st, WNOHANG)) != 0)
+			break;
+	sprintf(n, "%s_exits", pfx);
+	t_check(n, r == macpid, "startmac still running after %ld ms", t_now_ms() - t0);
+	sprintf(n, "%s_clean", pfx);
+	/* doLogout's _exit(0); a fault or any other exit is not a Log Out */
+	t_check(n, r == macpid && WIFEXITED(st) && WEXITSTATUS(st) == 0, "status %#x", st);
+	if (r == macpid) {
+		sprintf(n, "%s_status", pfx);
+		t_info(n, "%#x after %ld ms", st, t_now_ms() - t0);
+		macpid = 0;
+	}
+	sprintf(n, "%s_no_halt", pfx);
+	t_check(n, getsym("uinter_adcall") == 0, "uadmin %#lx", getsym("uinter_adcall"));
+	setsym("uinter_adtest", 0L);
+	sprintf(n, "%s_console", pfx);
+	t_check(n, waitfront(0L, 10), "front %ld", front());
+}
 #endif
 
 #ifdef SYS76
+
+/* n bytes of Mac memory at a, as an INFO line */
+static void
+macdump(name, a, n)
+char *name;
+long a;
+int n;
+{
+	unsigned char *lm;
+	char b[200];
+	int id, i;
+
+	id = shmget(TLOW, 0, 0);
+	lm = id < 0 ? 0 : (unsigned char *)shmat(id, (char *)0, SHM_RDONLY);
+	if (!lm || lm == (unsigned char *)-1)
+		return;
+	for (i = 0; i < n && i < 64; i++)
+		sprintf(b + 2 * i, "%02x", lm[a + i]);
+	t_info(name, "%lx %s", a, b);
+	shmdt((char *)lm);
+}
+
+#define	BE32(p)	((long)(p)[0] << 24 | (long)(p)[1] << 16 | (p)[2] << 8 | (p)[3])
+
+
+/* the shutdown queue (SDHeader at $5AF40): each procedure, its flags and first bytes */
+static void
+sdqueue()
+{
+	struct shmid_ds ds;
+	unsigned char *lm, *e;
+	long q, pr[8];
+	char b[40];
+	int id, i, n;
+
+	id = shmget(TLOW, 0, 0);
+	lm = id < 0 ? 0 : (unsigned char *)shmat(id, (char *)0, SHM_RDONLY);
+	if (!lm || lm == (unsigned char *)-1)
+		return;
+	shmctl(id, IPC_STAT, &ds);
+	for (q = BE32(lm + 0x5af42), n = 0; q > 0 && q + 10 < ds.shm_segsz && n < 8;
+	    q = BE32(e), n++) {
+		e = lm + q;
+		pr[n] = BE32(e + 6);
+		sprintf(b, "sdqueue_%d_flags", n);
+		t_info(b, "%d", e[4] << 8 | e[5]);
+	}
+	shmdt((char *)lm);
+	for (i = 0; i < n; i++) {
+		sprintf(b, "sdqueue_%d", i);
+		macdump(b, pr[i], 32);
+	}
+}
+
+/* Patch.067C's LAP Manager call at $38244 goes through its checked dispatcher */
+static int
+lapredirect()
+{
+	static unsigned char want[10] = {
+		0x43, 0xfa, 0xe1, 0xea, 0x70, 0x19, 0x4e, 0xba, 0xe2, 0x0e
+	};
+	unsigned char *lm;
+	int id, ok;
+
+	id = shmget(TLOW, 0, 0);
+	lm = id < 0 ? 0 : (unsigned char *)shmat(id, (char *)0, SHM_RDONLY);
+	if (!lm || lm == (unsigned char *)-1)
+		return 0;
+	ok = memcmp(lm + 0x38244, want, sizeof want) == 0;
+	shmdt((char *)lm);
+	return ok;
+}
+
+/* ShutDwnPower's and ShutDwnStart's shutDownDialog calls: 1 both skipped, 0 both kept */
+static int
+sdskipped()
+{
+	unsigned char *lm;
+	int id, n = 0;
+
+	id = shmget(TLOW, 0, 0);
+	lm = id < 0 ? 0 : (unsigned char *)shmat(id, (char *)0, SHM_RDONLY);
+	if (!lm || lm == (unsigned char *)-1)
+		return -1;
+	n += memcmp(lm + 0xd16a, "\x70\x00\x4e\x71", 4) == 0;
+	n += memcmp(lm + 0xd1d2, "\x70\x00\x4e\x71", 4) == 0;
+	shmdt((char *)lm);
+	return n == 2 ? 1 : n == 0 ? 0 : -1;
+}
+
+/* A/UX's resources, under the name with a space Shut Down looks for */
+#define	AUXRES		"/mac/lib/Resources/%AUXResources"
+#define	AUXRESSP	"/mac/lib/Resources/%AUX Resources"
 
 /* Special > Shut Down as root: the Mac ends by itself, with no panic */
 static void
@@ -1331,6 +1502,11 @@ shutdown76()
 	pid_t r = 0;
 
 	t_rearm(120);
+	/* Shut Down's dialog, without which it logs out */
+	link(AUXRES, AUXRESSP);
+	/* the halt recorded, the session killed in its place */
+	setsym("uinter_adcall", 0L);
+	setsym("uinter_adtest", 1L);
 	moveto(232, 9);
 	host("button 1");
 	pause_ms(800L);
@@ -1347,6 +1523,227 @@ shutdown76()
 		t_info("shutdown_status", "%#x after %ld ms", st, t_now_ms() - t0);
 		macpid = 0;
 	}
+	/* a fault (PC $17) ends it with SIGILL before the halt */
+	t_check("shutdown_uadmin", getsym("uinter_adcall") == 0x200 &&
+	    WIFSIGNALED(st) && WTERMSIG(st) == SIGKILL, "uadmin %#lx, status %#x",
+	    getsym("uinter_adcall"), st);
+	setsym("uinter_adtest", 0L);
+	unlink(AUXRESSP);
+}
+
+/*
+ * Root's Special > Shut Down, for real: the console's halt message must
+ * follow the HALT line, with no panic between.  Only the run's last
+ * stage may do this.
+ */
+static void
+halt76()
+{
+	static char line[] = "HALT mac76.shutdown_halts\n";
+	long t0;
+	int st = 0;
+	pid_t r = 0;
+
+	t_rearm(120);
+	link(AUXRES, AUXRESSP);
+	setsym("uinter_adtest", 0L);
+	sync();
+	write(1, line, sizeof line - 1);
+	moveto(232, 9);
+	host("button 1");
+	pause_ms(800L);
+	moveto(250, 139);
+	pause_ms(500L);
+	host("button 0");
+	for (t0 = t_now_ms(); t_now_ms() - t0 < 60000L; pause_ms(500L))
+		if ((r = waitpid(macpid, &st, WNOHANG)) != 0)
+			break;
+	t_fail("shutdown_halts", "startmac %s, status %#x", r == macpid ? "exited" : "still running", st);
+	if (r == macpid)
+		macpid = 0;
+	unlink(AUXRESSP);
+}
+
+/* the Mac menus' Log Out item */
+#define	LOGOUTV	60
+
+/* path and everything under it owned by uid */
+static void
+chownr(path, uid)
+char *path;
+int uid;
+{
+	char sub[256];
+	struct dirent *de;
+	DIR *d;
+
+	chown(path, uid, -1);
+	if ((d = opendir(path)) == 0)
+		return;
+	while ((de = readdir(d)) != 0)
+		if (strcmp(de->d_name, ".") && strcmp(de->d_name, "..") &&
+		    strlen(path) + strlen(de->d_name) + 2 < sizeof sub) {
+			sprintf(sub, "%s/%s", path, de->d_name);
+			chownr(sub, uid);
+		}
+	closedir(d);
+}
+
+/*
+ * A session as uid with the System Folder sys: its desktop, for a user
+ * the Special menu, then the Apple menu's Log Out ends it.
+ */
+static void
+session76(uid, sys, pfx)
+int uid;
+char *sys, *pfx;
+{
+	static char *av[] = { "/mac/bin/startmac", 0 };
+	char *env[10], tb[80], n[40], shot[40], req[60], *r;
+	int p[2], fd, i, st, chk = 0, white = 0, top = 0;
+	pid_t pid, dp;
+
+	t_rearm(240);
+	for (i = 0; macenv[i] && i < 9; i++)
+		env[i] = strncmp(macenv[i], "TBSYSTEM=", 9) ? macenv[i] : tb;
+	env[i] = 0;
+	sprintf(tb, "TBSYSTEM=%s", sys);
+	/* the user's System Folder and console, as after a login */
+	chownr(sys, uid);
+	chown("/dev/console", uid, -1);
+	if (pipe(p) < 0)
+		return;
+	if ((pid = fork()) == 0) {
+		setpgid(0, 0);	/* its own group, the console still its terminal */
+		dup2(p[1], 1);
+		dup2(p[1], 2);
+		close(p[0]);
+		close(p[1]);
+		for (fd = 3; fd < 20; fd++)
+			close(fd);
+		if (uid == 0 || (setgid(25) == 0 && setuid(uid) == 0))
+			execve(av[0], av, env);
+		_exit(127);
+	}
+	close(p[1]);
+	macpid = pid;
+	macid = 0;
+	relay(p[0], 90);
+	dp = drain(p[0]);
+	sprintf(n, "%s_front", pfx);
+	t_check(n, macid > 0, "the Mac's session never came to front");
+	hostopen();
+	if (macid > 0 && hfd >= 0) {
+		sprintf(shot, "%s%s_desktop", SHOT, pfx);
+		sprintf(req, "shot %s", shot);
+		for (i = 0; i < 8; i++) {
+			t_rearm(120);
+			host(req);
+			sprintf(req, "mac %s", shot);
+			if ((r = host(req)) != 0)
+				sscanf(r, "checker %d white %d top %d", &chk, &white, &top);
+			sprintf(req, "shot %s", shot);
+			if (chk >= 900 && top >= 900)
+				break;
+			pause_ms(10000L);
+		}
+		sprintf(n, "%s_desktop", pfx);
+		t_check(n, chk >= 900 && top >= 900, "checker %d, menu bar %d per mille", chk, top);
+		if (strcmp(pfx, "halt") == 0) {
+			halt76();
+			goto out;
+		}
+		if (uid) {
+			/* Log Out in place of Restart and Shut Down */
+			moveto(232, 9);
+			host("button 1");
+			pause_ms(800L);
+			sprintf(req, "shot %s%s_special", SHOT, pfx);
+			host(req);
+			host("button 0");
+			pause_ms(1000L);
+			sprintf(req, "%s%s_special", SHOT, pfx);
+			sprintf(n, "%s_special_menu", pfx);
+			i = shotdiff(shot, req);
+			t_check(n, i > 1000, "%d pixels changed", i);
+		}
+		/* AtalkHk2: -1, no LAP Manager */
+		macdump("atalkhk2", 0xb18L, 4);
+		sdqueue();
+		sprintf(n, "%s_lap_redirect", pfx);
+		t_check(n, lapredirect(), "");
+		/* only root's Shut Down and Restart show A/UX's dialog */
+		sprintf(n, "%s_sd_dialog", pfx);
+		i = sdskipped();
+		t_check(n, i == (uid != 0), "skipped %d", i);
+		t_rearm(120);
+		/* a user leaves through Special, root through the Apple menu */
+		if (uid) {
+			/* with the dialog's resources Special > Log Out still logs out */
+			link(AUXRES, AUXRESSP);
+			sprintf(req, "%s%s_speciallogout", SHOT, pfx);
+			menuitem(232, 9, 250, 123, req);
+		} else {
+			sprintf(req, "%s%s_apple", SHOT, pfx);
+			menuitem(20, 9, 60, LOGOUTV, req);
+		}
+		loggedout(pfx);
+		unlink(AUXRESSP);
+	}
+out:
+	if (hfd >= 0)
+		close(hfd);
+	hfd = -1;
+	if (macpid) {
+		kill(-pid, SIGKILL);
+		t_waitchild(pid, &st, 20);
+		macpid = 0;
+	}
+	close(p[0]);
+	if (dp > 0) {
+		kill(dp, SIGKILL);
+		waitpid(dp, (int *)0, 0);
+	}
+	setsym("uinter_adtest", 0L);
+	chownr(sys, 0);
+	chown("/dev/console", 0, -1);
+	sprintf(n, "%s_ram_freed", pfx);
+	t_check(n, shmget(TLOW, 0, 0) < 0, "'tLOW' left");
+	if ((i = shmget(TLOW, 0, 0)) >= 0)
+		shmctl(i, IPC_RMID, (struct shmid_ds *)0);
+	macid = 0;
+}
+
+/* a file's copy */
+static void
+copyf(a, b)
+char *a, *b;
+{
+	char buf[4096];
+	int f, g, n;
+
+	if ((f = open(a, O_RDONLY)) < 0)
+		return;
+	if ((g = open(b, O_WRONLY | O_CREAT | O_TRUNC, 0644)) >= 0) {
+		while ((n = read(f, buf, sizeof buf)) > 0)
+			write(g, buf, n);
+		close(g);
+	}
+	close(f);
+}
+
+/* the System Folders' volume mounted (once a boot), 0 if none */
+static int
+macvol()
+{
+	struct stat sb;
+
+	if (stat(MACDEV, &sb) < 0)
+		return 0;
+	if (stat(SYSDIR, &sb) == 0)
+		return 1;
+	return t_check("macvol_mount", system("/sbin/mount -F ufs " MACDEV " " MACVOL) == 0,
+	    "mount " MACDEV " failed");
 }
 
 /* About closed, SimpleText opened from the desktop and quit, the disk window */
@@ -1456,10 +1853,13 @@ screen76()
 #endif
 
 #ifdef SYS6
+#define	MAC6RAN	"/tmp/.t_mac6"	/* a run in this boot */
+
 /* System 6's Finder: the desktop pattern under a white menu bar, SysVersion */
 static void
 screen6()
 {
+	struct stat sb;
 	unsigned char *lm;
 	char *r;
 	int id, n, chk = 0, white = 0, top = 0;
@@ -1523,6 +1923,17 @@ screen6()
 	n = waitshot(SHOT "closed", SHOT "desktop", 0, 1999, 20);
 	t_check("disk_window_closed", n >= 0 && n < 2000, "%d pixels from the desktop", n);
 	t_check("finder_alive", alive76(), "");
+	/*
+	 * Logout runs the shutdown procedures, which close the Desktop
+	 * Manager's files; a killed session leaves them damaged for the next
+	 */
+	t_rearm(120);
+	if (stat(MAC6RAN, &sb) < 0) {
+		close(creat(MAC6RAN, 0644));
+		menuitem(184, 9, 189, 155, SHOT "logout");
+	} else
+		menuitem(20, 9, 60, 218, SHOT "applelogout");
+	loggedout("logout");
 	close(hfd);
 	hfd = -1;
 }
@@ -1552,7 +1963,9 @@ int on;
 #endif
 
 int
-main()
+main(argc, argv)
+int argc;
+char **argv;
 {
 	struct mod_mreg reg;
 	struct mod_execreg er;
@@ -1560,7 +1973,7 @@ main()
 	int e, mj = UIMAJ;
 
 #if defined(SYS76) || defined(SYS6)
-	t_init(TNAME, 330);
+	t_init(TNAME, 600);
 #else
 	t_init("mac", 300);
 #endif
@@ -1601,6 +2014,10 @@ main()
 	else
 		macjoin();
 #endif
+#ifdef SYS76
+	/* mounted for the rest of the boot */
+	macvol();
+#endif
 #ifdef SYS6
 	if (stat(STARTMAC, &sb) < 0 || stat(ROOT6 "/etc/aux/rom", &sb) < 0 ||
 	    stat(SYSDIR "/System", &sb) < 0)
@@ -1626,14 +2043,24 @@ main()
 			close(e);
 #else
 #ifdef SYS76
-		/* made by _AUXDispatch(36, 0); t_mac's run leaves one */
-		system("/usr/bin/rm -rf /tmp/.mac");
 		/* the module loaded, then a Quadra 800 (no ProductInfo of its own) */
 		e = open("/dev/uinter0", O_RDWR);
 		t_check("boxflag", setsym("uinter_boxflag", 29L) == 0, "no uinter_boxflag");
+#ifndef SYS81
+		system("/usr/bin/rm -rf /tmp/.mac");
+		/* the run's last stage: a root session that shuts down */
+		if (argc > 1 && strcmp(argv[1], "halt") == 0) {
+			session76(0, SYSDIR, "halt");
+			return t_done();
+		}
+		session76(atoi(OTHERUID), USERSYS, "user");
+#endif
+		session76(0, SYSDIR, "root");
+		/* made by _AUXDispatch(36, 0); t_mac's run leaves one */
+		system("/usr/bin/rm -rf /tmp/.mac");
 		/* SimpleText on the desktop, for the Finder to open */
-		link(SYSDIR "/SimpleText", "/Desktop Folder/SimpleText");
-		link(SYSDIR "/%SimpleText", "/Desktop Folder/%SimpleText");
+		copyf(SYSDIR "/SimpleText", "/Desktop Folder/SimpleText");
+		copyf(SYSDIR "/%SimpleText", "/Desktop Folder/%SimpleText");
 		startmac();
 		unlink("/Desktop Folder/SimpleText");
 		unlink("/Desktop Folder/%SimpleText");

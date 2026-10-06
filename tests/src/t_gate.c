@@ -9,7 +9,9 @@
  * code lands, and a process keeps its placement, so one process cannot
  * give a stable ratio.  Pass: both return the pid, and trap #0 costs at
  * most a quarter more than trap #10 (the gate is a few instructions; a
- * real regression is slower in every process).
+ * real regression is slower in every process).  A round is sized to run
+ * ROUNDMS on this host, so a loaded or slow host takes as long as an idle
+ * one.
  */
 #include <sys/types.h>
 #include <stdio.h>
@@ -17,7 +19,9 @@
 #include <sys/wait.h>
 #include "t.h"
 
-#define	CALLS	500000	/* about 50 clock ticks per round: one tick is 2% */
+#define	CALLS	500000	/* at most per round: about 50 clock ticks, one tick is 2% */
+#define	ROUNDMS	500
+#define	MINCALLS 5000
 #define	ROUNDS	3
 #define	PROCS	5
 
@@ -39,6 +43,31 @@ trap10()
 	return r;
 }
 
+static long calls = CALLS;
+
+/* calls per round: what takes ROUNDMS, by a short trial of trap #10 */
+static void
+size()
+{
+	long t0, t1;
+	int i, n = MINCALLS;
+
+	for (;;) {
+		t0 = t_now_ms();
+		for (i = 0; i < n; i++)
+			trap10();
+		t1 = t_now_ms();
+		if (t1 - t0 >= 50 || n >= CALLS)
+			break;
+		n *= 2;
+	}
+	calls = t1 > t0 ? (long)n * ROUNDMS / (t1 - t0) : CALLS;
+	if (calls > CALLS)
+		calls = CALLS;
+	if (calls < MINCALLS)
+		calls = MINCALLS;
+}
+
 /* microseconds per call x 100 */
 static long
 timeit(f)
@@ -48,10 +77,10 @@ int (*f)();
 	int i;
 
 	t0 = t_now_ms();
-	for (i = 0; i < CALLS; i++)
+	for (i = 0; i < calls; i++)
 		(*f)();
 	t1 = t_now_ms();
-	return (t1 - t0) * 100000L / CALLS;
+	return (t1 - t0) * 100000L / calls;
 }
 
 /* best of ROUNDS alternating rounds, sent to fd as b0, b10 */
@@ -62,6 +91,7 @@ int fd;
 	long b[2], t;
 	int k;
 
+	size();
 	for (k = 0; k < ROUNDS; k++) {
 		t = timeit(trap0);
 		if (k == 0 || t < b[0])

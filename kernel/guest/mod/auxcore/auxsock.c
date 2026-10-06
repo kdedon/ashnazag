@@ -462,6 +462,11 @@ aux_sockctl(a, rv, r, ep)
 		rv->r_val1 = v;
 		if (c == SIOCGIFCONF)
 			lolast((caddr_t)a[2]);
+	} else if (*ep == ENXIO && c == SIOCGIFCONF) {
+		/* IP without interfaces: an empty list, not a failure */
+		v = 0;
+		*ep = copyout((caddr_t)&v, (caddr_t)a[2], 4) ? EFAULT : 0;
+		rv->r_val1 = 0;
 	}
 	*ep = ret(*ep);
 	if (mac_socktrace)

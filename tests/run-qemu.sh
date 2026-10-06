@@ -108,6 +108,10 @@ if [ $MODE = direct ]; then
 	[ -f "$T/build/amiga/sys.img" ] && set -- "$@" \
 		-drive file="$T/build/amiga/sys.img",format=raw,if=none,id=hd0,snapshot=on \
 		-device scsi-hd,scsi-id=0,drive=hd0
+	# the Mac System Folders' volume, writes discarded
+	[ -f "$T/build/aux/macsys.img" ] && set -- "$@" \
+		-drive file="$T/build/aux/macsys.img",format=raw,if=none,id=hd1,snapshot=on \
+		-device scsi-hd,scsi-id=1,drive=hd1
 elif [ $MODE = net ]; then
 	MEM=${MEM:-128}
 	set -- -m "$MEM" -kernel "$KERNEL" -initrd "$T/build/netroot.img" \
@@ -142,7 +146,12 @@ done > "$OUT/serial.ts" &
 t0=$(date +%s)
 state=timeout
 while kill -0 $QPID 2>/dev/null; do
-	if grep -q '^TESTS DONE' "$OUT/serial.log" 2>/dev/null; then state=done; break; fi
+	# then a last stage that halts, if announced
+	if grep -q '^TESTS DONE' "$OUT/serial.log" 2>/dev/null &&
+	    { ! grep -q '^HALT NEXT' "$OUT/serial.log" ||
+	    grep -q '^HALT END\|system is halted' "$OUT/serial.log"; }; then
+		state=done; break
+	fi
 	if grep -qi 'panic' "$OUT/serial.log" 2>/dev/null; then state=panic; sleep 3; break; fi
 	sleep 2
 done

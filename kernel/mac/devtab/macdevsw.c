@@ -134,25 +134,29 @@ struct cdevsw cdevsw[70] = {
  * bufcall(qenable, q) or timeout(qenable, q) and its close leaves them
  * pending: the freed queue would later be enabled and run.  Its close
  * also cancels them.
+ *
+ * A failed open (sockmod: a signal while it waits for T_INFO_ACK;
+ * timod: one while it waits for memory) is freed
+ * without the close and left on the run list if the ack enabled it:
+ * the next queuerun calls its service procedure through freed memory.
+ * The open takes it off the list and drops its messages.
  */
 extern struct streamtab sockinfo;
 extern struct bclist strbcalls;
 extern int calllimit;
+extern queue_t *qhead, *qtail;
 #undef	splstr
-extern int sockmodclose(), untimeout(), splstr();
+extern int sockmodopen(), sockmodclose(), timodopen(), untimeout(), splstr();
 
-static int
-sockclose(q, flag, crp)
+/* q's pair off the run list, its qenable callbacks cancelled.  At splstr. */
+static void
+sockunsched(q)
 queue_t *q;
-int flag;
-cred_t *crp;
 {
 	register struct strevent *se, *next;
+	register queue_t *p, *prev;
 	register int i;
-	int r, sr;
 
-	r = sockmodclose(q, flag, crp);
-	sr = splstr();
 	for (se = strbcalls.bc_head; se; se = next) {
 		next = se->se_next;
 		if (se->se_func == qenable && (se->se_arg == (long)q || se->se_arg == (long)WR(q)))
@@ -165,6 +169,77 @@ cred_t *crp;
 			untimeout(callout[i].c_id);
 			i = -1;
 		}
+	for (prev = 0, p = qhead; p; p = p->q_link) {
+		if (p != q && p != WR(q)) {
+			prev = p;
+			continue;
+		}
+		if (prev)
+			prev->q_link = p->q_link;
+		else
+			qhead = p->q_link;
+		if (qtail == p)
+			qtail = prev;
+		p->q_flag &= ~QENAB;
+	}
+}
+
+/* Drop a failed open's queue pair from the scheduler and its messages. */
+static void
+openfailed(q)
+queue_t *q;
+{
+	int sr;
+
+	sr = splstr();
+	sockunsched(q);
+	q->q_flag |= QNOENB;
+	WR(q)->q_flag |= QNOENB;
+	flushq(q, FLUSHALL);
+	flushq(WR(q), FLUSHALL);
+	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (sr) : "memory");
+}
+
+static int
+sockopen(q, devp, flag, sflag, crp)
+queue_t *q;
+dev_t *devp;
+int flag, sflag;
+cred_t *crp;
+{
+	int e;
+
+	if ((e = sockmodopen(q, devp, flag, sflag, crp)) != 0)
+		openfailed(q);
+	return e;
+}
+
+/* timod's open also sleeps, for memory; a signal fails it. */
+static int
+timopen(q, devp, flag, sflag, crp)
+queue_t *q;
+dev_t *devp;
+int flag, sflag;
+cred_t *crp;
+{
+	int e;
+
+	if ((e = timodopen(q, devp, flag, sflag, crp)) != 0)
+		openfailed(q);
+	return e;
+}
+
+static int
+sockclose(q, flag, crp)
+queue_t *q;
+int flag;
+cred_t *crp;
+{
+	int r, sr;
+
+	r = sockmodclose(q, flag, crp);
+	sr = splstr();
+	sockunsched(q);
 	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (sr) : "memory");
 	return r;
 }
@@ -172,6 +247,8 @@ cred_t *crp;
 static int
 mac_sockfix()
 {
+	sockinfo.st_rdinit->qi_qopen = sockopen;
+	timinfo.st_rdinit->qi_qopen = timopen;
 	sockinfo.st_rdinit->qi_qclose = sockclose;
 	return 0;
 }

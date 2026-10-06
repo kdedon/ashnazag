@@ -31,13 +31,17 @@ extern k_sigset_t cantmask;
 extern void (*aux_macdetach)(), (*aux_uitick)();
 extern struct shminfo shminfo;
 extern struct shmid_ds shmem[];
-extern int shmsys();
+extern int shmsys(), sync(), uadmin();
+extern void dlm_cacheflush();
 extern char ui_shmdssz[sizeof (struct shmid_ds) == 112 ? 1 : -1];	/* the kernel's */
 
 struct uilayer ui;
 static int ui_nopen;
 static int uiflag[1] = { 0 };
 int	uinter_trace = 0;	/* 1: print each ioctl */
+int	uinter_adtest = 0;	/* 1: record root's Shut Down instead of halting */
+int	uinter_adcall = 0;	/* the uadmin call recorded: cmd << 8 | fcn */
+int	uinter_lapchk = 1;	/* 0: leave Patch.067C's AppleTalk queue calls alone */
 char	uinter_pram[64] = "/etc/aux/pram";	/* XPRAM across sessions */
 static int ui_pramdirty;
 struct uicall ui_calls[UI_NCALL];
@@ -479,6 +483,8 @@ uisetup(gp, cmd, arg, b, rvp)
 		wakeup((caddr_t)&ui.l_state);
 		ui.l_shmid = -1;
 		ui.l_evmask = 0xffef;
+		ui.l_lapchk = 0;
+		ui.l_sdchk = 0;
 		AUXP(gp)->ap_mac |= APM_TASK;
 		prampin();
 		*rvp = 0;
@@ -552,6 +558,120 @@ uisync()
 			lim->rlim_cur = lim->rlim_max < want ? lim->rlim_max : want;
 	}
 	return 0;
+}
+
+/* root's Restart (fcn 1) or Shut Down (0): sync, then uadmin(A_SHUTDOWN, fcn) */
+static int
+uiadmin(fcn)
+	int fcn;
+{
+	struct { int cmd, fcn, mdep; } a;
+	int rv[2];
+
+	if (u.u_cred->cr_ruid != 0 || !suser(u.u_cred))
+		return EPERM;
+	if (uinter_adtest) {
+		uinter_adcall = 2 << 8 | fcn;
+		psignal(u.u_procp, SIGKILL);
+		return 0;
+	}
+	sync();
+	a.cmd = 2;
+	a.fcn = fcn;
+	a.mdep = 0;
+	return uadmin(&a, rv);
+}
+
+/*
+ * Patch.067C's two transition queue walkers ask the LAP Manager for the
+ * queue (selector 25) through $0B18 without checking it, as its own
+ * dispatcher does.  Under a System without a LAP Manager ($0B18 <= 0)
+ * root's Log Out and Shut Down then jump to $17.  Each walker's call
+ * becomes a call to that dispatcher, with a1 first pointing at an empty
+ * queue header (the .MPP driver header, whose long at +2 is 0), which
+ * the dispatcher leaves when there is no LAP Manager.
+ */
+static unsigned char lapold[] = {
+	0x70, 0x19, 0x4e, 0xb0, 0x01, 0xe2, 0x0b, 0x18, 0x00, 0x02
+};
+static struct lapsite {
+	long	a;			/* the moveq #25,d0 */
+	unsigned char new[10];		/* lea hdr(pc),a1; moveq; jsr disp(pc) */
+} lapsite[] = {
+	{ 0x381ee, { 0x43, 0xfa, 0xe2, 0x40, 0x70, 0x19, 0x4e, 0xba, 0xe2, 0x64 } },
+	{ 0x38244, { 0x43, 0xfa, 0xe1, 0xea, 0x70, 0x19, 0x4e, 0xba, 0xe2, 0x0e } }
+};
+/* the dispatcher at $3645A and the header at $36430 */
+static unsigned char lapdisp[] = {
+	0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x4a, 0xb9, 0x00, 0x00, 0x0b, 0x18, 0x6f, 0x0a,
+	0x4e, 0xf0, 0x01, 0xf2, 0x00, 0x00, 0x0b, 0x18,
+	0x00, 0x02, 0x70, 0xff, 0x4e, 0x75
+};
+
+static void
+ui_lapchk()
+{
+	unsigned char b[sizeof lapdisp];
+	int i;
+
+	if (ui.l_lapchk || !uinter_lapchk)
+		return;
+	ui.l_lapchk = 1;
+	if (copyin((caddr_t)0x36430, b, 8) || bcmp(b, lapdisp, 8) ||
+	    copyin((caddr_t)0x3645a, b, 22) || bcmp(b, lapdisp + 8, 22))
+		return;
+	for (i = 0; i < 2; i++)
+		if (copyin((caddr_t)lapsite[i].a, b, 10) || bcmp(b, lapold, 10))
+			return;
+	for (i = 0; i < 2; i++)
+		if (copyout(lapsite[i].new, (caddr_t)lapsite[i].a, 10))
+			return;
+	dlm_cacheflush();
+}
+
+/*
+ * A user's Shut Down and Restart log out without A/UX's dialog, which
+ * offers a Shut Down with root's password: in ShutDwnPower and
+ * ShutDwnStart the call of shutDownDialog becomes moveq #0, its result
+ * when the dialog chose Logout.  The patch follows the session's real
+ * uid, which a login can change.
+ */
+static long sdsite[] = { 0xd16a, 0xd1d2 };
+static unsigned char sdold[2][8] = {
+	{ 0x42, 0xa7, 0x42, 0xa7, 0x61, 0x00, 0x03, 0x46 },
+	{ 0x48, 0x78, 0x00, 0x01, 0x61, 0x00, 0x02, 0xde }
+};
+static unsigned char sdentry[] = { 0x2f, 0x0d, 0x2f, 0x02, 0x9e, 0xfc, 0x04, 0x08 };
+static unsigned char sdnew[] = { 0x70, 0x00, 0x4e, 0x71 };
+
+static void
+ui_sdchk()
+{
+	unsigned char b[16];
+	int i, n, user;
+
+	if (ui.l_proc == 0)
+		return;
+	user = ui.l_proc->p_cred->cr_ruid != 0;
+	if (ui.l_sdchk == user + 1)
+		return;
+	ui.l_sdchk = user + 1;
+	if (copyin((caddr_t)0xd4b2, b, 8) || bcmp(b, sdentry, 8))
+		return;
+	for (i = 0; i < 2; i++)
+		if (copyin((caddr_t)sdsite[i] - 4, b + 8 * i, 8) ||
+		    bcmp(b + 8 * i, sdold[i], 4) ||
+		    (bcmp(b + 8 * i + 4, sdold[i] + 4, 4) && bcmp(b + 8 * i + 4, sdnew, 4)))
+			return;
+	for (i = 0, n = 0; i < 2; i++)
+		if (bcmp(b + 8 * i + 4, user ? sdnew : sdold[i] + 4, 4)) {
+			if (copyout(user ? sdnew : sdold[i] + 4, (caddr_t)sdsite[i], 4))
+				return;
+			n = 1;
+		}
+	if (n)
+		dlm_cacheflush();
 }
 
 /*
@@ -693,6 +813,8 @@ uimisc(gp, cmd, arg, b, rvp)
 			t->t_left = n > 0 ? n : 0;
 		} else
 			t->t_tick = 1;
+		ui_lapchk();
+		ui_sdchk();
 		if (ui.l_tid == 0 && (ui.l_tid = ttimeout(uitick, (caddr_t)0, 1L)) == -1) {
 			ui.l_tid = 0;
 			return EAGAIN;
@@ -808,7 +930,7 @@ uimisc(gp, cmd, arg, b, rvp)
 			uidetach(gp);
 		return 0;
 	case 44: case 45:		/* UI_REBOOT, UI_SHUTDOWN */
-		return EPERM;
+		return uiadmin(UIOC_NUM(cmd) == 45 ? 0 : 1);
 	case 37:			/* UI_ATTACHLAYER {id, size, flags} */
 		return uiattach(gp, rvp);
 	case 40:			/* UI_SELECT: no select events */
