@@ -1,6 +1,6 @@
 # Directory passthrough handler
 
-`container-handler` translates AmigaDOS packets into the host directory broker's requests. It uses opaque host handles and a shared 4 KiB transfer buffer. Reads and writes split larger requests. Waiting uses `timer.device`, allowing other Amiga tasks to run.
+`container-handler` translates AmigaDOS packets into the host directory broker's requests. It uses opaque host handles and a shared 4 KiB transfer buffer. Reads and writes split larger requests. Each request writes a doorbell in the boot ROM's space, which wakes the host broker; `timer.device` waits cover a broker without one.
 
 Build without running guest code:
 

@@ -25,6 +25,7 @@ extern void dlm_cacheflush();
 extern long lbolt;
 extern struct modwrapper tosguest_wrapper;
 extern struct proc *prfind();
+extern int tos_maprom();
 
 struct tosctr tosc;
 int	tos_trace = 0;		/* 1: console lines for bus errors and odd accesses */
@@ -680,6 +681,9 @@ tosioctl(dev, cmd, arg, mode, cr, rvp)
 
 	if (cmd == TOSIOC_ENTER)
 		return enter(arg, cr);
+	if (cmd == TOSIOC_MAPROM)
+		return GUESTP(curproc) && GUESTP(curproc)->gp_prof != &tos_profile ?
+		    EPERM : tos_maprom(dev, rvp);
 	if (cmd == TOSIOC_SOCK && GUESTP(curproc) &&
 	    GUESTP(curproc)->gp_prof == &tos_profile && (GUESTP(curproc)->gp_flags & TGF_SOLO))
 		return tsock(arg);

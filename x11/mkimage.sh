@@ -5,7 +5,7 @@
 #
 #   sh x11/mkimage.sh [kernel.elf [out.img]]
 #
-# Needs package.sh's $X11W/pkg.  BOOTX=1 boots to xdm (/etc/default/x).
+# Builds the server, client libraries, clients and package as needed.  BOOTX=1 boots to xdm (/etc/default/x).
 # XPKGS="manx xview" also installs those
 # packages (x11/NAME/build.sh, after build.sh clibs) as pkgadd would.
 # Tape segments from $AMIX_TAPE or, for 02 03 10, the live diskroot's
@@ -35,6 +35,10 @@ mkdir -p "$R/build/tape"
 for s in 02 03 10; do
 	cp "${AMIX_TAPE:-$AUX/kernel/mac/diskroot/build/tape}/$s" "$R/build/tape/$s"
 done
+# the X pieces it installs, built or refreshed here
+[ -f "$X11W/src/xc/programs/Xserver/Xamix" ] || X11W=$X11W sh "$D/build.sh"
+X11W=$X11W sh "$D/build.sh" clibs clients
+X11W=$X11W sh "$D/package.sh"
 ln -s "$X11W/pkg" "$R/x11pkg"
 (cd "$R" && patch -s -p4 < "$D/diskroot/x11-diskroot.diff")
 # the Mac environment's files (images/macenv/mkmacimage.sh)

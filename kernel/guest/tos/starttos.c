@@ -5,8 +5,9 @@
  *		[-m megabytes] [-M] [-S] [-v]
  *
  * ST-RAM is a shared mapping at 0, the ROM a read-only copy at its own
- * base, the machine-layer cartridge at $FA0000.  -P (a Falcon) runs the
- * machine's own ROM, mapped read-only from $E00000, with Falcon registers.  Drives are host
+ * base, the machine-layer cartridge at $FA0000.  On an Atari, unless
+ * -rom is given, and always with -P, the machine's own ROM runs in place,
+ * read-only at $E00000, with Falcon registers.  Drives are host
  * directories used with the caller's permissions: C:, the boot drive,
  * is ~/TOS (else /tos/sys, read-only) or, with -e, ~/TOS/env; U: is "/";
  * others come from /tos/sys/drives, ~/TOS/drives and -D.  -d makes C: a FAT image
@@ -41,9 +42,7 @@
 
 #define	CART	0xfa0000
 #define	CARTSZ	0x20000
-#define	FROM	0xe00000L	/* a Falcon's ROM */
-#define	FROMSZ	0x80000L
-#define	FROMCOPY "/etc/tos/rom"	/* the machine's ROM, copied at boot */
+#define	FROM	TOS_ROMBASE	/* a Falcon's ROM */
 
 static char *rom = "/etc/tos/emutos.img";	/* the free TOS; -rom for the user's */
 static char *cart = "/etc/tos/tosml.img";
@@ -55,7 +54,7 @@ static char *xdrv[26];			/* -D */
 static char *tab[26];			/* drive -> host directory */
 static char tro[26];			/* read-only */
 static long ramsize = 4L << 20;
-static int mono, stscreen, verbose, pass;
+static int mono, stscreen, verbose, pass, romarg;
 static int tfd;
 extern int fbpipe, vpass;
 
@@ -361,7 +360,7 @@ main(argc, argv)
 			c++;		/* skip the option's argument */
 	while ((c = getopt(argc, argv, "r:c:C:d:D:e:u:Um:MPSv")) != -1)
 		switch (c) {
-		case 'r': rom = optarg; break;
+		case 'r': rom = optarg; romarg = 1; break;
 		case 'c': cart = optarg; break;
 		case 'C': cdir = optarg; disk = 0; break;
 		case 'd': disk = optarg; cdir = 0; break;
@@ -406,23 +405,17 @@ main(argc, argv)
 		return 1;
 	}
 
+	/* the machine's own ROM, in place: asked for with -P, else unless -rom */
+	if (pass || !romarg) {
+		if ((c = ioctl(tfd, TOSIOC_MAPROM, 0)) > 0)
+			pass = 1;
+		else if (pass)
+			die("the machine's ROM");
+	}
 	if (pass) {
-		if ((c = open("/dev/mem", O_RDONLY)) >= 0) {
-			if (mmap((caddr_t)FROM, FROMSZ, PROT_READ | PROT_EXEC, MAP_SHARED | MAP_FIXED,
-			    c, (off_t)FROM) == (caddr_t)-1)
-				die("ROM");
-			close(c);
-		} else {
-			/* not root: the copy of the ROM made at boot */
-			region(FROM, FROMSZ, 0);
-			if (readall(FROMCOPY, (char *)FROM, FROMSZ) != FROMSZ)
-				die(FROMCOPY);
-			if (mprotect((caddr_t)FROM, FROMSZ, PROT_READ | PROT_EXEC) < 0)
-				die("mprotect");
-		}
 		rom = "the ROM";
 		memcpy(rbuf, (char *)FROM, 16);
-		n = FROMSZ;
+		n = c;
 	} else
 		n = readall(rom, rbuf, (long)sizeof rbuf);
 	base = get32((unsigned char *)rbuf + 8);

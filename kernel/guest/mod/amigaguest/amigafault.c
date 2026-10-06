@@ -1,11 +1,13 @@
 #include "amiga.h"
 
+long amiga_nfast;	/* INTENA writes on the fast path */
+
 struct ix {
 	struct amigactr *ctr;
 	struct amigadev dev;
 	unsigned char gary[4];
 	unsigned long fault;
-	int hit, read;
+	int hit, read, bell;
 	char	*r;		/* saved frame */
 	long	pc;		/* of the instruction */
 	int	len;
@@ -199,6 +201,7 @@ ioaccess(x, a, sz, vp, wr)
 	if (a <= x->fault && x->fault - a < (unsigned long)sz) x->hit = 1;
 	if (x->ctr->ac_config.ae_flags & AMIGAF_CENSUS) census(x, a, wr);
 	if (a >= 0xbfa000 && a < 0xbfb000) a += 0x4000;
+	if (wr && a == AMIGA_BELL) x->bell = 1;
 	if (openbus(x, a, sz)) {
 		if (!wr) *vp = sz == 1 ? 0xffUL : sz == 2 ? 0xffffUL : 0xffffffffUL;
 		return 0;
@@ -712,19 +715,55 @@ amiga_fault(gp, r, v)
 	struct ix x;
 	unsigned long saved[16], epoch, fa;
 	unsigned char b[4];
-	int i, j, sr = GR_SR(r), ssw, s, e, wb, tries;
+	int i, j, sr = GR_SR(r), ssw, s, e, wb, tries, w, n;
+	unsigned long value;
+	unsigned char op[8];
 	a->ac_stat.as_fault++;
 	a->ac_stat.as_lastpc = GR_PC(r);
 	if ((GR_FV(r) >> 12) != 7) return 1;
 	fa = G32(r + 84); a->ac_stat.as_lastaddr = fa;
 	ssw = G16(r + 76);
 	if ((ssw & 7) == 2 || (ssw & 7) == 6) return 1;
+	/*
+	 * Disable and Enable, a third of all faults, without the decoder:
+	 * a word write to INTENA as the only writeback, or before the
+	 * instruction ran, move.w #imm,$dff09a.
+	 */
+	w = G16(r + 82);
+	n = 0;
+	if (fa == 0xdff09a && !(ssw & 0x100) && (w & 0xf8) == 0xc0 && ((w & 7) == 1 || (w & 7) == 5) &&
+	    !((G16(r + 78) | G16(r + 80)) & 0x80) && G32(r + 104) == 0xdff09a) {
+		value = G32(r + 108) & 0xffff;
+		P16(r + 82, w & ~0x80);
+	} else if (fa == 0xdff09a && !(ssw & 0x100) && !((G16(r + 78) | G16(r + 80) | w) & 0x80) &&
+	    copyin((caddr_t)GR_PC(r), (caddr_t)op, 8) == 0 && G16(op) == 0x33fc &&
+	    G32(op + 4) == 0xdff09a) {
+		value = G16(op + 2);
+		n = 8;
+	} else
+		value = 0x10000;
+	if (value < 0x10000) {
+		if (a->ac_config.ae_flags & AMIGAF_CENSUS)
+			a->ac_census.custom[0x9a / 2][1]++;
+		amiga_nfast++;
+		s = amiga_spl();
+		if (value & 0x8000)
+			a->ac_dev.intena |= value & 0x7fff;
+		else
+			a->ac_dev.intena &= ~value;
+		a->ac_epoch++;
+		amiga_splx(s);
+		GR_PC(r) += n;
+		u.u_sigflag |= USTKCLEAR;
+		guest_trapret();
+		return 0;
+	}
 	for (i = 0; i < 8; i++) saved[i] = GR_D(r, i);
 	for (i = 0; i < 7; i++) saved[i + 8] = GR_A(r, i);
 	saved[15] = GR_USP(r);
 	for (tries = 0; tries < 3; tries++) {
 		x.r = r; x.pc = GR_PC(r); x.len = 0; x.ba = 0;
-		x.ctr = a; x.fault = fa; x.hit = 0; x.read = ssw & 0x100; x.nst = 0;
+		x.ctr = a; x.fault = fa; x.hit = 0; x.read = ssw & 0x100; x.nst = 0; x.bell = 0;
 		s = amiga_spl();
 		epoch = a->ac_epoch; x.dev = a->ac_dev;
 		for (i = 0; i < 4; i++) x.gary[i] = a->ac_gary[i];
@@ -739,6 +778,8 @@ amiga_fault(gp, r, v)
 				for (i = 0; i < 4; i++) a->ac_gary[i] = x.gary[i];
 				a->ac_epoch++;
 				amiga_splx(s);
+				if (x.bell)
+					amiga_ring(gp);
 				for (i = 0; i < x.nst; i++) {
 					for (j = 0; j < x.st[i].sz; j++)
 						b[j] = x.st[i].v >> (8 * (x.st[i].sz - 1 - j));

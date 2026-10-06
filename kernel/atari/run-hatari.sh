@@ -22,7 +22,10 @@
 set -e
 
 AUX=$(cd "$(dirname "$0")/../.." && pwd)
-HATARI=${HATARI:-$AUX/ref/hatari/build/src/hatari}
+if [ -z "$HATARI" ]; then
+	HATARI=$AUX/ref/hatari/build/src/hatari
+	sh "$AUX/kernel/atari/build-hatari.sh" > /dev/null	# rebuilds after a patch changes
+fi
 CPU=030 ST=14 TT=0 DISK= BUS=ide ROM= FRAMES=1500 OUT=./hatari-shot.png TMO=300 LOG=
 KERNEL= KARGS= KEYS=
 while getopts c:s:t:d:b:r:f:o:T:l:k:a:K: o; do

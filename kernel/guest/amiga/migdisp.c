@@ -8,16 +8,20 @@
 #include <unistd.h>
 #include <errno.h>
 #include <poll.h>
+#include "amigaio.h"
+#include <sys/time.h>
 #include "dsio.h"
 #include "rtgshare.h"
 #include "inputshare.h"
 #include "hostfswire.h"
 #include "miglog.h"
 
-extern int munmap();
+extern int munmap(), gettimeofday();
 
+int migkick = -1;
 static unsigned short red[256], green[256], blue[256];
 static unsigned char *shadow;
+static int pensok;   /* the pointer's pens match the palette and its colours */
 
 /* 5x7 glyphs, a row per byte, for the startup status */
 static const char glyphs[] = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.:/-_?";
@@ -94,6 +98,16 @@ static int rtg_blank(int fd, unsigned char *fb, struct fbinfo *fi)
     return 0;
 }
 
+/* rows of N bytes, N a multiple of 4 on 4-byte boundaries, are equal */
+static int same(const unsigned char *a, const unsigned char *b, unsigned int n)
+{
+    const unsigned long *x = (const unsigned long *)a, *y = (const unsigned long *)b;
+    if ((n | (unsigned long)a | (unsigned long)b) & 3) return !memcmp(a, b, n);
+    for (n >>= 2; n; n--)
+        if (*x++ != *y++) return 0;
+    return 1;
+}
+
 /*
  * Copies the rows that changed since the last refresh, or all with full:
  * the framebuffer is uncached, so writes cost far more than compares.
@@ -109,7 +123,7 @@ static int rtg_refresh(int fd, unsigned char *fb, struct fbinfo *fi,
     const unsigned char *src;
     for (i = 0; i < 256; i++) {
         if (red[i] != s->palette[i][0] || green[i] != s->palette[i][1] ||
-            blue[i] != s->palette[i][2]) changed = 1;
+            blue[i] != s->palette[i][2]) changed = 1, pensok = 0;
         red[i] = s->palette[i][0];
         green[i] = s->palette[i][1];
         blue[i] = s->palette[i][2];
@@ -119,13 +133,81 @@ static int rtg_refresh(int fd, unsigned char *fb, struct fbinfo *fi,
     if (changed && ioctl(fd, FBIOPUTCMAP, &cm) < 0) return -1;
     for (y = 0; y < s->height; y++) {
         src = (const unsigned char *)MIG_RTG_PIXELS + s->offset + y * s->stride;
-        if (!full && !memcmp(shadow + y * s->width, src, s->width)) continue;
+        if (!full && same(shadow + y * s->width, src, s->width)) continue;
         memcpy(shadow + y * s->width, src, s->width);
         memcpy(fb + fi->fi_offset + (yoff + y) * fi->fi_rowbytes + xoff,
             shadow + y * s->width, s->width);
         rows++;
     }
     return rows + changed;
+}
+
+/* the host-drawn pointer: the card's state, where it is drawn, its pens */
+static struct { unsigned int on, w, h; int x, y; unsigned short rgb[4][3];
+    unsigned char img[48][16]; } cur, drawn;
+static int curshown, curx0, cury0, curx1, cury1;
+static unsigned char pen[4];
+
+/* the card's pointer state, if it is between updates; 1 if it changed */
+static int cursor_read(void)
+{
+    volatile struct mig_rtg *s = (volatile struct mig_rtg *)MIG_RTG_BASE;
+    static unsigned int done = 0xffffffffU;
+    unsigned int seq = s->cseq, old = cur.on;
+    int ox = cur.x, oy = cur.y;
+    if (seq & 1 || seq == done || !s->cursor) return 0;
+    MIG_RTG_BARRIER();
+    cur.on = s->con; cur.x = s->cx; cur.y = s->cy;
+    /* guest memory: keep the sums below in range */
+    if (cur.x < -4096 || cur.x > 4096 || cur.y < -4096 || cur.y > 4096) cur.on = 0;
+    cur.w = s->cw > 16 ? 16 : s->cw; cur.h = s->ch > 48 ? 48 : s->ch;
+    memcpy(cur.rgb, (const void *)s->crgb, sizeof cur.rgb);
+    memcpy(cur.img, (const void *)s->cimg, sizeof cur.img);
+    MIG_RTG_BARRIER();
+    if (seq != s->cseq) { cur.on = 0; return 1; }
+    done = seq;
+    return cur.on != old || cur.x != ox || cur.y != oy ||
+        memcmp(&cur, &drawn, sizeof cur) != 0;
+}
+
+/* screen rows of the old pointer from the shadow, then the new one on top */
+static void cursor_draw(unsigned char *fb, struct fbinfo *fi, struct mig_rtg *s)
+{
+    unsigned int xoff = (fi->fi_width - s->width) / 2, yoff = (fi->fi_height - s->height) / 2;
+    unsigned int i, best, d, c;
+    int x, y;
+    unsigned char *row;
+    if (curshown)
+        for (y = cury0; y < cury1; y++)
+            memcpy(fb + fi->fi_offset + (yoff + y) * fi->fi_rowbytes + xoff + curx0,
+                shadow + y * s->width + curx0, curx1 - curx0);
+    curshown = 0;
+    if (memcmp(cur.rgb, drawn.rgb, sizeof cur.rgb)) pensok = 0;
+    drawn = cur;
+    if (!cur.on || !cur.w || !cur.h) return;
+    if (!pensok && !curx1) miglog(0, "pointer drawn by the display");
+    /* nearest palette entries to the sprite colours */
+    for (c = 1; c < 4 && !pensok; c++) {
+        best = 0xffffffffUL; pen[c] = 0;
+        for (i = 0; i < 256; i++) {
+            d = (unsigned int)abs((int)(red[i] >> 8) - (cur.rgb[c][0] >> 8)) +
+                abs((int)(green[i] >> 8) - (cur.rgb[c][1] >> 8)) +
+                abs((int)(blue[i] >> 8) - (cur.rgb[c][2] >> 8));
+            if (d < best) { best = d; pen[c] = i; }
+        }
+    }
+    pensok = 1;
+    curx0 = cur.x < 0 ? 0 : cur.x; cury0 = cur.y < 0 ? 0 : cur.y;
+    curx1 = cur.x + (int)cur.w; cury1 = cur.y + (int)cur.h;
+    if (curx1 > (int)s->width) curx1 = s->width;
+    if (cury1 > (int)s->height) cury1 = s->height;
+    if (curx0 >= curx1 || cury0 >= cury1) return;
+    for (y = cury0; y < cury1; y++) {
+        row = fb + fi->fi_offset + (yoff + y) * fi->fi_rowbytes + xoff;
+        for (x = curx0; x < curx1; x++)
+            if ((c = cur.img[y - cur.y][x - cur.x] & 3) != 0) row[x] = pen[c];
+    }
+    curshown = 1;
 }
 
 static int input_open(const char *name, int session, struct evinfo *info)
@@ -156,6 +238,13 @@ static void input_read(int fd, struct evinfo *info, int hidden,
             events[i].ie_type, events[i].ie_code, events[i].ie_value);
 }
 
+static long now(void)
+{
+    struct timeval tv;
+    gettimeofday(&tv, (void *)0);
+    return tv.tv_sec * 1000L + tv.tv_usec / 1000;
+}
+
 int migdisp(int ready, int life)
 {
     struct fbacq acq;
@@ -168,7 +257,11 @@ int migdisp(int ready, int life)
     struct mig_rtg rtg;
     int rtgactive = 0;
     unsigned char *fb;
-    int fd, hidden = 0, status, lastw = 0, lasth = 0, idle = 0, shown = 0;
+    int fd, hidden = 0, status, lastw = 0, lasth = 0, idle = 0, shown = 0, soon = 0, fresh = 0;
+    pid_t guest = getppid();
+    long tin = 0, waited = 0, longest = 0, changes = 0, lastfull = 0, t;
+    long wwait = 0, wlong = 0, wn = 0, wlog = 0, ms;
+    int rows, moved, kick;
     long nextstatus = 0;
     char success = 1;
     fd = open("/dev/fb0", O_RDWR);
@@ -195,6 +288,7 @@ int migdisp(int ready, int life)
     if (!shadow) { fprintf(stderr, "startmig: display: out of memory\n"); return 1; }
     miglog(0, "display session %ux%u", fi.fi_width, fi.fi_height);
     mig_rtg_init((struct mig_rtg *)MIG_RTG_BASE, fi.fi_width, fi.fi_height);
+    ((struct mig_rtg *)MIG_RTG_BASE)->cursor = 1;
     mig_input_init(input);
     memset(&inputstate, 0, sizeof inputstate);
     memset(&keyinfo, 0, sizeof keyinfo);
@@ -208,8 +302,14 @@ int migdisp(int ready, int life)
     p[0].fd = life; p[1].fd = fd;
     p[0].events = p[1].events = p[2].events = p[3].events = POLLIN;
     for (;;) {
-        /* slower refreshes while the screen stays unchanged */
-        status = poll(p, 4, hidden ? 500 : idle > 25 ? 120 : 40);
+        /*
+         * Compares the screen every 40 ms, 120 ms while it stays unchanged;
+         * the pointer a tick after input, when the guest has moved it.
+         * Timeouts are whole ticks: a shorter one would spin.
+         */
+        t = lastfull + (idle > 25 ? 120 : 40) - now();
+        status = poll(p, 4, hidden ? 500 : soon || t < 20 ? 20 : (int)t);
+        ms = now();
         if (status < 0) {
             if (errno == EINTR) continue;
             perror("startmig: display poll"); break;
@@ -221,15 +321,29 @@ int migdisp(int ready, int life)
             if (note.fn_type == FBN_HIDDEN) {
                 hidden = 1;
                 mig_input_reset(input, &inputstate);
+                if (migkick >= 0) {
+                    input->doorbell = 1;
+                    ioctl(migkick, AMIGAIOC_KICK, guest);
+                }
             }
             if (note.fn_type == FBN_SHOWN) { hidden = 0; rtgactive = -1; }
             if (note.fn_type == FBN_MODE) break;
         }
+        soon = (p[2].revents | p[3].revents) & POLLIN && !hidden;
         if ((p[2].revents | p[3].revents) & POLLIN) idle = 0;
+        kick = input->head == input->tail;
         if (p[2].revents & POLLIN)
             input_read(p[2].fd, &keyinfo, hidden, input, &inputstate);
         if (p[3].revents & POLLIN)
             input_read(p[3].fd, &mouseinfo, hidden, input, &inputstate);
+        /* the guest takes the events now rather than at its next poll */
+        /* only when the queue was empty: otherwise the guest is already on it */
+        if (soon && migkick >= 0 && kick) {
+            input->doorbell = 1;
+            ioctl(migkick, AMIGAIOC_KICK, guest);
+        }
+        fresh = soon && !tin;
+        if (fresh) tin = ms;
         if ((p[2].revents | p[3].revents) & (POLLHUP | POLLERR | POLLNVAL)) {
             mig_input_reset(input, &inputstate);
             if (p[2].revents & (POLLHUP | POLLERR | POLLNVAL)) {
@@ -265,15 +379,43 @@ int migdisp(int ready, int life)
         status = rtgactive != MIG_RTG_VISIBLE || lastw != rtg.width || lasth != rtg.height;
         if (status) {
             memset(fb + fi.fi_offset, 0, fi.fi_rowbytes * fi.fi_height);
+            curshown = 0;
             lastw = rtg.width; lasth = rtg.height;
         }
         rtgactive = MIG_RTG_VISIBLE;
-        status = rtg_refresh(fd, fb, &fi, &rtg, status);
-        if (status < 0) {
-            perror("startmig: RTG palette"); break;
+        rows = 0;
+        if (status || ms - lastfull >= (idle > 25 ? 120 : 40) - 20) {
+            rows = rtg_refresh(fd, fb, &fi, &rtg, status);
+            if (rows < 0) {
+                perror("startmig: RTG palette"); break;
+            }
+            lastfull = ms;
+            idle = rows ? 0 : idle + 1;
         }
-        idle = status ? 0 : idle + 1;
+        moved = cursor_read();
+        if (moved || rows)
+            cursor_draw(fb, &fi, &rtg);
+        /* input to the first screen change in a later refresh */
+        if ((moved || rows) && tin && !fresh) {
+            tin = ms - tin;
+            if (tin < 1000) {
+                waited += tin; changes++;
+                if (tin > longest) longest = tin;
+                wwait += tin; wn++;
+                if (tin > wlong) wlong = tin;
+            }
+            tin = 0;
+        }
+        if (wn && ms - wlog >= 2000) {
+            miglog(0, "input to screen: %ld changes, %ld ms average, %ld ms longest",
+                wn, wwait / wn, wlong);
+            wwait = wlong = wn = 0;
+            wlog = ms;
+        }
     }
+    if (changes)
+        miglog(1, "input to screen: %ld changes, %ld ms average, %ld ms longest",
+            changes, waited / changes, longest);
     mig_input_reset(input, &inputstate);
     if (p[2].fd >= 0) close(p[2].fd);
     if (p[3].fd >= 0) close(p[3].fd);

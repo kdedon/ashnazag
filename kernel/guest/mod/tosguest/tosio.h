@@ -21,6 +21,9 @@
 #define	TOSIOC_OWNER	TOSIOC(5)	/* out struct tosowner: who runs the container */
 #define	TOSIOC_PAUSE	TOSIOC(6)	/* value: 1 the guest sleeps, 0 it runs */
 #define	TOSIOC_SOCK	TOSIOC(7)	/* in/out struct tossock: the guest's sockets */
+#define	TOSIOC_MAPROM	TOSIOC(8)	/* the machine's ROM, read-only at TOS_ROMBASE; returns its size */
+
+#define	TOS_ROMBASE	0xe00000L
 
 struct tosenter {
 	unsigned long	te_ramsize;	/* ST-RAM at 0 */

@@ -169,5 +169,6 @@ extern int guest_getsr();		/* (gp, regs): the SR the guest sees */
 extern void guest_setsr();		/* (gp, regs, sr): switches stacks */
 extern void guest_trapret();		/* reschedule, deliverable signals */
 extern int guest_reflect();		/* (gp, regs, pc, fv, x, n, ipl) */
+extern int guest_rommap();		/* (dev, pa, size): the host's ROM in place */
 
 #endif	/* _GUEST_H */

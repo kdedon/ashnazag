@@ -1480,6 +1480,8 @@ scc_wr(o, v)
  */
 __asm__(".weak ata_machtype");
 extern unsigned long ata_machtype;
+/* read at run time: the compiler takes a declared object's address as nonzero */
+static unsigned long *volatile machtype = &ata_machtype;
 
 static int
 falcon_rd(o)
@@ -1489,7 +1491,7 @@ falcon_rd(o)
 	int v, n;
 
 	if (o == 0xff8006) {		/* bits 5, 4 and 1: ST-RAM 512 KB << n, 5 = 14 MB */
-		v = &ata_machtype ? *(volatile unsigned char *)0xffff8006 : 0x80;
+		v = machtype ? *(volatile unsigned char *)0xffff8006 : 0x80;
 		for (n = 0; n < 4 && 0x80000 << (n + 1) <= t->t_ramsize; n++)
 			;
 		if (t->t_ramsize >= 0xe00000)

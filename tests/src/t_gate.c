@@ -3,18 +3,23 @@
  *
  * trap #0 and trap #10 reach the same system call path; on a kernel
  * with guest support trap #0 passes its gate, trap #10 has none.  Both
- * run getpid in alternating rounds; the best round of each gives the
- * time per call.  Pass: both return the pid, and trap #0 costs at most
- * a quarter more than trap #10 (the gate is a few instructions; the
- * bound only catches a gross regression under emulator noise).
+ * run getpid in alternating rounds in several fresh processes; the best
+ * round of each over all processes gives the time per call.  The
+ * emulator's cost for a call varies by up to 50% with where a process's
+ * code lands, and a process keeps its placement, so one process cannot
+ * give a stable ratio.  Pass: both return the pid, and trap #0 costs at
+ * most a quarter more than trap #10 (the gate is a few instructions; a
+ * real regression is slower in every process).
  */
 #include <sys/types.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <sys/wait.h>
 #include "t.h"
 
-#define	CALLS	1000000	/* about 100 clock ticks per round: one tick is 1% */
-#define	ROUNDS	5
+#define	CALLS	500000	/* about 50 clock ticks per round: one tick is 2% */
+#define	ROUNDS	3
+#define	PROCS	5
 
 static int
 trap0()
@@ -49,29 +54,63 @@ int (*f)();
 	return (t1 - t0) * 100000L / CALLS;
 }
 
+/* best of ROUNDS alternating rounds, sent to fd as b0, b10 */
+static void
+child(fd)
+int fd;
+{
+	long b[2], t;
+	int k;
+
+	for (k = 0; k < ROUNDS; k++) {
+		t = timeit(trap0);
+		if (k == 0 || t < b[0])
+			b[0] = t;
+		t = timeit(trap10);
+		if (k == 0 || t < b[1])
+			b[1] = t;
+	}
+	(void)write(fd, (char *)b, sizeof b);
+	_exit(0);
+}
+
 int
 main()
 {
-	long b0 = 0, b10 = 0, t;
-	int k, pid = getpid();
+	long b0 = 0, b10 = 0, b[2];
+	int k, n = 0, pid = getpid(), fds[2];
 
 	t_init("gate", 120);
 	t_info("gates", "%s", t_kmem("guest_loading") == -1 ? "absent" : "present");
 	t_check("trap0_getpid", trap0() == pid, "trap #0 getpid gave %d, pid %d", trap0(), pid);
 	t_check("trap10_getpid", trap10() == pid, "trap #10 getpid gave %d, pid %d", trap10(), pid);
-	for (k = 0; k < ROUNDS; k++) {
-		t = timeit(trap0);
-		if (k == 0 || t < b0)
-			b0 = t;
-		t = timeit(trap10);
-		if (k == 0 || t < b10)
-			b10 = t;
+	if (pipe(fds) < 0) {
+		t_check("pipe", 0, "pipe failed");
+		return t_done();
+	}
+	for (k = 0; k < PROCS; k++) {
+		switch (fork()) {
+		case -1:
+			break;
+		case 0:
+			child(fds[1]);
+		default:
+			if (read(fds[0], (char *)b, sizeof b) == sizeof b) {
+				if (n == 0 || b[0] < b0)
+					b0 = b[0];
+				if (n == 0 || b[1] < b10)
+					b10 = b[1];
+				n++;
+			}
+			(void)wait((int *)0);
+		}
 		t_rearm(120);
 	}
+	t_check("procs", n == PROCS, "%d of %d timing processes reported", n, PROCS);
 	t_info("trap0_us", "%ld.%02ld", b0 / 100, b0 % 100);
 	t_info("trap10_us", "%ld.%02ld", b10 / 100, b10 % 100);
 	t_info("gate_cost", "%ld/100 us per call (%ld%%)", b0 - b10,
 	    b10 ? (b0 - b10) * 100 / b10 : 0L);
-	t_check("overhead", b0 <= b10 + b10 / 4, "trap #0 %ld vs trap #10 %ld (1/100 us)", b0, b10);
+	t_check("overhead", n > 0 && b0 <= b10 + b10 / 4, "trap #0 %ld vs trap #10 %ld (1/100 us)", b0, b10);
 	return t_done();
 }

@@ -25,7 +25,8 @@ Focus loss, device errors, and queue overflow request a reset. The guest
 releases tracked keys/buttons, drops queued events, then acknowledges the
 reset before the host resumes publishing. Events during recovery are dropped.
 A held key must be released and pressed again after recovery. The command
-polls once per DOS tick and processes at most 64 events before yielding.
+wakes on the host's PORTS doorbell or, without one, the next vertical
+blank, and processes at most 64 events before yielding.
 This bridge does not provide keyboard.device raw-matrix state or native
 custom-chip input. Guest execution and input delivery remain unverified.
 

@@ -75,12 +75,14 @@ if [ -f "$AMIGAROM" ] && [ -f "$AMIGASYS/S/Startup-Sequence" ]; then
 		done
 		echo "f /DEVS/Monitors/Container 755 0 3 $P/Devs/Monitors/Picasso96" >> "$M"
 	fi
+	# User-Startup also runs dragtest and, with IBrowse in SYS:, ibtest
+	U=$(cd "$AMIGASYS/S" && ls | grep -i '^user-startup$' || :)
+	{ [ -z "$U" ] || { cat "$AMIGASYS/S/$U"; echo; }; echo 'Run >NIL: Execute S:dragtest'
+	  [ ! -f "$AMIGASYS/IBrowse/IBrowse" ] || echo 'Run >NIL: Execute S:ibtest'; } > "$O/User-Startup"
+	[ -z "$U" ] || { sed "/ \/S\/$U /d" "$M" > "$M.new"; mv "$M.new" "$M"; }
+	echo "f /S/${U:-User-Startup} 755 0 3 $O/User-Startup" >> "$M"
+	echo "f /S/dragtest 755 0 3 $T/amiga/dragtest" >> "$M"
 	if [ -f "$AMIGASYS/IBrowse/IBrowse" ]; then
-		U=$(cd "$AMIGASYS/S" && ls | grep -i '^user-startup$' || :)
-		{ [ -z "$U" ] || cat "$AMIGASYS/S/$U"; echo 'Run >NIL: Execute S:ibtest'; } > "$O/User-Startup"
-		sed "/ \/S\/$U /d" "$M" > "$M.new"
-		mv "$M.new" "$M"
-		echo "f /S/${U:-User-Startup} 755 0 3 $O/User-Startup" >> "$M"
 		echo "f /S/ibtest 755 0 3 $T/amiga/ibrowse/ibtest" >> "$M"
 		echo "f /ibtest.html 755 0 3 $T/amiga/ibrowse/ibtest.html" >> "$M"
 	fi

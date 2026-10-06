@@ -9,6 +9,8 @@
 #define MIG_FS_IDLE 0U
 #define MIG_FS_REQUEST 1U
 #define MIG_FS_REPLY 2U
+/* a guest write here, in the boot ROM's space, wakes the host broker */
+#define MIG_FS_BELL 0x00f7fffcUL
 #define MIG_FS_BARRIER() __asm__ __volatile__("" : : : "memory")
 
 struct mig_fs_mailbox {
@@ -26,6 +28,7 @@ struct mig_fs_status {
 };
 typedef char mig_fs_fits[(sizeof(struct mig_fs_mailbox) <= MIG_FS_MAP_SIZE - 256) ? 1 : -1];
 
+extern int mig_fs_bell;
 int mig_fs_broker(int, int, const char *, int);
 int mig_fs_broker_at(int, int, const char *, int, struct mig_fs_mailbox *);
 #endif

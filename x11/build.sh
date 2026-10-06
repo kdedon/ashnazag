@@ -44,6 +44,24 @@ tree() {
 	cp "$AUX/kernel/mac/display/dsio.h" "$XC/programs/Xserver/hw/amix/rtg/fb/dsio.h"
 }
 
+# the config file for this cross build, from the repository's copy
+crossdef() {
+	sed -e "s,@AMIXBIN@,$TC/bin,g" \
+	    -e "s,@SYSINC@,$X11W/sysinc,g" \
+	    -e "s,@ELFBIN@,$AUX/toolchain/bin,g" \
+	    -e "s,@SYSLIBS@,-lsocket -lnsl -L$X11W/sysinc/lib -lscreen,g" \
+		"$D/config/cross.def" > "$XC/config/cf/cross.def"
+}
+
+# xdm's patch, if the tree was made without it
+newpatches() {
+	for p in "$D"/patches/*-xdm.diff; do
+		patch -s -p1 -R --dry-run -d "$XC" < "$p" > /dev/null 2>&1 && continue
+		echo "== patch $(basename "$p")"
+		patch -s -p1 -d "$XC" < "$p"
+	done
+}
+
 imake() {
 	cd "$XC/config/imake"
 	nice -n 19 gcc -w -O -DAMIX -DSVR4 -Dm68k -Ulinux -U__linux__ \
@@ -65,11 +83,7 @@ imake() {
 	mkdir -p "$X11W/sysinc/lib"
 	(cd "$X11W/sysinc" && cpio -i --quiet --to-stdout usr/amiga/lib/libscreen.so \
 		< "${AMIX_TAPE:-$AUX/kernel/mac/diskroot/build/tape}/02" > lib/libscreen.so)
-	sed -e "s,@AMIXBIN@,$TC/bin,g" \
-	    -e "s,@SYSINC@,$X11W/sysinc,g" \
-	    -e "s,@ELFBIN@,$AUX/toolchain/bin,g" \
-	    -e "s,@SYSLIBS@,-lsocket -lnsl -L$X11W/sysinc/lib -lscreen,g" \
-		"$D/config/cross.def" > "$XC/config/cf/cross.def"
+	crossdef
 	grep -q 'include <cross.def>' "$XC/config/cf/site.def" ||
 		sed -i 's,^#ifdef AfterVendorCF$,&\n#include <cross.def>,' "$XC/config/cf/site.def"
 }
@@ -130,6 +144,8 @@ clibs() {
 
 # Xt's dependants and Athena, xdm with its greeter linked in, the session tools
 clients() {
+	crossdef
+	newpatches
 	cd "$XC"
 	for d in lib/ICE lib/SM lib/Xmu lib/Xaw programs/xdm; do
 		(cd "$d" && sub_makefile)
@@ -141,7 +157,7 @@ clients() {
 		(cd "$d" && $MAKE all)
 	done
 	link="env AMIXLD_EXTRA=$X11W/libextra.a sh $D/config/amixld.sh"
-	(cd programs/xdm && $MAKE xdm XMULIB=-lXmu EXTRA_INCLUDES=-Igreeter SYS_LIBRARIES="-lsocket -lnsl" CCLINK="$link")
+	(cd programs/xdm && $MAKE clean > /dev/null && $MAKE xdm XMULIB=-lXmu EXTRA_INCLUDES=-Igreeter SYS_LIBRARIES="-lsocket -lnsl" CCLINK="$link")
 	cc="$TC/bin/m68k-cbm-sysv4-gcc -O -m68020 -I$XC/exports/include -I$X11W/sysinc"
 	L=$XC/exports/lib
 	mkdir -p "$X11W/session"

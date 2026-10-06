@@ -3,6 +3,8 @@
 #
 #   build-hatari.sh [-n]     -n: configure only
 #
+# Does nothing while the binary is newer than every local patch and the
+# source is at the pinned revision.
 # Source in ref/hatari (pinned below), binary in ref/hatari/build/src/hatari.
 # cmake and the SDL2 headers are fetched into ref/hatari/build/deps when the
 # host lacks them; the binary links against the host's libSDL2-2.0.so.0.
@@ -13,18 +15,34 @@ REV=a88efcfc			# branch debugger-memdump-mmu
 CMAKE=3.30.5
 
 AUX=$(cd "$(dirname "$0")/../.." && pwd)
+mkdir -p "$AUX/ref"
+# one build at a time: test runs call this too
+[ -n "$HATARI_BLOCK" ] || HATARI_BLOCK=1 exec flock "$AUX/ref/.hatari.lock" sh "$0" "$@"
 SRC=$AUX/ref/hatari
 B=$SRC/build
 D=$B/deps
 [ -d "$SRC/.git" ] || git clone -q "$URL" "$SRC"
-git -C "$SRC" fetch -q origin
-git -C "$SRC" checkout -q "$REV"
-# local fixes: cycle-exact 030 + MMU consumed a faulted prefetch word; a
-# command fifo with an idle writer was reported as a read error; rte
-# reran a data cycle the bus error handler had completed (DF cleared)
-for P in "$AUX"/kernel/atari/hatari-030ce-prefetch.patch "$AUX"/kernel/atari/hatari-fifo-eagain.patch \
-	"$AUX"/kernel/atari/hatari-030-rte-resume.patch; do
-	git -C "$SRC" apply -R --check "$P" 2>/dev/null || git -C "$SRC" apply "$P"
+# local fixes, every hatari-*.patch here: cycle-exact 030 + MMU consumed a
+# faulted prefetch word; a command fifo with an idle writer was reported as
+# a read error; rte reran a data cycle the bus error handler had completed
+# (DF cleared).  A patch newer than the binary resets the source and
+# applies them all again.
+PATCHES=$(ls "$AUX"/kernel/atari/hatari-*.patch)
+stale=
+[ -x "$B/src/hatari" ] || stale=1
+for P in $PATCHES; do
+	[ "$P" -nt "$B/src/hatari" ] && stale=1
+done
+[ "$(git -C "$SRC" rev-parse --short=8 HEAD)" = "$REV" ] || stale=1
+if [ -z "$stale" ] && [ "$1" != -n ]; then
+	ls -l "$B/src/hatari"
+	exit 0
+fi
+git -C "$SRC" cat-file -e "$REV^{commit}" 2>/dev/null || git -C "$SRC" fetch -q origin
+git -C "$SRC" checkout -q -f "$REV"
+git -C "$SRC" checkout -q -- .
+for P in $PATCHES; do
+	git -C "$SRC" apply "$P"
 done
 mkdir -p "$D"
 
