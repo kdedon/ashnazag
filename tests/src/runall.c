@@ -6,7 +6,9 @@
  * Mounts /proc, runs each test (the table below, or the names given) with a
  * timeout, then prints "TESTS DONE pass=N fail=M skip=S" counting result
  * lines.  A program that times out, dies on a signal, or exits nonzero
- * without a FAIL line adds one FAIL.
+ * without a FAIL line adds one FAIL.  With t_mac76 in the run, "HALT
+ * NEXT" comes first, and after the totals "t_mac76 halt" shuts the
+ * machine down; "HALT END" means it did not.
  */
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -45,10 +47,11 @@ static struct {
 	{ "t_gate", 150 },
 	{ "t_aux", 300 },
 	{ "t_mac", 330 },
-	{ "t_mac76", 330 },
+	{ "t_mac76", 600 },
 	{ "t_mac6", 330 },
 	/* a second run in the same boot: nothing of the first may linger */
 	{ "t_mac", 330 },
+	{ "t_mac6", 330 },
 	{ "t_vtop", 60 },
 	{ "t_display", 360 },
 	{ "t_tos", 700 },
@@ -98,6 +101,7 @@ addfail()
 }
 
 static int timedout;
+static char *runarg;		/* the test's one argument, if any */
 
 static void
 onalrm(sig)
@@ -132,7 +136,7 @@ int secs;
 		return 1;
 	}
 	if (pid == 0) {
-		execl(path, name, (char *)0);
+		execl(path, name, runarg, (char *)0);
 		sprintf(buf, "FAIL %s.run: exec: %s\n", name, strerror(errno));
 		say(buf);
 		addfail();
@@ -197,7 +201,7 @@ char **argv;
 {
 	struct utsname u;
 	char buf[256];
-	int i, pass, fail, skip;
+	int i, pass, fail, skip, halt;
 	long fm;
 
 	sprintf(buf, "T_RUNNER=%ld", (long)getpid());
@@ -219,13 +223,15 @@ char **argv;
 	sprintf(buf, "INFO runall: freemem %ld pages at start\n", fm);
 	say(buf);
 
+	halt = access("/tests/t_mac76", 0) == 0;
 	if (argc > 1) {
-		for (i = 1; i < argc; i++) {
+		for (halt = 0, i = 1; i < argc; i++) {
 			/* name[:seconds] */
 			char *c = strchr(argv[i], ':');
 
 			if (c)
 				*c++ = 0;
+			halt |= strcmp(argv[i], "t_mac76") == 0;
 			runone(argv[i], c ? atoi(c) : 120);
 		}
 	} else {
@@ -238,7 +244,14 @@ char **argv;
 	sprintf(buf, "INFO runall: freemem %ld pages at end\n", fm);
 	say(buf);
 	count(&pass, &fail, &skip);
+	if (halt)
+		say("HALT NEXT\n");
 	sprintf(buf, "TESTS DONE pass=%d fail=%d skip=%d\n", pass, fail, skip);
 	say(buf);
+	if (halt) {
+		runarg = "halt";
+		runone("t_mac76", 600);
+		say("HALT END\n");
+	}
 	return fail != 0;
 }

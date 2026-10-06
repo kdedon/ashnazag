@@ -2,9 +2,15 @@
 # an AppleDouble header file (%System) in place.
 #  - 'lpch' install groups that patch only Memory Manager traps get the
 #    notAUX condition (bit 8).
+#  - So do _ShutDown patches: A/UX's own ShutDown ends the session or
+#    halts through the kernel; the System's goes on to the ROM's
+#    power-off code.  A group that goes on with other modules is split
+#    after them, the rest keeping the group's condition.
 #  - A 'gpch' that stores a cache routine in the table at $DB8 skips it.
 # usage: auxguard.py [-n] %System     (-n: list only)
 import sys, os, struct
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import rsrcedit
 
 NOTAUX = 0x100
 MM = set(range(0xa01e, 0xa02e)) | {0xa036, 0xa040, 0xa057, 0xa064, 0xa09d}
@@ -75,16 +81,31 @@ if __name__ == '__main__':
     d = bytearray(open(a[0], 'rb').read())
     base, _ = fork(d)
     n = 0
+    splits = []
     for t, rid, off, ln in resources(d, base):
         if t != b'lpch':
             continue
-        for at, cond, traps in install_table(bytes(d[off:off + ln])):
+        b = bytes(d[off:off + ln])
+        for at, cond, traps in install_table(b):
             # OS trap words carry flag bits 8-10
-            if traps and all(v & ~0x700 in MM for v in traps) and not cond & NOTAUX:
-                print('lpch %d: %s' % (rid, ' '.join('%04x' % v for v in traps)))
-                cond |= NOTAUX
-                d[off + at:off + at + 3] = cond.to_bytes(3, 'big')
+            mm = traps and all(v & ~0x700 in MM for v in traps)
+            sd = 0
+            while sd < len(traps) and traps[sd] == 0xa895:
+                sd += 1
+            if (mm or sd) and not cond & NOTAUX:
+                print('lpch %d: %s' % (rid, ' '.join('%04x' % v for v in traps[:sd or len(traps)])))
+                d[off + at:off + at + 3] = (cond | NOTAUX).to_bytes(3, 'big')
                 n += 1
+                if sd and sd < len(traps):
+                    k = at + 3
+                    for i in range(sd):
+                        k += 5 if b[k] == 0xff else 3
+                    splits.append((rid, k, cond))
+    # the new group header after the _ShutDown entries
+    for rid, k, cond in reversed(splits):
+        o, ln, _ = rsrcedit.resource(d, b'lpch', rid)
+        r = bytes(d[o:o + ln])
+        rsrcedit.replace(d, b'lpch', rid, r[:k] + b'\xfe' + cond.to_bytes(3, 'big') + r[k:])
     # beq to bra before "movea.l $DB8,a1; move.w #124,d0; move.l a0,(a1,d0.w)"
     sig = bytes.fromhex('22780db8303c007c23880000')
     for t, rid, off, ln in resources(d, base):

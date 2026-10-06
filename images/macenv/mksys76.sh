@@ -83,6 +83,7 @@ if [ -n "$AR" ]; then
 		cp "$s" "$OUT/$f"
 	done
 fi
+sh "$D/logout/build.sh" "$OUT/Apple Menu Items"
 (cd "$OUT" && find . -type f ! -name .stamp -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) |
 	sha256sum | cut -c1-16 > "$OUT/.stamp"
 # invisible to the Finder: a header with the invisible flag

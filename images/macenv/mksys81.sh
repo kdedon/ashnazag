@@ -44,3 +44,5 @@ done
 "$B/hcopy" -m ":Utilities:SimpleText" "$W/f.bin"
 python3 "$AUX/tools/macbin2ad.py" -n SimpleText "$W/f.bin" "$OUT"
 "$B/humount" > /dev/null
+mkdir -p "$OUT/Apple Menu Items"
+sh "$D/logout/build.sh" "$OUT/Apple Menu Items"

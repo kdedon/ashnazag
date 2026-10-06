@@ -602,11 +602,23 @@ sysdump()
 
 /* Never returns: MMU and caches off, message, spin. */
 extern void mac_stop();
+extern void (*fbcons_panicfn)();
 
 void
 haltsys(how)
 int how;
 {
+	void (*f)();
+
+	/*
+	 * The console takes the screen from a session in front, as for a
+	 * panic: its text otherwise goes to a shadow in mapped memory,
+	 * which mac_stop cannot reach with the MMU off.
+	 */
+	if ((f = fbcons_panicfn) != 0) {
+		fbcons_panicfn = 0;
+		(*f)();
+	}
 	if (how == 0)
 		mac_stop("The system is halted; you may turn off power.\n");
 	else if (how == 1)

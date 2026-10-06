@@ -19,6 +19,16 @@ for line in log.split('\n'):
 	elif kind == 'SKIP':
 		skips.append('%s.%s: %s' % (area, name, why or ''))
 
+# HALT area.name: passes when the kernel's halt message follows, with no panic
+for m in re.finditer(r'^HALT ([\w-]+)\.(\S+)$', log, re.M):
+	area, name = m.groups()
+	rest = log[m.end():]
+	ok = 'system is halted' in rest and not re.search('panic', rest, re.I)
+	a = areas.setdefault(area, {'PASS': 0, 'FAIL': 0, 'SKIP': 0})
+	a['PASS' if ok else 'FAIL'] += 1
+	if not ok:
+		fails.append('%s.%s: no halt' % (area, name))
+
 done = re.search(r'^TESTS DONE (.*)$', log, re.M)
 print('%-12s %5s %5s %5s' % ('area', 'pass', 'fail', 'skip'))
 tot = {'PASS': 0, 'FAIL': 0, 'SKIP': 0}
