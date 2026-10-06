@@ -198,6 +198,9 @@ func QuadraRoot(entries []ufs.Entry, kernel io.ReaderAt, kernelSize int64) ([]uf
 		if err != nil {
 			return nil, err
 		}
+		if f.name == "inittab" {
+			b = withoutLines(b, "/usr/lib/sndd", "/usr/lib/sndaux") // not in this root
+		}
 		file(f.p, f.mode, 0, 3, b)
 	}
 	for _, p := range []string{"/var/adm/utmp", "/var/adm/utmpx"} {
@@ -237,4 +240,21 @@ func QuadraRoot(entries []ufs.Entry, kernel io.ReaderAt, kernelSize int64) ([]uf
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return provision.Apply(out, provision.DefaultPolicies(), nil, nil)
+}
+
+// withoutLines drops the lines that contain any of subs.
+func withoutLines(b []byte, subs ...string) []byte {
+	var out []byte
+	for _, l := range bytes.SplitAfter(b, []byte("\n")) {
+		keep := true
+		for _, sub := range subs {
+			if bytes.Contains(l, []byte(sub)) {
+				keep = false
+			}
+		}
+		if keep {
+			out = append(out, l...)
+		}
+	}
+	return out
 }
