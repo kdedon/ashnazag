@@ -90,25 +90,31 @@ find_card:
  move.l #RTG_BASE,%a1
  cmp.l #RTG_MAGIC,rtg_magic(%a1)
  bne return_zero
- cmp.l #1,rtg_version(%a1)
+ cmp.l #RTG_VERSION,rtg_version(%a1)
  bne return_zero
- cmp.l #4096,rtg_header_size(%a1)
- bne return_zero
- cmp.l #RTG_SIZE,rtg_memory_size(%a1)
+ cmp.l #RTG_HEADER_SIZE,rtg_header_size(%a1)
  bne return_zero
  cmp.l #1,rtg_format(%a1)
  bne return_zero
  move.l #1,lib_claimed(%a6)
  move.l %a1,gbi_RegisterBase(%a0)
- move.l #RTG_PIXELS,gbi_MemoryBase(%a0)
- move.l #RTG_SIZE,gbi_MemorySize(%a0)
- move.l #RTG_PIXELS,gbi_MemorySpaceBase(%a0)
- move.l #RTG_SIZE,gbi_MemorySpaceSize(%a0)
+ | the display session's memory, mapped by the launcher
+ move.l rtg_vram(%a1),gbi_MemoryBase(%a0)
+ move.l rtg_memory_size(%a1),gbi_MemorySize(%a0)
+ move.l rtg_vram(%a1),gbi_MemorySpaceBase(%a0)
+ move.l rtg_memory_size(%a1),gbi_MemorySpaceSize(%a0)
  moveq #1,%d0
  rts
 
 .macro callback field, target
  move.l #\target,\field(%a0)
+.endm
+| our function, with P96's own kept as the fallback for formats and masks
+.macro drawfn field, fallback, target
+ tst.l \fallback(%a0)
+ bne 1f
+ move.l \field(%a0),\fallback(%a0)
+1: move.l #\target,\field(%a0)
 .endm
 init_card:
  move.l #board_name,gbi_BoardName(%a0)
@@ -116,8 +122,9 @@ init_card:
  clr.l gbi_PaletteChipType(%a0)
  clr.l gbi_GraphicsControllerType(%a0)
  move.w #8,gbi_BitsPerCannon(%a0)
- | CPU rendering and a software pointer share the linear indexed buffer.
- or.l #0x05100000,gbi_Flags(%a0)
+ | In the display chain, direct access, own drawing functions without masks
+ or.l #0x04508000,gbi_Flags(%a0)
+ and.l #~0x01000000,gbi_Flags(%a0)
  move.w #2,gbi_RGBFormats(%a0)
  move.w #2,gbi_SoftSpriteFlags(%a0)
  | The host draws the pointer when it offers to: a hardware sprite.
@@ -168,6 +175,11 @@ init_card:
  callback gbi_SetSpritePosition, set_sprite_position
  callback gbi_SetSpriteImage, set_sprite_image
  callback gbi_SetSpriteColor, set_sprite_color
+ drawfn gbi_FillRect, gbi_FillRectDefault, fill_rect
+ drawfn gbi_InvertRect, gbi_InvertRectDefault, invert_rect
+ drawfn gbi_BlitRect, gbi_BlitRectDefault, blit_rect
+ drawfn gbi_BlitTemplate, gbi_BlitTemplateDefault, blit_template
+ drawfn gbi_BlitRectNoMaskComplete, gbi_BlitRectNoMaskCompleteDefault, blit_complete
  moveq #1,%d0
  rts
 noop:
@@ -210,7 +222,7 @@ publish_on:
  moveq #1,%d0
 1: move.l %d0,rtg_on(%a1)
  addq.l #1,rtg_seq(%a1)
- rts
+ bra ring
 set_gc:
  move.w %d0,gbi_Border(%a0)
  move.l %a1,gbi_ModeInfo(%a0)
@@ -219,34 +231,37 @@ set_gc:
  move.l #RTG_BASE,%a2
  addq.l #1,rtg_seq(%a2)
  moveq #0,%d0
- move.w gmi_Width(%a1),%d0
- move.l %d0,rtg_width(%a2)
  move.w gmi_Height(%a1),%d0
  move.l %d0,rtg_height(%a2)
- addq.l #1,rtg_seq(%a2)
+ move.w gmi_Width(%a1),%d0
+ move.l %d0,rtg_width(%a2)
+ | rows until SetPanning places the screen: one at the start of card memory
+ tst.l rtg_stride(%a2)
+ bne 1f
+ bsr row_bytes
+ move.l %d0,rtg_stride(%a2)
+1: addq.l #1,rtg_seq(%a2)
  move.l (%sp)+,%a2
- rts
+ bra ring
 set_panning:
  movem.l %d2-%d3/%a2,-(%sp)
  move.w %d1,gbi_XOffset(%a0)
  move.w %d2,gbi_YOffset(%a0)
  move.l #RTG_BASE,%a2
- and.l #65535,%d0
- addq.l #3,%d0
- and.l #-4,%d0
+ bsr row_bytes
  and.l #65535,%d1
  and.l #65535,%d2
  mulu.l %d0,%d2
  add.l %d1,%d2
  move.l %a1,%d3
- sub.l #RTG_PIXELS,%d3
+ sub.l rtg_vram(%a2),%d3
  add.l %d3,%d2
  addq.l #1,rtg_seq(%a2)
  move.l %d0,rtg_stride(%a2)
  move.l %d2,rtg_offset(%a2)
  addq.l #1,rtg_seq(%a2)
  movem.l (%sp)+,%d2-%d3/%a2
- rts
+ bra ring
 set_palette:
  movem.l %d2-%d3/%a2,-(%sp)
  and.l #65535,%d0
@@ -276,17 +291,34 @@ set_palette:
  move.w %d2,(%a2)+
  dbra %d1,2b
  addq.l #1,RTG_BASE+rtg_seq
+ bsr ring
 palette_done:
  movem.l (%sp)+,%d2-%d3/%a2
  rts
+| wakes the host display for the new state: the write faults; 1 is the SYS: handler's
+ring:
+ move.l #2,0xf7fffc
+ rts
+| rows of 8-bit pixels, on four-byte boundaries; as the display's when
+| the card's memory is the display and the bitmap is as wide as it
 bytes_per_row:
  cmp.l #1,%d7
  bne return_zero
+| SetPanning passes no format: the board shows only CLUT screens
+row_bytes:
  and.l #65535,%d0
  beq return_zero
  cmp.l #4096,%d0
  bhi return_zero
- addq.l #3,%d0
+ tst.l RTG_BASE+rtg_copy
+ bne 1f
+ cmp.l RTG_BASE+rtg_max_width,%d0
+ bne 1f
+ cmp.l RTG_BASE+rtg_vstride,%d0
+ bhi 1f
+ move.l RTG_BASE+rtg_vstride,%d0
+ rts
+1: addq.l #3,%d0
  and.l #-4,%d0
  rts
 calculate_memory:
@@ -336,6 +368,7 @@ set_sprite:
  and.l #1,%d0
  move.l %d0,rtg_con(%a1)
  addq.l #1,rtg_cseq(%a1)
+ bsr ring
  moveq #1,%d0
  rts
 set_sprite_position:
@@ -343,7 +376,7 @@ set_sprite_position:
  addq.l #1,rtg_cseq(%a1)
  bsr sprite_xy
  addq.l #1,rtg_cseq(%a1)
- rts
+ bra ring
 | top left: the pointer position on the visible screen plus the hot spot
 sprite_xy:
  move.w gbi_MouseX(%a0),%d0
@@ -398,6 +431,7 @@ set_sprite_image:
  dbra %d1,5b
 6: dbra %d3,4b
  addq.l #1,rtg_cseq(%a1)
+ bsr ring
  movem.l (%sp)+,%d2-%d5/%a2-%a3
  rts
 | colours 1 to 3 as index 0 to 2, each component repeated in a word
@@ -416,7 +450,7 @@ set_sprite_color:
  move.b %d3,(%a1)+
  move.b %d3,(%a1)+
  addq.l #1,RTG_BASE+rtg_cseq
- rts
+ bra ring
 | No beam: in and out of the blank on alternate calls, so polls end.
 vsync_state:
  eor.l #1,state_vsync(%a0)
@@ -429,6 +463,7 @@ wait_vsync:
  move.w #255,%d0
 1: dbra %d0,1b
  rts
+ .include "draw.inc"
  .balign 4
 clocks: .long 25175000,40000000,65000000,108000000
 code_end:

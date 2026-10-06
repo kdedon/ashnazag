@@ -4,7 +4,7 @@
 #   sh kernel/mac/bootblk/build.sh [outdir]
 #
 # outdir defaults to kernel/mac/bootblk/build: bootblk.bin (1024 bytes,
-# parameters empty), bootblk.lst (disassembly) and mkbb.
+# parameters empty), bootblk.lst (listing) and mkbb.
 set -e
 
 D=$(cd "$(dirname "$0")" && pwd)

@@ -30,6 +30,7 @@ entry:	lea	%pc@(__bss_start),%a0
 |   0 cpu (30, 40, 60)  4 entry  8 stack  12 boot record dst
 |   16 its src  20 its length  24 segment count
 |   28 segments: dst, src, file size, memory size
+|   92 address of a boot record word to translate to physical, or 0
 	.globl	go, go_kernel, go_end
 go:	movew	#0x2700,%sr
 	moveal	%sp@(4),%a4
@@ -46,7 +47,29 @@ go:	movew	#0x2700,%sr
 	pmove	%sp@,%tt1
 	addql	#4,%sp
 	jmp	%a4@
-1:	.word	0xf4f8			| cpusha %bc
+1:	movel	%a6@(92),%d1
+	beqs	2f
+	moveal	%d1,%a1
+	moveal	%a1@,%a0
+	moveq	#5,%d1
+	.word	0x4e7b,0x1001		| movec %d1,%dfc
+	cmpil	#60,%a6@
+	bnes	3f
+	.word	0xf5c8			| plpar (%a0)
+	movel	%a0,%a1@
+	bras	2f
+3:	.word	0xf568			| ptestr (%a0)
+	.word	0x4e7a,0x1805		| movec %mmusr,%d1
+	btst	#1,%d1			| transparent: as is
+	bnes	2f
+	btst	#0,%d1
+	beqs	2f
+	andiw	#0xf000,%d1
+	movel	%a0,%d2
+	andil	#0xfff,%d2
+	orl	%d2,%d1
+	movel	%d1,%a1@
+2:	.word	0xf4f8			| cpusha %bc
 	.word	0x4e7b,0x0002		| movec %d0,%cacr
 	.word	0x4e7b,0x0003		| movec %d0,%tc
 	.word	0x4e7b,0x0004		| movec %d0,%itt0
@@ -127,4 +150,29 @@ trap_frame:
 4:	trap	#14
 5:	moveal	%a6,%sp
 	moveml	%sp@+,%d2-%d7/%a2-%a6
+	rts
+
+| peek(addr, int *ok): the long at addr, in supervisor mode.  A bus
+| error returns 0 with *ok 0 instead of reaching TOS.
+	.globl	peek
+peek:	moveal	%sp@(4),%a0
+	movel	%a2,%sp@-
+	movew	%sr,%sp@-
+	oriw	#0x0700,%sr
+	movec	%vbr,%a2
+	movel	%a2@(8),%sp@-
+	lea	%pc@(1f),%a1
+	movel	%a1,%a2@(8)
+	moveal	%sp@(18),%a1
+	clrl	%a1@
+	movel	%sp,%d1
+	moveq	#0,%d0
+	nop
+	movel	%a0@,%d0
+	nop
+	addql	#1,%a1@
+1:	movel	%d1,%sp
+	movel	%sp@+,%a2@(8)
+	movew	%sp@+,%sr
+	movel	%sp@+,%a2
 	rts

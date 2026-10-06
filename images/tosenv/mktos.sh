@@ -10,14 +10,16 @@
 # 512 KB release zip, EMUTOSLANG its image (us); FVDI the fVDI tree
 # (kernel/guest/tos/fvdi/build.sh).  TOSAPPS names the
 # unpacked apps of APPS.md (default ref/tosapps); without them the
-# image has none.  NOTERADESK=1 leaves TeraDesk out,
-# NOFVDI=1 fVDI.
+# image has none.  CUBASE names mkcubase.sh's cubase.cpio (default
+# images/work/cubase), added to guest's ~/TOS when it exists.
+# NOTERADESK=1 leaves TeraDesk out, NOFVDI=1 fVDI.
 set -e
 D=$(cd "$(dirname "$0")" && pwd)
 AUX=$(cd "$D/../.." && pwd)
 G=$AUX/kernel/guest
 EMUTOS=${EMUTOS:-$AUX/ref/emutos-release/emutos-512k-1.4.zip}
 TOSAPPS=${TOSAPPS:-$AUX/ref/tosapps}
+CUBASE=${CUBASE:-$AUX/images/work/cubase/cubase.cpio}
 TC=$AUX/toolchain/amix
 SYS=$TC/m68k-cbm-sysv4/sysroot
 BIN=$AUX/toolchain/bin
@@ -32,20 +34,24 @@ LIBGCC=$(ls "$TC"/lib/gcc-lib/m68k-cbm-sysv4/*/libgcc.a | tail -1)
 # nonshared libc members
 (cd "$O/extra" && ar x "$SYS/usr/ccs/lib/libc.so" && rm -f libc.so.1 &&
  ar rc ../libextra.a $(ar t "$SYS/usr/ccs/lib/libc.so" | grep -v '^libc.so.1$'))
-for c in starttos tosdisp; do
-	nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -w -D__STDC__=0 \
-		-I"$G/mod/tosguest" -I"$AUX/kernel/mac/display" -c "$G/tos/$c.c" -o "$O/$c.o"
+for c in tos/starttos tos/tosdisp tos/tossnd sndout; do
+	nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -w -D__STDC__=0 -I"$G/mod/tosguest" \
+		-I"$G/include" -I"$AUX/kernel/mac/display" -I"$AUX/kernel/mac/sound" \
+		-c "$G/$c.c" -o "$O/${c#tos/}.o"
 done
 "$TC/bin/m68k-cbm-sysv4-ld" -o "$OUT/starttos" "$SYS/usr/ccs/lib/crt1.o" \
-	"$SYS/usr/ccs/lib/crti.o" "$O/starttos.o" "$O/tosdisp.o" "$SYS/usr/lib/libc.so.1" \
+	"$SYS/usr/ccs/lib/crti.o" "$O/starttos.o" "$O/tosdisp.o" "$O/tossnd.o" "$O/sndout.o" \
+	"$SYS/usr/lib/libc.so.1" \
 	"$O/libextra.a" "$LIBGCC" "$SYS/usr/ccs/lib/crtn.o"
 # cartridge: machine layer, the U: drive and STiK
 nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -m68020 -Wall -Wno-implicit -fno-builtin \
 	-c "$G/tos/hostfs.c" -o "$O/hostfs.o"
 nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -m68020 -Wall -Wno-implicit -fno-builtin \
 	-I"$G/mod/tosguest" -c "$G/tos/stik.c" -o "$O/stik.o"
+nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -m68020 -Wall -Wno-implicit -fno-builtin \
+	-I"$G/mod/tosguest" -c "$G/tos/xsnd.c" -o "$O/xsnd.o"
 "$BIN/m68k-elf-as" -m68040 --register-prefix-optional -o "$O/tosml.o" "$G/tos/tosml.s"
-"$BIN/m68k-elf-ld" --no-warn-rwx-segments -N -Ttext=0xfa0000 -o "$O/tosml.elf" "$O/tosml.o" "$O/hostfs.o" "$O/stik.o"
+"$BIN/m68k-elf-ld" --no-warn-rwx-segments -N -Ttext=0xfa0000 -o "$O/tosml.elf" "$O/tosml.o" "$O/hostfs.o" "$O/stik.o" "$O/xsnd.o"
 end=$("$BIN/m68k-elf-nm" "$O/tosml.elf" | awk '$3 == "_end" { print $1 }')
 [ $((0x$end)) -le $((0xfa0000 + 0x20000)) ] || { echo "[FAIL] cartridge ends at $end" >&2; exit 1; }
 "$BIN/m68k-elf-objcopy" -O binary "$O/tosml.elf" "$OUT/tosml.img"
@@ -101,6 +107,7 @@ fi
 # guest's TOS folder, as maketos makes it
 mkdir -p "$T/home/guest"
 (cd "$T/tos/sys" && find . | grep -v -x ./drives | cpio -pdm --quiet "$T/home/guest/TOS")
+[ ! -f "$CUBASE" ] || (cd "$T" && cpio -idm --quiet < "$CUBASE")
 find "$T" -type d -exec chmod 755 {} +
 find "$T" -type f -exec chmod 644 {} +
 (cd "$T" && find tos | cpio -o -H newc -R 0:3 --quiet) > "$OUT/sys.cpio"

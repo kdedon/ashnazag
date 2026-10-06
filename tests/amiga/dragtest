@@ -1,7 +1,16 @@
-; waits for the host test's go file, then opens a shell window to drag
+; runs the socket test on bsdgo; waits for the host test's go file, then opens a shell window to drag
 Lab wait
+If EXISTS SYS:bsdgo
+  SYS:bsdtest
+EndIf
 If NOT EXISTS SYS:draggo
   Wait 1
   Skip wait BACK
 EndIf
 NewShell WINDOW "CON:300/200/300/150/Drag"
+Lab cover
+If NOT EXISTS SYS:covergo
+  Wait 1
+  Skip cover BACK
+EndIf
+NewShell WINDOW "CON:0/12/640/468/Cover" FROM S:covershell

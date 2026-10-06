@@ -271,7 +271,7 @@ gcc:
   defined in the base or the Mac layer.
 - `sh kernel/mac/scsi/trial-link.sh WORKDIR` links the kernel in a scratch tree and runs the
   image checks: all `sd*` overrides bound, nothing unresolved, validator clean.
-- Worth checking in the disassembly: SR writes present in `splscsi`/`splrestore`; register
+- Worth checking in the object code: SR writes present in `splscsi`/`splrestore`; register
   polls re-read the chip; discarded INTR reads kept; `ncr_tc` re-reads TCM; `ncr_blind` has
   128 `movew` per direction and arms/restores u+0x374 on both exits; `p2int` calls
   `ncr96intr`.

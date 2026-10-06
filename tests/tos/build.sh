@@ -1,6 +1,7 @@
 #!/bin/sh
 # build.sh -- t_tos's inputs: starttos, the machine-layer cartridge, the
-# system C: folder with C:\AUTO\UTEST.PRG (checks the host drives),
+# system C: folder with C:\AUTO\UTEST.PRG (checks the host drives and
+# the XBIOS sound calls),
 # STIKTEST.PRG (checks the STiK transport), EXITTEST.PRG and SESSION.ACC
 # (the session's exit),
 # EmuTOS and the user's TOS ROM image.
@@ -41,27 +42,31 @@ case $TOSROM in
 esac
 [ -s "$R/etc/tos/rom" ] || rm -f "$R/etc/tos/rom"
 LIBGCC=$(ls "$TC"/lib/gcc-lib/m68k-cbm-sysv4/*/libgcc.a | tail -1)
-for c in starttos tosdisp; do
+for c in tos/starttos tos/tosdisp tos/tossnd sndout; do
 	nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -Wall -Wno-implicit -D__STDC__=0 \
-		-I"$G/mod/tosguest" -I"$KDIR/mac/display" -c "$G/tos/$c.c" -o "$O/$c.o"
+		-I"$G/mod/tosguest" -I"$G/include" -I"$KDIR/mac/display" -I"$KDIR/mac/sound" \
+		-c "$G/$c.c" -o "$O/${c#tos/}.o"
 done
 nice -n 19 "$TC/bin/m68k-cbm-sysv4-ld" -o "$R/tos/bin/starttos" "$SYS/usr/ccs/lib/crt1.o" \
-	"$SYS/usr/ccs/lib/crti.o" "$O/starttos.o" "$O/tosdisp.o" "$SYS/usr/lib/libc.so.1" \
+	"$SYS/usr/ccs/lib/crti.o" "$O/starttos.o" "$O/tosdisp.o" "$O/tossnd.o" "$O/sndout.o" \
+	"$SYS/usr/lib/libc.so.1" \
 	"$T/build/obj/libextra.a" "$LIBGCC" "$SYS/usr/ccs/lib/crtn.o"
 cp "$AUX/images/tosenv/maketos" "$R/tos/bin/maketos"
 XCC="nice -n 19 $TC/bin/m68k-cbm-sysv4-gcc -O -m68020 -Wall -Wno-implicit -fno-builtin"
 $XCC -c "$G/tos/hostfs.c" -o "$O/hostfs.o"
 $XCC -I"$G/mod/tosguest" -c "$G/tos/stik.c" -o "$O/stik.o"
+$XCC -I"$G/mod/tosguest" -c "$G/tos/xsnd.c" -o "$O/xsnd.o"
 "$BIN/m68k-elf-as" -m68040 --register-prefix-optional -o "$O/tosml.o" "$G/tos/tosml.s"
-"$BIN/m68k-elf-ld" --no-warn-rwx-segments -N -Ttext=0xfa0000 -o "$O/tosml.elf" "$O/tosml.o" "$O/hostfs.o" "$O/stik.o"
+"$BIN/m68k-elf-ld" --no-warn-rwx-segments -N -Ttext=0xfa0000 -o "$O/tosml.elf" "$O/tosml.o" "$O/hostfs.o" "$O/stik.o" "$O/xsnd.o"
 end=$("$BIN/m68k-elf-nm" "$O/tosml.elf" | awk '$3 == "_end" { print $1 }')
 [ $((0x$end)) -le $((0xfa0000 + 0x20000)) ] || { echo "[FAIL] cartridge ends at $end" >&2; exit 1; }
 # UTEST.PRG: linked at 0 and 0x10000, the difference gives the relocations
 $XCC -c "$T/tos/utest.c" -o "$O/utest.o"
 "$BIN/m68k-elf-as" -m68040 --register-prefix-optional -o "$O/gem.o" "$T/tos/gem.s"
 "$BIN/m68k-elf-as" -m68040 --register-prefix-optional -o "$O/irq.o" "$T/tos/irq.s"
+"$BIN/m68k-elf-as" -m68040 --register-prefix-optional -o "$O/snd.o" "$T/tos/snd.s"
 for base in 0 0x10000; do
-	"$BIN/m68k-elf-ld" --no-warn-rwx-segments -N -Ttext=$base -o "$O/u$base.elf" "$O/gem.o" "$O/utest.o" "$O/irq.o"
+	"$BIN/m68k-elf-ld" --no-warn-rwx-segments -N -Ttext=$base -o "$O/u$base.elf" "$O/gem.o" "$O/utest.o" "$O/irq.o" "$O/snd.o"
 	"$BIN/m68k-elf-objcopy" -O binary "$O/u$base.elf" "$O/u$base.bin"
 done
 end=$("$BIN/m68k-elf-nm" "$O/u0.elf" | awk '$3 == "_end" { print $1 }')

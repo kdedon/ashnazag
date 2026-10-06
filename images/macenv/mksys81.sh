@@ -31,7 +31,7 @@ get() {	# hfs-path outdir
 }
 get System "$OUT"
 # patches that would run over A/UX's Memory Manager
-python3 "$AUX/tools/auxguard.py" "$OUT/%System" > /dev/null
+python3 "$AUX/tools/auxguard.py" -s "$OUT/%System" > /dev/null
 # the System as installed: the CD's 'boot' 3 demands 'xboo' and a locked
 # startup volume, the installer's checks only when 'xboo' is there
 "$B/hcopy" -m ":Full Install Pieces:Software Installers:System Software:Mac OS 8.1 Update:System Resources" "$W/f.bin"
@@ -46,3 +46,4 @@ python3 "$AUX/tools/macbin2ad.py" -n SimpleText "$W/f.bin" "$OUT"
 "$B/humount" > /dev/null
 mkdir -p "$OUT/Apple Menu Items"
 sh "$D/logout/build.sh" "$OUT/Apple Menu Items"
+sh "$D/sound/build.sh" "$OUT/Extensions"

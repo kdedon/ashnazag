@@ -5,7 +5,8 @@
 | writing the image with host system calls (trap #0).  Each VBL it hands the mouse and
 | keyboard events the display process posts in its last page straight
 | to TOS's handlers.  It installs the STiK transport (stik.c) on the
-| host's sockets.
+| host's sockets, and the Falcon XBIOS sound calls (xsnd.c) on the
+| host's sound service.
 |
 |   m68k-elf-as -m68040 tosml.s; ld -Ttext=0xfa0000; objcopy -O binary
 
@@ -42,6 +43,7 @@ p_dtab:	.space	0x1000			| host drives: letter, flags, path; ... 0
 init:
 	jsr	pvinit
 	jsr	stikinit
+	jsr	xsndinit
 	jsr	hinit
 	tst.l	d0
 	beq.s	2f
@@ -345,6 +347,62 @@ gd:	move.l	a1,-(sp)
 	move.l	(sp)+,sp
 	move.l	(sp)+,a1
 	move.l	old_gd,-(sp)
+	rts
+
+| XBIOS: the sound calls (128-141) to xsnd(args, &result), others to TOS
+	.globl	xb, old_xb
+	.long	0x58425241		| XBRA
+	.long	0x41555855		| AUXU
+old_xb:	.long	0
+xb:	move.l	a0,-(sp)
+	lea	4+6(sp),a0		| a supervisor caller's arguments
+	tst.w	0x59e			| _longframe
+	beq.s	1f
+	addq.l	#2,a0
+1:	btst	#5,4(sp)
+	bne.s	2f
+	move.l	usp,a0
+2:	cmp.w	#128,(a0)
+	bcs.s	3f
+	cmp.w	#141,(a0)
+	bls.s	4f
+3:	move.l	(sp)+,a0
+	move.l	old_xb,-(sp)
+	rts
+4:	move.l	(sp)+,a0
+	move.l	a1,-(sp)
+	move.l	sp,a1
+	cmp.l	#hstk,sp
+	bls.s	5f
+	cmp.l	#hstke,sp
+	bls.s	6f
+5:	lea	hstke,sp
+6:	move.l	a1,-(sp)
+	movem.l	d1-d7/a0/a2-a6,-(sp)
+	lea	4+6(a1),a0
+	tst.w	0x59e
+	beq.s	7f
+	addq.l	#2,a0
+7:	btst	#5,4(a1)
+	bne.s	8f
+	move.l	usp,a0
+8:	clr.l	-(sp)
+	pea	(sp)
+	move.l	a0,-(sp)
+	jsr	xsnd
+	addq.l	#8,sp
+	move.l	(sp)+,d1
+	tst.l	d0
+	beq.s	9f
+	move.l	d1,d0
+	movem.l	(sp)+,d1-d7/a0/a2-a6
+	move.l	(sp)+,sp
+	move.l	(sp)+,a1
+	rte
+9:	movem.l	(sp)+,d1-d7/a0/a2-a6
+	move.l	(sp)+,sp
+	move.l	(sp)+,a1
+	move.l	old_xb,-(sp)
 	rts
 
 	.bss

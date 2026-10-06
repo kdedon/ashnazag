@@ -67,7 +67,12 @@ fi
 
 # the machine's default server options, then the caller's
 opts=`cat $R/lib/X11/xserver/options 2>/dev/null`
-$R/bin/Xamix :0 -auth $XAUTHORITY -fp $R/lib/X11/fonts/misc/,$R/lib/X11/fonts/75dpi/ $opts "$@" \
+fp=$R/lib/X11/fonts/misc/,$R/lib/X11/fonts/75dpi/
+# XView's OPEN LOOK fonts from the start: the server resets its font
+# path whenever the last client leaves, which can undo a session's xset
+O=/usr/openwin/lib/fonts
+[ -f $O/misc/fonts.dir ] && fp=$fp,$O/misc/,$O/75dpi/
+$R/bin/Xamix :0 -auth $XAUTHORITY -fp $fp $opts "$@" \
 	> $log 2>&1 &
 server=$!
 echo $server > $pid

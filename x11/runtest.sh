@@ -6,7 +6,8 @@
 # Login and startx go over the serial console; everything after that uses
 # the ADB keyboard and mouse only.
 AUX=$(cd "$(dirname "$0")/.." && pwd)
-X11W=${X11W:-$AUX/images/work/x11}
+PLATFORM=${PLATFORM:-mac}
+X11W=${X11W:-$AUX/images/work/x11-$PLATFORM}
 OUT=$1
 IMG=${2:-$X11W/q800-x11.img}
 set -- wait:90 shot:boot 'serial:root\n' wait:8 'serial:/usr/x11r6/bin/startx &\n' \

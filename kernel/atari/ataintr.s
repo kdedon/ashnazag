@@ -77,6 +77,16 @@ ata_aciaint:
 	moveb	&0xbf,MFP+ISRB		| end of interrupt: GPIP4
 	jmp	intret
 
+| MFP GPIP7: the DMA sound end, enabled only while a guest plays in front.
+	.globl	ata_sndint
+ata_sndint:
+	moveml	&0xfffe,%sp@-
+	movel	sup_cacr,%d0
+	movec	%d0,%cacr
+	jsr	ds_sndintr
+	moveb	&0x7f,MFP+ISRA		| end of interrupt: GPIP7
+	jmp	intret
+
 | Any other MFP channel (none is enabled): count it.  MFP handlers do
 | not nest, so clearing every in-service bit ends just this one.
 	.globl	ata_mfpstray
@@ -131,7 +141,254 @@ Lbp_fail:
 	moveq	&0,%d0
 	bras	Lbp_out
 
+.ifdef ATA060
+| ata_dmasync(): DMA (blitter, sound, disk DMA chip) reaches only
+| ST-RAM, which is never data-cached, so there is nothing to push.
+	.globl	ata_dmasync
+ata_dmasync:
+	rts
+
+| ata_idcm(pa, cm): set the cache mode of FastRAM page pa in the identity
+| map, then push and invalidate the page's lines.  Pages outside the map
+| are left alone.  Clobbers d0/d1/a0/a1.
+	.globl	ata_idcm
+ata_idcm:
+	movel	%sp@(4),%d1
+	andil	&0xfffff000,%d1
+	moveal	%d1,%a0
+	tstl	ata_idpt
+	beq.s	Lidcm_ret
+	subl	ata_idlo,%d1
+	bcs.s	Lidcm_ret
+	cmpal	ata_idhi,%a0
+	bcc.s	Lidcm_ret
+	moveq	&10,%d0
+	lsrl	%d0,%d1
+	moveal	ata_idpt,%a1
+	addal	%d1,%a1
+	movel	%a1@,%d1
+	btst	&0,%d1
+	beq.s	Lidcm_ret
+	movel	%d1,%d0
+	andil	&0x60,%d0
+	cmpl	%sp@(8),%d0
+	beq.s	Lidcm_ret
+	eorl	%d0,%d1
+	orl	%sp@(8),%d1
+	movew	%sr,%d0
+	movew	&0x2700,%sr
+	movel	%d1,%a1@
+	nop
+	.word	0xf518			| pflusha
+	.word	0xf470			| cpushp dc,(%a0)
+	movew	%d0,%sr
+Lidcm_ret:
+	rts
+
+| Table pages and u-areas are noncacheable in the identity map, as the
+| table walk and the u-area windows bypass the data cache; page_free
+| gives a page back its copyback mode.
+	.globl	hat_ptalloc
+hat_ptalloc:
+	movel	%sp@(8),%sp@-
+	movel	%sp@(8),%sp@-
+	jsr	ata_ptalloc_mac
+	addql	&8,%sp
+	tstl	%d0
+	beq.s	Lpta_ret
+	movel	%d0,%sp@-
+	pea	0x40
+	movel	%d0,%sp@-
+	jsr	ata_idcm
+	addql	&8,%sp
+	movel	%sp@+,%d0
+Lpta_ret:
+	moveal	%d0,%a0
+	rts
+
+	.globl	segu_get
+segu_get:
+	movel	%sp@(4),%sp@-
+	jsr	__amix_segu_get
+	addql	&4,%sp
+	tstl	%d0
+	beq.s	Lsg_ret
+	movel	%d0,%sp@-
+	movel	%sp@(8),%a0
+	bsr.s	Lunc_u
+	movel	%sp@+,%d0
+Lsg_ret:
+	moveal	%d0,%a0
+	rts
+
+	.globl	swapinub
+swapinub:
+	movel	%sp@(4),%sp@-
+	jsr	__amix_swapinub
+	addql	&4,%sp
+	movel	%d0,%sp@-
+	movel	%sp@(8),%a0
+	bsr.s	Lunc_u
+	movel	%sp@+,%d0
+	moveal	%d0,%a0
+	rts
+
+| a0 = proc: its two u-area pages, from p_ubptbl entries 0 and 2
+Lunc_u:
+	movel	%a2,%sp@-
+	movel	%a0,%d0
+	beq.s	Lunc_ret
+	addil	&95,%d0
+	andil	&0xfffffff0,%d0
+	moveal	%d0,%a2
+	movel	%a2@,%d0
+	bsr.s	Lunc_pg
+	movel	%a2@(8),%d0
+	bsr.s	Lunc_pg
+Lunc_ret:
+	moveal	%sp@+,%a2
+	rts
+Lunc_pg:
+	btst	&0,%d0
+	beq.s	Lunc_pgret
+	pea	0x40
+	movel	%d0,%sp@-
+	jsr	ata_idcm
+	addql	&8,%sp
+Lunc_pgret:
+	rts
+
+	.globl	page_free
+page_free:
+	movel	%sp@(4),%d0
+	subl	pages,%d0
+	bcs.s	Lpf_go
+	movel	%sp@(4),%d1
+	cmpl	epages,%d1
+	bcc.s	Lpf_go
+	divul	&60,%d0			| sizeof (page_t)
+	addl	pages_base,%d0
+	moveq	&12,%d1
+	lsll	%d1,%d0
+	movel	hat_cm_ram,%sp@-
+	movel	%d0,%sp@-
+	jsr	ata_idcm
+	addql	&8,%sp
+Lpf_go:
+	jmp	__amix_page_free
+
+| Vector 61 on the 060.  Kernel code from the stock image divides by a
+| constant with the 64-bit muls.l/mulu.l, which the 060 lacks; it gets
+| them emulated here, operand Dn, (An), (d16,An) or #imm, and ata_isp61_n
+| counts them.  User traps and anything else go on to isp61_vec.
+	.globl	ata_isp61
+ata_isp61:
+	btst	&5,%sp@			| from supervisor mode?
+	beq.w	Li61_user
+	moveml	&0xfffe,%sp@-		| d0-d7/a0-a6; SR at 60, PC at 62
+	movel	%sp@(62),%a0
+	movew	%a0@,%d0
+	movew	%d0,%d1
+	andiw	&0xffc0,%d1
+	cmpiw	&0x4c00,%d1		| mul.l
+	bne.w	Li61_no
+	movew	%a0@(2),%d1		| 0 Dl:3 signed 64-bit 0:7 Dh:3
+	btst	&10,%d1
+	beq.w	Li61_no
+	movew	%d1,%d2
+	andiw	&0x83f8,%d2
+	bne.w	Li61_no
+	movew	%d0,%d2
+	andiw	&7,%d2			| EA register
+	lsrw	&3,%d0
+	andiw	&7,%d0			| EA mode
+	moveq	&4,%d7			| instruction length
+	tstw	%d0
+	bne.s	1f
+	movel	%sp@(0,%d2:w:4),%d4	| Dn
+	bra.s	5f
+1:	cmpiw	&7,%d0
+	bne.s	2f
+	cmpiw	&4,%d2
+	bne.w	Li61_no
+	movel	%a0@(4),%d4		| #imm
+	moveq	&8,%d7
+	bra.s	5f
+2:	cmpiw	&7,%d2
+	beq.s	3f
+	moveal	%sp@(32,%d2:w:4),%a1
+	bra.s	4f
+3:	lea	%sp@(68),%a1		| sp before the 8-byte frame
+4:	cmpiw	&2,%d0
+	beq.s	6f
+	cmpiw	&5,%d0
+	bne.w	Li61_no
+	addaw	%a0@(4),%a1
+	moveq	&6,%d7
+6:	movel	%a1@,%d4
+5:	movew	%d1,%d5
+	rolw	&4,%d5
+	andiw	&7,%d5			| Dl
+	movel	%d4,%a2			| a
+	movel	%sp@(0,%d5:w:4),%d3	| b
+	movel	%d3,%a3
+	| 32x32 -> 64 from 16-bit products: hi d0, lo d6
+	movel	%d4,%d2
+	movel	%d2,%d6
+	mulu.w	%d3,%d6			| al*bl
+	movel	%d2,%d0
+	swap	%d0
+	movel	%d3,%d4
+	swap	%d4
+	mulu.w	%d4,%d0			| ah*bh
+	mulu.w	%d2,%d4			| al*bh
+	swap	%d2
+	mulu.w	%d3,%d2			| ah*bl
+	addl	%d4,%d2
+	bcc.s	7f
+	addil	&0x10000,%d0
+7:	movel	%d2,%d4
+	swap	%d4
+	clrw	%d4
+	clrw	%d2
+	swap	%d2
+	addl	%d4,%d6
+	addxl	%d2,%d0
+	btst	&11,%d1			| signed: hi -= (a < 0 ? b : 0) + (b < 0 ? a : 0)
+	beq.s	8f
+	movel	%a2,%d2
+	bpl.s	9f
+	subl	%a3,%d0
+9:	movel	%a3,%d2
+	bpl.s	8f
+	subl	%a2,%d0
+8:	movel	%d6,%sp@(0,%d5:w:4)
+	andiw	&7,%d1
+	movel	%d0,%sp@(0,%d1:w:4)	| Dh
+	addql	&1,ata_isp61_n
+	movew	%sp@(60),%d2		| N and Z of the product, V and C clear
+	andiw	&0xfff0,%d2
+	tstl	%d0
+	bpl.s	1f
+	oriw	&8,%d2
+1:	orl	%d6,%d0
+	bne.s	2f
+	oriw	&4,%d2
+2:	movew	%d2,%sp@(60)
+	addl	%d7,%sp@(62)
+	moveml	%sp@+,&0x7fff
+	rte
+Li61_no:
+	moveml	%sp@+,&0x7fff
+Li61_user:
+	jmp	isp61_vec
+.endif
+
 	.data
+.ifdef ATA060
+	.globl	ata_isp61_n
+ata_isp61_n:	.long	0
+.endif
 Lbp_vec:	.long	0
 Lbp_sp:		.long	0
 	.globl	ata_spurious

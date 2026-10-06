@@ -26,12 +26,32 @@ extern long lbolt;
 extern struct modwrapper tosguest_wrapper;
 extern struct proc *prfind();
 extern int tos_maprom();
+/* weak, absent on the Mac: read at run time, as the compiler takes a declared symbol's address as nonzero */
+__asm__(".weak ds_sndexit");
+extern void ds_sndexit();
+static void (*volatile sndexit_p)() = ds_sndexit;
+__asm__(".weak ds_sndcb");
+extern void (*ds_sndcb)();
+static void (*volatile *volatile sndcb_p)() = &ds_sndcb;
+__asm__(".weak ds_gralloc");
+extern int ds_gralloc();
+static int (*volatile gralloc_p)() = ds_gralloc;
+__asm__(".weak ds_grfree");
+extern void ds_grfree();
+static void (*volatile grfree_p)() = ds_grfree;
+__asm__(".weak ds_grmmap");
+extern int ds_grmmap();
+static int (*volatile grmmap_p)() = ds_grmmap;
+/* the weak ones above are absent on the Mac; the compiler would take their addresses as nonzero */
+extern int spec_segmap();
 
 struct tosctr tosc;
 int	tos_trace = 0;		/* 1: console lines for bus errors and odd accesses */
 
 static struct guest_profile tos_profile;
 static int tos_nopen;
+static struct proc *tos_stproc;	/* allocated the ST-RAM block; only it maps it */
+static pid_t tos_stpid;
 static int tosdevflag[1] = { 0 };
 
 int
@@ -501,8 +521,11 @@ static void
 tos_pexit(gp)
 	struct guest_proc *gp;
 {
-	if (tosc.t_gp == gp)
+	if (tosc.t_gp == gp) {
+		if (sndexit_p)
+			sndexit_p(gp->gp_proc);
 		tos_stop();
+	}
 }
 
 static int
@@ -535,7 +558,51 @@ tosclose(dev, flag, otyp, cr)
 	struct cred *cr;
 {
 	tos_nopen = 0;			/* called on the last close only */
+	if (grfree_p)
+		grfree_p();		/* after the last mapping too */
+	tos_stproc = 0;
 	return 0;
+}
+
+/* the passthrough ST-RAM block */
+int
+tosmmap(dev, off, prot)
+	dev_t dev;
+	off_t off;
+	int prot;
+{
+	return grmmap_p ? grmmap_p(off) : -1;
+}
+
+int
+tossegmap(dev, off, as, addrp, len, prot, maxprot, flags, cr)
+	dev_t dev;
+	off_t off;
+	struct as *as;
+	addr_t *addrp;
+	u_int len, prot, maxprot, flags;
+	struct cred *cr;
+{
+	if (curproc != tos_stproc || curproc->p_pid != tos_stpid)
+		return EACCES;
+	return spec_segmap(dev, off, as, addrp, len, prot, maxprot, flags, cr);
+}
+
+static int
+stram(size)
+	unsigned long size;
+{
+	int e;
+
+	if (!gralloc_p)
+		return ENXIO;
+	if (GUESTP(curproc))
+		return EPERM;
+	if ((e = gralloc_p(size)) == 0) {
+		tos_stproc = curproc;
+		tos_stpid = curproc->p_pid;
+	}
+	return e;
 }
 
 int
@@ -708,6 +775,8 @@ tosioctl(dev, cmd, arg, mode, cr, rvp)
 	if (cmd == TOSIOC_MAPROM)
 		return GUESTP(curproc) && GUESTP(curproc)->gp_prof != &tos_profile ?
 		    EPERM : tos_maprom(dev, rvp);
+	if (cmd == TOSIOC_STRAM)
+		return stram((unsigned long)arg);
 	if (cmd == TOSIOC_SOCK && GUESTP(curproc) &&
 	    GUESTP(curproc)->gp_prof == &tos_profile && (GUESTP(curproc)->gp_flags & TGF_SOLO))
 		return tsock(arg);
@@ -759,6 +828,14 @@ tosioctl(dev, cmd, arg, mode, cr, rvp)
 		return 0;
 	case TOSIOC_STAT:
 		return copyout((caddr_t)&t->t_st, arg, sizeof t->t_st) ? EFAULT : 0;
+	case TOSIOC_SND: {
+		struct tossndio sn;
+
+		if (copyin(arg, (caddr_t)&sn, sizeof sn))
+			return EFAULT;
+		tos_snd(&sn);
+		return copyout((caddr_t)&sn, arg, sizeof sn) ? EFAULT : 0;
+	}
 	case TOSIOC_SOCK:
 		return curproc == t->t_proc ? tsock(arg) : EPERM;
 	case TOSIOC_HALT:
@@ -776,6 +853,8 @@ tosguest_load()
 	int v;
 
 	tos_profile.gpf_name = "tos";
+	if (sndcb_p)
+		*sndcb_p = tos_sndend;
 	tos_profile.gpf_wrapper = &tosguest_wrapper;
 	tos_profile.gpf_exit = tos_pexit;
 	tos_profile.gpf_fork = tos_pfork;
@@ -803,12 +882,14 @@ tosguest_unload()
 	if (tosc.t_state != 0 || tos_nopen)
 		return EBUSY;
 	guest_profile_del(&tos_profile);
+	if (sndcb_p)
+		*sndcb_p = 0;
 	return 0;
 }
 
 struct mod_drv_data tosguest_drvdata[] = {
 	{ { nodev, nodev, nodev, nodev, nodev, nodev, nodev, 0 }, 0, 0,
-	  { tosopen, tosclose, tosrdwr, tosrdwr, tosioctl, nodev, nodev, nodev,
+	  { tosopen, tosclose, tosrdwr, tosrdwr, tosioctl, tosmmap, tossegmap, nodev,
 	    nodev, nodev, 0, 0, tosdevflag }, TOS_MAJOR, 1 }
 };
 

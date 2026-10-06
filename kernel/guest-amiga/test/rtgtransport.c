@@ -8,7 +8,9 @@ int main(void)
     assert(sizeof(unsigned int) == 4);
     assert(sizeof(unsigned short) == 2);
     assert(sizeof s <= MIG_RTG_HEADER_SIZE);
-    mig_rtg_init(&s, 1024, 768);
+    mig_rtg_init(&s, 1024, 768, MIG_RTG_VRAM, 1024, 1024 * 768);
+    assert(s.vram == MIG_RTG_VRAM && s.vstride == 1024 && s.memory_size == 1024 * 768 &&
+        !s.copy && !s.track && !s.ram && !s.inram);
     assert(mig_rtg_snapshot(&s, &out, 1024, 768) == 0);
     s.on = MIG_RTG_BLANK;
     assert(mig_rtg_snapshot(&s, &out, 1024, 768) == MIG_RTG_BLANK);
@@ -25,7 +27,7 @@ int main(void)
     assert(mig_rtg_snapshot(&s, &out, 1024, 768) == 1);
     s.seq += 2;
     assert(mig_rtg_snapshot(&s, &out, 1024, 768) == 1);
-    s.offset = MIG_RTG_SIZE - ((s.height - 1) * s.stride + s.width);
+    s.offset = s.memory_size - ((s.height - 1) * s.stride + s.width);
     assert(mig_rtg_snapshot(&s, &out, 1024, 768) == 1);
     s.offset++;
     assert(mig_rtg_snapshot(&s, &out, 1024, 768) == -1);
@@ -48,9 +50,9 @@ int main(void)
     s.on = MIG_RTG_BLANK;
     assert(mig_rtg_snapshot(&s, &out, 1024, 768) == -1);
     s.on = MIG_RTG_VISIBLE;
-    s.version--; s.memory_size++;
+    s.version--; s.memory_size = MIG_RTG_VRAM_MAX + MIG_RTG_EXTRA + 1;
     assert(mig_rtg_snapshot(&s, &out, 1024, 768) == -1);
-    s.memory_size--; s.max_width++;
+    s.memory_size = 1024 * 768; s.max_width++;
     assert(mig_rtg_snapshot(&s, &out, 1024, 768) == -1);
     s.max_width--; s.format++;
     assert(mig_rtg_snapshot(&s, &out, 1024, 768) == -1);

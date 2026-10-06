@@ -1,7 +1,7 @@
 #!/bin/sh
 # xsession -- the X session chooser and its sessions.
 #
-#   xsession [twm|xview|mac|tos|amiga|console]
+#   xsession [twm|xview|mac|tos|amiga|console|cpm]
 #
 # Under xdm (no argument) it offers the installed sessions with the last
 # one, kept in $HOME/.xsession-choice, as the default: Return or 10 s
@@ -36,6 +36,9 @@ envs=
 [ -x /usr/bin/startmac ] && envs="$envs mac"
 [ -x /usr/bin/starttos ] && envs="$envs tos"
 [ -x /usr/bin/startmig ] && envs="$envs amiga"
+# CP/M-68K runs in a terminal, listed last so the others keep their numbers
+cpm=
+[ -x /usr/bin/startcpm ] && cpm=cpm
 label() {
 	case $1 in
 	twm) echo "Desktop: twm" ;;
@@ -44,13 +47,14 @@ label() {
 	tos) echo "TOS environment" ;;
 	amiga) echo "Amiga environment" ;;
 	console) echo "Console (full-screen terminal)" ;;
+	cpm) echo "CP/M-68K environment" ;;
 	esac
 }
 
 if [ -n "$choose" ]; then
 	list=twm
 	[ -x /usr/openwin/bin/olvwm ] && list="$list xview"
-	list="$list $envs console"
+	list="$list $envs console $cpm"
 	last=`sed 1q $HOME/.xsession-choice 2> /dev/null`
 	args=
 	for s in $list; do
@@ -72,6 +76,7 @@ menus() {
 	for e in $envs; do
 		echo "$1\"`label $e`\" $2/usr/x11r6/bin/xdmenv $e$3"
 	done
+	[ -z "$cpm" ] || echo "$1\"`label cpm`\" ${2}xterm -T CP/M-68K -e /usr/bin/startcpm$3"
 }
 
 case $name in
@@ -117,7 +122,7 @@ xview)
 mac|tos|amiga)
 	exec xdmenv $name
 	;;
-console)
+console|cpm)
 	# the whole screen in characters of the 7x13 font, the window a
 	# little larger so the pointer, and with it the keyboard, is in it
 	set -- `xdpyinfo | sed -n 's/^ *dimensions: *\([0-9]*\)x\([0-9]*\) pixels.*/\1 \2/p'`
@@ -128,7 +133,9 @@ console)
 	[ $y -gt $b ] && b=$y
 	x=`expr \( $c \* 7 + 2 \* $b - $w \) / 2`
 	y=`expr \( $r \* 13 + 2 \* $b - $h \) / 2`
-	exec xterm -fn 7x13 -bw 0 -b $b -geometry ${c}x$r+-$x+-$y -ls
+	set -- -ls
+	[ $name = cpm ] && set -- -T CP/M-68K -e /usr/bin/startcpm
+	exec xterm -fn 7x13 -bw 0 -b $b -geometry ${c}x$r+-$x+-$y "$@"
 	;;
 *)
 	echo "xsession: unknown session $name" >&2

@@ -21,6 +21,10 @@ struct amigadev {
 struct amigacensus {
 	unsigned long custom[256][2], cia[2][16][2];
 	unsigned long other[AMIGA_NOTHER][3];	/* address, count, first PC */
+	unsigned long nfmt, nssw, nfail, nchip, nfastram, low[16];	/* faults left to the kernel, by reason */
+	unsigned long miss[AMIGA_NOTHER][3];	/* PC, count, address of decoder misses */
+	unsigned long priv[AMIGA_NOTHER][3];	/* PC, count, opcode of privileged traps */
+	unsigned long blit[AMIGA_NOTHER][2];	/* PC, count of blitter starts */
 };
 
 void amigadev_reset(struct amigadev *);

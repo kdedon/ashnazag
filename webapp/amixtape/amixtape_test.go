@@ -192,3 +192,15 @@ func TestCancel(t *testing.T) {
 		t.Fatal("not cancelled")
 	}
 }
+
+// Parts chosen in either order join to the same segments as the whole tape.
+func TestPartOrder(t *testing.T) {
+	p1, p2 := part("a.tar.bz2", fixture(fixturePart1)), part("b.tar.bz2", fixture(fixturePart2))
+	whole := scan(t, []string{"00", "01", "02", "03"}, part("t.tar", tarball(false, 0, 1, 2, 3)))
+	for _, parts := range [][]Part{{p1, p2}, {p2, p1}} {
+		r := scan(t, []string{"00", "01", "02", "03"}, parts...)
+		if !reflect.DeepEqual(r.Data, whole.Data) {
+			t.Fatal("parts and whole tape differ")
+		}
+	}
+}

@@ -381,7 +381,7 @@ function renderPresets() {
   element('presets').replaceChildren(...presets.map((preset) => {
     const card = textNode('div', '', 'family-card');
     card.classList.toggle('selected', activePreset?.id === preset.id);
-    card.append(textNode('h3', preset.label), textNode('p', preset.description), textNode('span', preset.status, 'badge'));
+    card.append(textNode('h3', preset.label), textNode('p', preset.description), textNode('span', preset.runnable ? 'runnable' : 'not yet runnable', 'badge'));
     const button = textNode('button', preset.status === 'planned' ? 'Planned' : `Use ${preset.label}`, 'configure-button');
     button.type = 'button';
     button.disabled = preset.status === 'planned';

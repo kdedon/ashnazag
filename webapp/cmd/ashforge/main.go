@@ -23,7 +23,7 @@ const usage = `usage:
   ashforge tape part...
   ashforge build (-preset quadra800 | -recipe recipe.json) [-root MiB] [-swap MiB]
                  [-package kind:family:id=file ...] -tape part [-tape part ...]
-                 -kernel unix.elf -donor disk.img -output new.img [-export recipe.json]
+                 -kernel unix.elf [-donor disk.img, Quadra] -output new.img [-export recipe.json]
 
 A tape part is an archive (.tar.bz2, .tar.gz, .tar, .zip), a SIMH .tap image,
 a segment file, a raw image or a directory of these.`
@@ -170,6 +170,13 @@ func checkTape(ctx context.Context, names []string) error {
 	return res.Need(ids)
 }
 
+func files0Size(name string) int64 {
+	if st, err := os.Stat(name); err == nil {
+		return st.Size()
+	}
+	return 0
+}
+
 func build(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("build", flag.ContinueOnError)
 	preset := fs.String("preset", "", "preset id")
@@ -185,7 +192,7 @@ func build(ctx context.Context, args []string) error {
 	export := fs.String("export", "", "write the recipe here")
 	var pkgs list
 	fs.Var(&pkgs, "package", "provisioning package kind:family:id=file; repeat in order")
-	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || (*preset == "") == (*recipePath == "") || (len(tape) == 0) == (*tapes == "") || *kernel == "" || *donor == "" || *output == "" {
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || (*preset == "") == (*recipePath == "") || (len(tape) == 0) == (*tapes == "") || *kernel == "" || *output == "" {
 		return fmt.Errorf("%s", usage)
 	}
 	var imported *forge.Recipe
@@ -218,7 +225,13 @@ func build(ctx context.Context, args []string) error {
 	if len(pkgs) != 0 {
 		s.Provision = nil
 	}
-	files := []string{*kernel, *donor}
+	files := []string{*kernel}
+	if roles := forge.Roles(s); roles[2] == "boot-donor" {
+		if *donor == "" {
+			return fmt.Errorf("%s", usage)
+		}
+		files = append(files, *donor)
+	}
 	for _, p := range pkgs {
 		spec, file, ok := strings.Cut(p, "=")
 		parts := strings.Split(spec, ":")
@@ -272,7 +285,13 @@ func build(ctx context.Context, args []string) error {
 	}
 	defer os.Remove(scratch.Name())
 	defer scratch.Close()
-	if err = scratch.Truncate(int64(s.Settings.RootMiB) << 20); err != nil {
+	rootMiB, homeMiB := s.Settings.RootMiB, 0
+	if p, _ := forge.Lookup(s.Preset); p.Recipe == "falcon-console" {
+		if rootMiB, homeMiB, err = forge.FalconSizes(s, files0Size(*kernel)); err != nil {
+			return err
+		}
+	}
+	if err = scratch.Truncate(int64(rootMiB) << 20); err != nil {
 		return err
 	}
 	out, err := os.OpenFile(*output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
@@ -286,7 +305,21 @@ func build(ctx context.Context, args []string) error {
 			os.Remove(*output)
 		}
 	}()
-	if err = forge.Quadra(ctx, r, media, scratch, out); err != nil {
+	if homeMiB != 0 {
+		home, err := os.CreateTemp(dir, ".ashforge-home-*")
+		if err != nil {
+			return err
+		}
+		defer os.Remove(home.Name())
+		defer home.Close()
+		if err = home.Truncate(int64(homeMiB) << 20); err != nil {
+			return err
+		}
+		err = forge.Falcon(ctx, r, media, scratch, home, out)
+	} else {
+		err = forge.Quadra(ctx, r, media, scratch, out)
+	}
+	if err != nil {
 		return err
 	}
 	if err = out.Sync(); err != nil {

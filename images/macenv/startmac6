@@ -1,0 +1,28 @@
+#!/sbin/sh
+# startmac6 -- System 6.0.7 with MultiFinder: A/UX 2.0.1's Mac
+# environment in its own root, /a201.  root's System Folder is
+# /a201/mac/sys/System Folder, another user's /a201/home/<login>/System
+# Folder.  One session per System Folder.  TBMEMORY as for startmac.
+PATH=/usr/bin:/sbin:/usr/sbin
+R=/a201
+case `id` in
+uid=0\(*) S="$R/mac/sys/System Folder" ;;
+*) S="$R/home/`id | sed 's/^uid=[0-9]*(\([^)]*\)).*/\1/'`/System Folder" ;;
+esac
+[ -f "$S/System" ] || { echo "startmac6: no $S" >&2; exit 1; }
+F="$S/.stamp"
+[ -f "$F" ] || : >> "$F"
+envlock -t "$F" || exit 1
+[ -t 0 ] || exec envlock "$F" /usr/aux/lib/mac6 "$@"
+# the Mac has the keyboard: no echo, and what the tty got meanwhile is
+# dropped
+t=`stty -g`
+trap : 2 3
+trap 'stty $t; exit 1' 1 15
+stty -echo
+envlock "$F" /usr/aux/lib/mac6 "$@"
+r=$?
+stty -icanon min 0 time 0
+cat > /dev/null
+stty $t
+exit $r

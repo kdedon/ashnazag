@@ -18,7 +18,8 @@
  * and Workbench loading.  The boot extension binds container.card
  * before any screen opens; the RTG session then shows Workbench, a
  * drag on its backdrop changes the screen, IBrowse (when installed)
- * shows a local page and SIGTERM ends the session.
+ * shows a local page and SIGTERM ends the session.  On a root with
+ * TCP/IP, SYS:bsdtest uses bsdsocket.library against bsdsrv's servers.
  * Skips without guest support, the module or the 68040 path.
  */
 #include <sys/types.h>
@@ -41,8 +42,11 @@
 #include <sys/syscall.h>
 #include <sys/procfs.h>
 #include <dirent.h>
+#include <sys/resource.h>
 #include "sys/mod.h"
 #include "amigaio.h"
+#include "rtgshare.h"
+#include "hostfswire.h"
 #include "t.h"
 
 extern int getksym();
@@ -52,6 +56,7 @@ extern int getksym();
 #define	ROM	"/etc/amiga/kicka4000.rom"
 #define	SYSDEV	"/dev/dsk/c0d0s0"
 #define	SYS	"/amiga/sys"
+#define	BSDSRV	"/tests/amiga/bsdsrv"
 #define	LOAD	0x1000L
 #define	INTENA	0xdff09aL
 #define	INTENAR	0xdff01cL
@@ -558,7 +563,7 @@ ioctls()
 	ae.ae_fastsize = AMIGA_FAST_MAX + 0x100000;
 	t_check("enter_fastmax", E(ioctl(afd, AMIGAIOC_ENTER, &ae)) == EINVAL, "%s", T_ERR);
 	ae.ae_fastsize = 0;
-	ae.ae_flags = 4;
+	ae.ae_flags = 8;
 	t_check("enter_flags", E(ioctl(afd, AMIGAIOC_ENTER, &ae)) == EINVAL, "%s", T_ERR);
 	t_check("enter_efault", E(ioctl(afd, AMIGAIOC_ENTER, (char *)1)) == EFAULT, "%s", T_ERR);
 	unlink("/tmp/amiga1");
@@ -615,6 +620,276 @@ rom()
 }
 
 /* nonzero once the guest has read SYS:path since t0 */
+
+/*
+ * The card's drawing functions (draw.bin at DRAW) on bitmaps in this
+ * process, against plain C: fills, inversions, copies in every direction,
+ * templates in each draw mode, P96's own function for what they decline,
+ * saved registers, and the host pointer put back before drawing.
+ */
+#define DRAW	0x24000000UL
+#define DW	256
+#define DH	64
+static unsigned char dbm[2][DW * DH], dref[2][DW * DH], dtpl[16 * DH];
+static long dreg[22];
+static struct { long mem; short bpr, pad; long fmt; } dri[2];
+static struct { long mem; short bpr; unsigned char xo, mode; long fg, bg; } dtp;
+static long dbi[512];
+
+static int
+dcall(n)
+	int n;
+{
+	static long in[11];
+	int i, ok = 1;
+
+	memcpy((char *)in, (char *)dreg, sizeof in);
+	((int (*)())((long *)DRAW)[5])(((long *)DRAW)[n], dreg);
+	for (i = 2; i < 8; i++)
+		ok &= dreg[11 + i] == in[i];
+	return ok & (dreg[11 + 10] == in[10]);
+}
+
+static int
+drand(n)
+	int n;
+{
+	return rand() % n;
+}
+
+static void
+dreset()
+{
+	int i;
+
+	for (i = 0; i < DW * DH; i++)
+		dbm[0][i] = dref[0][i] = rand(), dbm[1][i] = dref[1][i] = rand();
+}
+
+/* rectangle x,y w,h fitting DW x DH */
+static void
+drect(v)
+	int v[4];
+{
+	v[2] = 1 + drand(DW - 1);
+	v[3] = 1 + drand(DH - 1);
+	v[0] = drand(DW - v[2] + 1);
+	v[1] = drand(DH - v[3] + 1);
+}
+
+static void
+drawtest()
+{
+	volatile struct mig_rtg *s;
+	unsigned char *p, tmp[DW * DH];
+	int fd, i, k, x, y, n, fail[8], v[4], w[4], bit, c, mode;
+	long *deflt;
+
+	struct rlimit rl;
+
+	if ((fd = open("/tests/amiga/draw.bin", O_RDONLY)) < 0) {
+		t_skip("draw", "no draw.bin");
+		return;
+	}
+	if (getrlimit(RLIMIT_VMEM, &rl) == 0 && rl.rlim_cur < rl.rlim_max) {
+		rl.rlim_cur = rl.rlim_max;
+		setrlimit(RLIMIT_VMEM, &rl);
+	}
+	if (mmap((caddr_t)DRAW, 65536, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_FIXED,
+	    open("/dev/zero", O_RDWR), 0) == (caddr_t)-1) {
+		t_check("draw_map", 0, "code: %s", T_ERR);
+		return;
+	}
+	if (mmap((caddr_t)MIG_RTG_BASE, MIG_RTG_HEADER_SIZE, PROT_READ | PROT_WRITE,
+	    MAP_PRIVATE | MAP_FIXED, open("/dev/zero", O_RDWR), 0) == (caddr_t)-1) {
+		t_check("draw_map", 0, "header: %s", T_ERR);
+		return;
+	}
+	if (mmap((caddr_t)0xf7f000, 4096, PROT_READ | PROT_WRITE,
+	    MAP_PRIVATE | MAP_FIXED, open("/dev/zero", O_RDWR), 0) == (caddr_t)-1) {
+		t_check("draw_map", 0, "doorbell: %s", T_ERR);
+		return;
+	}
+	read(fd, (char *)DRAW, 65536);
+	close(fd);
+	deflt = (long *)((long *)DRAW)[7];
+	s = (volatile struct mig_rtg *)MIG_RTG_BASE;
+	for (i = 0; i < 2; i++) {
+		dri[i].mem = (long)dbm[i];
+		dri[i].bpr = DW;
+		dri[i].fmt = 1;
+	}
+	/* P96's own functions: the default slots */
+	for (i = 386; i <= 434; i += 8)
+		*(long *)((char *)dbi + i) = ((long *)DRAW)[6];
+	srand(1);
+	memset(fail, 0, sizeof fail);
+	for (k = 0; k < 300; k++) {
+		dreset();
+		memset(dreg, 0, sizeof dreg);
+		dreg[8] = (long)dbi;
+		dreg[9] = (long)&dri[0];
+		dreg[7] = 1;
+		drect(v);
+		dreg[0] = v[0]; dreg[1] = v[1]; dreg[2] = v[2]; dreg[3] = v[3];
+		/* a pointer drawn over part of the screen bitmap, sometimes */
+		s->pshown = k & 1;
+		s->porigin = (long)dbm[0];
+		s->pstride = DW;
+		s->px0 = drand(DW - 16); s->py0 = drand(DH - 20);
+		s->px1 = s->px0 + 1 + drand(16); s->py1 = s->py0 + 1 + drand(20);
+		*(long *)0xf7fffc = 0;
+		if (s->pshown)
+			for (y = s->py0; y < s->py1; y++)
+				for (x = s->px0; x < s->px1; x++) {
+					c = y * DW + x;
+					s->psave[y - s->py0][x - s->px0] = rand();
+					/* some pixels drawn over since: they stay */
+					s->pdrawn[y - s->py0][x - s->px0] = rand() & 1 ? dbm[0][c] : dbm[0][c] + 1;
+				}
+		switch (k % 5) {
+		case 0:		/* fill */
+			dreg[4] = rand();
+			dreg[5] = 255;
+			n = dcall(0);
+			break;
+		case 1:		/* invert */
+			dreg[4] = rand();
+			n = dcall(1);
+			break;
+		case 2:		/* copy within one bitmap */
+			drect(w);
+			v[2] = w[2]; v[3] = w[3];
+			drect(w);
+			if (w[0] + v[2] > DW) w[0] = DW - v[2];
+			if (w[1] + v[3] > DH) w[1] = DH - v[3];
+			if (v[0] + v[2] > DW) v[0] = DW - v[2];
+			if (v[1] + v[3] > DH) v[1] = DH - v[3];
+			if (k % 3 == 0) w[1] = v[1];
+			dreg[0] = v[0]; dreg[1] = v[1]; dreg[2] = w[0]; dreg[3] = w[1];
+			dreg[4] = v[2]; dreg[5] = v[3]; dreg[6] = 255;
+			n = dcall(2);
+			break;
+		case 3:		/* copy between bitmaps */
+			drect(w);
+			v[2] = w[2]; v[3] = w[3];
+			drect(w);
+			if (w[0] + v[2] > DW) w[0] = DW - v[2];
+			if (w[1] + v[3] > DH) w[1] = DH - v[3];
+			if (v[0] + v[2] > DW) v[0] = DW - v[2];
+			if (v[1] + v[3] > DH) v[1] = DH - v[3];
+			dreg[9] = (long)&dri[1];
+			dreg[10] = (long)&dri[0];
+			dreg[0] = v[0]; dreg[1] = v[1]; dreg[2] = w[0]; dreg[3] = w[1];
+			dreg[4] = v[2]; dreg[5] = v[3]; dreg[6] = 0xc0;
+			n = dcall(3);
+			break;
+		default:	/* template */
+			for (i = 0; i < sizeof dtpl; i++)
+				dtpl[i] = rand();
+			dtp.mem = (long)dtpl;
+			dtp.bpr = 8 + 2 * drand(4);
+			if (v[2] > dtp.bpr * 8 - 15)
+				v[2] = dtp.bpr * 8 - 15;
+			dreg[2] = v[2];
+			dtp.xo = drand(16);
+			dtp.mode = drand(3) | (rand() & 4);
+			dtp.fg = rand();
+			dtp.bg = rand();
+			dreg[4] = (dtp.mode & 3) == 2 ? rand() & 255 : 255;
+			dreg[10] = (long)&dtp;
+			n = dcall(4);
+			break;
+		}
+		/* the reference: the pointer put back, then the drawing */
+		p = dref[0];
+		if (k & 1) {
+			int hit;
+			x = dreg[0]; y = dreg[1];
+			/* the rectangles the function touches on the screen bitmap */
+			hit = 0;
+			for (i = 0; i < 2; i++) {
+				int rx, ry, rw, rh;
+				if (k % 5 < 2 || k % 5 == 4) {
+					if (i) break;
+					rx = v[0]; ry = v[1]; rw = v[2]; rh = v[3];
+				} else if (k % 5 == 2) {
+					rx = i ? w[0] : v[0]; ry = i ? w[1] : v[1]; rw = v[2]; rh = v[3];
+				} else {
+					if (!i) continue;
+					rx = w[0]; ry = w[1]; rw = v[2]; rh = v[3];
+				}
+				if (rx < s->px1 && rx + rw > s->px0 && ry < s->py1 && ry + rh > s->py0)
+					hit = 1;
+			}
+			if (hit) {
+				for (y = s->py0; y < s->py1; y++)
+					for (x = s->px0; x < s->px1; x++)
+						if (p[y * DW + x] == s->pdrawn[y - s->py0][x - s->px0])
+							p[y * DW + x] = s->psave[y - s->py0][x - s->px0];
+				if (s->pshown || *(long *)0xf7fffc != 1 || s->pad)
+					fail[5]++;
+			} else if (!s->pshown || *(long *)0xf7fffc)
+				fail[5]++;
+		}
+		switch (k % 5) {
+		case 0:
+			for (y = v[1]; y < v[1] + v[3]; y++)
+				memset(p + y * DW + v[0], (int)dreg[4] & 255, v[2]);
+			break;
+		case 1:
+			for (y = v[1]; y < v[1] + v[3]; y++)
+				for (x = v[0]; x < v[0] + v[2]; x++)
+					p[y * DW + x] ^= dreg[4];
+			break;
+		case 2:
+		case 3:
+			memcpy((char *)tmp, (char *)(k % 5 == 2 ? dref[0] : dref[1]), sizeof tmp);
+			for (y = 0; y < v[3]; y++)
+				memcpy((char *)p + (w[1] + y) * DW + w[0],
+				    (char *)tmp + (v[1] + y) * DW + v[0], v[2]);
+			break;
+		default:
+			mode = dtp.mode;
+			for (y = 0; y < v[3]; y++)
+				for (x = 0; x < v[2]; x++) {
+					bit = dtp.xo + x;
+					c = dtpl[y * dtp.bpr + bit / 8] >> (7 - bit % 8) & 1;
+					if (mode & 4) c = !c;
+					i = (v[1] + y) * DW + v[0] + x;
+					if ((mode & 3) >= 2) { if (c) p[i] ^= dreg[4]; }
+					else if (c) p[i] = dtp.fg;
+					else if (mode & 1) p[i] = dtp.bg;
+				}
+			break;
+		}
+		if (memcmp((char *)dbm[0], (char *)dref[0], DW * DH) ||
+		    memcmp((char *)dbm[1], (char *)dref[1], DW * DH))
+			fail[k % 5]++;
+		if (!n)
+			fail[6]++;
+	}
+	t_check("draw_fill", !fail[0], "%d of 60 differ", fail[0]);
+	t_check("draw_invert", !fail[1], "%d of 60 differ", fail[1]);
+	t_check("draw_copy", !fail[2], "%d of 60 differ", fail[2]);
+	t_check("draw_copy2", !fail[3], "%d of 60 differ", fail[3]);
+	t_check("draw_template", !fail[4], "%d of 60 differ", fail[4]);
+	t_check("draw_pointer", !fail[5], "%d of 150 wrong", fail[5]);
+	t_check("draw_registers", !fail[6], "%d calls changed saved registers", fail[6]);
+	/* what the functions decline goes to P96's own */
+	*deflt = 0;
+	s->pshown = 0;
+	dreg[8] = (long)dbi; dreg[9] = (long)&dri[0];
+	dreg[0] = dreg[1] = 0; dreg[2] = dreg[3] = 4; dreg[5] = 0x0f; dreg[7] = 1;
+	dcall(0);
+	dreg[5] = 255; dreg[7] = 9;
+	dcall(0);
+	t_check("draw_default", *deflt == 2, "P96's own called %ld times, not 2", *deflt);
+	munmap((caddr_t)DRAW, 65536);
+	munmap((caddr_t)MIG_RTG_BASE, MIG_RTG_HEADER_SIZE);
+	munmap((caddr_t)0xf7f000, 4096);
+}
+
 static int
 used(path, t0)
 	char *path;
@@ -777,8 +1052,122 @@ ibrowse()
 	t_info("ibrowse_notice", "after Return: %s", r ? r : "no reply");
 }
 
+/*
+ * bsdsocket.library: SYS:bsdtest starts on SYS:bsdgo and talks to
+ * bsdsrv, which prints a "name ok detail" line per check.
+ */
+static void
+bsdsock()
+{
+	char b[160], name[32];
+	FILE *f;
+	int ok, k, n = 0;
+
+	sprintf(b, "%s/bsdtest", SYS);
+	if (access(b, 0) != 0 || access(BSDSRV, 1) != 0) {
+		t_skip("bsdsock", "no bsdtest in SYS:");
+		return;
+	}
+	if (access("/usr/lib/libsocket.so", 0) != 0 || access("/dev/tcp", 0) != 0) {
+		t_skip("bsdsock", "no TCP/IP on this root");
+		return;
+	}
+	if ((f = popen(BSDSRV " " SYS "/bsdgo", "r")) == 0) {
+		t_check("bsdsock", 0, "popen: %s", T_ERR);
+		return;
+	}
+	while (fgets(b, sizeof b, f) != 0) {
+		b[strcspn(b, "\n")] = 0;
+		if (sscanf(b, "%31s %d %n", name, &ok, &k) == 2) {
+			t_check(name, ok, "%s", b + k);
+			n++;
+		} else
+			t_info("bsdsock", "%s", b);
+	}
+	pclose(f);
+	t_check("bsdsock", n > 0, "bsdsrv reported nothing");
+}
+
+/*
+ * The sound driver: S:sndtest runs ahitest on SYS:sndgo, half a second
+ * at 22050 Hz through container.audio without AHI.  The sound helper
+ * logs what it took when play stops: frames, player passes (the
+ * driver's timing hook) and the PORTS kicks that woke the mixing task.
+ */
+static void
+sound()
+{
+	char b[64], line[256], *s;
+	unsigned fr = 0, pa = 0, ki = 0;
+	int k, hz = 0, ch = 0, got = 0;
+	FILE *f;
+
+	sprintf(b, "%s/sndgo", SYS);
+	close(creat(b, 0644));
+	for (k = 0; k < 30 && !got; k++) {
+		sleep(1);
+		if ((f = fopen("/tmp/startmig.log", "r")) == 0)
+			continue;
+		while (fgets(line, sizeof line, f) != 0)
+			if ((s = strstr(line, "sound: stopped:")) != 0)
+				got = sscanf(s, "sound: stopped: %u frames, %u passes, %u kicks",
+				    &fr, &pa, &ki) == 3;
+			else if ((s = strstr(line, "sound: ")) != 0)
+				sscanf(s, "sound: %d Hz, %d channels", &hz, &ch);
+		fclose(f);
+	}
+	unlink(b);
+	t_check("sound_start", hz == 22050 && ch == 2, "%d Hz, %d channels", hz, ch);
+	t_check("sound_stop", got, "no stop logged in %d s", k);
+	t_info("sound", "%u frames, %u passes, %u kicks", fr, pa, ki);
+	t_check("sound_frames", fr >= 6615 && fr <= 22050, "%u frames", fr);
+	t_check("sound_passes", pa >= 15, "%u passes", pa);
+	t_check("sound_kicks", ki >= 1, "%u kicks", ki);
+}
+
 static time_t migt0;
 static void cpu();
+
+/* guest P's traps so far: bus faults, privileged instructions, interrupts */
+static void
+traps(p, v)
+	pid_t p;
+	long v[4];
+{
+	struct amigawait aw;
+	struct amigastat st;
+	int fd;
+
+	memset((char *)&aw, 0, sizeof aw);
+	aw.aw_pid = p;
+	aw.aw_stat = &st;
+	v[0] = v[1] = v[2] = 0;
+	v[3] = t_now_ms();
+	if ((fd = open("/dev/amiga", O_RDWR)) < 0)
+		return;
+	if (ioctl(fd, AMIGAIOC_GSTAT, &aw) == 0) {
+		v[0] = st.as_fault;
+		v[1] = st.as_priv;
+		v[2] = st.as_intr;
+	} else
+		t_info("traps", "%s", T_ERR);
+	close(fd);
+}
+
+/* traps per second since V0 */
+static void
+trapinfo(name, p, v0)
+	char *name;
+	pid_t p;
+	long v0[4];
+{
+	long v[4], ms;
+
+	traps(p, v);
+	ms = v[3] - v0[3] > 0 ? v[3] - v0[3] : 1;
+	t_info(name, "in %ld ms: %ld faults/s, %ld privileged/s, %ld interrupts/s", ms,
+	    (v[0] - v0[0]) * 1000 / ms, (v[1] - v0[1]) * 1000 / ms, (v[2] - v0[2]) * 1000 / ms);
+}
 
 /*
  * CPU samples while idle and while the pointer moves; a click on the
@@ -789,13 +1178,16 @@ pointer(p)
 	pid_t p;
 {
 	char *r;
-	long t0, g0[2], g1[2], h0[2], h1[2];
+	long t0, g0[2], g1[2], h0[2], h1[2], tv[4];
 	int k;
 
 	settle("amiga_p0");
 	t_info("phase", "idle profile at %ld s", (long)(time((time_t *)0) - migt0));
+	traps(p, tv);
 	host("prof 3 idle");
 	nap(3500);
+	trapinfo("idle_traps", p, tv);
+	traps(p, tv);
 	t_info("phase", "pointer profile at %ld s", (long)(time((time_t *)0) - migt0));
 	cpu(p, 0, g0);
 	cpu(p, 1, h0);
@@ -807,6 +1199,7 @@ pointer(p)
 	cpu(p, 1, h1);
 	t_info("point_cpu", "in %ld ms: guest user %ld sys %ld, helpers user %ld sys %ld",
 	    t_now_ms() - t0, g1[0] - g0[0], g1[1] - g0[1], h1[0] - h0[0], h1[1] - h0[1]);
+	trapinfo("point_traps", p, tv);
 	host("move -2000 -2000 50");
 	host("move 50 77 50");
 	settle("amiga_c0");
@@ -859,6 +1252,97 @@ cpu(p, kids, v)
 }
 
 /*
+ * The test host's PC samples for SECS s: ms of all work (guest, helpers,
+ * kernel; not the idle loop) and ms to the end of the last busy 100 ms.
+ */
+static void
+busy(secs, name)
+	int secs;
+	char *name;
+{
+	static long idle;
+	char req[64], *r;
+	long b, e;
+
+	if (!idle) {
+		FILE *f = fopen("/tests/ksyms", "r");
+		char sym[64];
+		unsigned long a;
+
+		idle = -1;
+		while (f && fscanf(f, "%63s %lx", sym, &a) == 2)
+			if (strcmp(sym, "idle") == 0) {
+				idle = a;
+				break;
+			}
+		if (f)
+			fclose(f);
+	}
+	if (idle == -1) {
+		t_skip(name, "no idle symbol");
+		return;
+	}
+	sprintf(req, "busy %d %lx %lx", secs, idle, idle + 6);
+	if ((r = host(req)) == 0 || sscanf(r, "%ld %ld", &b, &e) != 2)
+		t_info(name, "no sample: %s", r ? r : "no reply");
+	else
+		t_info(name, "busy %ld of %d ms, last busy at %ld ms", b, secs * 1000, e);
+}
+
+/* N bytes at ADDR in guest P, through /proc; 0 on success */
+static int
+peek(p, addr, buf, n)
+	pid_t p;
+	unsigned long addr;
+	char *buf;
+	int n;
+{
+	char path[64];
+	int fd, r;
+
+	sprintf(path, "/proc/%05ld", (long)p);
+	if ((fd = open(path, O_RDONLY)) < 0)
+		return -1;
+	r = lseek(fd, (off_t)addr, SEEK_SET) == (off_t)addr && read(fd, buf, n) == n ? 0 : -1;
+	close(fd);
+	return r;
+}
+
+/*
+ * After the drags, with the test's SYS: polls ended: the Workbench screen
+ * is the display, nothing was copied, and the helpers sleep while the
+ * guest idles.
+ */
+static void
+idle(p)
+	pid_t p;
+{
+	static struct mig_rtg r0, r1;
+	struct mig_fs_status f0, f1;
+	long dw, bw;
+
+	settle("amiga_idle");
+	if (peek(p, MIG_RTG_BASE, (char *)&r0, sizeof r0) < 0 ||
+	    peek(p, MIG_FS_STATUS, (char *)&f0, sizeof f0) < 0) {
+		t_check("direct_default", 0, "guest memory: %s", T_ERR);
+		return;
+	}
+	nap(5000);
+	if (peek(p, MIG_RTG_BASE, (char *)&r1, sizeof r1) < 0 ||
+	    peek(p, MIG_FS_STATUS, (char *)&f1, sizeof f1) < 0) {
+		t_check("idle_wakeups", 0, "guest memory: %s", T_ERR);
+		return;
+	}
+	t_check("direct_default", !r1.copy && !r1.copies && r1.width == r1.max_width &&
+	    r1.stride == r1.vstride, "copy %u, %u copies, screen %ux%u rows %u, display %u rows %u",
+	    r1.copy, r1.copies, r1.width, r1.height, r1.stride, r1.max_width, r1.vstride);
+	dw = r1.wakes - r0.wakes;
+	bw = f1.wakes - f0.wakes;
+	t_info("idle_wakeups", "in 5 s: display %ld, SYS: %ld", dw, bw);
+	t_check("idle_wakeups", dw <= 2 && bw <= 2, "display %ld, SYS: %ld in 5 s", dw, bw);
+}
+
+/*
  * Drags a shell window's title bar 200,150 up and left and times the
  * screen settling after the button is released, with the CPU time the
  * guest (user, system) and its helpers used meanwhile.
@@ -868,7 +1352,7 @@ drag(p)
 	pid_t p;
 {
 	char b[64], *r, prev[16], cur[16];
-	long t0, t1, t2, g0[2], g1[2], h0[2], h1[2];
+	long t0, t1, t2, g0[2], g1[2], h0[2], h1[2], tv[4];
 	int k, v[4];
 
 	sprintf(b, "%s/draggo", SYS);
@@ -879,11 +1363,13 @@ drag(p)
 	settle("amiga_d0");
 	cpu(p, 0, g0);
 	cpu(p, 1, h0);
+	traps(p, tv);
 	t0 = t_now_ms();
 	host("button 1");
 	host("move -200 -150 50");
-	host("button 0");
+	host("button 0 0");
 	t1 = t2 = t_now_ms();
+	busy(6, "drag_redraw");
 	strcpy(prev, "amiga_d0");
 	for (k = 0; k < 40; k++) {
 		sprintf(cur, "amiga_d%d", k + 1);
@@ -901,6 +1387,7 @@ drag(p)
 	t_info("drag_time", "press to release %ld ms, release to settled %ld ms", t1 - t0, t2 - t1);
 	t_info("drag_cpu", "in %ld ms: guest user %ld sys %ld, helpers user %ld sys %ld",
 	    t_now_ms() - t0, g1[0] - g0[0], g1[1] - g0[1], h1[0] - h0[0], h1[1] - h0[1]);
+	trapinfo("drag_traps", p, tv);
 	t_check("drag_moved", v[2] - v[0] >= 400 && v[3] - v[1] >= 250,
 	    "changed %d,%d-%d,%d", v[0], v[1], v[2], v[3]);
 	/* back down in 60 small moves 16 ms apart, as a hand drags */
@@ -912,8 +1399,9 @@ drag(p)
 	host("button 1");
 	host("glide 60 3 2 16");
 	nap(1800);
-	host("button 0");
+	host("button 0 0");
 	t1 = t2 = t_now_ms();
+	busy(6, "glide_redraw");
 	strcpy(prev, "amiga_g0");
 	for (k = 0; k < 40; k++) {
 		sprintf(cur, "amiga_g%d", k + 1);
@@ -933,6 +1421,15 @@ drag(p)
 	    t_now_ms() - t0, g1[0] - g0[0], g1[1] - g0[1], h1[0] - h0[0], h1[1] - h0[1]);
 	t_check("glide_moved", v[2] - v[0] >= 400 && v[3] - v[1] >= 250,
 	    "changed %d,%d-%d,%d", v[0], v[1], v[2], v[3]);
+	/* a window over the whole screen, opened and closed by the guest */
+	settle("amiga_v0");
+	busy(3, "idle_busy");
+	traps(p, tv);
+	sprintf(b, "%s/covergo", SYS);
+	close(creat(b, 0644));
+	busy(10, "cover");
+	trapinfo("cover_traps", p, tv);
+	host("shot amiga_uncover");
 }
 
 /*
@@ -1020,6 +1517,7 @@ logout(p, stp, o)
 	return r;
 }
 
+
 static void
 boot()
 {
@@ -1043,13 +1541,33 @@ boot()
 	if (!t_check("boot_mount", system("/sbin/mount -F ufs " SYSDEV " " SYS) == 0,
 	    "mount " SYSDEV " failed"))
 		return;
+	/* the most private memory this system reserves now, in 4 MB steps */
+	{
+		struct rlimit rl;
+
+		if (getrlimit(RLIMIT_VMEM, &rl) == 0 && rl.rlim_cur < rl.rlim_max) {
+			rl.rlim_cur = rl.rlim_max;
+			setrlimit(RLIMIT_VMEM, &rl);
+		}
+	}
+	for (k = 4; k <= 128; k += 4) {
+		caddr_t m = mmap((caddr_t)0, (size_t)k << 20, PROT_READ | PROT_WRITE, MAP_PRIVATE,
+		    fd = open("/dev/zero", O_RDWR), 0);
+		close(fd);
+		if (m == (caddr_t)-1)
+			break;
+		munmap(m, (size_t)k << 20);
+	}
+	t_info("boot_reserve", "%d MB of private memory can be reserved (%s)", k - 4, T_ERR);
 	t0 = migt0 = time((time_t *)0);
 	if ((p = fork()) == 0) {
 		fd = open("/tmp/startmig.log", O_WRONLY | O_CREAT | O_TRUNC, 0644);
 		dup2(fd, 1);
 		dup2(fd, 2);
 		putenv("HOME=/nonexistent");
-		execl("/tests/amiga/startmig", "startmig", "--census", "-boot", "/etc/amiga/boot.rom", (char *)0);
+		/* this root has no swap: fast RAM within what it can reserve */
+		execl("/tests/amiga/startmig", "startmig", "--census", "-m", "16",
+		    "-boot", "/etc/amiga/boot.rom", (char *)0);
 		_exit(127);
 	}
 	if (p < 0) {
@@ -1057,6 +1575,8 @@ boot()
 		system("/sbin/umount " SYS);
 		return;
 	}
+	/* where the boot spends its time: PC samples to LoadWB */
+	host("prof 40 boot");
 	memset(seen, 0, sizeof seen);
 	for (i = 0; i < 180 && waitpid(p, &st, WNOHANG) != p; i++) {
 		for (k = n = 0; k < 9; k++) {
@@ -1073,6 +1593,13 @@ boot()
 	for (k = 0; k < 5; k++)
 		t_check(name[k], seen[k], "SYS:%s never read", mark[k]);
 	t_check("boot_alive", i < 180 ? kill(p, 0) == 0 : 1, "startmig ended: status 0x%x", st);
+	{
+		long z[4];
+
+		z[0] = z[1] = z[2] = 0;
+		z[3] = t_now_ms() - (time((time_t *)0) - t0) * 1000L;
+		trapinfo("boot_traps", p, z);
+	}
 	/* Workbench draws its screen well after LoadWB starts */
 	w = h = 0;
 	for (k = 0; k < 30; k++) {
@@ -1081,9 +1608,10 @@ boot()
 		    (r = host("lit amiga_wb")) == 0 || atoi(r) > w * h / 2)
 			break;
 	}
-	if (r == 0)
+	if (r == 0) {
 		t_skip("boot_screen", "no test host");
-	else {
+		bsdsock();
+	} else {
 		t_check("boot_screen", atoi(r) > 0, "screen black: no RTG screen");
 		t_info("boot_screen", "%s of %d pixels lit %d s after the boot marks", r, w * h, 5 * k + 5);
 		/* the backdrop fills most of the Workbench screen */
@@ -1129,9 +1657,13 @@ boot()
 				break;
 		}
 		t_check("boot_key", r && strncmp(r, "diff", 4) == 0, "screen unchanged by keys");
+		/* before the timings */
+		bsdsock();
 		ibrowse();
 		pointer(p);
 		drag(p);
+		sound();
+		idle(p);
 	}
 	if (!w || !logout(p, &st, o)) {
 		if (w)
@@ -1155,7 +1687,7 @@ boot()
 	/* the display's input-to-screen times, a line per 2 s with input, and its pointer */
 	if ((f = fopen("/tmp/startmig.0.log", "r")) != 0) {
 		while (fgets(line, sizeof line, f) != 0)
-			if (strstr(line, "input to screen") || strstr(line, "pointer drawn")) {
+			{
 				fputs(line, stdout);
 				fflush(stdout);
 			}
@@ -1222,6 +1754,20 @@ main(argc, argv)
 	if (ioctl(afd, AMIGAIOC_INFO, &ai) < 0 || !(ai.ai_features & AMIGA_FEAT_EXPERIMENTAL)) {
 		t_skip("guest", "no 68040 execution path");
 		return t_done();
+	}
+	/* in a child: a fault in the card's code must not end the suite */
+	{
+		pid_t dp;
+		int dst;
+
+		fflush(stdout);
+		if ((dp = fork()) == 0) {
+			drawtest();
+			fflush(stdout);
+			_exit(0);
+		}
+		t_waitchild(dp, &dst, 60);
+		t_check("draw_ran", dp > 0 && WIFEXITED(dst) && WEXITSTATUS(dst) == 0, "status 0x%x", dst);
 	}
 	guests();
 	exits();

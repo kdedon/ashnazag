@@ -858,7 +858,11 @@ register struct fbmode *m;
 		FC->fc_bg = 0;
 	} else {
 		FC->fc_fg = 0;
+#ifdef ATA060
+		FC->fc_bg = d == 16 ? 0xFFFFFFFFUL : 0x00FFFFFFUL;	/* RGB565 */
+#else
 		FC->fc_bg = d == 16 ? 0x7FFF7FFFUL : 0x00FFFFFFUL;
+#endif
 	}
 	fb_mkexp();
 	FC->fc_cdrawn = 0;

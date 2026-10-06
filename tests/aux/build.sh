@@ -59,13 +59,16 @@ if [ -f "$OUT/mod.d/uinter" ] && [ -f "$AUXROOT/mac/bin/startmac" ] && [ -f "$SY
 	cp "$AUXROOT/shlib/libmac1_s" "$OUT/root/shlib/"
 	cp "$AUXROOT/mac/lib/Patches/Patch.067C" "$OUT/root/mac/lib/Patches/"
 	# Shut Down's dialog resources; the test root's names have no spaces
+	mkdir -p "$OUT/root/mac/lib/Resources"
 	if [ -f "$AUXROOT/mac/lib/Resources/%AUX Resources" ]; then
-		mkdir -p "$OUT/root/mac/lib/Resources"
 		cp "$AUXROOT/mac/lib/Resources/%AUX Resources" "$OUT/root/mac/lib/Resources/%AUXResources"
 	fi
 	cp "$SYSF" "$OUT/root/mac/sys/Sys7/System"
 	cp "$AUXROOT/mac/lib/SystemFiles/shared/Finder" "$OUT/root/mac/sys/Sys7/Finder"
 	cp "$AUXROM" "$OUT/root/etc/aux/rom"
+	# SysBeep's sound on a Quadra; t_sound's INIT
+	cp "$AUXROOT/mac/lib/Resources/sampledBeep" "$OUT/root/mac/lib/Resources/"
+	sh "$T/aux/sndtest/build.sh" "$OUT/root/mac/lib/SndTest"
 	# the File ID daemon, which the Mac side needs to create folders
 	cp "$AUXROOT/etc/fidd" "$OUT/root/etc/aux/fidd"
 	# Mac OS 7.6.1 and 8.1 from their CDs, when present, on a ufs volume
@@ -103,6 +106,8 @@ if [ -f "$OUT/mod.d/uinter" ] && [ -f "$AUXROOT/mac/bin/startmac" ] && [ -f "$SY
 		AUXROM6=${AUXROM6:-$AUX/368CADFE - Mac IIci.ROM}
 		[ -f "$AUXROM6" ] || AUXROM6=$AUXROM
 		cp "$AUXROM6" "$R6/etc/aux/rom"
+		mkdir -p "$R6/mac/lib/Resources"
+		cp "$AUXROOT/mac/lib/Resources/sampledBeep" "$R6/mac/lib/Resources/"
 	fi
 	CD81=${CD81:-$AUX/media/MacOS8_1.iso}
 	[ ! -f "$CD81" ] || sh "$AUX/images/macenv/mksys81.sh" "$CD81" "$V/S81"

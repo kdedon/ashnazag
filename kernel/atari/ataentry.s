@@ -39,6 +39,20 @@ Lnext:
 	bne.w	Lscan
 	suba	%a0,%a0
 Lfound:
+.ifdef ATA060
+	| copied to FastRAM: enter the copy, which finds the record past its end
+	moveal	%a0,%a2
+	movel	%a0,%sp@-
+	jsr	ata_reloc
+	addql	&4,%sp
+	tstl	%d0
+	beq.w	Lstay
+	addl	&atari_entry,%d0
+	moveal	%d0,%a0
+	jmp	%a0@
+Lstay:
+	moveal	%a2,%a0
+.endif
 	movel	%a0,%sp@-
 	jsr	ata_shim_main
 	addql	&4,%sp
@@ -67,6 +81,22 @@ ata_early_exc:
 	movew	%a2@,%d0
 	movel	%d0,%sp@-
 	jsr	ata_puthex
+.ifdef ATA060
+	| format 4 (060 access error): fault address and FSLW
+	movew	%a2@(6),%d0
+	andiw	&0xf000,%d0
+	cmpiw	&0x4000,%d0
+	bne.w	Lexcend
+	pea	Lexcea
+	jsr	ata_puts
+	movel	%a2@(8),%sp@-
+	jsr	ata_puthex
+	pea	Lexcfs
+	jsr	ata_puts
+	movel	%a2@(12),%sp@-
+	jsr	ata_puthex
+Lexcend:
+.endif
 	pea	Lnl
 	jsr	ata_stop
 
@@ -94,10 +124,22 @@ ata_restart:
 	jmp	%a0@
 
 Lmmuoff:
+.ifdef ATA060
+	.word	0xf4f8			| cpusha bc
+	moveq	&0,%d0
+	movec	%d0,%cacr
+	.word	0x4e7b,0x0003		| movec %d0,%tc
+	.word	0x4e7b,0x0004		| movec %d0,%itt0
+	.word	0x4e7b,0x0005		| movec %d0,%itt1
+	.word	0x4e7b,0x0006		| movec %d0,%dtt0
+	.word	0x4e7b,0x0007		| movec %d0,%dtt1
+	.word	0xf518			| pflusha
+.else
 	moveq	&0,%d0
 	movec	%d0,%cacr
 	lea	Lzero,%a0
 	.word	0xf010,0x4000		| pmove (%a0),%tc
+.endif
 	rts
 
 	.data
@@ -105,6 +147,10 @@ Lexc:	.asciz	"\natari: early exception, vector "
 Lexcpc:	.asciz	" pc "
 Lexcsr:	.asciz	" sr "
 Lnl:	.asciz	"\n"
+.ifdef ATA060
+Lexcea:	.asciz	" ea "
+Lexcfs:	.asciz	" fslw "
+.endif
 	.even
 Lzero:	.long	0
 	.balign	4
@@ -151,6 +197,9 @@ ata_nfcall:				| ata_nfcall(id, arg)
 	movel	%d1,%sp@-
 	movel	%d0,%sp@-
 	clrl	%sp@-
+.ifdef ATA060
+	.word	0xf478			| cpusha dc: the host reads memory, not the copyback cache
+.endif
 	.word	0x7301
 	movel	%a1,%sp
 	movew	%sp@+,%sr

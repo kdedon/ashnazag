@@ -51,6 +51,9 @@ case "$1" in
 		"$DLM/tools/mkksym.c" "$DLM/dlm_sym.c"
 	$HCC -o "$O/tools/modfix" "$DLM/tools/modfix.c"
 	"$O/tools/mkksym" -x "$KERNEL" > "$O/exports"
+	# the display service's Atari build: its interrupt level, page size
+	! grep -qw ds_vidput "$O/exports" || KCC="$KCC -DDS_ATARI"
+	! grep -qw ata_idcm "$O/exports" || KCC="$KCC -DATA060"
 	rm -rf "$O/mod.d"
 	for m in guestcore auxcore auxexec uinter tosguest amigaguest; do
 		d=$O/src/$m

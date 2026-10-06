@@ -6,6 +6,9 @@
 #include "../../guest/include/amigaio.h"
 
 #define _AMIGA_H
+#define AMIGA_BELL 0xf7fffcUL
+#define AMIGA_SNDBELL 0xf7fff8UL
+static void amiga_ring() {}
 typedef char *caddr_t;
 #define USTKCLEAR 1
 struct { int u_sigflag; } u;

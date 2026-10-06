@@ -9,12 +9,15 @@
 # network root (t_net only) on user-mode networking, with a TCP echo
 # service (cat) at 10.0.2.100:7.  --kernel-dir: a kernel/ tree
 # (built) to test instead of ../kernel.  ROM, MEM (MB), TMO (s), GEOM
-# (QEMU -g: WxHxDEPTH), CMDLINE (one boot option) override.
+# (QEMU -g: WxHxDEPTH), CMDLINE (one boot option), QEMUX (QEMU options)
+# override.
 # Direct boot also serves t_display's host requests on SCC channel B
 # (display/hostio.py: keys, mouse, screen dumps in results/.../display/).
 # Out: results/<time>-<mode>/ with serial.log, serial.ts (host time of each
 # line), screen.png, summary.txt.
-# GROUP=smoke|core|mac|tos|mint|cpm|amiga|display runs that set only.
+# AMIGANET=1 (direct boot): the root also has TCP/IP, for t_amiga's
+# bsdsocket.library checks (user-mode network, no echo service).
+# GROUP=smoke|core|mac|tos|mint|cpm|amiga|display|sound runs that set only.
 # Exit: 0 all PASS, 1 any FAIL, 2 timeout, panic or no TESTS DONE.
 # up to QSLOTS QEMUs at once (tools/qslot.sh)
 # one run per checkout at a time: they share tests/build
@@ -54,7 +57,8 @@ mint)	G="t_mint" ;;
 cpm)	G="t_cpm" ;;
 amiga)	G="t_amiga t_env" ;;
 display) G="t_display" ;;
-*)	echo "GROUP: smoke core mac tos mint cpm amiga display"; exit 2 ;;
+sound)	G="t_sound" ;;
+*)	echo "GROUP: smoke core mac tos mint cpm amiga display sound"; exit 2 ;;
 esac
 if [ -n "${G:-}" ]; then
 	ONLY="$T/src/runall.c"
@@ -76,7 +80,7 @@ fi
 if [ -n "$BUILD" ]; then
 	sh "$T/build.sh" > "$OUT/build.log" 2>&1 || { tail "$OUT/build.log"; exit 2; }
 	if [ $MODE = direct ]; then
-		KERNEL=$KERNEL sh "$T/mktestroot.sh" >> "$OUT/build.log" 2>&1 ||
+		KERNEL=$KERNEL AMIGANET=$AMIGANET sh "$T/mktestroot.sh" >> "$OUT/build.log" 2>&1 ||
 			{ tail "$OUT/build.log"; exit 2; }
 	elif [ $MODE = net ]; then
 		NET=1 KERNEL=$KERNEL sh "$T/mktestroot.sh" >> "$OUT/build.log" 2>&1 ||
@@ -94,6 +98,8 @@ SOCK=$SK/qmp.sock
 QEMU="$Q/usr/bin/qemu-system-m68k -L $Q/usr/share/qemu -M q800 -display none"
 # GEOM: the screen, e.g. 800x600x1 for a 1-bit display
 [ -n "$GEOM" ] && QEMU="$QEMU -g $GEOM"
+# QEMUX: extra QEMU options, e.g. "-icount shift=3" to time by instructions
+[ -n "$QEMUX" ] && QEMU="$QEMU $QEMUX"
 # CMDLINE: one kernel boot option for a direct boot, e.g. nofpu
 [ -n "$CMDLINE" ] && [ $MODE != rom ] && QEMU="$QEMU -append $CMDLINE"
 # GDB: a unix socket path for a gdbstub (the guest runs without waiting)
@@ -101,6 +107,7 @@ QEMU="$Q/usr/bin/qemu-system-m68k -L $Q/usr/share/qemu -M q800 -display none"
 if [ $MODE = direct ]; then
 	MEM=${MEM:-128}
 	set -- -m "$MEM" -kernel "$KERNEL" -initrd "$T/build/testroot.img"
+	[ -z "$AMIGANET" ] || set -- -m "$MEM" -kernel "$KERNEL" -initrd "$T/build/amiganetroot.img" -nic user
 	# t_ufs's volume, writes discarded
 	[ -f "$T/build/ufs/ufs.img" ] && set -- "$@" \
 		-drive file="$T/build/ufs/ufs.img",format=raw,if=none,id=hd2,snapshot=on \

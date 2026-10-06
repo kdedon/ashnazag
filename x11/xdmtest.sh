@@ -10,7 +10,8 @@
 # ends.  Each session's end must bring back the xdm login.  The image
 # needs XView and the Amiga environment for these numbers.
 AUX=$(cd "$(dirname "$0")/.." && pwd)
-X11W=${X11W:-$AUX/images/work/x11}
+PLATFORM=${PLATFORM:-mac}
+X11W=${X11W:-$AUX/images/work/x11-$PLATFORM}
 OUT=$1
 IMG=${2:-$X11W/q800-mac.img}
 # N relative moves of DX DY: ADB carries 7-bit deltas, and the server

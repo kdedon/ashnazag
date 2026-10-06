@@ -34,6 +34,21 @@ c /dev/mouse	660 0 25 53 0
 f /etc/group	444 0 3 build/group
 f /usr/bin/dstest 755 2 2 ../../build/mac/display/dstest
 
+# sound: the chip for the service, which serves /dev/sound
+c /dev/asc	600 0 3 46 0
+# the A/UX Sound Manager's synths, relayed to sndaux through srv
+d /dev/snd	755 0 3
+c /dev/snd/note	666 0 3 47 0
+c /dev/snd/wave1	666 0 3 47 1
+c /dev/snd/wave2	666 0 3 47 2
+c /dev/snd/wave3	666 0 3 47 3
+c /dev/snd/wave4	666 0 3 47 4
+c /dev/snd/samp	666 0 3 47 5
+c /dev/snd/raw	666 0 3 47 6
+c /dev/snd/reset	666 0 3 47 255
+c /dev/snd/srv	600 0 3 47 128
+f /usr/lib/sndd 755 0 3 ../../build/mac/sound/sndd
+
 # console: ldterm and ttcompat by autopush, Mac key bindings
 d /etc/ap	755 0 3
 f /etc/ap/chan.ap 644 0 3 etc/chan.ap

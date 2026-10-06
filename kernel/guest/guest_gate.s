@@ -175,7 +175,8 @@ Lftslow:
 
 | guest_fpriv -- vector 8 of a guest with GPF_PRIV in virtual supervisor
 | mode: rte (format 0), move to and from SR (Dn, (sp)+, -(sp), #imm)
-| and ori/andi/eori #,SR against gp_vsr, as gcpu.c emulates them.  An
+| and ori/andi/eori #,SR against gp_vsr, as gcpu.c emulates them, and
+| move to and from USP against gp_vusp.  An
 | IPL below gp_vpend (an interrupt would be taken), pending signals, a
 | reschedule, other instructions or a fault take the C path.
 
@@ -225,7 +226,73 @@ guest_fpriv:
 	beqw	Lfpandi
 	cmpiw	&0x0a7c,%d0
 	beqw	Lfpeori
+	movew	%d0,%d1
+	andiw	&0xfff0,%d1
+	cmpiw	&0x4e60,%d1
+	beqw	Lfpusp
 	bra	Lfpfault
+Lfpusp:					| a1: the guest; register n in d1
+	movew	%d0,%d1
+	andiw	&7,%d1
+	addql	&2,%a0
+	btst	&3,%d0
+	bnew	Lfpfrusp
+	cmpiw	&3,%d1			| move An,usp
+	bcsw	Lfpus1
+	beqw	Lfpus3
+	cmpiw	&5,%d1
+	bcsw	Lfpus4
+	beqw	Lfpus5
+	cmpiw	&7,%d1
+	bcsw	Lfpus6
+	movel	%a2,%d2
+	bra	Lfpus9
+Lfpus1:
+	lslw	&2,%d1
+	movel	%sp@(32,%d1:w),%d2
+	bra	Lfpus9
+Lfpus3:
+	movel	%a3,%d2
+	bra	Lfpus9
+Lfpus4:
+	movel	%a4,%d2
+	bra	Lfpus9
+Lfpus5:
+	movel	%a5,%d2
+	bra	Lfpus9
+Lfpus6:
+	movel	%a6,%d2
+Lfpus9:
+	movel	%d2,%a1@(GP_VUSP)
+	bra	Lfpdone
+Lfpfrusp:				| move usp,An
+	movel	%a1@(GP_VUSP),%d2
+	cmpiw	&3,%d1
+	bcsw	Lfpur1
+	beqw	Lfpur3
+	cmpiw	&5,%d1
+	bcsw	Lfpur4
+	beqw	Lfpur5
+	cmpiw	&7,%d1
+	bcsw	Lfpur6
+	moveal	%d2,%a2
+	bra	Lfpdone
+Lfpur1:
+	lslw	&2,%d1
+	movel	%d2,%sp@(32,%d1:w)
+	bra	Lfpdone
+Lfpur3:
+	moveal	%d2,%a3
+	bra	Lfpdone
+Lfpur4:
+	moveal	%d2,%a4
+	bra	Lfpdone
+Lfpur5:
+	moveal	%d2,%a5
+	bra	Lfpdone
+Lfpur6:
+	moveal	%d2,%a6
+	bra	Lfpdone
 Lfprte:
 	movesw	%a2@(6),%d1
 	cmpiw	&0x0fff,%d1

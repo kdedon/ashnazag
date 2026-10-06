@@ -1,0 +1,3 @@
+; a window over the whole Workbench, closed again: both redraws
+Wait 3
+EndCLI

@@ -16,9 +16,12 @@
  * it converts the TOS screen to the frame buffer and passes keyboard
  * and mouse to the IKBD.  The parent enters the ROM's reset code.
  * With -P the session owns the video hardware: TOS sets its own modes
- * and draws at the top of ST-RAM, which is the session's region.
+ * and draws at the top of ST-RAM, which is the session's region.  Its
+ * ST-RAM is then one contiguous block of the machine's, for the DMA.
  * -S keeps GEM on the ST screen: fVDI gets no frame buffer, for
  * programs that also write and read that screen themselves.
+ * A second child, the sound pump, plays the guest's DMA sound on the
+ * host's sound service; with -P the machine's own sound is used.
  */
 
 #include <sys/types.h>
@@ -58,7 +61,7 @@ static int mono, stscreen, verbose, pass, romarg;
 static int tfd;
 extern int fbpipe, vpass;
 
-extern void disp();
+extern void disp(), tossnd();
 
 static void
 die(what)
@@ -305,6 +308,31 @@ fbmap(fd)
 	close(rf.fd);
 }
 
+/* the sound pump, rung through a pipe the cartridge writes to */
+static void
+sndstart()
+{
+	struct tossnd *sd = (struct tossnd *)TOSSND;
+	int b[2];
+	pid_t pid;
+
+	sd->sd_bell = -1;
+	if (pass || pipe(b) < 0)
+		return;
+	if ((pid = fork()) == 0) {
+		close(b[1]);
+		tossnd(tfd, b[0], (unsigned long)ramsize);
+		_exit(0);
+	}
+	close(b[0]);
+	if (pid < 0) {
+		close(b[1]);
+		return;
+	}
+	fcntl(b[1], F_SETFL, O_NDELAY);		/* full: the pump has been rung */
+	sd->sd_bell = b[1];
+}
+
 /* C: from the environment, locked for this session */
 static int
 envsetup()
@@ -425,7 +453,19 @@ main(argc, argv)
 		fprintf(stderr, "starttos: %s: not a TOS image\n", rom);
 		return 1;
 	}
-	region(0L, (unsigned long)ramsize, 1);
+	if (pass) {
+		if (ioctl(tfd, TOSIOC_STRAM, ramsize) < 0) {
+			if (errno != ENOMEM)
+				die("ST-RAM");
+			fprintf(stderr, "starttos: no %ld MB of contiguous ST-RAM free; -m asks for less\n",
+			    ramsize >> 20);
+			return 1;
+		}
+		if (mmap((caddr_t)0, (size_t)ramsize, PROT_READ | PROT_WRITE | PROT_EXEC,
+		    MAP_SHARED | MAP_FIXED, tfd, 0) == (caddr_t)-1)
+			die("ST-RAM");
+	} else
+		region(0L, (unsigned long)ramsize, 1);
 	if (!pass) {
 		region(base, (n + 0xfff) & ~0xfffL, 0);
 		memcpy((char *)base, rbuf, n);
@@ -463,6 +503,7 @@ main(argc, argv)
 	}
 	close(pfd[1]);
 	fbmap(pfd[0]);
+	sndstart();
 	memset((char *)&sa, 0, sizeof sa);
 	sa.sa_handler = nothing;
 	sa.sa_flags = SA_NODEFER;

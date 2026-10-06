@@ -35,7 +35,7 @@ sh x11/package.sh
 AMIX_TAPE=<tape dir> sh x11/mkimage.sh [kernel.elf [out.img]]   # ROOTMB 96
 ```
 
-Work tree `$X11W` (set it; the build needs a scratch directory). `tree` extracts `ref/x11r6.3/dist`
+Work tree `$X11W` (default `images/work/x11-$PLATFORM`, PLATFORM mac or atari; the build needs a scratch directory). `tree` extracts `ref/x11r6.3/dist`
 `xc-1..3`, the port overlay, all `patches/*.diff` and `src/`, plus `kernel/mac/display/dsio.h`. `imake`
 builds a host `imake` (with `-DAMIX -DSVR4 -Dm68k`), uses host `cpp -undef` for it, and installs
 `cross.def` into `site.def`'s after-vendor half; it also takes `amiga/screen.h` and

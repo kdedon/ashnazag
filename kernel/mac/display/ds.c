@@ -26,6 +26,10 @@
 #include "sys/proc.h"
 #include "sys/disp.h"
 #include "sys/signal.h"
+#include "vm/as.h"
+#include "vm/seg.h"
+#include "vm/page.h"
+#include "sys/tuneable.h"
 #endif
 #include "fbcons.h"
 #include "adb.h"
@@ -40,11 +44,19 @@ extern int fbcons_grab();
 extern struct fbpmode fbp_mode[];
 #ifdef DS_ATARI
 extern void ata_dspoll(), ata_vsave(), ata_vload(), ata_vput(), ata_bsave(), ata_bload();
-extern int ata_vget();
+extern int ata_vget(), ata_sget();
+extern void ata_sput(), ata_sirq();
 extern int ata_vnative(), ata_brun(), ata_nvmode(), ata_vmfind();
 extern void ata_vminfo(), ata_vmset();
 extern unsigned long ata_pool;
+static void ds_sndsave(), ds_sndload();
 static struct dsvid ds_vcons;		/* the mode under a Videl session */
+#endif
+#if defined(DS_ATARI) && defined(ATA060)
+extern int ata_svfb;
+#define DS_SV	ata_svfb	/* the display is the SuperVidel's native mode */
+#else
+#define DS_SV	0
 #endif
 extern int fbp_nmode, fbp_cur;
 
@@ -53,6 +65,7 @@ struct dssess ds_sess[1 + DS_NSESS];
 struct dssess *ds_front = &ds_sess[0];
 unsigned long ds_gen, ds_serial, ds_vblcount;
 unsigned long ds_nhwvbl, ds_nswvbl;	/* VBLs from DAFB, from the tick */
+void (*ds_frontfn)();
 
 static long ds_nextid = 1;
 static int ds_pend = -1;		/* hotkey digit to act on, -1 none */
@@ -180,6 +193,13 @@ int lo, hi;
 		r = s->s_blank ? 0 : s->s_cmap[0][i];
 		g = s->s_blank ? 0 : s->s_cmap[1][i];
 		b = s->s_blank ? 0 : s->s_cmap[2][i];
+#if defined(ATA060)
+		/* 8 bits a gun; no ST palette, a Videl register */
+		if (DS_SV) {
+			FAL_PAL(i) = (r & 0xFF00) << 16 | (g & 0xFF00) << 8 | (b & 0xFF00) >> 8;
+			continue;
+		}
+#endif
 		FAL_PAL(i) = (r & 0xFC00) << 16 | (g & 0xFC00) << 8 | (b & 0xFC00) >> 8;
 		if (i < 16)
 			ST_PAL(i) = STE4(r) << 8 | STE4(g) << 4 | STE4(b);
@@ -443,8 +463,9 @@ register struct dssess *s;
 	s->s_mem = s->s_shadow = 0;
 	s->s_pfn = 0;
 #ifdef DS_ATARI
-	if (s->s_vid)
+	if (s->s_vid) {
 		kmem_free((caddr_t)s->s_vid, sizeof *s->s_vid);
+	}
 	s->s_vid = 0;
 #endif
 }
@@ -487,6 +508,14 @@ int *errp, vid;
 	s->s_dead = 1;
 	s->s_size = ds_disp.d_info.fi_size;
 #ifdef DS_ATARI
+#ifdef ATA060
+	/* a guest's Videl writes would end the native mode */
+	if (vid && DS_SV) {
+		s->s_used = 0;
+		*errp = ENXIO;
+		return 0;
+	}
+#endif
 	if (vid) {
 		for (i = 1; i <= DS_NSESS; i++)
 			if (ds_sess[i].s_used && !ds_sess[i].s_dead && DS_GUEST(&ds_sess[i])) {
@@ -703,6 +732,10 @@ register struct dssess *to;
 		ata_vload(&ds_vcons);
 		ata_bload(ds_vcons.v_blt);
 	}
+	if (DS_GUEST(from))
+		ds_sndsave(from);
+	if (DS_GUEST(to))
+		ds_sndload(to);
 #endif
 	ds_lcopy((unsigned long *)vram, (unsigned long *)to->s_shadow, to->s_size);
 	if (to == &ds_sess[0])
@@ -711,6 +744,8 @@ register struct dssess *to;
 	x = DS_SPL(DS_HI);
 	ds_front = to;
 	ds_serial++;
+	if (ds_frontfn)
+		(*ds_frontfn)(to);
 	to->s_blank = 0;		/* the switch key counts as input */
 #ifdef DS_ATARI
 	wakeup((caddr_t)&ds_front);	/* blits waiting for the front */
@@ -941,8 +976,8 @@ ds_init()
 	ds_disp.d_page = m->fm_base & ~DS_PGOFF;
 #ifdef DS_ATARI
 	ds_disp.d_dafb = 0;
-	fi->fi_type = FBT_VIDEL;
-	fi->fi_layout = d == 1 || d > 8 ? FBL_PACKED : FBL_IPLAN2;
+	fi->fi_type = DS_SV ? FBT_SVIDEL : FBT_VIDEL;
+	fi->fi_layout = d == 1 || d > 8 || DS_SV ? FBL_PACKED : FBL_IPLAN2;
 #else
 	ds_disp.d_dafb = m->fm_base >= DAFB_VRAM && m->fm_base < DAFB_REG;
 	fi->fi_type = ds_disp.d_dafb ? FBT_DAFB : FBT_NUBUS;
@@ -962,6 +997,10 @@ ds_init()
 		ds_disp.d_vsize = ata_pool + DS_VPOOL - ds_disp.d_page;
 #endif
 	end = ds_disp.d_dafb ? DAFB_REG : (ds_disp.d_page & 0xFF000000) + 0x01000000;
+#ifdef ATA060
+	if (DS_SV)
+		end = 0xA8000000;	/* the SuperVidel's RAM */
+#endif
 	if (fi->fi_size > end - ds_disp.d_page)
 		return ENXIO;
 	if (d == 1)
@@ -991,8 +1030,14 @@ ds_init()
 	fi->fi_cmapbits = 8;
 	fi->fi_mode = (fbp_cur >= 0 && fbp_cur < fbp_nmode) ? fbp_mode[fbp_cur].pm_id : 0x80;
 #ifdef DS_ATARI
-	fi->fi_cmapbits = 6;
+	fi->fi_cmapbits = DS_SV ? 8 : 6;
 	fi->fi_flags = d <= 8 ? FBF_BLANK | FBF_CMAP : 0;
+#ifdef ATA060
+	if (DS_SV)
+		for (i = 0; "SuperVidel"[i]; i++)
+			fi->fi_name[i] = "SuperVidel"[i];
+	else
+#endif
 	for (i = 0; "Videl"[i]; i++)
 		fi->fi_name[i] = "Videl"[i];
 #else
@@ -1015,6 +1060,12 @@ ds_init()
 	ds_q.q_qinfo = &ds_qi;
 #ifdef DS_ATARI
 	ds_clutload(&ds_sess[0], 0, (int)fi->fi_cmapsize);
+#ifdef ATA060
+	/* user pages noncacheable but not serialised, so writes can be buffered */
+	if (DS_SV)
+		(void)hat_cm_fb_add(ds_disp.d_page >> DS_PGSHIFT,
+		    (ds_disp.d_page + fi->fi_size + DS_PGOFF) >> DS_PGSHIFT);
+#endif
 #else
 	if (ds_disp.d_dafb) {
 		(void)hat_cm_fb_add(ds_disp.d_page >> DS_PGSHIFT,
@@ -1054,6 +1105,90 @@ ds_init()
 }
 
 #ifdef DS_ATARI
+/* ---------------------------------------------------- guest ST-RAM */
+
+/*
+ * A passthrough guest's ST-RAM: one run of free physical pages, so its
+ * DMA (sound, the Videl) reaches guest address g at ds_gpa + g.  One
+ * guest at a time; the block goes on its device's last close, which
+ * follows the last mapping.
+ */
+extern int availrmem;
+extern u_int pages_pp_kernel;
+extern struct tune tune;
+static page_t *ds_gpp;			/* the block's first page */
+static unsigned long ds_gpa, ds_gsize;
+static pid_t ds_gpid;			/* the process that took it */
+
+/* size bytes of ST-RAM for the caller, zeroed; errno */
+int
+ds_gralloc(size)
+unsigned long size;
+{
+	register page_t *pp, *lo;
+	register unsigned long i, n;
+
+	n = (size + DS_PGOFF) >> DS_PGSHIFT;
+	if (ds_gpp)
+		return EBUSY;
+	if (n == 0 || size > 0xE00000L)
+		return EINVAL;
+	if (availrmem - (int)n < tune.t_minarmem)
+		return ENOMEM;
+	availrmem -= n;
+	pages_pp_kernel += n;
+	if ((pp = page_get(n << DS_PGSHIFT, P_NOSLEEP | P_PHYSCONTIG)) == 0) {
+		availrmem += n;
+		pages_pp_kernel -= n;
+		return ENOMEM;
+	}
+	/* the run comes as a list in no set order */
+	for (lo = pp, i = 1; i < n; i++)
+		if ((pp = pp->p_next) < lo)
+			lo = pp;
+	ds_gpp = lo;
+	ds_gpa = (pages_base + (lo - pages)) << DS_PGSHIFT;
+	ds_gsize = n << DS_PGSHIFT;
+	ds_gpid = curproc->p_pid;
+	if (ds_gpa + ds_gsize > 0xE00000L) {
+		ds_grfree();
+		return ENOMEM;
+	}
+	bzero((caddr_t)ds_gpa, ds_gsize);
+	DS_CPUSHA();
+	return 0;
+}
+
+void
+ds_grfree()
+{
+	register page_t *pp;
+	register unsigned long i, n = ds_gsize >> DS_PGSHIFT;
+
+	if (ds_gpp == 0)
+		return;
+	for (i = 1; i <= DS_NSESS; i++)
+		if (ds_sess[i].s_gpa == ds_gpa)
+			ds_sess[i].s_gtop = 0;
+	for (i = 0, pp = ds_gpp; i < n; i++, pp++)
+		if (--pp->p_keepcnt == 0)
+			page_abort(pp);
+	availrmem += n;
+	pages_pp_kernel -= n;
+	ds_gpp = 0;
+	ds_gpa = ds_gsize = 0;
+}
+
+/* the page frame at offset off of the block, -1 if none */
+int
+ds_grmmap(off)
+off_t off;
+{
+	if (ds_gpp == 0 || off < 0 || (unsigned long)off >= ds_gsize)
+		return -1;
+	return (ds_gpa + off) >> DS_PGSHIFT;
+}
+
 /* ---------------------------------------------------- Videl passthrough */
 
 /*
@@ -1072,6 +1207,11 @@ unsigned long win;
 	s->s_vproc = curproc;
 	s->s_vpid = curproc->p_pid;
 	s->s_vwin = win;
+	s->s_gtop = 0;
+	if (ds_gpp && ds_gpid == curproc->p_pid) {
+		s->s_gpa = ds_gpa;
+		s->s_gtop = win < ds_gsize ? win : ds_gsize;
+	}
 	return 0;
 }
 
@@ -1159,8 +1299,8 @@ ds_vowner()
  * A guest write of sz bytes at a, from the owner's process.  It is
  * kept in the session's state and, while the session is in front,
  * written to the Videl.  The screen address is the guest's: it becomes
- * the same place in the pool, or the pool's start when it lies outside
- * the region.  The address counters are not written.
+ * the same place in the pool or the guest's ST-RAM block, else the
+ * pool's start.  The address counters are not written.
  */
 void
 ds_vidput(a, sz, v)
@@ -1199,10 +1339,13 @@ int sz;
 			d->v_st = 0;
 	}
 	if (base) {
-		o = s->s_vgbase - s->s_vwin;
-		if (o >= s->s_size)
-			o = 0;
-		o += ds_disp.d_page;
+		g = s->s_vgbase;
+		if (g - s->s_vwin < s->s_size)
+			o = ds_disp.d_page + (g - s->s_vwin);
+		else if (g + s->s_size <= s->s_gtop)
+			o = s->s_gpa + g;
+		else
+			o = ds_disp.d_page;
 		d->v_reg[0x01] = o >> 16;
 		d->v_reg[0x03] = o >> 8;
 		d->v_reg[0x0D] = o;
@@ -1226,6 +1369,310 @@ int sz;
 			d->v_reg[0x10 + i] = ata_vget(0xFF8210L + i);
 			d->v_reg[0xC2 + i] = ata_vget(0xFF82C2L + i);
 		}
+}
+/* ---------------------------------------------------- sound passthrough */
+
+/*
+ * A guest's DMA sound, codec and matrix registers, $FF8900-$FF8943, are
+ * the machine's own while its session is in front.  The buffer addresses
+ * are the guest's; its ST-RAM is one physical block, so they reach the
+ * hardware with one add.  Away from the front the DMA is stopped, and the
+ * registers written are replayed when the session returns.  Only playback
+ * is passed: the record bits never reach the hardware, whose record
+ * address is not the guest's.
+ */
+#define SREG(o)		((o) >= 0xFF8900 && (o) < 0xFF8944)
+#define SADR(k)		((k) & 1 && (k) >= 3 && (k) <= 0x13)	/* base, counter, end */
+#define SMW(k)		((k) >= 0x22 && (k) <= 0x25)
+#define SREC(d)		((d)->v_snd[1] & 0x80)	/* the address registers are the record ones */
+
+/* the 24 bits in the shadow's address register at k */
+static unsigned long
+ds_sadr(d, k)
+register struct dsvid *d;
+register int k;
+{
+	return (unsigned long)d->v_snd[k] << 16 | d->v_snd[k + 2] << 8 | d->v_snd[k + 4];
+}
+
+static void
+ds_sw3(a, v)
+unsigned long a, v;
+{
+	ata_sput(a, v >> 16);
+	ata_sput(a + 2, v >> 8);
+	ata_sput(a + 4, v);
+}
+
+/*
+ * The physical memory of the guest's buffer [g, e), both 0 unless it
+ * lies in the guest's block or in the region, which is the pool while
+ * the session is in front.
+ */
+static void
+ds_sphys(s, g, e, pb, pe)
+register struct dssess *s;
+unsigned long g, e, *pb, *pe;
+{
+	*pb = *pe = 0;
+	if (e <= g)
+		return;
+	if (e <= s->s_gtop) {
+		*pb = s->s_gpa + g;
+		*pe = s->s_gpa + e;
+	} else if (g >= s->s_vwin && e - s->s_vwin <= s->s_size) {
+		*pb = ds_disp.d_page + (g - s->s_vwin);
+		*pe = ds_disp.d_page + (e - s->s_vwin);
+	}
+}
+
+/*
+ * The interrupt control as the hardware gets it: bit 0 asks for input 7
+ * at the end of play, bit 2 for Timer A.  Timer A's pin is not the host's,
+ * so its events come by input 7 too; the record bits stay with the guest.
+ */
+static int
+ds_sctl0(d)
+register struct dsvid *d;
+{
+	return d->v_snd[0] & 5 ? 1 : 0;
+}
+
+/*
+ * Input 7 on the host while the front guest asks for the DMA end, on the
+ * edge it set for that (its AER bit 7 for input 7, bit 4 for Timer A).
+ */
+static void
+ds_sirq(s)
+register struct dssess *s;
+{
+	register struct dsvid *d;
+
+	if (s && DS_GUEST(s) && (d = s->s_vid)->v_sw[0] && d->v_snd[0] & 5) {
+		d->v_scur = d->v_snd[0] & 1 ? d->v_sedge & 0x80 : d->v_sedge & 0x10;
+		ata_sirq(1, d->v_scur != 0);
+	} else
+		ata_sirq(0, 0);
+}
+
+/*
+ * The shadow's buffer into the hardware's base and end registers, from
+ * guest address from (0: its start); the length of the part passed.
+ */
+static unsigned long
+ds_ssync(s, from)
+register struct dssess *s;
+unsigned long from;
+{
+	register struct dsvid *d = s->s_vid;
+	unsigned long g = ds_sadr(d, 3), pb, pe;
+
+	ds_sphys(s, g, ds_sadr(d, 0xF), &pb, &pe);
+	d->v_spb = pb;
+	ds_sw3(0xFF8903L, from >= g && from - g < pe - pb ? pb + (from - g) : pb);
+	ds_sw3(0xFF890FL, pe);
+	return pe - pb;
+}
+
+/* a guest write of sz bytes at a, from the owner's process */
+void
+ds_sndput(a, sz, v)
+unsigned long a, v;
+int sz;
+{
+	register struct dssess *s;
+	register struct dsvid *d;
+	register int i, k, c, sync = 0, irq = 0;
+
+	a &= 0xFFFFFF;
+	if (sz < 1 || sz > 4 || !SREG(a) || !SREG(a + sz - 1) || (s = ds_vowner()) == 0)
+		return;
+	d = s->s_vid;
+	for (i = 0; i < sz; i++) {
+		k = a + i - 0xFF8900;
+		if (SADR(k) && SREC(d))
+			continue;
+		d->v_snd[k] = v >> 8 * (sz - 1 - i);
+		d->v_sw[k] = 1;
+		if (k == 1 || SADR(k))
+			d->v_spos = 0;
+	}
+	if (s != ds_front)
+		return;
+	for (i = 0; i < sz; i++) {
+		k = a + i - 0xFF8900;
+		if (SADR(k)) {
+			if (!SREC(d))
+				sync |= k == 0x13 ? 2 : k == 7;
+			continue;
+		}
+		if (k == 1) {
+			c = d->v_snd[1] & 3;
+			if (c & 1 && ds_ssync(s, 0L) == 0)
+				c &= 2;
+			ata_sput(a + i, c);
+			continue;
+		}
+		ata_sput(a + i, k == 0 ? ds_sctl0(d) : d->v_snd[k]);
+		irq |= k == 0;
+	}
+	if (sync) {
+		c = ata_sget(0xFF8901L) & 1;
+		if (c && !(sync & 2))
+			;			/* the end follows: the frame in progress is not touched */
+		else if (ds_ssync(s, 0L) == 0 && c)
+			ata_sput(0xFF8901L, 0);	/* a zero-length frame would run through memory */
+	}
+	if (irq)
+		ds_sirq(s);
+}
+
+/* the guest's AER, for the edges of input 7 (bit 7) and Timer A (bit 4) */
+void
+ds_sndedge(aer)
+int aer;
+{
+	register struct dssess *s;
+
+	if ((s = ds_vowner()) == 0)
+		return;
+	s->s_vid->v_sedge = aer & 0x90;
+	if (s == ds_front)
+		ds_sirq(s);
+}
+
+/* p, the owner, exits: the DMA stops */
+void
+ds_sndexit(p)
+register struct proc *p;
+{
+	register struct dssess *s;
+	register int i;
+
+	for (i = 1; i <= DS_NSESS; i++) {
+		s = &ds_sess[i];
+		if (s->s_used && !s->s_dead && DS_GUEST(s) && s->s_vproc == p && s->s_vpid == p->p_pid)
+			break;
+	}
+	if (i > DS_NSESS)
+		return;
+	if (s == ds_front) {
+		if (s->s_vid->v_sw[1])
+			ata_sput(0xFF8901L, 0);
+		ds_sirq(0);
+	}
+	s->s_vid->v_spos = 0;
+}
+
+void (*ds_sndcb)();
+
+/*
+ * The DMA sound end, at the MFP: the front guest's events, as its control
+ * register and edges ask.  With the two on different edges the host takes
+ * them in turn.
+ */
+void
+ds_sndintr()
+{
+	register struct dssess *s = ds_front;
+	register struct dsvid *d;
+	register int ev = 0, cur, e7, eA;
+
+	if (ds_sndcb == 0 || s == 0 || !DS_GUEST(s) || s->s_vproc == 0)
+		return;
+	d = s->s_vid;
+	cur = d->v_scur != 0;
+	e7 = (d->v_sedge & 0x80) != 0;
+	eA = (d->v_sedge & 0x10) != 0;
+	if (d->v_snd[0] & 1 && e7 == cur)
+		ev |= 1;
+	if (d->v_snd[0] & 4 && eA == cur)
+		ev |= 4;
+	if ((d->v_snd[0] & 5) == 5 && e7 != eA) {
+		d->v_scur = !cur;
+		ata_sirq(1, !cur);
+	}
+	if (ev)
+		(*ds_sndcb)(ev);
+}
+
+/*
+ * The hardware's byte at a for the owner of the front session, else -1:
+ * the guest's own state.  The counter is shown as the guest's address.
+ */
+int
+ds_sndget(a)
+unsigned long a;
+{
+	register struct dssess *s;
+	register struct dsvid *d;
+	register int k;
+	unsigned long c;
+
+	a &= 0xFFFFFF;
+	if (!SREG(a) || (s = ds_vowner()) == 0 || s != ds_front)
+		return -1;
+	d = s->s_vid;
+	k = a - 0xFF8900;
+	if (SADR(k) && SREC(d))
+		return -1;
+	if (k >= 9 && k <= 0xD && k & 1) {
+		c = (unsigned long)ata_sget(0xFF8909L) << 16 | ata_sget(0xFF890BL) << 8 | ata_sget(0xFF890DL);
+		if (d->v_spb && c >= d->v_spb && c - d->v_spb < 0x1000000L)
+			c = ds_sadr(d, 3) + (c - d->v_spb);
+		return (c >> 8 * ((0xD - k) / 2)) & 0xFF;
+	}
+	if (SADR(k) || SMW(k) || k == 0)
+		return -1;
+	c = ata_sget(a);
+	if (k == 1)
+		c = (c & 3) | (d->v_snd[1] & 0xFC);
+	return c;
+}
+
+/* s leaves the front: where the DMA is is kept, then it stops */
+static void
+ds_sndsave(s)
+register struct dssess *s;
+{
+	register struct dsvid *d = s->s_vid;
+	unsigned long c, e;
+
+	if (d->v_sw[1]) {
+		d->v_snd[1] = (d->v_snd[1] & 0xFC) | (ata_sget(0xFF8901L) & 3);
+		d->v_spos = 0;
+		c = (unsigned long)ata_sget(0xFF8909L) << 16 | ata_sget(0xFF890BL) << 8 | ata_sget(0xFF890DL);
+		e = (unsigned long)ata_sget(0xFF890FL) << 16 | ata_sget(0xFF8911L) << 8 | ata_sget(0xFF8913L);
+		if (d->v_snd[1] & 1 && d->v_spb && c >= d->v_spb && c < e)
+			d->v_spos = ds_sadr(d, 3) + ((c - d->v_spb) & ~3UL);
+	}
+	if (d->v_sw[1])
+		ata_sput(0xFF8901L, 0);
+	ds_sirq(0);
+}
+
+/*
+ * s comes to the front: its registers, then the buffer and the control
+ * register.  A playing one resumes where it stopped; the start goes
+ * back into the base register for the next frame.
+ */
+static void
+ds_sndload(s)
+register struct dssess *s;
+{
+	register struct dsvid *d = s->s_vid;
+	register int k, n;
+
+	for (k = 0; k < 0x44; k++)
+		if (d->v_sw[k] && k != 1 && !SADR(k))
+			ata_sput(0xFF8900L + k, k == 0 ? ds_sctl0(d) : d->v_snd[k]);
+	n = ds_ssync(s, d->v_snd[1] & 1 ? d->v_spos : 0L) != 0;
+	if (d->v_sw[1])
+		ata_sput(0xFF8901L, d->v_snd[1] & (n ? 3 : 2));
+	if (n && d->v_snd[1] & 1 && d->v_spos)
+		ds_ssync(s, 0L);
+	d->v_spos = 0;
+	ds_sirq(s);
 }
 #endif
 

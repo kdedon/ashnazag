@@ -23,6 +23,8 @@
 #define	TOSIOC_SOCK	TOSIOC(7)	/* in/out struct tossock: the guest's sockets */
 #define	TOSIOC_MAPROM	TOSIOC(8)	/* the machine's ROM, read-only at TOS_ROMBASE; returns its size */
 #define	TOSIOC_HALT	TOSIOC(9)	/* the guest: halt the machine, root only */
+#define	TOSIOC_SND	TOSIOC(10)	/* in/out struct tossndio: the sound pump */
+#define	TOSIOC_STRAM	TOSIOC(11)	/* value: bytes of contiguous ST-RAM, then mmap at 0 */
 
 #define	TOS_ROMBASE	0xe00000L
 
@@ -143,5 +145,46 @@ struct tospv {
 
 #define	PE_KEY		1		/* scan code, $80 on release */
 #define	PE_BTN		2		/* buttons: 1 right, 2 left */
+
+/*
+ * The sound pump (TOSIOC_SND): signals buffer ends and serves the STE
+ * DMA sound registers, a page of memory at $FF8900.  The caller becomes
+ * the pump: a control register write sends it SIGUSR1.
+ */
+struct tossndio {
+	unsigned long	sn_ends;	/* in: a buffer ended, TSE_* inputs */
+	long		sn_ctl;		/* in: new $FF8901, -1 none */
+	unsigned long	sn_pos;		/* in: the frame counter $FF8909, 0 none */
+	unsigned long	sn_gen;		/* out: control register writes */
+	unsigned char	sn_reg[0x40];	/* out: $FF8900-$FF893F */
+};
+
+#define	TSE_TIMERA	1		/* Timer A's event input */
+#define	TSE_GPIP7	2		/* MFP input 7 */
+
+/*
+ * Falcon XBIOS sound state, kept by the cartridge's calls and played by
+ * the pump; shared like struct tospv, in the same page.
+ */
+#define	TOSSND		(TOSPV + 0xc00)
+
+struct tossnd {
+	unsigned long	sd_gen;		/* guest: bumped after each change */
+	unsigned long	sd_ctl;		/* guest: Buffoper's SB_* */
+	unsigned long	sd_beg, sd_end;	/* guest: Setbuffer's play buffer */
+	unsigned long	sd_mode;	/* guest: Setmode, 0 stereo 8, 1 stereo 16, 2 mono 8 */
+	unsigned long	sd_tracks;	/* guest: play tracks - 1 */
+	unsigned long	sd_mon;		/* guest: the track heard */
+	unsigned long	sd_rate;	/* guest: 16.16 Hz */
+	unsigned long	sd_irq;		/* guest: TSE_* raised at each buffer end */
+	unsigned long	sd_seen;	/* pump: the sd_gen acted on */
+	unsigned long	sd_play;	/* pump: playing */
+	unsigned long	sd_pos;		/* pump: the address playing now */
+	unsigned long	sd_ends;	/* pump: buffer ends so far */
+	long		sd_bell;	/* the pump's doorbell, a descriptor; -1 none */
+};
+
+#define	SB_PLAY		1
+#define	SB_REPEAT	2
 
 #endif	/* _TOSIO_H */

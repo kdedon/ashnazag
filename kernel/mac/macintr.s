@@ -72,9 +72,15 @@ p2int:
 	moveb	%a0@(0x1a00),%d0
 	andb	%a0@(0x1c00),%d0
 	btst	&3,%d0			| CB2: 53C96 SCSI
-	beq.w	Lp2slot
+	beq.w	Lp2snd
 	moveb	&0x08,%a0@(0x1a00)	| ack the edge, then service the chip
 	jsr	ncr96intr
+	jmp	intret
+Lp2snd:
+	btst	&4,%d0			| CB1: sound chip
+	beq.w	Lp2slot
+	moveb	&0x10,%a0@(0x1a00)
+	jsr	snd_intr
 	jmp	intret
 Lp2slot:
 	btst	&1,%d0			| CA1: a slot line fell

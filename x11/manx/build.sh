@@ -11,7 +11,8 @@
 set -e
 D=$(cd "$(dirname "$0")" && pwd)
 AUX=$(cd "$D/../.." && pwd)
-X11W=${X11W:-$AUX/images/work/x11}
+PLATFORM=${PLATFORM:-mac}
+X11W=${X11W:-$AUX/images/work/x11-$PLATFORM}
 XC=$X11W/src/xc
 W=$X11W/manx
 TC=$AUX/toolchain/amix

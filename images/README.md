@@ -143,7 +143,7 @@ The default kernel is `kernel/build/unix-mac.elf`. `-c` stores a kernel command 
 
 ## Disk with a Unix root
 
-`q800-unix-disk.img` (339,787,776 bytes, SCSI ID 0) boots like `q800-unix.img` and then runs AMIX multi-user from its own root partition. Log in on the screen and keyboard as `guest` or `root` (no passwords). The previous build is `q800-unix-disk.img.prev`.
+`q800-unix-disk.img` (440,451,072 bytes, SCSI ID 0) boots like `q800-unix.img` and then runs AMIX multi-user from its own root partition. Log in on the screen and keyboard as `guest` or `root` (no passwords); the login message (`images/macenv/motd`) lists how to start each environment. The previous build is `q800-unix-disk.img.prev`.
 
 | Part | Contents |
 |---|---|
@@ -202,6 +202,8 @@ The Finder desktop appears in about a minute; the image carries the Finder's des
 
 The guest modules are registered at run level 2 (`/etc/rc2.d/S05aux`), which also starts the File ID daemon (`/etc/aux/fidd`).  The template is `/mac/lib/System Folder`. root's System Folder is `/mac/sys/System Folder`; other users (group `display`) get `$HOME/System Folder` from `makemac` on their first `startmac`. Both are refreshed when the template changes (`makemac -f`, which keeps Preferences, the desktop database, MacTCP settings and added files); guest already has one; the Mac's PRAM is kept in `/etc/aux/pram`.
 
+`startmac6` runs System 6.0.7 with MultiFinder instead: A/UX 2.0.1's Mac environment in its own root, `/a201`, on the IIci's ROM in 4 MB (`TBMEMORY`), from the A/UX 2.0.1 CD (`media/AUX_2.0.1_CD_Image.iso`, `CD201`) and the IIci ROM beside the repository (`AUXROM6`); without them the image has no System 6.  root's System Folder is `/a201/mac/sys/System Folder`, guest's `/a201/home/guest/System Folder`; other users need a copy there.  Special > Logout leaves it.
+
 The Mac reports the model that fits the host and the ROM (a Quadra 800 on a Quadra 800) and gets a quarter of physical memory, 8 to 32 MB, as free swap allows.  `/etc/aux/macenv.conf` or the environment of `startmac` may set `TBMEMORY` (e.g. `16M`) and, for root, `MACMODEL` (a Gestalt machine ID, e.g. `22` for a Quadra 700).
 
 Rebuild (needs the A/UX root in `tests/aux/auxroot`, the Quadra 700 ROM beside the repository, and the inputs of `x11/mkimage.sh`; the image goes to `$X11W/q800-mac.img`, default `images/work/x11`).  The last step boots the image once in QEMU with the Quadra 800 ROM to make the desktop database (`mkdesktop.py`, a few minutes; `DESKTOP=0` skips it):
@@ -225,3 +227,15 @@ Drive C: is your folder `~/TOS` (AUTO, accessories, the saved desktop); `maketos
 `starttos -rom FILE` runs your own TOS ROM image instead. The image never contains one.
 
 `/etc/rc2.d/S05aux` registers the `tosguest` module (`/dev/tos`, major 56, group `display`) with the A/UX modules. Rebuild with `images/macenv/mkmacimage.sh`; `images/tosenv/mktos.sh` makes the container's files.
+
+## The CP/M-68K environment
+
+The Quadra image, and the Falcon image built with `TOSENV=1`, also run Digital Research's CP/M-68K 1.3 as an AMIX process. Type:
+
+```sh
+startcpm
+```
+
+or pick "CP/M-68K environment" at the xdm session chooser (last in the list) or in the twm and XView menus, which open it in an xterm. The first run makes your A: drive, `~/CPM/a.img` (8 MB), from the nine distribution disks' files in `/cpm/dist`; `X.REL` programs are also there as `X.68K`, which the CCP runs. `EXIT` ends the session, as does end of input. Drives B: to P: are `~/CPM/b.img` and so on, or directories `~/CPM/b/` copied in at each start; `startcpm -e NAME` uses `~/CPM/NAME/` instead. The console is your terminal. One session per environment at a time.
+
+The image builds put in the files from DRI's release zip (`media/cpm68k/68kv1_3.zip`, `CPMZIP`); without it there is no CP/M. `images/cpmenv/mkcpm.sh` makes the archive; details in `kernel/guest/cpm/CPM.md`.

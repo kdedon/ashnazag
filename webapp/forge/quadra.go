@@ -20,6 +20,9 @@ import (
 // QuadraTimestamp fixes root file times so equal inputs give equal images.
 const QuadraTimestamp = 723000000
 
+// DefaultZone is the Falcon root's /etc/TIMEZONE value.
+const DefaultZone = "CST6CDT"
+
 // Media is one input. Builds take the tape's segments (TapeSegments), then
 // one Media per later role.
 type Media struct {
@@ -83,6 +86,9 @@ func Quadra(ctx context.Context, r Recipe, media []Media, root interface {
 	if err = s.Runnable(); err != nil {
 		return err
 	}
+	if p, _ := Lookup(s.Preset); p.Recipe != "quadra-console" {
+		return fmt.Errorf("the %s preset is not a Quadra build", p.Label)
+	}
 	if len(r.Lock.Bindings) != 0 || len(r.Lock.Artifacts) != 0 {
 		return fmt.Errorf("catalog packages cannot be installed by this preset yet")
 	}
@@ -143,6 +149,11 @@ func Root(ctx context.Context, recipe []byte, entries []ufs.Entry, kernel Media,
 	entries, err = recipes.QuadraRoot(entries, kernel.Reader, kernel.Size)
 	if err != nil {
 		return nil, err
+	}
+	if p, _ := Lookup(s.Preset); p.Recipe == "falcon-console" {
+		if entries, err = recipes.AtariRoot(entries, DefaultZone); err != nil {
+			return nil, err
+		}
 	}
 	if len(packages) != 0 {
 		readers := make([]io.ReaderAt, len(packages))

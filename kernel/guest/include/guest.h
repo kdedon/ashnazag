@@ -91,6 +91,7 @@ struct guest_proc {
 #define	GPF_CPU030	0x400	/* sees a 68030: its bus fault frames, its MMU */
 #define	GPF_ETAIL	0x800	/* in the tail of an emulated instruction or reflected exception */
 #define	GPF_IDROP	0x1000	/* the IPL dropped since the last such tail */
+#define	GPF_QUIET	0x2000	/* in a host call that must not be interrupted: only termination signals pass */
 #define	GPF_PROFILE	0xffff0000	/* profile's own bits */
 #define	GUEST_PRIV(gp)	((char *)((gp) + 1))	/* profile state */
 #define	GUESTP(p)	((struct guest_proc *)(p)->p_evpdp)

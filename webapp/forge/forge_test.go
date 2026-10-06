@@ -164,7 +164,7 @@ func testSelection() Selection {
 }
 
 func TestPresets(t *testing.T) {
-	want := map[string]string{"quadra800": "available", "falcon030": "planned", "falcon-ct60": "planned", "tt030": "planned", "a4000-040": "planned"}
+	want := map[string]string{"quadra800": "available", "falcon030": "available", "falcon-ct60": "planned", "tt030": "planned", "a4000-040": "planned"}
 	for _, p := range Presets() {
 		if want[p.ID] != p.Status {
 			t.Errorf("%s: status %q", p.ID, p.Status)
@@ -173,7 +173,13 @@ func TestPresets(t *testing.T) {
 		s := Selection{Preset: p.ID, Machine: p.Machine, Settings: p.Settings}
 		s.Settings.Devices = sorted(s.Settings.Devices)
 		if err := s.Runnable(); (err == nil) != (p.Status == "available") {
-			t.Errorf("%s: runnable %v", p.ID, err)
+			t.Errorf("%s: buildable %v", p.ID, err)
+		}
+		if p.Runnable != (p.ID == "quadra800" || p.ID == "falcon030") {
+			t.Errorf("%s: runnable flag %v", p.ID, p.Runnable)
+		}
+		if p.ID == "falcon-ct60" && !contains(p.Settings.Devices, "falcon-ide") {
+			t.Errorf("%s: no devices", p.ID)
 		}
 	}
 	if len(want) != 0 {
@@ -185,7 +191,7 @@ func TestPresets(t *testing.T) {
 		t.Fatalf("quadra preset drifted: %+v", p)
 	}
 	f, _ := Lookup("falcon030")
-	if f.Settings.DiskMiB != 512 || !contains(f.Settings.Devices, "falcon-ide") {
+	if f.Settings.DiskMiB != 512 || f.Settings.RootMiB != 128 || f.Settings.SwapMiB != 64 || f.Recipe != "falcon-console" || !contains(f.Settings.Devices, "falcon-ide") {
 		t.Fatalf("falcon preset: %+v", f)
 	}
 }
@@ -323,7 +329,7 @@ func TestDecodeRejects(t *testing.T) {
 	if _, err := Decode([]byte("not json")); err == nil || !strings.Contains(err.Error(), "not a forge recipe") {
 		t.Errorf("malformed: %v", err)
 	}
-	p, _ := Lookup("falcon030")
+	p, _ := Lookup("falcon-ct60")
 	planned, err := NewRecipe(Selection{Preset: p.ID, Machine: p.Machine, Settings: p.Settings}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -375,5 +381,27 @@ func TestDecodeUpgradesSegmentRoles(t *testing.T) {
 	}
 	if _, err = Decode([]byte(strings.Replace(old, "amix-03", "amix-04", 1))); err == nil || !strings.Contains(err.Error(), `expected "amix-03"`) {
 		t.Fatal(err)
+	}
+}
+
+// A planned preset's recipe exports and imports, but cannot build.
+func TestPlannedPresetRecipe(t *testing.T) {
+	p, _ := Lookup("falcon-ct60")
+	s := Selection{Preset: p.ID, Machine: p.Machine, Settings: p.Settings}
+	r, err := NewRecipe(s, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := Encode(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := Decode(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel, err := back.Selection()
+	if err != nil || !reflect.DeepEqual(sel, s) || sel.Runnable() == nil {
+		t.Fatalf("%+v %v", sel, err)
 	}
 }

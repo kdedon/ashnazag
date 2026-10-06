@@ -64,5 +64,19 @@ int main(int argc,char **argv)
     req(MIG_FS_INFO,0,0);run();assert(!r.error&&r.result>0&&r.size<=(unsigned int)r.result&&r.length>0&&!r.flags);
     req(MIG_FS_INFO,0,0);r.volume=1;run();assert(!r.error&&r.flags);
     req(999,root,0);run();assert(r.error==209);
-    mig_hostfs_destroy(fs);puts("hostfs: paths, locks, IO, enumeration, readonly and bounds passed");return 0;
+    /* an overlay shows its view while the file holds the original, in any case */
+    snprintf(p,sizeof(p),"%s/Prefs",argv[1]);out=fopen(p,"w");assert(out);fputs("abcdef",out);fclose(out);
+    assert(mig_hostfs_overlay("PREFS",(const unsigned char *)"abcdef",(const unsigned char *)"abXYef",6)==0);
+    req(MIG_FS_OPEN,root,"prefs");run();assert(!r.error);f=r.result;
+    req(MIG_FS_READ,f,0);r.length=3;run();assert(r.result==3&&!memcmp(r.data,"abX",3));
+    req(MIG_FS_READ,f,0);r.length=9;run();assert(r.result==3&&!memcmp(r.data,"Yef",3));
+    req(MIG_FS_CLOSE,f,0);run();assert(!r.error);
+    req(MIG_FS_OPEN,0,"prefs");r.volume=1;run();assert(!r.error);f=r.result;
+    req(MIG_FS_READ,f,0);r.volume=1;r.length=9;run();assert(r.result==6&&!memcmp(r.data,"abcdef",6));
+    req(MIG_FS_CLOSE,f,0);r.volume=1;run();assert(!r.error);
+    out=fopen(p,"w");assert(out);fputs("abcdeg",out);fclose(out);
+    req(MIG_FS_OPEN,root,"prefs");run();assert(!r.error);f=r.result;
+    req(MIG_FS_READ,f,0);r.length=9;run();assert(r.result==6&&!memcmp(r.data,"abcdeg",6));
+    req(MIG_FS_CLOSE,f,0);run();assert(!r.error);
+    mig_hostfs_destroy(fs);puts("hostfs: paths, locks, IO, enumeration, readonly, bounds and overlays passed");return 0;
 }

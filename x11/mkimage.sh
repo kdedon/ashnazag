@@ -14,7 +14,8 @@ set -e
 
 D=$(cd "$(dirname "$0")" && pwd)
 AUX=$(cd "$D/.." && pwd)
-X11W=${X11W:-$AUX/images/work/x11}
+PLATFORM=${PLATFORM:-mac}
+X11W=${X11W:-$AUX/images/work/x11-$PLATFORM}
 KERNEL=${1:-$AUX/kernel/build/unix-mac.elf}
 OUT=${2:-$X11W/q800-x11.img}
 T=$X11W/auxtree
@@ -46,6 +47,7 @@ if [ -n "$MACPKG" ]; then
 	ln -s "$MACPKG" "$R/macpkg"
 	(cd "$R" && patch -s -p4 < "$AUX/images/macenv/mac-diskroot.diff")
 	[ -f "$MACPKG/rom" ] || sed -i '\|^f /etc/aux/rom	|d' "$R/root.manifest"
+	[ -f "$MACPKG/a201.cpio" ] || sed -i '/a201\|mac6/d' "$R/root.manifest"
 fi
 pk=
 for p in $XPKGS; do

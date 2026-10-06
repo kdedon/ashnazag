@@ -31,6 +31,13 @@ mkdir -p "$O" "$R/tests/amiga"
 "$BIN/m68k-elf-as" -m68040 --register-prefix-optional -o "$O/guest.o" "$T/amiga/guest.s"
 "$BIN/m68k-elf-ld" --no-warn-rwx-segments -N -e start -Ttext=0x1000 -o "$O/guest.elf" "$O/guest.o"
 "$BIN/m68k-elf-objcopy" -O binary "$O/guest.elf" "$R/tests/amiga/guest.bin"
+# the card's drawing functions, for t_amiga to call at 0x24000000
+RTG=$KDIR/guest/amiga/rtg
+${HOSTCC:-cc} -std=c99 -Wall -Werror "$RTG/abi.c" -o "$O/abi"
+"$O/abi" > "$O/rtgabi.inc"
+"$BIN/m68k-elf-as" -m68020 -I "$RTG" -I "$O" -o "$O/drawtest.o" "$T/amiga/drawtest.s"
+"$BIN/m68k-elf-ld" --no-warn-rwx-segments -N -e 0x24000000 -Ttext=0x24000000 -o "$O/drawtest.elf" "$O/drawtest.o"
+"$BIN/m68k-elf-objcopy" -O binary "$O/drawtest.elf" "$R/tests/amiga/draw.bin"
 if [ -f "$AMIGAROM" ]; then
 	mkdir -p "$R/etc/amiga"
 	cp "$AMIGAROM" "$R/etc/amiga/kicka4000.rom"
@@ -82,13 +89,43 @@ sys.stdout.buffer.write(donotwait(open(sys.argv[2], "rb").read()))' \
 		done
 		echo "f /DEVS/Monitors/Container 755 0 3 $P/Devs/Monitors/Picasso96" >> "$M"
 	fi
+	# the sound driver, its mode and AHI prefs, and ahitest, which drives it
+	sh "$KDIR/guest/amiga/ahi/build.sh" "$O/ahi" > /dev/null
+	"$BIN/m68k-elf-as" -m68020 -o "$O/ahitest.o" "$T/amiga/sound/ahitest.s"
+	python3 "$KDIR/guest/amiga/rtg/elf2hunk.py" "$O/ahitest.o" "$O/ahitest"
+	python3 "$AUX/tools/amiga/ahiprefs.py" "$O/ahigen" | sed 's#^Devs/#DEVS/#' > "$O/ahigen.list"
+	printf '%s\n' DEVS/AHI/container.audio C/ahitest S/sndtest >> "$O/ahigen.list"
+	awk 'NR == FNR { drop["/" tolower($0)]; next } !(tolower($2) in drop)' "$O/ahigen.list" "$M" > "$M.new"
+	mv "$M.new" "$M"
+	for d in DEVS/AHI DEVS/AudioModes Prefs/Env-Archive/Sys; do
+		grep -q -i "^d /$d " "$M" || echo "d /$d 755 0 3" >> "$M"
+	done
+	while read -r f; do
+		case $f in
+		DEVS/AHI/*) echo "f /$f 755 0 3 $O/ahi/container.audio" ;;
+		C/ahitest) echo "f /$f 755 0 3 $O/ahitest" ;;
+		S/sndtest) echo "f /$f 755 0 3 $T/amiga/sound/sndtest" ;;
+		DEVS/*) echo "f /$f 755 0 3 $O/ahigen/Devs/${f#DEVS/}" ;;
+		*) echo "f /$f 755 0 3 $O/ahigen/$f" ;;
+		esac
+	done < "$O/ahigen.list" >> "$M"
 	# User-Startup also runs dragtest and, with IBrowse in SYS:, ibtest
 	U=$(cd "$AMIGASYS/S" && ls | grep -i '^user-startup$' || :)
 	{ [ -z "$U" ] || { cat "$AMIGASYS/S/$U"; echo; }; echo 'Run >NIL: Execute S:dragtest'
+	  echo 'Run >NIL: Execute S:sndtest'
 	  [ ! -f "$AMIGASYS/IBrowse/IBrowse" ] || echo 'Run >NIL: Execute S:ibtest'; } > "$O/User-Startup"
 	[ -z "$U" ] || { sed "/ \/S\/$U /d" "$M" > "$M.new"; mv "$M.new" "$M"; }
 	echo "f /S/${U:-User-Startup} 755 0 3 $O/User-Startup" >> "$M"
 	echo "f /S/dragtest 755 0 3 $T/amiga/dragtest" >> "$M"
+	echo "f /S/covershell 755 0 3 $T/amiga/covershell" >> "$M"
+	# bsdsocket.library; dragtest runs SYS:bsdtest on SYS:bsdgo against the host's bsdsrv
+	sh "$KDIR/guest/amiga/bsdsock/build.sh" "$O/bsdsock" > /dev/null
+	sh "$T/amiga/bsdtest/build.sh" "$O/bsdtest"
+	awk 'tolower($2) != "/libs/bsdsocket.library"' "$M" > "$M.new"
+	mv "$M.new" "$M"
+	echo "f /LIBS/bsdsocket.library 755 0 3 $O/bsdsock/bsdsocket.library" >> "$M"
+	echo "f /bsdtest 755 0 3 $O/bsdtest/bsdtest" >> "$M"
+	cp "$O/bsdtest/bsdsrv" "$R/tests/amiga/bsdsrv"
 	if [ -f "$AMIGASYS/IBrowse/IBrowse" ]; then
 		echo "f /S/ibtest 755 0 3 $T/amiga/ibrowse/ibtest" >> "$M"
 		echo "f /ibtest.html 755 0 3 $T/amiga/ibrowse/ibtest.html" >> "$M"

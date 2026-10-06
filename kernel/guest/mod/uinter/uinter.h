@@ -74,6 +74,7 @@ struct uirom {
 	unsigned char	r_prod[UI_PRODSIZE];
 	unsigned char	*r_low;		/* kernel low memory, UI_LOWSIZE */
 	int		r_box;		/* box flag asked for, -1: pickbox */
+	int		r_aux2;		/* loaded for an A/UX 2 Mac */
 };
 
 extern struct uirom ui_rom;

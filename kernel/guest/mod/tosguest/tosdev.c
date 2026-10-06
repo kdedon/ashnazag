@@ -241,6 +241,12 @@ mget(x, a, sz, vp)
 /* the display service, on a Falcon: the guest's Videl writes */
 __asm__(".weak ds_vidput");
 extern void ds_vidput();
+__asm__(".weak ds_sndput");
+extern void ds_sndput();
+__asm__(".weak ds_sndget");
+extern int ds_sndget();
+__asm__(".weak ds_sndedge");
+extern void ds_sndedge();
 
 static int
 mput(x, a, sz, v)
@@ -268,6 +274,8 @@ mput(x, a, sz, v)
 		}
 	if ((tosc.t_flags & TEF_FALCON) && &ds_vidput)
 		ds_vidput(a, sz, v0);
+	if ((tosc.t_flags & TEF_FALCON) && &ds_sndput)
+		ds_sndput(a, sz, v0);
 	na = a & 0xffffff;
 	if ((tosc.t_flags & TEF_FALCON) && na <= 0xff8a3c && na + sz > 0xff8a3c && (tosc.t_blt[0x3c] & 0x80))
 		bltgo();
@@ -1057,7 +1065,7 @@ mfp_rd(m, n, isst)
 	if (n >= MFP_TADR && n < MFP_TADR + 4) {
 		int i = n - MFP_TADR;
 
-		if (tctl(m, i) == 0)
+		if (tctl(m, i) == 0 || tctl(m, i) == 8)
 			return m->m_cnt[i];
 		/* running: count down one step per read */
 		m->m_cnt[i] = m->m_cnt[i] > 1 ? m->m_cnt[i] - 1 : m->m_r[n];
@@ -1077,6 +1085,8 @@ mfp_wr(m, n, v)
 	int hi = 0;
 
 	m->m_r[n] = v;
+	if (n == MFP_AER && m == &tosc.t_mfp && (tosc.t_flags & TEF_FALCON) && &ds_sndedge)
+		ds_sndedge(v);
 	switch (n) {
 	case MFP_IERA: hi = 1; /* FALLTHROUGH */
 	case MFP_IERB:
@@ -1502,8 +1512,13 @@ falcon_rd(o)
 		return vid_rd(o & 0xff);
 	if (o >= 0xff9800 && o < 0xff9c00)
 		return t->t_fpal[o & 0x3ff];
-	if (o >= 0xff8900 && o < 0xff8944)
+	if (o >= 0xff8900 && o < 0xff8944) {
+		if ((o & ~1) == 0xff8922)	/* Microwire data: shifted out at once */
+			return 0;
+		if (&ds_sndget && (v = ds_sndget(o)) >= 0)
+			return v;
 		return t->t_snd[o - 0xff8900];
+	}
 	if (o >= 0xff8a00 && o < 0xff8a40)
 		return t->t_blt[o - 0xff8a00];
 	if (o >= 0xffa200 && o < 0xffa208)	/* host port: transmit always empty */
@@ -1538,6 +1553,84 @@ falcon_wr(o, v)
 	return 0;
 }
 
+extern struct proc *prfind();
+
+/* the pump, if it still runs */
+static struct proc *
+sndpump()
+{
+	struct proc *p = tosc.t_spid ? prfind(tosc.t_spid) : 0;
+
+	return p && p == tosc.t_sproc && p->p_stat != SZOMB ? p : 0;
+}
+
+/* an STE DMA sound control write: the pump starts or stops play */
+static void
+sndpoke()
+{
+	struct proc *p;
+
+	tosc.t_sgen++;
+	if ((p = sndpump()) != 0)
+		psignal(p, SIGUSR1);
+}
+
+/*
+ * The pump's call: a buffer ended (Timer A counts an event, MFP input
+ * 7 raises its interrupt), the STE registers it changed, and theirs.
+ */
+void
+tos_snd(sn)
+	struct tossndio *sn;
+{
+	struct tosctr *t = &tosc;
+	struct tosmfp *m = &t->t_mfp;
+	int s = splhi_();
+
+	t->t_spid = curproc->p_pid;
+	t->t_sproc = curproc;
+	if ((sn->sn_ends & TSE_TIMERA) && tctl(m, 0) == 8 && --m->m_cnt[0] == 0) {
+		m->m_cnt[0] = m->m_r[MFP_TADR];
+		mfp_irq(m, CH_TIMERA);
+	}
+	if (sn->sn_ends & TSE_GPIP7)
+		mfp_irq(m, 15);
+	if (sn->sn_ctl >= 0)
+		t->t_snd[1] = sn->sn_ctl;
+	if (sn->sn_pos) {
+		t->t_snd[9] = sn->sn_pos >> 16;
+		t->t_snd[0xb] = sn->sn_pos >> 8;
+		t->t_snd[0xd] = sn->sn_pos;
+	}
+	sn->sn_gen = t->t_sgen;
+	bcopy((caddr_t)t->t_snd, (caddr_t)sn->sn_reg, sizeof sn->sn_reg);
+	splx_(s);
+	if (sn->sn_ends)
+		tos_kick(1);
+}
+
+/* the DMA sound end at the machine's MFP, for the front session: bit 0 input 7, bit 2 the guest's Timer A event */
+void
+tos_sndend(ev)
+	int ev;
+{
+	struct tosctr *t = &tosc;
+	struct tosmfp *m = &t->t_mfp;
+	int s;
+
+	if (t->t_state != 1 || !(t->t_flags & TEF_FALCON))
+		return;
+	s = splhi_();
+	if ((ev & 4) && tctl(m, 0) == 8 && --m->m_cnt[0] == 0) {
+		m->m_cnt[0] = m->m_r[MFP_TADR];
+		mfp_irq(m, CH_TIMERA);
+	}
+	if (ev & 1)
+		mfp_irq(m, 15);
+	splx_(s);
+	tos_kick(1);
+}
+
 /*
  * One byte of the ST I/O page.  0, or -1: nothing there (bus error).
  */
@@ -1566,6 +1659,8 @@ iorb(a, vp)
 		v = 0;				/* SCSI bus idle */
 	else if (o >= 0xff8800 && o < 0xff8900)
 		v = o & 2 ? 0xff : t->t_ym[t->t_ymsel & 15];
+	else if (o >= 0xff8900 && o < 0xff8940)
+		v = (o & ~1) == 0xff8922 ? 0 : t->t_snd[o - 0xff8900];
 	else if (o == 0xff8961)
 		v = t->t_rtcidx;
 	else if (o == 0xff8963)
@@ -1640,6 +1735,10 @@ iowb(a, v)
 			t->t_ym[t->t_ymsel & 15] = v;
 		else
 			t->t_ymsel = v;
+	} else if (o >= 0xff8900 && o < 0xff8940) {
+		t->t_snd[o - 0xff8900] = v;
+		if (o == 0xff8901)
+			sndpoke();
 	} else if (o == 0xff8961)
 		t->t_rtcidx = v & 63;
 	else if (o == 0xff8963) {

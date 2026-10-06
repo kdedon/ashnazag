@@ -5,7 +5,8 @@
 #
 #   sh x11/xsesstest.sh OUTDIR [image]
 AUX=$(cd "$(dirname "$0")/.." && pwd)
-X11W=${X11W:-$AUX/images/work/x11}
+PLATFORM=${PLATFORM:-mac}
+X11W=${X11W:-$AUX/images/work/x11-$PLATFORM}
 OUT=$1
 IMG=${2:-$X11W/q800-mac.img}
 set -- wait:120 'serial:guest\n' wait:10 'serial:xsession twm\n' wait:60 shot:01-twm

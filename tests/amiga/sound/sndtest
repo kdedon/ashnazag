@@ -1,0 +1,8 @@
+; waits for the host test's go file, then plays half a second through
+; container.audio
+Lab wait
+If NOT EXISTS SYS:sndgo
+  Wait 1
+  Skip wait BACK
+EndIf
+C:ahitest
