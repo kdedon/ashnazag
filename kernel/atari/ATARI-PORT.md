@@ -43,7 +43,7 @@ Sources: **NB** NetBSD/atari (`ref/netbsd/sys/arch/atari`, BSD, has Falcon suppo
 | RTC/NVRAM | MC146818 at 0xFFFF8961 (index) / 8963 (data); NVRAM holds boot preference, video mode, language | `clkset`/`stime`, root `date` | NB `clock.c`, `nvram.c`; MAC `rtc/` hook points; SP1 `setboot` (boot-pref byte 0x40 = Unix) | rtc driver |
 | Bus control | 0xFFFF8007 (16/8 MHz bus, blitter) | `config` | LX | leave as TOS set it |
 | Reboot/halt | MMU and caches off, jump through ROM reset vector at 0x00E00004 | `haltsys`, `rtnfirm` | MAC `rtc/` restart flow, NB `machdep.c` | per CPU (CT: cpusha first) |
-| Network | none built in; DaynaPORT SCSI/Link (ZuluSCSI/BlueSCSI), CT60 EtherNat, SuperVidel | DLPI | SP1 `dp.c`, FM `sockets/xif/ethernat` (facts) | after M2 |
+| Network | none built in; NetUSBee (cartridge port), DaynaPORT SCSI/Link (ZuluSCSI/BlueSCSI), CT60 EtherNat, SuperVidel | DLPI | SP1 `dp.c`, FM `sockets/xif/ethernat` (facts) | NetUSBee: `netusbee/` (major 18, `/dev/aen0`); others after M2 |
 
 ## 3. Memory
 

@@ -1,7 +1,7 @@
 # Third-party sources fetched at build time (images/fetch.sh), cached in
 # toolchain/dl/vendor, never committed.
 # name|kind|url|pin (sha256 for tar, commit for git)|licence
-manx|git|https://github.com/slaapliedje/manx|271e2ad660e17d9690d781f022269292e8afa8c0|GPL-2.0
+manx|git|https://github.com/slaapliedje/manx|5147e70cea1ff337040c27c6962dbea8f5cd8c28|GPL-2.0
 xview|tar|https://www.ibiblio.org/pub/Linux/libs/X/xview/xview-3.2p1.4.src.tar.gz|fcc88f884a6cb05789ed800edea24d9c4cf1f60cb7d61f3ce7f10de677ef9e8d|Sun XView notice (free use, copy, modify); olvwm: own notice
 xview-sp1|git|https://github.com/slaapliedje/atari-sysv-sp1|dff3982db969274de5b10f36ec32c13644d421e5|GPL-2.0
 teradesk|git|https://github.com/freemint/teradesk|8035b6e157bd34cb2bd72a26473990c7711501de|GPL-2.0

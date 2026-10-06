@@ -161,7 +161,7 @@ Run them by path, for example `/usr/aux/bin/ls -l /` or `/usr/aux/bin/vi file`. 
 
 ### Network and packages
 
-The Ethernet is not configured. Set the address, netmask and gateway in `/etc/inet/network-config` and remove the `#`s; it runs at boot. By hand:
+The root is set up for QEMU's user-mode network: address 10.0.2.15, gateway 10.0.2.2 (`/etc/inet/network-config`, run at boot) and DNS 10.0.2.3 (`/etc/resolv.conf`). On real hardware edit both files for your network. By hand:
 
 ```sh
 /usr/sbin/slink addaen /dev/aen0 aen0

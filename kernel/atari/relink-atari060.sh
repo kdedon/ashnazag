@@ -68,6 +68,9 @@ for c in ataide ahdi; do
 done
 cc_nobss "$A/atartc.c" "-I$AMIX_ROOT/usr/sys/amiga/alien $SOFTMUL"
 cc_nobss "$MAC/s5dir/uiomod.c"
+for c in nuchip nudlpi; do
+	cc_nobss "$A/netusbee/$c.c" "-I$A/netusbee"
+done
 $CC -c "$MAC/vtop/vtop.s" -o "$W/vtop.o"
 $CC -c "$MAC/ptalloc/ptalloc.s" -o "$W/ptalloc.o"
 m68k-linux-gnu-objcopy --redefine-sym hat_ptalloc=ata_ptalloc_mac "$W/ptalloc.o"
@@ -91,7 +94,7 @@ sh "$K/guest/build.sh" -k "$BASE" "$W/guest"
 OBJS="$W/dlm/dlm.o $W/guest/guest.o $W/ataentry.o $W/ataintr.o $W/pstartata.o $W/ata060math.o $W/cfgorig.o
 $W/ataconf.o $W/ikbd.o $W/fbcons.o $W/fbfont.o $W/atadevsw.o $W/atacons.o $W/ds.o $W/dsdev.o
 $W/dsseg.o $W/atads.o $W/ataide.o $W/ahdi.o $W/atartc.o $W/rd.o $RDB/rdimage.o
-$W/uiomod.o $W/vtop.o $W/ptalloc.o"
+$W/uiomod.o $W/vtop.o $W/ptalloc.o $W/nuchip.o $W/nudlpi.o"
 
 OVR="pstart config config_orig putchar getchar callrom sysdump haltsys rtnfirm
 hw_clkstart clkreld p1int p2int p3int p4int p5int p6int parinit qlintr slpoll
@@ -137,7 +140,7 @@ echo "[*] no 64-bit multiply or divide in the Atari objects"
 python3 "$A/chk64.py" $W/ataentry.o $W/ataintr.o $W/pstartata.o $W/ata060math.o $W/cfgorig.o \
 	$W/ataconf.o $W/ikbd.o $W/fbcons.o $W/fbfont.o $W/atadevsw.o $W/atacons.o \
 	$W/ds.o $W/dsdev.o $W/dsseg.o $W/atads.o $W/ataide.o $W/ahdi.o $W/atartc.o \
-	$W/uiomod.o $W/vtop.o $W/ptalloc.o $W/rd.o
+	$W/uiomod.o $W/vtop.o $W/ptalloc.o $W/rd.o $W/nuchip.o $W/nudlpi.o
 
 echo "[*] linking the Atari overrides over the base"
 m68k-cbm-sysv4-ld -r -o "$OUT" "$W/base.weak" $OBJS

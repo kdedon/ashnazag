@@ -65,6 +65,13 @@ for c in ataide ahdi atartc; do
 	[ -s "$W/$c.o.warn" ] && { cat "$W/$c.o.warn"; echo "[FAIL] $c.c: warnings"; exit 1; }
 done
 
+# the cartridge-port Ethernet, after main() has cleared BSS
+for c in nuchip nudlpi; do
+	$CC $CFLAGS -I"$A/netusbee" -c "$A/netusbee/$c.c" -o "$W/$c.o" 2> "$W/$c.o.warn" || {
+		cat "$W/$c.o.warn"; exit 1; }
+	[ -s "$W/$c.o.warn" ] && { cat "$W/$c.o.warn"; echo "[FAIL] $c.c: warnings"; exit 1; }
+done
+
 # FPU emulator from the pinned tarball, with its glue.  The glue maps only
 # CPU types 40 and 60 and counts any other as an error; the emulator runs
 # the same on every CPU, so the glue reads 40.
@@ -114,6 +121,7 @@ sh "$K/guest/build.sh" -k "$BASE" "$W/guest"
 
 OBJS="$W/dlm/dlm.o $W/guest/guest.o $W/ataentry.o $W/ataintr.o $W/ataconf.o $W/ikbd.o $W/fbcons.o $W/fbfont.o
 $W/atadevsw.o $W/atacons.o $W/ds.o $W/dsdev.o $W/dsseg.o $W/atads.o $W/ataide.o $W/ahdi.o $W/atartc.o $W/rd.o $RDB/rdimage.o
+$W/nuchip.o $W/nudlpi.o
 $W/fpe030.o $FPEOBJS $W/fpe-obj/fpe_glue.o $W/fpe040.o"
 
 OVR="config putchar getchar callrom sysdump haltsys rtnfirm hw_clkstart clkreld

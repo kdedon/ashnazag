@@ -45,7 +45,7 @@ disk() {
 	has "A/UX 3.1 CD (--aux-cd)" f "$AUX/media/aux-3.1.iso"
 	has "A/UX 3.1 disk image, for images/mkimage.sh only (--aux-disk)" sh -c '[ -e "$1/AUX_3_1_1GB_Use_In_Shoebill.zip" ] || [ -e "$1/AUX_3_1_1GB.dsk" ]' - "$AUX"
 	has "Quadra 800 ROM (--q800-rom)" f "$AUX/Quadra 800.ROM"
-	has "tape segments 03 10" sh -c '[ -f "$1/03" ] && [ -f "$1/10" ]' - "$T"
+	has "tape segments 03 07 10" sh -c '[ -f "$1/03" ] && [ -f "$1/07" ] && [ -f "$1/10" ]' - "$T"
 }
 x11() {
 	disk

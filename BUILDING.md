@@ -45,8 +45,10 @@ images. The last four packages are only for building QEMU.
 | `kernel/amix-040-060-port` | 68040/68060 port | [amix-040-060-port](https://github.com/asokero/amix-040-060-port) at `54fba4d` plus `kernel/port-local.diff`; setup writes its `config.sh` |
 
 The patched QEMU is required for the tests: stock QEMU 8.2 loses 68040 page writes under
-paging. Distribution `m68k-linux-gnu` packages (gcc 13.2, binutils 2.42 on Ubuntu 24.04)
-are untested here. Build times on a slow 4-core machine at `-j1`: gcc-cross-amix about
+paging. Ubuntu 24.04's `gcc-m68k-linux-gnu` and `binutils-m68k-linux-gnu` (gcc 13.2,
+binutils 2.42) build the Atari loader in CI; installed normally, distribution packages
+work. Unpacked with `dpkg-deb -x`, binutils' own libraries need
+`patchelf --set-rpath '$ORIGIN/../lib/x86_64-linux-gnu'` on its binaries. Build times on a slow 4-core machine at `-j1`: gcc-cross-amix about
 5 minutes, each binutils about 10, gcc 13.3.0 about an hour, QEMU about 40 minutes;
 `JOBS=4` shortens them. `--amix-cross DIR` copies an existing gcc-cross-amix install
 instead of building it.
@@ -55,7 +57,7 @@ instead of building it.
 
 | Option | File | Used for |
 |---|---|---|
-| `--tape FILE...` | the AMIX 2.1 tape archive (both parts); also a SIMH `.tap`, a raw image or a directory of segments | kernel (02, 04, 19), RAM-disk root (02), disk root (02, 03, 10), X (13, 14) |
+| `--tape FILE...` | the AMIX 2.1 tape archive (both parts); also a SIMH `.tap`, a raw image or a directory of segments | kernel (02, 04, 19), RAM-disk root (02), disk root (02, 03, 07, 10), X (13, 14) |
 | `--patch FILE` | AMIX 2.1 patch disk ADF | kernel (2.1c sources `c0.c`, `aen.c`, `kernel.c`) |
 | `--q800-rom FILE` | Quadra 800 ROM | ROM boot in QEMU, Mac environment desktop |
 | `--q700-rom FILE` | Quadra 700 ROM `420DBFF3` | A/UX guest tests, Mac environment on hosts without a ROM |
@@ -80,7 +82,7 @@ Optional open-source downloads: `--tos-src` (EmuTOS 1.4, fVDI), `--x11` (X11R6.3
 |---|---|---|
 | kernel | `sh kernel/build.sh` | tape (02, 04, 19), patch disk, toolchains |
 | suite (minimum) | `sh tests/run-qemu.sh` | kernel + patched QEMU. No ROM: QEMU boots the kernel directly. Guest tests skip without their media. |
-| disk | `sh images/mkimage.sh --small`, `images/mkboot.sh`, `kernel/mac/diskroot/mkdiskimage.sh` | suite + A/UX 3.1 CD (A/UX disk image for `mkimage.sh`), hfsutils, tape 03 and 10; Quadra 800 ROM to boot it |
+| disk | `sh images/mkimage.sh --small`, `images/mkboot.sh`, `kernel/mac/diskroot/mkdiskimage.sh` | suite + A/UX 3.1 CD (A/UX disk image for `mkimage.sh`), hfsutils, tape 03, 07 and 10; Quadra 800 ROM to boot it |
 | x11 | `x11/build.sh`, `x11/mkimage.sh` | disk + tape 13, 14, `--x11` |
 | mac | `images/macenv/mkmacimage.sh` | x11 + Mac OS 7.6.1 CD, Quadra 700 ROM, the A/UX root tree (`tests/aux/auxroot`) |
 | tos | `tests/run-qemu.sh` (t_tos) | suite + `--tos-src` |
@@ -98,5 +100,8 @@ direct-boot path (`tests/run-qemu.sh`, `images/qemu/run-direct.sh`) needs neithe
 
 `images/mkimage.sh` (A/UX Startup boot) still reads a prebuilt A/UX 3.1 disk image
 (`AUX_3_1_1GB_Use_In_Shoebill.zip`, or the unzipped `AUX_3_1_1GB.dsk`, via `--aux-disk`).
+Get it from the "A/UX 3.0.1 + 3.1 update" listing on Macintosh Repository or Macintosh
+Garden. The file is 59,762,632 bytes, MD5 `e03b0c41bad70fa23a804afc7a2f7a2c`. The A/UX 3.1
+update CD on archive.org is not this image.
 
 A/UX 2.x media will be needed later for a System 6 environment on smaller machines.
