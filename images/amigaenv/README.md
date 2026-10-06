@@ -9,7 +9,13 @@ The package prepares the system directory from the supplied AmigaOS 3.2
 floppies. A native extension ROM registers our directory handler before DOS
 starts. Kickstart remains unchanged. The prepared startup launches the input
 bridge and Workbench; the original vendor startup is preserved alongside it.
-**Boot and Workbench execution remain unverified.** No emulator has run.
+
+While Kickstart and the Startup-Sequence run, the screen shows "Starting
+the Amiga environment" with the seconds elapsed and the file being read.
+startmig logs its progress, each file opened and the handler's request
+counts to `.startmig.log` in a writable SYS: (`~/Amiga`), otherwise to
+`/tmp/startmig.<uid>.log`. After the hot key, the console shows startmig's
+messages; errors (ROM, `/dev/amiga`, module, display) go there too.
 
 Build a new private staging directory:
 

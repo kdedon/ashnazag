@@ -91,6 +91,16 @@ cp clients/olvwm-4.1/olvwm "$P/bin/"
 "$AUX/toolchain/bin/m68k-elf-strip" "$P"/bin/*
 cp "$W/openwin-menu" "$P/lib/"
 cp misc/support/*.info clients/olvwm-4.1/olvwm.info "$P/lib/help/"
+# the OPEN LOOK glyph and cursor fonts (olwm and olvwm stop without
+# them) and Lucida, XView's default; the session adds them to the font path
+for d in misc 75dpi; do
+	mkdir -p "$P/lib/fonts/$d"
+	cp fonts/bdf/$d/*.bdf fonts/bdf/$d/fonts.alias "$P/lib/fonts/$d/"
+	(cd "$P/lib/fonts/$d" && for f in *.bdf; do
+		printf '%s %s\n' "$f" "$(sed -n 's/^FONT //p' "$f" | head -1 | tr A-Z a-z)"
+	done > fonts.tmp && { wc -l < fonts.tmp | tr -d ' '; cat fonts.tmp; } > fonts.dir &&
+	rm fonts.tmp)
+done
 cp "$(sh "$AUX/images/fetch.sh" xview-sp1)/xview/text_extras_menu" "$P/lib/locale/C/xview/.text_extras_menu"
 python3 "$AUX/x11/mkpkg.py" XVIEW 3.2p1.4 x11 "XView 3.2 and OPEN LOOK" \
 	"XView toolkit clients: olwm, olvwm, cmdtool, textedit, clock, props; in /usr/openwin/bin" \

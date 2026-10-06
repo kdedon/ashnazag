@@ -1,0 +1,13 @@
+# The guest modules and the machine's ROM, for the TOS environment.
+# 54: the major of /dev/uinter0, 56 of /dev/tos.
+umask 022
+PATH=/usr/bin:/sbin:/usr/sbin
+case $1 in
+'start')
+	/usr/aux/lib/auxreg /usr/aux/lib/mod.d 54 56 || exit 1
+	# starttos -P reads this copy when the user may not read /dev/mem
+	dd if=/dev/mem of=/etc/tos/rom.$$ bs=4096 skip=3584 count=128 2> /dev/null &&
+		[ `wc -c < /etc/tos/rom.$$` -eq 524288 ] && chmod 444 /etc/tos/rom.$$ &&
+		mv /etc/tos/rom.$$ /etc/tos/rom
+	rm -f /etc/tos/rom.$$ ;;
+esac

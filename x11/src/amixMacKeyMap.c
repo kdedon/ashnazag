@@ -179,3 +179,57 @@ CARD8 amixMacModMap[MAP_LENGTH] = {
 KeySymsRec amixMacKeySyms = {
     AdbMap, MIN_ADB_KEY, MAX_ADB_KEY, ADB_GLYPHS,
 };
+
+/*
+ * German layout: letters and symbols of the German Atari keyboard at
+ * their ADB positions.  Alternate becomes Mode_switch for @ \ [ ] { } ~.
+ */
+static struct { unsigned char code; KeySym k[4]; } deKeys[] = {
+    { 0x06, { XK_y, NoSymbol } },
+    { 0x10, { XK_z, NoSymbol } },
+    { 0x13, { XK_2, XK_quotedbl } },
+    { 0x14, { XK_3, XK_section } },
+    { 0x16, { XK_6, XK_ampersand } },
+    { 0x1A, { XK_7, XK_slash } },
+    { 0x1C, { XK_8, XK_parenleft } },
+    { 0x19, { XK_9, XK_parenright } },
+    { 0x1D, { XK_0, XK_equal } },
+    { 0x1B, { XK_ssharp, XK_question, XK_backslash } },
+    { 0x18, { XK_apostrophe, XK_grave } },
+    { 0x21, { XK_udiaeresis, XK_Udiaeresis, XK_at, XK_backslash } },
+    { 0x1E, { XK_plus, XK_asterisk, XK_asciitilde } },
+    { 0x29, { XK_odiaeresis, XK_Odiaeresis, XK_bracketleft, XK_braceleft } },
+    { 0x27, { XK_adiaeresis, XK_Adiaeresis, XK_bracketright, XK_braceright } },
+    { 0x32, { XK_numbersign, XK_asciicircum } },
+    { 0x2A, { XK_asciitilde, XK_bar } },
+    { 0x0A, { XK_less, XK_greater, XK_bar } },
+    { 0x2B, { XK_comma, XK_semicolon } },
+    { 0x2F, { XK_period, XK_colon } },
+    { 0x2C, { XK_minus, XK_underscore } },
+    { 0x37, { XK_Mode_switch, NoSymbol } },
+};
+
+static KeySym DeMap[0x80 * 4];
+
+/* the keymap for layout name ("us", "de"); FALSE if unknown */
+Bool
+amixMacKeyLayout(name)
+char *name;
+{
+    int i, j;
+
+    if (strcmp(name, "us") == 0)
+	return TRUE;
+    if (strcmp(name, "de") != 0)
+	return FALSE;
+    for (i = 0; i < 0x80; i++)
+	for (j = 0; j < 4; j++)
+	    DeMap[i * 4 + j] = j < ADB_GLYPHS ? AdbMap[i * ADB_GLYPHS + j] : NoSymbol;
+    for (i = 0; i < sizeof deKeys / sizeof deKeys[0]; i++)
+	for (j = 0; j < 4; j++)
+	    DeMap[deKeys[i].code * 4 + j] = deKeys[i].k[j];
+    amixMacModMap[0x37 + 8] = m2;
+    amixMacKeySyms.map = DeMap;
+    amixMacKeySyms.mapWidth = 4;
+    return TRUE;
+}

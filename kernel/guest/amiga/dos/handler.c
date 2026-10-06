@@ -69,7 +69,7 @@ void handler(void) {
    if(box[3]) { permit(); p->res2=202; goto reply; }
    box[3]=(U)port; permit();
   }
-  zero(r,sizeof(*r));
+  zero(r,__builtin_offsetof(struct mig_fs_request,data));
   op=p->type;
   switch(op) {
   case 0:

@@ -1,0 +1,3 @@
+# BOOT=xdm: graphical login on the screen; BOOT=console: text login.
+# Read at boot, or when the screen's xdm or getty is restarted.
+BOOT=console

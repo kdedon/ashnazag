@@ -1,0 +1,35 @@
+wait login:
+type root\n
+wait # 
+type (startx; echo x-`expr 3 + 4`-ended; cat /tmp/Xamix.log) &\n
+type until [ -p /tmp/.X11-unix/X0 ]; do sleep 2; done; sleep 60; echo x-`expr 1 + 1`-up\n
+wait x-2-up
+debug screenshot OUT/1-desktop.png
+type echo key-`expr 6 + 36`-ok > /dev/console\n
+wait key-42-ok
+sleep 5
+debug screenshot OUT/2-typed.png
+type kill `cat /tmp/Xamix.pid`\n
+wait x-7-ended
+wait Videl
+sleep 3
+debug screenshot OUT/3-console.png
+type (startx -- -depth 1 -kbd de; echo x-`expr 5 + 6`-ended; cat /tmp/Xamix.log) &\n
+type until [ -p /tmp/.X11-unix/X0 ]; do sleep 2; done; sleep 60; echo x-`expr 2 + 2`-up\n
+wait x-4-up
+type echo kezy\n
+sleep 5
+debug screenshot OUT/4-de.png
+event keydown 0x1d
+event keydown 0x38
+event keypress 0x01
+event keyup 0x38
+event keyup 0x1d
+sleep 5
+type kill `cat /tmp/Xamix.pid`\n
+wait x-11-ended
+wait depth 1
+sleep 3
+type echo x-`expr 4 + 5`-done\n
+wait x-9-done
+debug quit 0

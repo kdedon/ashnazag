@@ -1,0 +1,11 @@
+#!/bin/sh
+# The screen's login, respawned by init: xdm when /etc/default/x has
+# BOOT=xdm, else a text login.  When xdm gives up (no server) or is
+# killed, one text login runs before xdm starts again.
+rm -f /usr/x11r6/lib/X11/xdm/console-user
+# the last BOOT= line; blanks, quotes and a trailing comment allowed
+b=`sed -n 's/^[ 	]*BOOT[ 	]*=[ 	"'"'"']*\([a-z]*\).*/\1/p' /etc/default/x 2> /dev/null | sed -n '$p'`
+if [ "$b" = xdm ] && [ -x /usr/x11r6/bin/xdm ]; then
+	/usr/x11r6/bin/xdm -nodaemon -config /usr/x11r6/lib/X11/xdm/xdm-config < /dev/null > /dev/null 2>&1
+fi
+exec /etc/getty console console

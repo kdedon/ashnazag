@@ -28,6 +28,16 @@ cp "$XC/fonts/bdf/misc/fonts.alias" "$P/fonts/misc/"
 cp "$XC/programs/rgb/rgb.txt" "$P/lib/rgb.txt"
 cp "$D/session/startx" "$D/session/xinitrc" "$P/lib/"
 cp "$XC/programs/Xserver/Xext/SecurityPolicy" "$P/lib/SecurityPolicy"
+# xdm and the session chooser (build.sh clients)
+cp "$XC/programs/xdm/xdm" "$X11W/session/xchoose" "$X11W/session/xdmenv" "$P/bin/"
+"$STRIP" "$P/bin/xdm" "$P/bin/xchoose" "$P/bin/xdmenv"
+cp "$D/session/xsession" "$P/bin/"
+mkdir -p "$P/xdm"
+cp "$D"/session/xdm/* "$P/xdm/"
+# the screen's login runs through xdmboot, which reads /etc/default/x
+sed 's,^co:234:respawn:/etc/getty console console$,co:234:respawn:/usr/x11r6/lib/X11/xdm/xdmboot,' \
+	"$D/../kernel/mac/diskroot/etc/inittab" > "$P/lib/inittab"
+grep -q xdmboot "$P/lib/inittab"
 
 # fonts.dir: "count" then "file XLFD", the XLFD from each BDF's FONT line
 for dir in "$P/fonts/misc" "$P/fonts/75dpi"; do
@@ -46,6 +56,13 @@ R=/usr/x11r6
 	echo "l $R/bin/X Xamix"
 	echo "f $R/bin/startx 755 0 3 x11pkg/lib/startx"
 	echo "l /usr/bin/startx $R/bin/startx"
+	echo "f $R/bin/xdm 755 0 3 x11pkg/bin/xdm"
+	echo "f $R/bin/xchoose 755 0 3 x11pkg/bin/xchoose"
+	echo "f $R/bin/xdmenv 4755 0 3 x11pkg/bin/xdmenv"
+	echo "f $R/bin/xsession 755 0 3 x11pkg/bin/xsession"
+	echo "l /usr/bin/xsession $R/bin/xsession"
+	echo "f /etc/default/x 644 0 3 x11pkg/xdm/default-x"
+	echo "f /etc/inittab 644 0 3 x11pkg/lib/inittab"
 	echo "d $R/lib 755 0 3"
 	echo "d $R/lib/X11 755 0 3"
 	echo "f $R/lib/X11/rgb.txt 444 0 3 x11pkg/lib/rgb.txt"
@@ -53,6 +70,13 @@ R=/usr/x11r6
 	echo "f $R/lib/X11/xserver/SecurityPolicy 444 0 3 x11pkg/lib/SecurityPolicy"
 	echo "d $R/lib/X11/xinit 755 0 3"
 	echo "f $R/lib/X11/xinit/xinitrc 644 0 3 x11pkg/lib/xinitrc"
+	echo "d $R/lib/X11/xdm 755 0 3"
+	for f in xdm-config Xservers Xresources; do
+		echo "f $R/lib/X11/xdm/$f 644 0 3 x11pkg/xdm/$f"
+	done
+	for f in Xstartup Xreset xdmboot; do
+		echo "f $R/lib/X11/xdm/$f 755 0 3 x11pkg/xdm/$f"
+	done
 	echo "d $R/lib/X11/fonts 755 0 3"
 	for sub in misc 75dpi; do
 		echo "d $R/lib/X11/fonts/$sub 755 0 3"

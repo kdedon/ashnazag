@@ -1,0 +1,4 @@
+#!/bin/sh
+# after a login on the screen: the user xdmenv lets take it over
+umask 022
+echo "$USER" > /usr/x11r6/lib/X11/xdm/console-user

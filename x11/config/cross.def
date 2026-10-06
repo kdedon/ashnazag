@@ -48,3 +48,7 @@ XCOMM No TCP transport: the server listens on the UNIX-domain socket only
 
 XCOMM Mac: only the fb card; an Amiga build sets this to YES for ZZ9000
 #define RtgZZ9000 NO
+
+XCOMM xdm: greeter linked in, no XDMCP chooser
+#define SharedLibXdmGreet NO
+#define BuildChooser NO

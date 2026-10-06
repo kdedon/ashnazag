@@ -65,7 +65,9 @@ if ls -d $log >/dev/null 2>&1 || ls -d $pid >/dev/null 2>&1; then
 	rm -f $log $pid
 fi
 
-$R/bin/Xamix :0 -auth $XAUTHORITY -fp $R/lib/X11/fonts/misc/,$R/lib/X11/fonts/75dpi/ "$@" \
+# the machine's default server options, then the caller's
+opts=`cat $R/lib/X11/xserver/options 2>/dev/null`
+$R/bin/Xamix :0 -auth $XAUTHORITY -fp $R/lib/X11/fonts/misc/,$R/lib/X11/fonts/75dpi/ $opts "$@" \
 	> $log 2>&1 &
 server=$!
 echo $server > $pid

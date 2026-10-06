@@ -1,0 +1,10 @@
+xlogin*greeting:	Ash Nazag
+xlogin*namePrompt:	Login:\040
+xlogin*fail:	Login incorrect
+xlogin*greetFont:	-adobe-helvetica-bold-r-normal--14-*-*-*-*-*-*-*
+xlogin*font:	-adobe-helvetica-medium-r-normal--12-*-*-*-*-*-*-*
+xlogin*promptFont:	-adobe-helvetica-bold-r-normal--12-*-*-*-*-*-*-*
+xlogin*failFont:	-adobe-helvetica-bold-r-normal--12-*-*-*-*-*-*-*
+xlogin*greetColor:	navy
+xlogin*failColor:	red
+xlogin*borderWidth:	2

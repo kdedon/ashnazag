@@ -11,10 +11,15 @@
 # IMAGE defaults to kernel/build/atari/disk/falcon-disk.img; it is copied.
 # TOSROM: the TOS 4.04 image or its zip (default: tos404*.zip in the
 # repo root).  Skips (exit 0) without the ROM or Hatari.
-# STAGES: any of vga rgb mod tos tosloop (mod, tos and tosloop need an
-# image made with TESTS=modadmin MODS=<mod.d>) (default "vga rgb").
+# STAGES: any of vga rgb mod tos tosloop x xtos (mod, tos and tosloop need an
+# image made with TESTS=modadmin MODS=<mod.d>; x one made with X11=<pkg>)
+# (default "vga rgb").  x: startx in 256 colours, typing into xterm, the
+# server stopped and the console back; then in 2 colours with the German
+# layout (x-4-de.png shows "keyz"), stopped from the console.
 # tosloop starts the TOS environment BOOTS times (default 15) in one
-# session and checks each desktop.
+# session and checks each desktop.  xtos (an image made with X11=<pkg>
+# TOSENV=1): guest starts X, then starttos -P from the console; the hot
+# keys switch between X, the GEM desktop and the console; each ends.
 set -e
 T=$(cd "$(dirname "$0")" && pwd)
 A=$(cd "$T/.." && pwd)
@@ -75,6 +80,16 @@ for s in $STAGES; do
 		python3 "$T/tosshot.py" differ "$OUT/tos-1-ctrlc.png" "$OUT/tos-2-console.png" || fail=1
 		python3 "$T/tosshot.py" same "$OUT/tos-1-ctrlc.png" "$OUT/tos-3-back.png" || fail=1
 		python3 "$T/tosshot.py" differ "$OUT/tos-3-back.png" "$OUT/tos-4-exit.png" || fail=1 ;;
+	x)	run x vga
+		check "$OUT/x.log.out" 'x-2-up' 'key-42-ok' 'x-7-ended' 'fb: /dev/fb0 Videl 640x480 depth 8' \
+			'x-4-up' 'x-11-ended' 'fb: /dev/fb0 Videl 640x480 depth 1' 'x-9-done'
+		! grep -q 'Fatal\|PANIC\|panic' "$OUT/x.log.out" || { echo "[FAIL] x: server or kernel error"; fail=1; } ;;
+	xtos)	run xtos vga
+		check "$OUT/xtos.log.out" 'x-2-up' 'tos-left=0' 'x-7-ended' 'xtos-9-done'
+		! grep -q 'Fatal\|PANIC\|panic' "$OUT/xtos.log.out" || { echo "[FAIL] xtos: server or kernel error"; fail=1; }
+		python3 "$T/tosshot.py" desktop "$OUT/xtos-3-tos.png" || fail=1
+		python3 "$T/tosshot.py" same "$OUT/xtos-1-x.png" "$OUT/xtos-4-x.png" || fail=1
+		python3 "$T/tosshot.py" same "$OUT/xtos-3-tos.png" "$OUT/xtos-5-tos.png" || fail=1 ;;
 	tosloop)
 		n=${BOOTS:-15}
 		{ sed -n '1,/^wait mods-done/p' "$T/falcon-tos-keys.txt"

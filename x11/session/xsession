@@ -1,0 +1,137 @@
+#!/bin/sh
+# xsession -- the X session chooser and its sessions.
+#
+#   xsession [twm|xview|mac|tos|amiga|console]
+#
+# Under xdm (no argument) it offers the installed sessions with the last
+# one, kept in $HOME/.xsession-choice, as the default: Return or 10 s
+# starts it, a number or a click picks another.  From a text console it
+# starts X with the named session (or the chooser), and returns when
+# the session ends.  Environments run full screen; the session ends
+# with them.
+PATH=/usr/x11r6/bin:/usr/X/bin:/usr/openwin/bin:$PATH
+OPENWINHOME=/usr/openwin
+export PATH OPENWINHOME
+
+if [ -z "$DISPLAY" ]; then
+	XSESSION=$1
+	export XSESSION
+	exec /usr/x11r6/bin/startx /usr/x11r6/bin/xsession
+fi
+
+# a log that outlives xdm's per-session .xsession-errors
+l=$HOME/.xsession-log
+[ -f $l ] && tail -100 $l > $l.new && mv $l.new $l
+exec 2>> $l
+name=${1:-$XSESSION}
+[ "$name" = failsafe ] && name=console
+choose=
+[ -n "$name" ] || choose=1
+
+[ -f $HOME/.Xresources ] && xrdb -merge $HOME/.Xresources
+xsetroot -solid gray40
+
+# the environments installed
+envs=
+[ -x /usr/bin/startmac ] && envs="$envs mac"
+[ -x /usr/bin/starttos ] && envs="$envs tos"
+[ -x /usr/bin/startmig ] && envs="$envs amiga"
+label() {
+	case $1 in
+	twm) echo "Desktop: twm" ;;
+	xview) echo "Desktop: XView (olvwm)" ;;
+	mac) echo "Mac environment" ;;
+	tos) echo "TOS environment" ;;
+	amiga) echo "Amiga environment" ;;
+	console) echo "Console (full-screen terminal)" ;;
+	esac
+}
+
+if [ -n "$choose" ]; then
+	list=twm
+	[ -x /usr/openwin/bin/olvwm ] && list="$list xview"
+	list="$list $envs console"
+	last=`sed 1q $HOME/.xsession-choice 2> /dev/null`
+	args=
+	for s in $list; do
+		args="$args $s"
+		[ "$s" = "$last" ] && def=$s
+	done
+	set -- -t 10
+	[ -n "$def" ] && set -- "$@" -d $def
+	for s in $args; do
+		set -- "$@" "$s=`label $s`"
+	done
+	name=`xchoose "$@"` || exit 0
+	echo $name > $HOME/.xsession-choice
+fi
+echo "`date`: xsession $name" >&2
+
+# window-manager menus: a terminal and every environment
+menus() {
+	for e in $envs; do
+		echo "$1\"`label $e`\" $2/usr/x11r6/bin/xdmenv $e$3"
+	done
+}
+
+case $name in
+twm)
+	m=$HOME/.xsession-twmrc
+	{
+		sed '/^menu "defops"/,$d' /usr/X/lib/twm/system.twmrc
+		echo 'menu "defops"'
+		echo '{'
+		echo '"Twm"	f.title'
+		echo '"Terminal"	f.exec "xterm &"'
+		menus '' 'f.exec "' ' &"'
+		echo '""	f.nop'
+		sed -n '/^menu "defops"/,$p' /usr/X/lib/twm/system.twmrc | sed '1,3d'
+	} > $m
+	xterm -geometry 80x24+16+40 &
+	exec twm -f $m
+	;;
+xview)
+	m=$HOME/.xsession-olmenu
+	{
+		echo '"Workspace"	TITLE'
+		echo '"Terminal"	DEFAULT exec xterm'
+		echo '"Shell Tool"	exec cmdtool'
+		echo '"Text Editor"	exec textedit'
+		echo '"Clock"	exec clock'
+		[ -n "$envs" ] && {
+			echo '"Environments"	MENU'
+			menus '	' 'exec '
+			echo '"Environments"	END'
+		}
+		echo 'SEPARATOR'
+		echo '"Properties..."	PROPERTIES'
+		echo '"Refresh"	REFRESH'
+		echo '"Exit"	EXIT'
+	} > $m
+	OLWMMENU=$m
+	export OLWMMENU
+	xset +fp $OPENWINHOME/lib/fonts/misc/,$OPENWINHOME/lib/fonts/75dpi/
+	xterm -geometry 80x24+16+40 &
+	exec olvwm
+	;;
+mac|tos|amiga)
+	exec xdmenv $name
+	;;
+console)
+	# the whole screen in characters of the 7x13 font, the window a
+	# little larger so the pointer, and with it the keyboard, is in it
+	set -- `xdpyinfo | sed -n 's/^ *dimensions: *\([0-9]*\)x\([0-9]*\) pixels.*/\1 \2/p'`
+	w=${1:-640} h=${2:-480}
+	c=`expr $w / 7` r=`expr $h / 13`
+	b=`expr \( $w - $c \* 7 + 1 \) / 2`
+	y=`expr \( $h - $r \* 13 + 1 \) / 2`
+	[ $y -gt $b ] && b=$y
+	x=`expr \( $c \* 7 + 2 \* $b - $w \) / 2`
+	y=`expr \( $r \* 13 + 2 \* $b - $h \) / 2`
+	exec xterm -fn 7x13 -bw 0 -b $b -geometry ${c}x$r+-$x+-$y -ls
+	;;
+*)
+	echo "xsession: unknown session $name" >&2
+	exit 1
+	;;
+esac

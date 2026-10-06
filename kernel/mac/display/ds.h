@@ -108,6 +108,7 @@ struct dssess {
 	pid_t		s_vpid;
 	unsigned long	s_vwin;		/* where s_vproc maps the region */
 	unsigned long	s_vgbase;	/* screen address the guest set */
+	int		s_vmode;	/* FBIOSMODE's mode, index + 1; 0 a guest's or none */
 #endif
 };
 
@@ -156,9 +157,14 @@ void	ds_setblank();		/* (s, on) */
 void	ds_note();		/* (s, type) */
 void	ds_now();		/* (sec, usec) */
 void	ds_vblintr();
+void	ds_sinfo();		/* (s, fi): what FBIOGINFO reports for s */
+int	ds_ncmap();		/* (s) -> its colour table's entries */
 #ifdef DS_ATARI
 void	ds_relmouse();		/* (buttons, dx, dy) */
 int	ds_vidpass();		/* (s, window) -> errno */
+int	ds_setmode();		/* (s, id) -> errno */
+/* a guest's Videl session: its own mode and palette, IKBD key codes */
+#define DS_GUEST(s)	((s)->s_vid && !(s)->s_vmode)
 void	ds_vidput();		/* (addr, size, value) */
 void	ds_bltgo();		/* (registers) */
 #endif

@@ -12,6 +12,7 @@ with the `m68k-cbm-sysv4` toolchain; clients are the stock AMIX X11R4 ones (tape
 | `patches/01-rtg-card-table.diff` | port overlay: `rtgCardRec` table in `rtg.h`, `rtgInit.c` calls through it, ZZ9000 as one entry (`zz9000/zz9000card.c`, code moved from `rtgInit.c`), `-rtg name`, card options via `ddxProcessArgument`. No ZZ9000 behaviour change |
 | `patches/02-fb-event-input.diff` | port overlay: `amixInput` hook (keyboard enable/disable, wakeup read), keymap pointers and key offset in `amixKbd.c`; `Xamix` target (`Xzz9000` is a link to it); `fb` directory |
 | `patches/03-no-tcp.diff` | `os/access.c` includes `netinet/in.h` even without TCP (its interface code needs it) |
+| `patches/05-iplan2p8.diff` | `iplan2p8` (interleaved 8 bitplanes, sources copied by `tree`) in `Xamix` |
 | `patches/04-card-select.diff` | `RtgZZ9000` switch in the server, `rtg` and `amix` Imakefiles and `amixIo.c`: the ZZ9000 card is optional |
 | `src/amixEv.c` | `inev` records → the port's `InputEvent` → `amixKbdEnqueueEvent`/`amixMouseEnqueueEvent` (autorepeat, acceleration unchanged); `-mb3` |
 | `src/amixMacKeyMap.c` | ADB core keymap, keycode = ADB + 8; Command Mod1 (Meta), Option Mod2 (Mode_switch) |
@@ -56,7 +57,7 @@ Build time: libraries ~1 min, server (261 files) ~1–2 min.
 ## Run
 
 ```
-Xamix :0 [-fb /dev/fb0] [-mb3] [-rtg fb|zz9000] [-fp path]
+Xamix :0 [-fb /dev/fb0] [-mb3] [-rtg fb|zz9000] [-fp path] [-depth n] [-kbd us|de]
 /usr/x11r6/bin/startx [script] [-- server options]      # log: /tmp/Xamix.log
 ```
 
@@ -129,3 +130,22 @@ them too. Build times: clibs ~20 s, manx ~30 s, XView ~45 s.
   the BSD calls libc lacks (`index`, `rindex`, `bcopy`, `bzero`, `random`, `srandom`, `getwd`,
   `killpg`). Clients: olwm, olvwm, olwmslave, cmdtool, textedit, clock, props (9 MB).
 - Both use the R6.3 libraries, which speak only the UNIX-domain transport (`ConnectionFlags`).
+
+## xdm and sessions
+
+```
+sh x11/build.sh clibs clients      # ICE SM Xt Xmu Xaw, xdm, xchoose, xdmenv
+BOOTX=1 sh x11/mkimage.sh ...      # boot to xdm; /etc/default/x BOOT=xdm|console
+sh x11/xdmtest.sh OUTDIR [image]   # QEMU: login, chooser, twm, XView, Console, TOS, Mac
+```
+
+init's `co` entry runs `xdmboot`: xdm (`-nodaemon`, no XDMCP port, server with `-auth`) when
+`/etc/default/x` says `BOOT=xdm`, else getty; a text login also follows xdm's exit. After login
+`xsession` offers twm, XView, the installed environments and a full-screen Console xterm,
+remembering the choice in `~/.xsession-choice`. `xsession NAME` from a text console starts X
+with that session. `xdmenv` (setuid root) starts an environment for the user xdm logged in on
+the screen, with the console as its terminal, and brings X back afterwards.
+`patches/06-xdm.diff`: accounts without a password log in with an empty one on the local
+screen (root too, if it has none), unless `/etc/default/login` has `PASSREQ=YES`; the session
+takes a user licence before `setuid` (non-root only); the cookie comes from an XTEA-hashed pool
+(clock, ticks, process times, `/dev` entry times, a seed kept in `xdm-seed`, mode 600).

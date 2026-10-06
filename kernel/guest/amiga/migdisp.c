@@ -11,41 +11,121 @@
 #include "dsio.h"
 #include "rtgshare.h"
 #include "inputshare.h"
+#include "hostfswire.h"
+#include "miglog.h"
 
 extern int munmap();
 
 static unsigned short red[256], green[256], blue[256];
+static unsigned char *shadow;
+
+/* 5x7 glyphs, a row per byte, for the startup status */
+static const char glyphs[] = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.:/-_?";
+static const unsigned char font[][7] = {
+    {0,0,0,0,0,0,0},
+    {14,17,17,31,17,17,17}, {30,17,17,30,17,17,30}, {14,17,16,16,16,17,14},
+    {28,18,17,17,17,18,28}, {31,16,16,30,16,16,31}, {31,16,16,30,16,16,16},
+    {14,17,16,23,17,17,15}, {17,17,17,31,17,17,17}, {14,4,4,4,4,4,14},
+    {7,2,2,2,2,18,12}, {17,18,20,24,20,18,17}, {16,16,16,16,16,16,31},
+    {17,27,21,21,17,17,17}, {17,17,25,21,19,17,17}, {14,17,17,17,17,17,14},
+    {30,17,17,30,16,16,16}, {14,17,17,17,21,18,13}, {30,17,17,30,20,18,17},
+    {15,16,16,14,1,1,30}, {31,4,4,4,4,4,4}, {17,17,17,17,17,17,14},
+    {17,17,17,17,17,10,4}, {17,17,17,21,21,21,10}, {17,17,10,4,10,17,17},
+    {17,17,17,10,4,4,4}, {31,1,2,4,8,16,31},
+    {14,17,19,21,25,17,14}, {4,12,4,4,4,4,14}, {14,17,1,2,4,8,31},
+    {31,2,4,2,1,17,14}, {2,6,10,18,31,2,2}, {31,16,30,1,1,17,14},
+    {6,8,16,30,17,17,14}, {31,1,2,4,8,8,8}, {14,17,17,14,17,17,14},
+    {14,17,17,15,1,2,12},
+    {0,0,0,0,0,12,12}, {0,12,12,0,12,12,0}, {0,1,2,4,8,16,0},
+    {0,0,0,31,0,0,0}, {0,0,0,0,0,0,31}, {14,17,1,2,4,0,4}
+};
+
+/* one line of text, twice size, colour 1 on 0 */
+static void text(unsigned char *fb, struct fbinfo *fi, unsigned int y, const char *s)
+{
+    unsigned int n = strlen(s), x0, i, row, col, c;
+    const char *g;
+    unsigned char *p;
+    if (n > fi->fi_width / 12) n = fi->fi_width / 12;
+    x0 = (fi->fi_width - n * 12) / 2;
+    for (row = 0; row < 16; row++)
+        memset(fb + fi->fi_offset + (y + row) * fi->fi_rowbytes, 0, fi->fi_width);
+    for (i = 0; i < n; i++) {
+        c = (unsigned char)s[i];
+        if (c >= 'a' && c <= 'z') c -= 32;
+        g = strchr(glyphs, c);
+        c = g && c ? g - glyphs : sizeof glyphs - 2;
+        for (row = 0; row < 14; row++) {
+            p = fb + fi->fi_offset + (y + row) * fi->fi_rowbytes + x0 + i * 12;
+            for (col = 0; col < 10; col++)
+                p[col] = font[c][row / 2] >> (4 - col / 2) & 1;
+        }
+    }
+}
+
+/* the startup status while no RTG screen shows */
+static void drawstatus(unsigned char *fb, struct fbinfo *fi)
+{
+    volatile struct mig_fs_status *st = (struct mig_fs_status *)MIG_FS_STATUS;
+    char line[160], path[64];
+    unsigned int i, y = fi->fi_height / 2 - 24;
+    long ms = miglog_ms();
+    if (fi->fi_height < 64) return;
+    text(fb, fi, y, "STARTING THE AMIGA ENVIRONMENT");
+    if (!st->requests)
+        sprintf(line, "%ld S  KICKSTART", ms / 1000);
+    else {
+        for (i = 0; i < sizeof path - 1 && st->path[i]; i++)
+            path[i] = st->path[i];
+        path[i] = 0;
+        sprintf(line, "%ld S  SYS:%s", ms / 1000, path);
+    }
+    text(fb, fi, y + 32, line);
+}
 
 static int rtg_blank(int fd, unsigned char *fb, struct fbinfo *fi)
 {
     struct fbcmap cm;
-    unsigned short black = 0;
-    cm.cm_start = 0; cm.cm_count = 1;
-    cm.cm_red = cm.cm_green = cm.cm_blue = &black;
+    static unsigned short grey[2] = { 0, 0xaaaa };
+    cm.cm_start = 0; cm.cm_count = 2;
+    cm.cm_red = cm.cm_green = cm.cm_blue = grey;
     if (ioctl(fd, FBIOPUTCMAP, &cm) < 0) return -1;
     memset(fb + fi->fi_offset, 0, fi->fi_rowbytes * fi->fi_height);
     return 0;
 }
 
+/*
+ * Copies the rows that changed since the last refresh, or all with full:
+ * the framebuffer is uncached, so writes cost far more than compares.
+ * Returns the number of rows copied, or -1.
+ */
 static int rtg_refresh(int fd, unsigned char *fb, struct fbinfo *fi,
-    struct mig_rtg *s)
+    struct mig_rtg *s, int full)
 {
     struct fbcmap cm;
     unsigned int i, y, xoff = (fi->fi_width - s->width) / 2;
     unsigned int yoff = (fi->fi_height - s->height) / 2;
+    int changed = full, rows = 0;
+    const unsigned char *src;
     for (i = 0; i < 256; i++) {
+        if (red[i] != s->palette[i][0] || green[i] != s->palette[i][1] ||
+            blue[i] != s->palette[i][2]) changed = 1;
         red[i] = s->palette[i][0];
         green[i] = s->palette[i][1];
         blue[i] = s->palette[i][2];
     }
     cm.cm_start = 0; cm.cm_count = 256;
     cm.cm_red = red; cm.cm_green = green; cm.cm_blue = blue;
-    if (ioctl(fd, FBIOPUTCMAP, &cm) < 0) return -1;
-    for (y = 0; y < s->height; y++)
+    if (changed && ioctl(fd, FBIOPUTCMAP, &cm) < 0) return -1;
+    for (y = 0; y < s->height; y++) {
+        src = (const unsigned char *)MIG_RTG_PIXELS + s->offset + y * s->stride;
+        if (!full && !memcmp(shadow + y * s->width, src, s->width)) continue;
+        memcpy(shadow + y * s->width, src, s->width);
         memcpy(fb + fi->fi_offset + (yoff + y) * fi->fi_rowbytes + xoff,
-            (const unsigned char *)MIG_RTG_PIXELS + s->offset + y * s->stride,
-            s->width);
-    return 0;
+            shadow + y * s->width, s->width);
+        rows++;
+    }
+    return rows + changed;
 }
 
 static int input_open(const char *name, int session, struct evinfo *info)
@@ -88,7 +168,8 @@ int migdisp(int ready, int life)
     struct mig_rtg rtg;
     int rtgactive = 0;
     unsigned char *fb;
-    int fd, hidden = 0, status, lastw = 0, lasth = 0;
+    int fd, hidden = 0, status, lastw = 0, lasth = 0, idle = 0, shown = 0;
+    long nextstatus = 0;
     char success = 1;
     fd = open("/dev/fb0", O_RDWR);
     if (fd < 0) { perror("startmig: /dev/fb0"); return 1; }
@@ -110,6 +191,9 @@ int migdisp(int ready, int life)
     fb = (unsigned char *)mmap((caddr_t)0, fi.fi_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     if (fb == (unsigned char *)-1) { perror("startmig: display mmap"); return 1; }
     memset(fb + fi.fi_offset, 0, fi.fi_rowbytes * fi.fi_height);
+    shadow = (unsigned char *)malloc(fi.fi_width * fi.fi_height);
+    if (!shadow) { fprintf(stderr, "startmig: display: out of memory\n"); return 1; }
+    miglog(0, "display session %ux%u", fi.fi_width, fi.fi_height);
     mig_rtg_init((struct mig_rtg *)MIG_RTG_BASE, fi.fi_width, fi.fi_height);
     mig_input_init(input);
     memset(&inputstate, 0, sizeof inputstate);
@@ -124,7 +208,8 @@ int migdisp(int ready, int life)
     p[0].fd = life; p[1].fd = fd;
     p[0].events = p[1].events = p[2].events = p[3].events = POLLIN;
     for (;;) {
-        status = poll(p, 4, hidden ? 500 : 40);
+        /* slower refreshes while the screen stays unchanged */
+        status = poll(p, 4, hidden ? 500 : idle > 25 ? 120 : 40);
         if (status < 0) {
             if (errno == EINTR) continue;
             perror("startmig: display poll"); break;
@@ -140,6 +225,7 @@ int migdisp(int ready, int life)
             if (note.fn_type == FBN_SHOWN) { hidden = 0; rtgactive = -1; }
             if (note.fn_type == FBN_MODE) break;
         }
+        if ((p[2].revents | p[3].revents) & POLLIN) idle = 0;
         if (p[2].revents & POLLIN)
             input_read(p[2].fd, &keyinfo, hidden, input, &inputstate);
         if (p[3].revents & POLLIN)
@@ -159,20 +245,34 @@ int migdisp(int ready, int life)
         if (status < 0) continue;
         /* until the RTG card shows a screen, the session stays black */
         if (status != MIG_RTG_VISIBLE) {
-            if (rtgactive != MIG_RTG_BLANK && rtg_blank(fd, fb, &fi) < 0) {
-                perror("startmig: RTG blank"); break;
+            if (rtgactive != MIG_RTG_BLANK) {
+                if (rtg_blank(fd, fb, &fi) < 0) {
+                    perror("startmig: RTG blank"); break;
+                }
+                nextstatus = 0;
             }
             rtgactive = MIG_RTG_BLANK;
+            if (!shown && miglog_ms() >= nextstatus) {
+                drawstatus(fb, &fi);
+                nextstatus = miglog_ms() + 1000;
+            }
             continue;
         }
-        if (rtgactive != MIG_RTG_VISIBLE || lastw != rtg.width || lasth != rtg.height) {
+        if (!shown) {
+            miglog(0, "RTG screen %ux%u: Picasso96 bound", rtg.width, rtg.height);
+            shown = 1;
+        }
+        status = rtgactive != MIG_RTG_VISIBLE || lastw != rtg.width || lasth != rtg.height;
+        if (status) {
             memset(fb + fi.fi_offset, 0, fi.fi_rowbytes * fi.fi_height);
             lastw = rtg.width; lasth = rtg.height;
         }
         rtgactive = MIG_RTG_VISIBLE;
-        if (rtg_refresh(fd, fb, &fi, &rtg) < 0) {
+        status = rtg_refresh(fd, fb, &fi, &rtg, status);
+        if (status < 0) {
             perror("startmig: RTG palette"); break;
         }
+        idle = status ? 0 : idle + 1;
     }
     mig_input_reset(input, &inputstate);
     if (p[2].fd >= 0) close(p[2].fd);

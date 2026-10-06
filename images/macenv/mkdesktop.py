@@ -147,6 +147,10 @@ try:
 			finder_keys()
 			send(s, '\n')
 		ok = seen(b'-3-DONE', 1800)
+		# BOOTX=1: the image boots to xdm from now on
+		if ok and os.environ.get('BOOTX') == '1':
+			send(s, "sed 's/^BOOT=.*/BOOT=xdm/' /etc/default/x > /tmp/x; cp /tmp/x /etc/default/x; sync; echo BOOT""X-OK\n")
+			ok = seen(b'BOOTX-OK', 60)
 		send(s, '/sbin/uadmin 2 0\n')
 		seen(b'\0never', 30)
 finally:

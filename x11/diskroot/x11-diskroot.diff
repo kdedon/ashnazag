@@ -1,6 +1,6 @@
 --- a/kernel/mac/diskroot/root.manifest
 +++ b/kernel/mac/diskroot/root.manifest
-@@ -67,3 +67,58 @@
+@@ -67,3 +67,72 @@
  
  e /var/adm/utmp	644 0 2
  e /var/adm/utmpx 644 0 2
@@ -21,6 +21,13 @@
 +l /usr/x11r6/bin/X Xamix
 +f /usr/x11r6/bin/startx 755 0 3 x11pkg/lib/startx
 +l /usr/bin/startx /usr/x11r6/bin/startx
++f /usr/x11r6/bin/xdm 755 0 3 x11pkg/bin/xdm
++f /usr/x11r6/bin/xchoose 755 0 3 x11pkg/bin/xchoose
++f /usr/x11r6/bin/xdmenv 4755 0 3 x11pkg/bin/xdmenv
++f /usr/x11r6/bin/xsession 755 0 3 x11pkg/bin/xsession
++l /usr/bin/xsession /usr/x11r6/bin/xsession
++f /etc/default/x 644 0 3 x11pkg/xdm/default-x
++f /etc/inittab 644 0 3 x11pkg/lib/inittab
 +d /usr/x11r6/lib 755 0 3
 +d /usr/x11r6/lib/X11 755 0 3
 +f /usr/x11r6/lib/X11/rgb.txt 444 0 3 x11pkg/lib/rgb.txt
@@ -28,6 +35,13 @@
 +f /usr/x11r6/lib/X11/xserver/SecurityPolicy 444 0 3 x11pkg/lib/SecurityPolicy
 +d /usr/x11r6/lib/X11/xinit 755 0 3
 +f /usr/x11r6/lib/X11/xinit/xinitrc 644 0 3 x11pkg/lib/xinitrc
++d /usr/x11r6/lib/X11/xdm 755 0 3
++f /usr/x11r6/lib/X11/xdm/xdm-config 644 0 3 x11pkg/xdm/xdm-config
++f /usr/x11r6/lib/X11/xdm/Xservers 644 0 3 x11pkg/xdm/Xservers
++f /usr/x11r6/lib/X11/xdm/Xresources 644 0 3 x11pkg/xdm/Xresources
++f /usr/x11r6/lib/X11/xdm/Xstartup 755 0 3 x11pkg/xdm/Xstartup
++f /usr/x11r6/lib/X11/xdm/Xreset 755 0 3 x11pkg/xdm/Xreset
++f /usr/x11r6/lib/X11/xdm/xdmboot 755 0 3 x11pkg/xdm/xdmboot
 +d /usr/x11r6/lib/X11/fonts 755 0 3
 +d /usr/x11r6/lib/X11/fonts/misc 755 0 3
 +f /usr/x11r6/lib/X11/fonts/misc/10x20.bdf 444 0 3 x11pkg/fonts/misc/10x20.bdf

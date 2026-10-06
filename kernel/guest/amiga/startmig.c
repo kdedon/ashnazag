@@ -21,6 +21,7 @@
 #include "hostfswire.h"
 #include "sysroot.h"
 #include "envroot.h"
+#include "miglog.h"
 
 #define ROMBASE 0xf80000UL
 #define ROMSIZE 0x80000UL
@@ -58,7 +59,7 @@ loadboot(char *path)
         get32(p + 2) != BOOTBASE || get32(p + 6) <= BOOTBASE + 26 ||
         get32(p + 6) > BOOTBASE + BOOTSIZE || !(p[10] & 1) ||
         get32(p + 22) < BOOTBASE + 26 || get32(p + 22) >= BOOTBASE + BOOTSIZE) {
-        fprintf(stderr, "startmig: invalid container boot extension\n");
+        miglog(1, "invalid container boot extension %.500s", path);
         exit(1);
     }
     if (mprotect((caddr_t)BOOTBASE, BOOTSIZE, PROT_READ | PROT_EXEC) < 0)
@@ -69,7 +70,7 @@ static void
 fail(message)
 	char *message;
 {
-	fprintf(stderr, "startmig: %s: %s\n", message, strerror(errno));
+	miglog(1, "%.500s: %s", message, strerror(errno));
 	exit(1);
 }
 
@@ -107,7 +108,7 @@ readrom(path)
 		fail(path);
 	close(fd);
 	if (n != ROMSIZE || count != 0) {
-		fprintf(stderr, "startmig: ROM must be exactly 512 KiB\n");
+		miglog(1, "%.500s: ROM must be exactly 512 KiB", path);
 		return 0;
 	}
 	for (i = 0; i < ROMSIZE; i += 4) {
@@ -123,7 +124,7 @@ readrom(path)
 	}
 	if (sum != 0xffffffffUL || (crc ^ 0xffffffffUL) != 0x9bb8fc93UL ||
 	    get32(rombuf) != 0x11144ef9UL || get32(rombuf + 4) != 0xf800d2UL) {
-		fprintf(stderr, "startmig: expected the A4000 Kickstart 3.2 (47.96) ROM\n");
+		miglog(1, "%.500s: expected the A4000 Kickstart 3.2 (47.96) ROM", path);
 		return 0;
 	}
 	return 1;
@@ -191,7 +192,7 @@ startdisplay()
     p.fd = ready[0]; p.events = POLLIN;
     do { n = poll(&p, 1, 5000); } while (n < 0 && errno == EINTR);
     if (n <= 0 || read(ready[0], &success, 1) != 1 || success != 1) {
-        fprintf(stderr, "startmig: display session did not become ready\n");
+        miglog(1, "display session did not become ready");
         kill(pid, SIGTERM);
         exit(1);
     }
@@ -220,11 +221,37 @@ startfilesystem(dev, root, readonly)
     p.fd = ready[0]; p.events = POLLIN;
     do { n = poll(&p, 1, 5000); } while (n < 0 && errno == EINTR);
     if (n <= 0 || read(ready[0], &success, 1) != 1 || success != 1) {
-        fprintf(stderr, "startmig: filesystem helper did not become ready\n");
+        miglog(1, "filesystem helper did not become ready");
         kill(pid, SIGTERM);
         exit(1);
     }
     close(ready[0]);
+}
+
+/*
+ * The log goes in a writable SYS:, otherwise /tmp; a black screen
+ * leaves the startup's progress there.
+ */
+static void
+openlog(root, writable)
+    char *root;
+    int writable;
+{
+    char path[1100];
+    int fd = -1;
+    if (writable && strlen(root) < 1000) {
+        sprintf(path, "%s/.startmig.log", root);
+        unlink(path);
+        fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    }
+    if (fd < 0) {
+        sprintf(path, "/tmp/startmig.%ld.log", (long)getuid());
+        unlink(path);
+        fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    }
+    if (fd < 0) return;
+    miglog_fd = fd;
+    miglog(1, "log in %s", path);
 }
 
 static int
@@ -263,6 +290,8 @@ main(argc, argv)
 	struct sigaction sa;
 	struct rlimit rl;
 	int i, check = 0, probe = 0, fd, lockfd = -1;
+
+	miglog_start(-1);
 
 	for (i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--check")) check = 1;
@@ -303,31 +332,42 @@ main(argc, argv)
 		readonly |= rootreadonly;
 		if (!readonly && (lockfd = envlock("startmig", "amiga", sysroot)) == -1)
 			return 1;
+		openlog(sysroot, !readonly);
+		miglog(0, "SYS: is %.500s%s", sysroot, readonly ? ", read-only" : "");
 	}
 	if (!readrom(rom))
 		return 1;
+	miglog(0, "Kickstart %.500s verified", rom);
 	if (check) {
 		printf("A4000 Kickstart 3.2 (47.96): checksum and CRC verified\n");
 		return 0;
 	}
 	if (!probe && !checksystem(sysroot)) {
-		fprintf(stderr, "startmig: %s has no readable S/Startup-Sequence; run makeamiga -f\n", sysroot);
+		miglog(1, "%.500s has no readable S/Startup-Sequence; run makeamiga -f", sysroot);
 		return 1;
 	}
 	for (i = 3; i < 256; i++)
-		if (i != lockfd)
+		if (i != lockfd && i != miglog_fd)
 			close(i);
 	fd = open("/dev/amiga", O_RDWR);
+	if (fd < 0 && (errno == ENXIO || errno == ENODEV)) {
+		miglog(1, "/dev/amiga: Amiga module not loaded; as root run /usr/sbin/amigareg /usr/aux/lib/mod.d");
+		return 1;
+	}
+	if (fd < 0 && errno == EACCES) {
+		miglog(1, "/dev/amiga: permission denied; the display group may use it");
+		return 1;
+	}
 	if (fd < 0)
 		fail("/dev/amiga");
 	if (ioctl(fd, AMIGAIOC_INFO, &info) < 0)
 		fail("AMIGAIOC_INFO");
 	if (info.ai_version != AMIGA_ABI_VERSION) {
-		fprintf(stderr, "startmig: incompatible kernel ABI\n");
+		miglog(1, "Amiga module ABI %lu, expected %d", info.ai_version, AMIGA_ABI_VERSION);
 		return 1;
 	}
 	if (!probe && !(info.ai_features & (AMIGA_FEAT_BOOT | AMIGA_FEAT_EXPERIMENTAL))) {
-		fprintf(stderr, "startmig: kernel lacks Amiga execution support\n");
+		miglog(1, "Amiga environment needs a 68040");
 		return 1;
 	}
 	/* the guest's memory exceeds the default soft limit on mappings */
@@ -343,6 +383,9 @@ main(argc, argv)
 		region(MIG_FS_BASE, MIG_FS_MAP_SIZE, 1);
 		startdisplay();
 		startfilesystem(fd, sysroot, readonly);
+		miglog(0, "display and SYS: helpers ready");
+		/* the helpers run first when both wait for the same tick */
+		nice(1);
 	}
 	if (fastmb)
 		region(FASTBASE, fastmb << 20, 0);
@@ -351,8 +394,6 @@ main(argc, argv)
 	if (mprotect((caddr_t)ROMBASE, ROMSIZE, PROT_READ | PROT_EXEC) < 0)
 		fail("mprotect");
 	if (!probe) {
-		if (!(info.ai_features & AMIGA_FEAT_BOOT))
-			fprintf(stderr, "startmig: boot and guest execution remain unverified\n");
 		region(BOOTBASE, BOOTSIZE, 0);
 		loadboot(boot);
 	}
@@ -362,12 +403,14 @@ main(argc, argv)
 	sa.sa_flags = SA_NODEFER;
 	if (sigaction(SIGUSR2, &sa, (struct sigaction *)0) < 0)
 		fail("SIGUSR2");
+	if (!probe)
+		miglog(1, "starting Kickstart; Workbench follows (the hot key returns here)");
 	ae.ae_version = AMIGA_ABI_VERSION;
 	ae.ae_chipsize = CHIPSIZE;
 	ae.ae_fastsize = fastmb << 20;
 	ae.ae_flags = AMIGAF_PAL | (census ? AMIGAF_CENSUS : 0);
 	if (ioctl(fd, AMIGAIOC_ENTER, &ae) < 0)
-		fail("AMIGAIOC_ENTER");
+		fail("Amiga session (AMIGAIOC_ENTER)");
 	if (probe) {
 		if (ioctl(fd, AMIGAIOC_LEAVE, 0) < 0)
 			fail("AMIGAIOC_LEAVE");

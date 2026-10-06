@@ -43,6 +43,7 @@
 #define	CARTSZ	0x20000
 #define	FROM	0xe00000L	/* a Falcon's ROM */
 #define	FROMSZ	0x80000L
+#define	FROMCOPY "/etc/tos/rom"	/* the machine's ROM, copied at boot */
 
 static char *rom = "/etc/tos/emutos.img";	/* the free TOS; -rom for the user's */
 static char *cart = "/etc/tos/tosml.img";
@@ -406,12 +407,19 @@ main(argc, argv)
 	}
 
 	if (pass) {
-		if ((c = open("/dev/mem", O_RDONLY)) < 0)
-			die("/dev/mem");
-		if (mmap((caddr_t)FROM, FROMSZ, PROT_READ | PROT_EXEC, MAP_SHARED | MAP_FIXED,
-		    c, (off_t)FROM) == (caddr_t)-1)
-			die("ROM");
-		close(c);
+		if ((c = open("/dev/mem", O_RDONLY)) >= 0) {
+			if (mmap((caddr_t)FROM, FROMSZ, PROT_READ | PROT_EXEC, MAP_SHARED | MAP_FIXED,
+			    c, (off_t)FROM) == (caddr_t)-1)
+				die("ROM");
+			close(c);
+		} else {
+			/* not root: the copy of the ROM made at boot */
+			region(FROM, FROMSZ, 0);
+			if (readall(FROMCOPY, (char *)FROM, FROMSZ) != FROMSZ)
+				die(FROMCOPY);
+			if (mprotect((caddr_t)FROM, FROMSZ, PROT_READ | PROT_EXEC) < 0)
+				die("mprotect");
+		}
 		rom = "the ROM";
 		memcpy(rbuf, (char *)FROM, 16);
 		n = FROMSZ;
