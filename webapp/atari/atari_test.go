@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 )
 
@@ -80,5 +82,29 @@ func TestChecksums(t *testing.T) {
 	}
 	if _, _, err := Sizes(64, 1<<20, 32, 32); err == nil {
 		t.Error("tiny disk accepted")
+	}
+}
+
+// The embedded boot code must be a fresh build of the loader sources.
+func TestEmbeddedLoaderMatchesSource(t *testing.T) {
+	src := "../../kernel/atari"
+	if _, err := os.Stat("../../toolchain/linux/bin/m68k-linux-gnu-gcc"); err != nil && os.Getenv("CROSS") == "" {
+		t.Skip("toolchain unavailable")
+	}
+	out := t.TempDir()
+	if b, err := exec.Command("sh", filepath.Join(src, "mkboot.sh"), out).CombinedOutput(); err != nil {
+		t.Fatalf("mkboot.sh: %v\n%s", err, b)
+	}
+	for _, c := range []struct {
+		name string
+		got  []byte
+	}{{"bootsec.bin", bootSector}, {"axbload.bin", loader}} {
+		want, err := os.ReadFile(filepath.Join(out, c.name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(c.got, want) {
+			t.Errorf("embedded %s differs from a build of the sources; copy it from mkboot.sh output", c.name)
+		}
 	}
 }

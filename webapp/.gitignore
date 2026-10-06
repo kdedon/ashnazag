@@ -1,1 +1,4 @@
 /build/
+/atari/axbload.bin
+/atari/bootsec.bin
+/atari/testdata/

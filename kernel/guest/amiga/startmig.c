@@ -910,12 +910,13 @@ main(argc, argv)
 			    MAP_SHARED | MAP_FIXED, dfd, 0) == (caddr_t)-1)
 				fail("display mapping");
 			pretouch(&fi, dfd);
-			region(VRAMEND(&fi), MIG_RTG_EXTRA, 0);
 		}
 		startfilesystem(fd, go[0], sysroot, readonly);
 		/* the driver's mixing task is woken by the helper, never polls */
 		if (migkick >= 0 && (info.ai_features & AMIGA_FEAT_SNDBELL))
 			startsound(fd);
+		if (direct)
+			region(VRAMEND(&fi), MIG_RTG_EXTRA, 0);
 		close(go[0]);
 		miglog(0, "display and SYS: helpers ready");
 		/* the helpers run first when both wait for the same tick */

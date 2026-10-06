@@ -750,6 +750,99 @@ diff(a, b)
 	return n;
 }
 
+/* dumps name until it differs from ref by lo..hi pixels, at most tmo ms; the diff */
+static int
+until(ref, name, lo, hi, tmo)
+	char *ref, *name;
+	int lo, hi;
+	long tmo;
+{
+	long t0 = t_now_ms();
+	int n;
+
+	do {
+		nap(500);
+		shot(name);
+		n = diff(ref, name);
+	} while ((n < lo || n > hi) && t_now_ms() - t0 < tmo);
+	return n;
+}
+
+static unsigned long handed(), seen();
+
+/*
+ * Motion through the host, taken by the guest before the next: a busy
+ * host merges moves, and the sum of a long move against the screen's
+ * edge and a short one back loses the clamp at the edge.  1 if taken.
+ */
+static int
+pmove(dx, dy)
+	int dx, dy;
+{
+	char req[40];
+	long xy = peek(PVF(pv_xy), 4), t0;
+	unsigned long want;
+
+	want = (unsigned long)(((xy >> 16) + dx) & 0xffff) << 16 | ((xy + dy) & 0xffff);
+	sprintf(req, "move %d %d", dx, dy);
+	host(req);
+	if (xy == -1 || !(peek(PVF(pv_on), 4) & PV_MOUSE)) {
+		nap(300);
+		return 1;
+	}
+	t0 = t_now_ms();
+	while ((peek(PVF(pv_xy), 4) != want || peek(PVF(pv_cxy), 4) != want) &&
+	    t_now_ms() - t0 < 10000)
+		nap(20);
+	return peek(PVF(pv_cxy), 4) == want;
+}
+
+/* left button down and up, each handed on before the next; 1 if both were */
+static int
+click1()
+{
+	unsigned long h = handed(), h1;
+
+	host("button 1 0");
+	h1 = seen(h);
+	host("button 0 0");
+	return h1 != h && seen(h1) != h1;
+}
+
+/*
+ * A double click where the pointer is, each change seen by the display
+ * process.  Those round trips can outlast TOS's double-click time, so
+ * the guest is held meanwhile and takes all four in one VBL.  Returns
+ * the number of changes seen.
+ */
+static int
+dclick()
+{
+	unsigned long h = handed(), h1;
+	int i, got = 0;
+
+	kill(tpid, SIGSTOP);
+	for (i = 0; i < 4; i++) {
+		host(i & 1 ? "button 0 0" : "button 1 0");
+		h1 = seen(h);
+		got += h1 != h;
+		h = h1;
+	}
+	kill(tpid, SIGCONT);
+	return got;
+}
+
+/* pointer to x, y from the top left; 1 if the guest took the motion */
+static int
+ptrto(x, y)
+	int x, y;
+{
+	int ok = pmove(-400, 0) & pmove(0, -300) & pmove(x, y);
+
+	nap(500);
+	return ok;
+}
+
 /*
  * EmuDesk's Change resolution (Control-R): a dialog on the ST screen;
  * off under fVDI, where the host sets the screen size.
@@ -780,28 +873,22 @@ static void
 fvdichecks()
 {
 	long t0;
-	int n;
+	int n, in = 1;
 
 	t_check(N("fvdi_on"), fvdion(), "no fVDI driver cookie");
 	shot(S("f0"));
 	t0 = t_now_ms();
 	host("key alt+c");
-	nap(3000);
-	shot(S("f1"));
-	n = diff(S("f0"), S("f1"));
+	n = until(S("f0"), S("f1"), 2001, 1 << 30, 20000L);
 	t_check(N("window_open"), n > 2000, "diff %d", n);
-	t_info(N("window_open_ms"), "%ld (with a 3 s wait)", t_now_ms() - t0);
+	t_info(N("window_open_ms"), "%ld", t_now_ms() - t0);
 	if (strcmp(pf, "tos306_fvdi") == 0) {
-		host("move -1000 0");
-		host("move 0 -800");
-		host("move 8 121");
-		host("click 1");
+		in = pmove(-1000, 0) & pmove(0, -800) & pmove(8, 121) & click1();
 	} else
 		host("key ctrl+u");
-	nap(3000);
-	shot(S("f2"));
-	n = diff(S("f0"), S("f2"));
-	t_check(N("window_close"), n >= 0 && n < 400, "diff %d", n);
+	n = until(S("f0"), S("f2"), 0, 399, 20000L);
+	t_check(N("window_close"), n >= 0 && n < 400, "diff %d%s", n,
+	    in ? "" : ", input not taken");
 	host("key ctrl+alt+meta_l+0");
 	nap(1000);
 	host("key ctrl+alt+meta_l+1");
@@ -1432,11 +1519,9 @@ static void
 pointer(cx, cy)
 	int cx, cy;		/* drive C:'s icon, from the top left */
 {
-	char req[40];
 	char *r;
-	int n = 0, i, got = 0;
-	unsigned long n0, h, h1;
-	long t0, dt = -1;
+	int n = 0, got, in;
+	unsigned long n0;
 
 	shot(S("m0"));
 	host("move 40 30");
@@ -1465,44 +1550,16 @@ pointer(cx, cy)
 	host("click 1");
 	nap(1000);
 	/* drive C:: a double click on its icon opens a window */
-	host("move -400 0");
-	nap(300);
-	host("move 0 -300");
-	nap(300);
-	sprintf(req, "move %d %d", cx, cy);
-	host(req);
-	nap(500);
+	in = ptrto(cx, cy);
 	shot(S("c0"));
 	ioctl(tfd, TOSIOC_STAT, &st);
 	n0 = st.ts_sys;
-	/*
-	 * The host samples the mouse in its own time, which a busy host
-	 * stretches past a short hold: each change waits until the display
-	 * process has handed it on.  The second press stays well inside
-	 * TOS's double-click time.
-	 */
-	h = handed();
-	t0 = t_now_ms();
-	for (i = 0; i < 4; i++) {
-		host(i & 1 ? "button 0 0" : "button 1 0");
-		h1 = seen(h);
-		got += h1 != h;
-		h = h1;
-		if (i == 2)
-			dt = t_now_ms() - t0;
-		if (i < 3)
-			nap(i & 1 ? 40 : 20);
-	}
-	nap(3000);
-	shot(S("c1"));
-	r = cmp2(S("c0"), S("c1"));
-	n = 0;
-	if (r)
-		sscanf(r, "diff %d", &n);
+	got = dclick();
+	n = until(S("c0"), S("c1"), 5001, 1 << 30, 20000L);
 	ioctl(tfd, TOSIOC_STAT, &st);
 	t_check(N("drive_c_window"), n > 5000 && st.ts_sys > 0,
-	    "%s, host calls %lu -> %lu, %d of 4 changes seen, second press at %ld ms",
-	    r ? r : "no answer", n0, st.ts_sys, got, dt);
+	    "diff %d, host calls %lu -> %lu, %d of 4 changes seen%s",
+	    n, n0, st.ts_sys, got, in ? "" : ", motion not taken");
 }
 
 /* one profile: start, desktop, timers, input, idle cost, end */
@@ -1765,37 +1822,6 @@ terarun()
 		nap(200);
 }
 
-/* a double click where the pointer is, each change seen by the display process */
-static void
-dclick()
-{
-	unsigned long h = handed();
-	int i;
-
-	for (i = 0; i < 4; i++) {
-		host(i & 1 ? "button 0 0" : "button 1 0");
-		h = seen(h);
-		if (i < 3)
-			nap(i & 1 ? 40 : 20);
-	}
-}
-
-/* pointer to x, y from the top left */
-static void
-ptrto(x, y)
-	int x, y;
-{
-	char req[40];
-
-	host("move -400 0");
-	nap(300);
-	host("move 0 -300");
-	nap(300);
-	sprintf(req, "move %d %d", x, y);
-	host(req);
-	nap(500);
-}
-
 /*
  * EmuDesk under fVDI with the template's desktop: a text file opened
  * from a drive window runs Qed.  The desktop's own viewer would write
@@ -1823,9 +1849,9 @@ textrun()
 	if (up) {
 		/* drive G:'s icon, then its one file, readme.txt */
 		ptrto(115, 40);
+		shot(S("w0"));
 		dclick();
-		nap(3000);
-		shot(S("window"));
+		(void)until(S("w0"), S("window"), 5001, 1 << 30, 20000L);
 		ptrto(60, 160);
 		dclick();
 		for (i = 0; i < 30 && !(ok = running(QEDDIR "/qed.app")); i++) {
