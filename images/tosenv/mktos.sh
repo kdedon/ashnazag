@@ -50,10 +50,12 @@ end=$("$BIN/m68k-elf-nm" "$O/tosml.elf" | awk '$3 == "_end" { print $1 }')
 [ $((0x$end)) -le $((0xfa0000 + 0x20000)) ] || { echo "[FAIL] cartridge ends at $end" >&2; exit 1; }
 "$BIN/m68k-elf-objcopy" -O binary "$O/tosml.elf" "$OUT/tosml.img"
 cp "$D/maketos" "$D/tosdrive" "$OUT/"
-# /tos/sys: README.TXT, AUTO, the user's apps (C:\APPS), G: in the drive table
+# /tos/sys: README.TXT, SESSION.ACC, AUTO, the user's apps (C:\APPS), G: in the drive table
 T=$O/root
 mkdir -p "$T/tos/sys/AUTO" "$T/tos/sys/APPS" "$T/usr/games/tos"
 sed 's/$/\r/' "$D/c-readme.txt" > "$T/tos/sys/README.TXT"
+# the Desk menu's Session...: Log Out, and Shut Down for root
+sh "$G/tos/session.sh" "$T/tos/sys/SESSION.ACC"
 printf '# drive letter, host directory, ro: read-only\nG /usr/games/tos ro\n' > "$T/tos/sys/drives"
 if [ -d "$TOSAPPS/qed/qed" ]; then
 	mkdir -p "$T/tos/sys/APPS/QED"

@@ -15,3 +15,6 @@ it returns to the built-in desktop, where text files open in Qed.  To
 boot into the built-in desktop, select TERADESK\DESKTOP.PRG there,
 choose Options > Install application, set Boot status to Normal, then
 Options > Save desktop.  Its source is in /tos/src.
+
+Desk > Session... ends the session (Log Out); root can also shut the
+machine down there.

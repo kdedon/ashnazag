@@ -35,6 +35,7 @@ p_tz:	.long	0			| seconds east of UTC
 p_fb:	.space	16			| the frame buffer (tosfb.h), zero for none
 	.globl	p_tfd
 p_tfd:	.long	-1			| /dev/tos, for socket calls
+	.long	hostcall		| host system calls for guest programs
 	.org	0x80
 p_dtab:	.space	0x1000			| host drives: letter, flags, path; ... 0
 
@@ -373,6 +374,11 @@ Mfree:	movem.l	d2/a2,-(sp)
 	trap	#1
 	addq.l	#6,sp
 	movem.l	(sp)+,d2/a2
+	rts
+
+| A guest program's host system call: trap #0 is one only from here.
+| d0 the number, arguments after the return address; carry set on error.
+hostcall: trap	#0
 	rts
 
 | host system calls: the result, or -errno

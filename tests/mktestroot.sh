@@ -53,6 +53,9 @@ KDIR=$KDIR sh "$T/tos/build.sh" "$TOSB"
 # t_mint's mintrun and MiNTLib programs
 MINTB=$B/mint
 KDIR=$KDIR sh "$T/mint/build.sh" "$MINTB"
+# t_cpm's startcpm and CP/M-68K
+CPMB=$B/cpm
+KDIR=$KDIR sh "$T/cpm/build.sh" "$CPMB"
 # t_amiga's guest image, startmig and ROM
 AMIB=$B/amiga
 KDIR=$KDIR sh "$T/amiga/build.sh" "$AMIB"
@@ -75,6 +78,8 @@ if [ -z "$TESTKB" ]; then
 	[ -d "$AUXB/root" ] && TESTKB=$((TESTKB + 256 + $(du -sk "$AUXB/root" | cut -f1)))
 	[ -d "$TOSB/root" ] && TESTKB=$((TESTKB + 1152 + $(du -sk "$TOSB/root" | cut -f1)))
 	[ -d "$AMIB/root" ] && TESTKB=$((TESTKB + 64 + $(du -sk "$AMIB/root" | cut -f1)))
+	# t_cpm's A: holds the distribution twice
+	[ -d "$CPMB/root" ] && TESTKB=$((TESTKB + 128 + 3 * $(du -sk "$CPMB/root" | cut -f1)))
 fi
 
 # /etc/group with the display devices' group
@@ -168,6 +173,17 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 		done
 		(cd "$MINTB/root" && find . -type f | sed 's#^\.##' | sort) | while read -r f; do
 			echo "f $f 755 0 3 $MINTB/root$f"
+		done
+	fi
+	if [ -d "$CPMB/root" ] && [ -f "$AUXB/mod.d/tosguest" ]; then
+		[ -d "$TOSB/root" ] || [ -d "$MINTB/root" ] || echo "c /dev/tos 660 0 25 56 0"
+		(cd "$CPMB/root" && find . -type d | sed 's#^\.##' | sort) | while read -r d; do
+			if [ -n "$d" ] && ! grep -q "^d $d[ 	]" "$M"; then
+				echo "d $d 755 0 3"
+			fi
+		done
+		(cd "$CPMB/root" && find . -type f | sed 's#^\.##' | sort) | while read -r f; do
+			echo "f $f 755 0 3 $CPMB/root$f"
 		done
 	fi
 	if [ -d "$TOSB/root" ] && [ -f "$AUXB/mod.d/tosguest" ]; then

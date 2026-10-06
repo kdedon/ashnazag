@@ -1,0 +1,12 @@
+# cpmtools definitions for startcpm's drives.  A hard-disk image of
+# n * 16 KB has n tracks; ibm-3740 (8" SSSD) is cpmtools' own.
+diskdef cpm68k-8m
+  seclen 128
+  tracks 512
+  sectrk 128
+  blocksize 4096
+  maxdir 1024
+  skew 0
+  boottrk 0
+  os 2.2
+end

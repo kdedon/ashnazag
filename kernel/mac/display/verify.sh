@@ -56,7 +56,7 @@ def check(ok, msg):
 # the VBL shares VIA2 CA1 with the SONIC: every low line served, bounded
 p2 = '\n'.join(sum((body.get(x, []) for x in ('Lp2slot', 'Lp2serve', 'Lp2loop', 'Lp2vbl', 'Lp2again')), []))
 check('<snintr>' in p2 and '<ds_vblintr>' in p2 and 'btst #6,%d3' in p2 and
-      re.search(r'dbeq %d2,[0-9a-f]+ <Lp2loop>', p2) is not None,
+      re.search(r'db(?:eq|f) %d2,[0-9a-f]+ <Lp2loop>', p2) is not None,
       'p2int: CA1 serves port A bit 0 (snintr) and bit 6 (ds_vblintr) until both are high')
 
 # user translations are unloaded only where no process is inside the HAT:

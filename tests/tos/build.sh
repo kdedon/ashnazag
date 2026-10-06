@@ -1,12 +1,13 @@
 #!/bin/sh
 # build.sh -- t_tos's inputs: starttos, the machine-layer cartridge, the
 # system C: folder with C:\AUTO\UTEST.PRG (checks the host drives),
-# STIKTEST.PRG (checks the STiK transport),
+# STIKTEST.PRG (checks the STiK transport), EXITTEST.PRG and SESSION.ACC
+# (the session's exit),
 # EmuTOS and the user's TOS ROM image.
 #
 #   sh tests/tos/build.sh outdir
 #
-# Out: outdir/root/tos/bin/{starttos,maketos}, outdir/root/tos/{sys,stik,fvdi,teradesk,qed}/,
+# Out: outdir/root/tos/bin/{starttos,maketos}, outdir/root/tos/{sys,stik,exit,acc,fvdi,teradesk,qed}/,
 # outdir/root/etc/tos/{emutos.img,rom,tosml.img}.
 # EMUTOS names the EmuTOS 512 KB release zip (default: ref/emutos-release),
 # EMUTOSLANG its image (us).  TOSROM names the user's ROM: an image, or a
@@ -76,6 +77,15 @@ done
 end=$("$BIN/m68k-elf-nm" "$O/s0.elf" | awk '$3 == "_end" { print $1 }')
 python3 "$T/tos/elf2prg.py" "$O/s0.bin" "$O/s0x10000.bin" \
 	$((0x$end - $(wc -c < "$O/s0.bin"))) "$O/stiktest.prg"
+# EXITTEST.PRG: the session's host calls; SESSION.ACC, the accessory making them
+"$BIN/m68k-elf-as" -m68040 --register-prefix-optional -o "$O/exit.o" "$T/tos/exit.s"
+for base in 0 0x10000; do
+	"$BIN/m68k-elf-ld" --no-warn-rwx-segments -N -Ttext=$base -o "$O/x$base.elf" "$O/exit.o"
+	"$BIN/m68k-elf-objcopy" -O binary "$O/x$base.elf" "$O/x$base.bin"
+done
+mkdir -p "$R/tos/exit" "$R/tos/acc"
+python3 "$T/tos/elf2prg.py" "$O/x0.bin" "$O/x0x10000.bin" 0 "$R/tos/exit/EXITTEST.PRG"
+sh "$G/tos/session.sh" "$R/tos/acc/SESSION.ACC"
 "$BIN/m68k-elf-objcopy" -O binary "$O/tosml.elf" "$R/etc/tos/tosml.img"
 # the system C: folder: C:\AUTO\UTEST.PRG, G: in its drive table
 mkdir -p "$R/tos/sys/AUTO"

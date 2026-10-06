@@ -398,6 +398,7 @@ amigaioctl(dev, cmd, arg, mode, cr, rvp)
 	gp = GUESTP(curproc);
 	if (!gp || gp->gp_prof != &amiga_profile) return ENXIO;
 	if (cmd == AMIGAIOC_LEAVE) return guest_detach(&amiga_profile);
+	if (cmd == AMIGAIOC_HALT) return guest_halt();
 	if (cmd == AMIGAIOC_STAT)
 		return copyout((caddr_t)&AMIGAP(gp)->ac_stat, arg, sizeof(struct amigastat)) ? EFAULT : 0;
 	return EINVAL;

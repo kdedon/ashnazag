@@ -135,6 +135,11 @@ int mig_input_event(struct mig_input *q, struct mig_input_state *s,
             code == IE_RELY ? value : 0);
     case IE_BTN:
         if (code < 1 || code > 3) return 0;
+        /* Control-click is the menu button on a one-button mouse */
+        if (code == 1 && (value ? (s->qualifier & 8) != 0 : s->menubtn)) {
+            s->menubtn = value != 0;
+            code = 2;
+        }
         bit = code == 1 ? 0x4000 : code == 2 ? 0x2000 : 0x1000;
         if (!!(s->qualifier & bit) == !!value) return 0;
         if (value) s->qualifier |= bit; else s->qualifier &= ~bit;

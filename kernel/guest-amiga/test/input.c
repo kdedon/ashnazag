@@ -58,7 +58,10 @@ int main(void)
     assert(!emit(IE_KEY, 0x7d, 1));
     assert(!emit(IE_KEY, 0x36, 0));
     assert(s.qualifier & 8);
+    assert(emit(IE_BTN, 1, 1) && q.event[(q.head - 1) % MIG_INPUT_COUNT].code == 0x69);
     assert(emit(IE_KEY, 0x7d, 0) && !(s.qualifier & 8));
-    puts("[ok] input translation, qualifiers, focus reset, overflow, wrap, restart");
+    assert(emit(IE_BTN, 1, 0) && q.event[(q.head - 1) % MIG_INPUT_COUNT].code == 0xe9);
+    assert(emit(IE_BTN, 1, 1) && q.event[(q.head - 1) % MIG_INPUT_COUNT].code == 0x68);
+    puts("[ok] input translation, qualifiers, Control-click, focus reset, overflow, wrap, restart");
     return 0;
 }

@@ -170,5 +170,6 @@ extern void guest_setsr();		/* (gp, regs, sr): switches stacks */
 extern void guest_trapret();		/* reschedule, deliverable signals */
 extern int guest_reflect();		/* (gp, regs, pc, fv, x, n, ipl) */
 extern int guest_rommap();		/* (dev, pa, size): the host's ROM in place */
+extern int guest_halt();		/* root's Shut Down from a session */
 
 #endif	/* _GUEST_H */

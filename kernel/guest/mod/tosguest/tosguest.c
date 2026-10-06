@@ -761,6 +761,8 @@ tosioctl(dev, cmd, arg, mode, cr, rvp)
 		return copyout((caddr_t)&t->t_st, arg, sizeof t->t_st) ? EFAULT : 0;
 	case TOSIOC_SOCK:
 		return curproc == t->t_proc ? tsock(arg) : EPERM;
+	case TOSIOC_HALT:
+		return curproc == t->t_proc ? guest_halt() : EPERM;
 	}
 	return EINVAL;
 }
