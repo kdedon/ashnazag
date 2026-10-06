@@ -4,7 +4,8 @@
 #   sh x11/build.sh [stage ...]
 #
 # Stages (default: all in order): tree, imake, makefiles, libs, server;
-# clibs (client libraries) on request.
+# clibs (client libraries) and clients (xdm, xchoose, xdmenv; after
+# clibs) on request.
 # Work tree: $X11W (default: images/work/x11), sources in
 # $X11W/src/xc.  Out: $X11W/src/xc/programs/Xserver/Xamix.
 set -e
@@ -33,6 +34,11 @@ tree() {
 		echo "== patch $(basename "$p")"
 		patch -s -p1 -d "$XC" < "$p"
 	done
+	# interleaved 8-bitplane frame buffers: the 4-plane sources built for 8
+	I=$AUX/ref/xfree86-3.3.6/xc/programs/Xserver/iplan2p4
+	mkdir -p "$XC/programs/Xserver/iplan2p8"
+	cp "$I"/*.[ch] "$XC/programs/Xserver/iplan2p8/"
+	{ echo '#define IPlanes 8'; cat "$I/Imakefile"; } > "$XC/programs/Xserver/iplan2p8/Imakefile"
 	# new files
 	(cd "$D/src" && tar cf - .) | (cd "$XC/programs/Xserver/hw/amix" && tar xpf -)
 	cp "$AUX/kernel/mac/display/dsio.h" "$XC/programs/Xserver/hw/amix/rtg/fb/dsio.h"
@@ -120,6 +126,31 @@ clibs() {
 	for d in lib/X11 lib/Xext; do
 		(cd "$d" && $MAKE -o ks_tables.h all)
 	done
+}
+
+# Xt's dependants and Athena, xdm with its greeter linked in, the session tools
+clients() {
+	cd "$XC"
+	for d in lib/ICE lib/SM lib/Xmu lib/Xaw programs/xdm; do
+		(cd "$d" && sub_makefile)
+	done
+	for d in lib/ICE lib/SM lib/Xmu lib/Xaw; do
+		(cd "$d" && $MAKE includes)
+	done
+	for d in lib/ICE lib/SM lib/Xt lib/Xmu lib/Xaw; do
+		(cd "$d" && $MAKE all)
+	done
+	link="env AMIXLD_EXTRA=$X11W/libextra.a sh $D/config/amixld.sh"
+	(cd programs/xdm && $MAKE xdm XMULIB=-lXmu EXTRA_INCLUDES=-Igreeter SYS_LIBRARIES="-lsocket -lnsl" CCLINK="$link")
+	cc="$TC/bin/m68k-cbm-sysv4-gcc -O -m68020 -I$XC/exports/include -I$X11W/sysinc"
+	L=$XC/exports/lib
+	mkdir -p "$X11W/session"
+	$cc -c -o "$X11W/session/xchoose.o" "$D/session/xchoose.c"
+	$link -o "$X11W/session/xchoose" "$X11W/session/xchoose.o" $L/libXaw.a $L/libXmu.a \
+		$L/libXt.a $L/libSM.a $L/libICE.a $L/libXext.a $L/libX11.a -lsocket -lnsl
+	$cc -I"$AUX/kernel/mac/display" -c -o "$X11W/session/xdmenv.o" "$D/session/xdmenv.c"
+	$link -o "$X11W/session/xdmenv" "$X11W/session/xdmenv.o"
+	ls -l programs/xdm/xdm "$X11W/session/xchoose" "$X11W/session/xdmenv"
 }
 
 server() {

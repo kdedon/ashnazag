@@ -4,9 +4,9 @@
  * The screen is a session of the display service: VRAM while in front,
  * shadow pages while hidden; the kernel swaps them and the colour table
  * on a switch.  Packed 1 bpp is drawn by mfb (pixel 0 white, as on the
- * Mac), packed 8 bpp by cfb with the colour table loaded from the
- * installed colormap.  Input comes from the event devices bound to the
- * session.
+ * Mac), packed 8 bpp by cfb and interleaved 8 bitplanes by iplan2p8,
+ * both with the colour table loaded from the installed colormap.  Input
+ * comes from the event devices bound to the session.
  */
 
 #include "../../amix.h"
@@ -24,6 +24,8 @@ extern Bool amixEvMb3;
 extern Bool amixEvOpen();
 extern Bool mfbScreenInit(), mfbCreateDefColormap();
 extern Bool cfbScreenInit(), cfbCreateDefColormap(), cfbSetVisualTypes();
+extern Bool ipl2p8ScreenInit(), iplCreateDefColormap(), iplSetVisualTypes();
+extern Bool amixMacKeyLayout();
 extern int TellLostMap(), TellGainedMap();
 
 typedef struct {
@@ -36,6 +38,36 @@ typedef struct {
 static fbDevRec fbDev[MAXSCREENS];
 static char	*fbName[MAXSCREENS];
 static int	nfbName;
+static int	fbDepth;	/* -depth: the session mode to set, 0 the display's */
+
+#define fbIpl(d)	((d)->fi.fi_layout == FBL_IPLAN2)
+
+/* the largest mode of fbDepth, if the display offers modes */
+static void
+fbSetMode(d, name)
+fbDevRec *d;
+char	 *name;
+{
+    struct fbmodeinfo mi[16];
+    struct fbmodes    ms;
+    int		      i, best = -1;
+
+    if (!fbDepth || d->fi.fi_depth == fbDepth || !(d->fi.fi_flags & FBF_SETMODE))
+	return;
+    ms.ms_count = 16;
+    ms.ms_modes = mi;
+    if (ioctl(d->fd, FBIOGMODES, &ms) < 0)
+	return;
+    for (i = 0; i < ms.ms_count && i < 16; i++)
+	if (mi[i].mi_depth == fbDepth && (best < 0 ||
+	    mi[i].mi_width * mi[i].mi_height > mi[best].mi_width * mi[best].mi_height))
+	    best = i;
+    if (best < 0)
+	ErrorF("fb: %s: no depth %d mode\n", name, fbDepth);
+    else if (ioctl(d->fd, FBIOSMODE, mi[best].mi_id) < 0 ||
+	     ioctl(d->fd, FBIOGINFO, &d->fi) < 0)
+	ErrorF("fb: %s: FBIOSMODE: %s\n", name, strerror(errno));
+}
 
 static Bool
 fbProbe(index)
@@ -74,15 +106,18 @@ int index;
 	ErrorF("fb: FBIOGINFO: %s\n", strerror(errno));
 	goto fail;
     }
+    fbSetMode(d, name);
     if (d->fi.fi_offset > d->fi.fi_size ||
 	d->fi.fi_offset + d->fi.fi_rowbytes * d->fi.fi_height > d->fi.fi_size ||
-	d->fi.fi_rowbytes < (d->fi.fi_width * d->fi.fi_depth + 7) / 8)
+	d->fi.fi_rowbytes < (d->fi.fi_width * d->fi.fi_depth + 7) / 8 ||
+	(fbIpl(d) && d->fi.fi_rowbytes % 16))
     {
 	ErrorF("fb: %s: inconsistent geometry\n", name);
 	goto fail;
     }
-    if (d->fi.fi_layout != FBL_PACKED ||
-	(d->fi.fi_depth != 1 && d->fi.fi_depth != 8))
+    if (!(d->fi.fi_layout == FBL_PACKED &&
+	  (d->fi.fi_depth == 1 || d->fi.fi_depth == 8)) &&
+	!(fbIpl(d) && d->fi.fi_depth == 8))
     {
 	ErrorF("fb: %s: depth %lu layout %lu not supported\n", name,
 	       d->fi.fi_depth, d->fi.fi_layout);
@@ -292,11 +327,18 @@ int	     dpix, dpiy;
 	fbPutCmap(d, 0, 2, wb, wb, wb);
 	return TRUE;
     }
-    if (!cfbSetVisualTypes(8, (1 << PseudoColor) | (1 << GrayScale) |
-			   (1 << StaticGray), (int) d->fi.fi_cmapbits))
-	return FALSE;
-    if (!cfbScreenInit(pScreen, base, pRTG->width, pRTG->height,
-		       dpix, dpiy, pRTG->pitch))
+    if (fbIpl(d))
+    {
+	if (!iplSetVisualTypes(8, (1 << PseudoColor) | (1 << GrayScale) |
+			       (1 << StaticGray), (int) d->fi.fi_cmapbits) ||
+	    !ipl2p8ScreenInit(pScreen, base, pRTG->width, pRTG->height,
+			      dpix, dpiy, pRTG->pitch))
+	    return FALSE;
+    }
+    else if (!cfbSetVisualTypes(8, (1 << PseudoColor) | (1 << GrayScale) |
+				(1 << StaticGray), (int) d->fi.fi_cmapbits) ||
+	     !cfbScreenInit(pScreen, base, pRTG->width, pRTG->height,
+			    dpix, dpiy, pRTG->pitch))
 	return FALSE;
     pScreen->InstallColormap = fbInstallColormap;
     pScreen->UninstallColormap = fbUninstallColormap;
@@ -311,6 +353,8 @@ ScreenPtr pScreen;
 {
     if (fbDevOf(pScreen)->fi.fi_depth == 1)
 	return mfbCreateDefColormap(pScreen);
+    if (fbIpl(fbDevOf(pScreen)))
+	return iplCreateDefColormap(pScreen);
     return cfbCreateDefColormap(pScreen);
 }
 
@@ -363,6 +407,17 @@ int    i;
 	fbName[nfbName++] = argv[i + 1];
 	return 2;
     }
+    if (strcmp(argv[i], "-depth") == 0 && i + 1 < argc)
+    {
+	fbDepth = atoi(argv[i + 1]);
+	return 2;
+    }
+    if (strcmp(argv[i], "-kbd") == 0 && i + 1 < argc)
+    {
+	if (!amixMacKeyLayout(argv[i + 1]))
+	    FatalError("-kbd: layout %s unknown (us, de)\n", argv[i + 1]);
+	return 2;
+    }
     if (strcmp(argv[i], "-mb3") == 0)
     {
 	amixEvMb3 = TRUE;
@@ -375,6 +430,8 @@ static void
 fbUseMsg()
 {
     ErrorF("-fb /dev/fbN           frame buffer of the next screen (/dev/fb0)\n");
+    ErrorF("-depth n               the display's largest mode of depth n\n");
+    ErrorF("-kbd us|de             keyboard layout\n");
     ErrorF("-mb3                   left/right arrow are buttons 2/3 (Option: arrows)\n");
 }
 

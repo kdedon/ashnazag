@@ -18,6 +18,11 @@
 # (e.g. TESTS=t_page).  MODS: a module directory (guest/build.sh -m's
 # mod.d) to put in /tests/mod.d, with /tests/auxreg, /dev/uinter0 and
 # /dev/tos.  TOSOUT: mktos.sh's outdir; starttos and the cartridge go in /tests.
+# X11: x11/package.sh's pkg directory; X goes on the root with the AMIX
+# clients (tape segments 13, 14) and the server options in etc/xoptions.
+# TOSENV=1: the TOS environment (images/tosenv/mktos.sh) with starttos,
+# and the guest modules built for this kernel, registered at boot.
+# With X11 or TOSENV, guest is in group display.
 # The tape segments come from the Mac build or $AMIX_TAPE.
 set -e
 
@@ -54,7 +59,58 @@ printf 'TZ=%s\nexport TZ\n' "$ZONE" > "$W/src/build/TIMEZONE"
   echo 'f /usr/amiga/bin/setclk 755 0 3 build/setclk'
   echo 'd /home 755 0 3'
   echo 'f /etc/vfstab 744 0 3 vfstab'; } > "$W/root.manifest"
-if [ -n "$MODS" ]; then
+if [ -n "$X11" ]; then
+	ln -sfn "$(cd "$X11" && pwd)" "$W/src/x11pkg"
+	mkdir -p "$W/src/build/tape"
+	for s in 13 14; do
+		[ -f "$W/src/build/tape/$s" ] ||
+			cp "${AMIX_TAPE:?AMIX_TAPE: tape segments 13 and 14}/$s" "$W/src/build/tape/$s"
+	done
+	{ echo 'a build/tape/13'
+	  echo 'a build/tape/14'
+	  for f in bin/X bin/X2410 bin/Xdmi bin/loadcoff lib/tigagm.coff; do echo "r /usr/X/$f"; done
+	  echo 'r /usr/lib/dmiexec'
+	  cat "$X11/x11.manifest"
+	  echo 'f /usr/x11r6/lib/X11/xserver/options 644 0 3 atari/xoptions'; } >> "$W/root.manifest"
+fi
+if [ "$TOSENV" = 1 ]; then
+	E=$W/env
+	rm -rf "$E"
+	mkdir -p "$E"
+	sh "$K/guest/build.sh" -m "$KERNEL" "$E/guest" > "$E/guest.log" 2>&1 ||
+		{ tail "$E/guest.log"; exit 1; }
+	sh "$K/../images/tosenv/mktos.sh" "$E/tos" > "$E/tos.log" 2>&1 ||
+		{ tail "$E/tos.log"; exit 1; }
+	# guest's TOS folder goes on /home, which is mounted over the root's
+	mkdir -p "$E/gt"
+	(cd "$E/gt" && cpio -id --quiet < "$E/tos/guest.cpio")
+	(cd "$E/gt/home" && find guest/TOS | cpio -o -H newc -R 100:1 --quiet) > "$E/homeguest.cpio"
+	rm -rf "$E/gt"
+	{ echo 'd /usr/aux 755 0 3'
+	  echo 'd /usr/aux/lib 755 0 3'
+	  echo 'd /usr/aux/lib/mod.d 755 0 3'
+	  for m in guestcore auxcore auxexec uinter tosguest; do
+		echo "f /usr/aux/lib/mod.d/$m 644 0 3 $E/guest/mod.d/$m"
+	  done
+	  echo 'f /usr/aux/lib/auxreg 755 0 3 build/auxreg'
+	  echo 'f /etc/rc2.d/S05aux 744 0 3 atari/S05aux'
+	  echo 'c /dev/uinter0 660 0 25 54 0'
+	  echo 'c /dev/tos 660 0 25 56 0'
+	  echo 'd /etc/tos 755 0 3'
+	  echo "f /etc/tos/emutos.img 444 0 3 $E/tos/emutos.img"
+	  echo "f /etc/tos/tosml.img 444 0 3 $E/tos/tosml.img"
+	  for f in starttos maketos tosdrive; do echo "f /usr/bin/$f 755 0 3 $E/tos/$f"; done
+	  echo "a $E/tos/sys.cpio"
+	  echo "a $E/tos/games.cpio"; } >> "$W/root.manifest"
+fi
+if [ -n "$X11$TOSENV" ]; then
+	T2=${AMIX_TAPE:-$W/src/build/tape}
+	{ (cd "$W/src/build" && cpio -i --quiet --to-stdout etc/group < "$T2/02") | grep -v '^display:'
+	  echo 'display::25:guest'; } > "$W/src/build/group.display"
+	grep -q '^other:' "$W/src/build/group.display" || { echo "[FAIL] no group file on tape 02"; exit 1; }
+	echo 'f /etc/group 444 0 3 build/group.display' >> "$W/root.manifest"
+fi
+if [ -n "$MODS$TOSENV" ]; then
 	TC=$K/../toolchain/amix SYS=$K/../toolchain/amix/m68k-cbm-sysv4/sysroot
 	for f in "$K"/dlm/libmod/*.s; do
 		"$TC/bin/m68k-cbm-sysv4-as" -o "$W/src/build/lm_${f##*/}.o" "$f"
@@ -111,6 +167,7 @@ else
 	[ -f "$G/.profile" ] || { echo "[FAIL] no $G/.profile (run mkroot.sh)"; exit 1; }
 	printf '%s\n' 'd /lost+found 755 0 0' 'd /guest 755 100 1' \
 		"f /guest/.profile 644 100 1 $G/.profile" > "$W/home.manifest"
+	[ "$TOSENV" != 1 ] || echo "a $W/env/homeguest.cpio" >> "$W/home.manifest"
 	$PY "$DR/mkufs.py" -s $HOMEMB -t 723000000 -m /home "$W/home.manifest" "$W/home.img"
 	HOMEID=AXU HOMES=s3
 fi

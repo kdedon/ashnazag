@@ -5,7 +5,8 @@
 #
 #   sh x11/mkimage.sh [kernel.elf [out.img]]
 #
-# Needs package.sh's $X11W/pkg.  XPKGS="manx xview" also installs those
+# Needs package.sh's $X11W/pkg.  BOOTX=1 boots to xdm (/etc/default/x).
+# XPKGS="manx xview" also installs those
 # packages (x11/NAME/build.sh, after build.sh clibs) as pkgadd would.
 # Tape segments from $AMIX_TAPE or, for 02 03 10, the live diskroot's
 # build/tape.
@@ -49,5 +50,9 @@ for p in $XPKGS; do
 	pk="$pk $f"
 done
 [ -z "$pk" ] || python3 "$R/pkg/pkginst.py" "$X11W/xpkgs" $pk >> "$R/root.manifest"
+if [ "$BOOTX" = 1 ]; then
+	sed 's/^BOOT=.*/BOOT=xdm/' "$X11W/pkg/xdm/default-x" > "$R/default-x"
+	echo "f /etc/default/x 644 0 3 default-x" >> "$R/root.manifest"
+fi
 : "${AMIX_TAPE:?AMIX_TAPE: tape segments 13 and 14}"
 AMIX_TAPE=$AMIX_TAPE ROOTMB=${ROOTMB:-96} nice -n 19 sh "$R/mkdiskimage.sh" "$KERNEL" "$OUT"

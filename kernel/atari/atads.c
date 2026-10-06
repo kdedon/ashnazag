@@ -274,6 +274,102 @@ int sz;
 			V8(a++) = v >> 8 * sz;
 }
 
+/* ------------------------------------------------------ session modes */
+
+/*
+ * Modes a Unix session may set on a VGA monitor: id, size, depth, the
+ * Falcon mode word and its timings ($FF8282-$FF828C, $FF82A2-$FF82AC).
+ */
+static struct advm {
+	unsigned short	m_id, m_w, m_h, m_d, m_vm;
+	unsigned short	m_t[12];
+} ad_vm[] = {
+	{ 0x81, 640, 480, 1, 0x18, { 0xC6, 0x8D, 0x15, 0x273, 0x50, 0x96,
+	    0x419, 0x3FF, 0x3F, 0x3F, 0x3FF, 0x415 } },
+	{ 0x82, 640, 480, 8, 0x1B, { 0xC6, 0x8D, 0x15, 0x2AB, 0x84, 0x96,
+	    0x419, 0x3FF, 0x3F, 0x3F, 0x3FF, 0x415 } },
+	{ 0x83, 320, 480, 16, 0x14, { 0xC6, 0x8D, 0x15, 0x2AC, 0x91, 0x96,
+	    0x419, 0x3FF, 0x3F, 0x3F, 0x3FF, 0x415 } },
+	{ 0x84, 320, 240, 16, 0x114, { 0xC6, 0x8D, 0x15, 0x2AC, 0x91, 0x96,
+	    0x419, 0x3FF, 0x3F, 0x3F, 0x3FF, 0x415 } },
+};
+#define AD_NVM	(sizeof ad_vm / sizeof ad_vm[0])
+#define PUT16(d, o, v)	((d)->v_reg[(o) - 0x8200] = (v) >> 8, (d)->v_reg[(o) - 0x8200 + 1] = (v) & 0xFF)
+
+/* the number of session modes: none unless the monitor is VGA */
+int
+ata_nvmode()
+{
+	return (V8(0x8006) >> 6) == 2 ? AD_NVM : 0;
+}
+
+/* index of mode id, or -1 */
+int
+ata_vmfind(id)
+unsigned long id;
+{
+	register int i;
+
+	for (i = 0; i < ata_nvmode(); i++)
+		if (ad_vm[i].m_id == id)
+			return i;
+	return -1;
+}
+
+/* mode n's geometry into fi */
+void
+ata_vminfo(n, fi)
+int n;
+register struct fbinfo *fi;
+{
+	register struct advm *m = &ad_vm[n];
+
+	fi->fi_width = m->m_w;
+	fi->fi_height = m->m_h;
+	fi->fi_depth = m->m_d;
+	fi->fi_rowbytes = m->m_w * m->m_d / 8;
+	fi->fi_layout = m->m_d == 1 || m->m_d > 8 ? FBL_PACKED : FBL_IPLAN2;
+	fi->fi_planebytes = m->m_d == 1 || m->m_d > 8 ? 0 : 2;
+	fi->fi_visual = m->m_d == 1 ? FBV_MONO : m->m_d <= 8 ? FBV_PSEUDO : FBV_TRUE;
+	fi->fi_rmask = m->m_d == 16 ? 0xF800 : 0;
+	fi->fi_gmask = m->m_d == 16 ? 0x07E0 : 0;
+	fi->fi_bmask = m->m_d == 16 ? 0x001F : 0;
+	fi->fi_cmapsize = m->m_d <= 8 ? 1 << m->m_d : 0;
+	fi->fi_offset = 0;
+	fi->fi_mode = m->m_id;
+	fi->fi_flags = FBF_SETMODE | (m->m_d <= 8 ? FBF_BLANK | FBF_CMAP : 0);
+}
+
+/*
+ * Mode n into d, showing base: the timings, then the line width,
+ * video control and shift mode, as the ROM sets them.
+ */
+void
+ata_vmset(d, n, base)
+register struct dsvid *d;
+int n;
+unsigned long base;
+{
+	register struct advm *m = &ad_vm[n];
+	register int i, sh;
+
+	for (i = 0; i < 12; i++)
+		PUT16(d, ad_vtime[i], m->m_t[i]);
+	d->v_reg[0x01] = base >> 16;
+	d->v_reg[0x03] = base >> 8;
+	d->v_reg[0x0D] = base;
+	d->v_reg[0x0A] = 0;
+	d->v_reg[0x60] = 0;
+	d->v_reg[0x65] = 0;
+	PUT16(d, 0x820E, 0);
+	PUT16(d, 0x8210, ((m->m_vm & 8) ? 40 : 20) << (m->m_vm & 7));
+	PUT16(d, 0x82C2, ((m->m_vm & 8) ? 8 : 4) | ((m->m_vm & 0x100) ? 1 : 0));
+	PUT16(d, 0x82C0, 0x186);
+	sh = m->m_d == 1 ? 0x400 : m->m_d == 8 ? 0x10 : m->m_d == 16 ? 0x100 : 0;
+	PUT16(d, 0x8266, sh);
+	d->v_st = 0;
+}
+
 /* ------------------------------------------------------------ blitter */
 
 /* Waits for the blitter to go idle; 0, or -1 if it does not. */

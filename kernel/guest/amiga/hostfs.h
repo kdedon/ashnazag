@@ -2,7 +2,7 @@
 #define AMIGA_HOSTFS_H
 
 #define MIG_FS_PATH 512
-#define MIG_FS_DATA 4096
+#define MIG_FS_DATA 32768
 #define MIG_FS_VOLUMES 8
 #define MIG_FS_HANDLES 64
 #define MIG_FS_LOCK 1

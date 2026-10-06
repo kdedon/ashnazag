@@ -124,8 +124,12 @@ cp -rp "$M/mac/lib/System Folder" "$M/home/guest/"
 rm -rf "$M"
 
 # swap backs the Mac's memory (startmac's TBMEMORY, up to 32 MB)
-ROOTMB=${ROOTMB:-224} SWAPMB=${SWAPMB:-96} MACPKG=$P sh "$AUX/x11/mkimage.sh" "$KERNEL" "$OUT"
+# BOOTX=1 with the desktop database: mkdesktop.py logs in on the console,
+# then sets xdm
+bx=$BOOTX
+[ "$DESKTOP" = 0 ] || bx=
+ROOTMB=${ROOTMB:-224} SWAPMB=${SWAPMB:-96} MACPKG=$P BOOTX=$bx sh "$AUX/x11/mkimage.sh" "$KERNEL" "$OUT"
 # the Finder's desktop database, made once in QEMU (DESKTOP=0: on the
 # first startmac instead)
-[ "$DESKTOP" = 0 ] || python3 "$D/mkdesktop.py" "$OUT" ||
+[ "$DESKTOP" = 0 ] || BOOTX=$BOOTX python3 "$D/mkdesktop.py" "$OUT" ||
 	{ echo "[FAIL] desktop database (DESKTOP=0 leaves it to the first startmac)"; exit 1; }

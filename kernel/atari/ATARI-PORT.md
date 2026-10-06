@@ -114,7 +114,7 @@ The user has screen + keyboard only, so the console is built in from M1:
 - **Output**: Videl framebuffer, 1 bit/pixel text through the Mac `fbcons.c` renderer (8×16 font). M1 moves the screen into the ST-RAM pool and programs a 2-colour mode for the monitor in 0xFFFF8006, with or without TOS: VGA 640×480, RGB/TV 640×400 interlaced at the refresh TOS left (50/60 Hz), SM124 640×400. `video=MON640xLINES[@HZ]` (MON mono, rgb, vga or tv; e.g. `video=rgb640x200@50`) forces one. A plane-0-only view of any planar mode gives 1-bit output for free.
 - **Input**: IKBD ACIA at IPL 6 (after the `spl` patch: maskable) → scancode → the shared keymap/console path of the display service; mouse packets → event device (X later).
 - `putchar` (panic path) draws straight into the framebuffer, polled; `getchar` polls the ACIA.
-- Later: the display service's `/dev/fb` with Videl modes (8-plane interleaved → chunky-to-planar in the X DDX and the Mac environment, per PLAN Phase 4).
+- Session modes: on a VGA monitor a `/dev/fb` session may set 640×480 at 1 bit or 8 interleaved planes, or 320×480/320×240 at 16-bit chunky (`FBIOSMODE`); the mode goes with the session on a switch. X draws 8 planes directly (`x11/falcon/XFALCON.md`).
 
 ## 8. Boot path
 

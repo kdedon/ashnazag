@@ -225,12 +225,32 @@ caddr_t arg;
 	struct fbmodeinfo mi;
 	register struct fbinfo *fi = &ds_disp.d_info;
 	register unsigned long i, n;
+#ifdef DS_ATARI
+	struct fbinfo vf;
+	extern int ata_nvmode();
+	extern void ata_vminfo();
+#endif
 
 	if (copyin(arg, (caddr_t)&ms, sizeof ms))
 		return EFAULT;
 	n = (fbp_cur >= 0 && fbp_cur < fbp_nmode) ? fbp_nmode : 1;
+#ifdef DS_ATARI
+	n = 1 + ata_nvmode();
+#endif
 	for (i = 0; i < n && i < ms.ms_count; i++) {
-		if (n == 1) {
+#ifdef DS_ATARI
+		if (i > 0) {
+			ata_vminfo((int)i - 1, &vf);
+			mi.mi_id = vf.fi_mode;
+			mi.mi_width = vf.fi_width;
+			mi.mi_height = vf.fi_height;
+			mi.mi_depth = vf.fi_depth;
+			mi.mi_rowbytes = vf.fi_rowbytes;
+			mi.mi_offset = 0;
+			mi.mi_flags = 0;
+		} else
+#endif
+		if (n == 1 || fbp_cur < 0) {
 			mi.mi_id = fi->fi_mode;
 			mi.mi_width = fi->fi_width;
 			mi.mi_height = fi->fi_height;
@@ -263,15 +283,17 @@ caddr_t arg;
 int put;
 {
 	struct fbcmap cm;
+	struct fbinfo fi;
 	register unsigned short *b;
 	register int n, sz, err = 0;
 
 	if (copyin(arg, (caddr_t)&cm, sizeof cm))
 		return EFAULT;
 	n = cm.cm_count;
-	if ((unsigned long)cm.cm_start + n > ds_disp.d_info.fi_cmapsize)
+	ds_sinfo(s, &fi);
+	if ((unsigned long)cm.cm_start + n > fi.fi_cmapsize)
 		return EINVAL;
-	if (put && !(ds_disp.d_info.fi_flags & FBF_CMAP))
+	if (put && !(fi.fi_flags & FBF_CMAP))
 		return ENXIO;
 	if (n == 0)
 		return 0;
@@ -345,15 +367,17 @@ int *rvalp;
 		s = 0;
 	switch (cmd) {
 	case FBIOGINFO:
-		fi = ds_disp.d_info;
-		if (s)
-			fi.fi_size = s->s_size;
+		ds_sinfo(s, &fi);
 		if (copyout((caddr_t)&fi, (caddr_t)arg, sizeof fi))
 			return EFAULT;
 		return 0;
 	case FBIOGMODES:
 		return ds_gmodes((caddr_t)arg);
 	case FBIOSMODE:
+#ifdef DS_ATARI
+		if (s)
+			return ds_setmode(s, (unsigned long)arg);
+#endif
 		return ENXIO;
 	case FBIOGETCMAP:
 	case FBIOPUTCMAP:
@@ -600,7 +624,7 @@ int *rvalp;
 		bzero((caddr_t)&ei, sizeof ei);
 		ei.ei_kset = EVK_ADB;
 #ifdef DS_ATARI
-		if (e->e_sess && e->e_sess->s_vid)
+		if (e->e_sess && DS_GUEST(e->e_sess))
 			ei.ei_kset = EVK_IKBD;	/* IKBD scancodes */
 #endif
 		ei.ei_flags = EVF_CAPSLATCH;

@@ -1,0 +1,76 @@
+wait login:
+type guest\n
+wait $ 
+type (startx > /tmp/sx.log 2>&1; echo x-`expr 3 + 4`-ended) &\n
+type until [ -p /tmp/.X11-unix/X0 ]; do sleep 2; done; sleep 60; echo x-`expr 1 + 1`-up\n
+wait x-2-up
+type echo typed-in-xterm\n
+sleep 5
+debug screenshot OUT/1-x.png
+event keydown 0x1d
+event keydown 0x38
+event keypress 0x01
+event keyup 0x38
+event keyup 0x1d
+sleep 5
+sleep 3
+debug screenshot OUT/2-console.png
+type starttos -P 2> /tmp/st.log; echo starttos-rc=$?\n
+sleep 150
+debug screenshot OUT/3-tos.png
+event keydown 0x1d
+event keydown 0x38
+event keypress 0x02
+event keyup 0x38
+event keyup 0x1d
+sleep 5
+sleep 5
+event keypress 0x2a
+sleep 10
+debug screenshot OUT/4-x.png
+event keydown 0x1d
+event keydown 0x38
+event keypress 0x03
+event keyup 0x38
+event keyup 0x1d
+sleep 5
+sleep 10
+debug screenshot OUT/5-tos.png
+event keydown 0x1d
+event keydown 0x38
+event keypress 0x01
+event keyup 0x38
+event keyup 0x1d
+sleep 5
+sleep 3
+event keydown 0x1d
+event keypress 0x2e
+event keyup 0x1d
+wait ^C
+type echo tos-left=`ps -e | grep -c starttos`\n
+wait tos-left=
+sleep 5
+event keydown 0x1d
+event keydown 0x38
+event keypress 0x02
+event keyup 0x38
+event keyup 0x1d
+sleep 5
+sleep 5
+event keypress 0x2a
+sleep 10
+debug screenshot OUT/6-x-after-tos.png
+event keydown 0x1d
+event keydown 0x38
+event keypress 0x01
+event keyup 0x38
+event keyup 0x1d
+sleep 5
+type kill `cat /tmp/Xamix.pid`\n
+wait x-7-ended
+sleep 3
+type cat /tmp/st.log /tmp/Xamix.log; echo xtos-`expr 4 + 5`-done\n
+wait xtos-9-done
+sleep 2
+debug screenshot OUT/7-console.png
+debug quit 0

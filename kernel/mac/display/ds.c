@@ -41,7 +41,8 @@ extern struct fbpmode fbp_mode[];
 #ifdef DS_ATARI
 extern void ata_dspoll(), ata_vsave(), ata_vload(), ata_vput(), ata_bsave(), ata_bload();
 extern int ata_vget();
-extern int ata_vnative(), ata_brun();
+extern int ata_vnative(), ata_brun(), ata_nvmode(), ata_vmfind();
+extern void ata_vminfo(), ata_vmset();
 extern unsigned long ata_pool;
 static struct dsvid ds_vcons;		/* the mode under a Videl session */
 #endif
@@ -88,6 +89,34 @@ static unsigned char ds_digit[10] = {
 };
 
 /* ------------------------------------------------------------ CLUT */
+
+/* what FBIOGINFO reports for s: the display, or the mode s set */
+void
+ds_sinfo(s, fi)
+register struct dssess *s;
+register struct fbinfo *fi;
+{
+	*fi = ds_disp.d_info;
+#ifdef DS_ATARI
+	if (ata_nvmode())
+		fi->fi_flags |= FBF_SETMODE;
+	if (s && s->s_vmode)
+		ata_vminfo(s->s_vmode - 1, fi);
+#endif
+	if (s)
+		fi->fi_size = s->s_size;
+}
+
+/* entries in s's colour table */
+int
+ds_ncmap(s)
+struct dssess *s;
+{
+	struct fbinfo fi;
+
+	ds_sinfo(s, &fi);
+	return (int)fi.fi_cmapsize;
+}
 
 /*
  * Mac standard tables, white at 0 and black at the last entry: 8 bpp is
@@ -209,7 +238,7 @@ int on;
 	x = DS_SPL(DS_HI);
 	s->s_blank = on;
 	s->s_dlo = 0;
-	s->s_dhi = ds_disp.d_info.fi_cmapsize;
+	s->s_dhi = ds_ncmap(s);
 	DS_SPLX(x);
 }
 
@@ -222,7 +251,7 @@ ds_vbl()
 
 	ds_vblcount++;
 #ifdef DS_ATARI
-	if (s->s_vid)
+	if (DS_GUEST(s))
 		s->s_dlo = 256, s->s_dhi = 0;
 #endif
 	if (HWCLUT && s->s_dhi > s->s_dlo) {
@@ -460,7 +489,7 @@ int *errp, vid;
 #ifdef DS_ATARI
 	if (vid) {
 		for (i = 1; i <= DS_NSESS; i++)
-			if (ds_sess[i].s_used && !ds_sess[i].s_dead && ds_sess[i].s_vid) {
+			if (ds_sess[i].s_used && !ds_sess[i].s_dead && DS_GUEST(&ds_sess[i])) {
 				s->s_used = 0;
 				*errp = EBUSY;
 				return 0;
@@ -604,7 +633,7 @@ register struct dssess *s;
 			if (s == &ds_sess[0])
 				adbkbd_cons(c | 0x80);
 #ifdef DS_ATARI
-			else if (s->s_vid)
+			else if (DS_GUEST(s))
 				ds_evpost(s, 0, IE_KEY, ata_vnative(c), 0L, sec, us);
 #endif
 			else
@@ -686,10 +715,10 @@ register struct dssess *to;
 	wakeup((caddr_t)&ds_front);	/* blits waiting for the front */
 #endif
 #ifdef DS_ATARI
-	if (!to->s_vid)
+	if (!DS_GUEST(to))
 #endif
 	if (HWCLUT)
-		ds_clutload(to, 0, (int)ds_disp.d_info.fi_cmapsize);
+		ds_clutload(to, 0, ds_ncmap(to));
 	to->s_dlo = 256;
 	to->s_dhi = 0;
 	DS_SPLX(x);
@@ -808,7 +837,7 @@ int unit, kind, b, more;
 	}
 	ds_now(&sec, &us);
 #ifdef DS_ATARI
-	if (s->s_vid)
+	if (DS_GUEST(s))
 		ds_evpost(s, 0, IE_KEY, ata_vnative(c), up ? 0L : 1L, sec, us);
 	else
 #endif
@@ -1035,13 +1064,74 @@ ds_vidpass(s, win)
 register struct dssess *s;
 unsigned long win;
 {
-	if (s->s_vid == 0)
+	if (!DS_GUEST(s))
 		return EINVAL;
 	if (win & DS_PGOFF)
 		return EINVAL;
 	s->s_vproc = curproc;
 	s->s_vpid = curproc->p_pid;
 	s->s_vwin = win;
+	return 0;
+}
+
+/*
+ * s takes session mode id and with it the Videl and the whole pool.
+ * The first mode is set before s is mapped.  Process context.
+ */
+int
+ds_setmode(s, id)
+register struct dssess *s;
+unsigned long id;
+{
+	struct fbinfo fi;
+	struct dsvid *v;
+	caddr_t mem, shadow;
+	unsigned long *pfn, size, msize;
+	register int n;
+
+	if (DS_GUEST(s))
+		return EINVAL;
+	if ((n = ata_vmfind(id)) < 0)
+		return ENXIO;
+	ata_vminfo(n, &fi);
+	if (fi.fi_rowbytes * fi.fi_height > ds_disp.d_vsize)
+		return ENXIO;		/* the Videl would scan past the pool */
+	if (!fbcons_grab())
+		return EBUSY;
+	if (s->s_vmode == 0) {
+		if (ds_segcount(s)) {
+			fbcons_unlock();
+			return EBUSY;
+		}
+		mem = s->s_mem, msize = s->s_memsize, shadow = s->s_shadow;
+		pfn = s->s_pfn, size = s->s_size;
+		s->s_size = ds_disp.d_vsize;
+		v = (struct dsvid *)kmem_zalloc(sizeof *v, KM_NOSLEEP);
+		if (v == 0 || ds_shadow(s) == 0) {
+			if (v)
+				kmem_free((caddr_t)v, sizeof *v);
+			s->s_mem = mem, s->s_memsize = msize, s->s_shadow = shadow;
+			s->s_pfn = pfn, s->s_size = size;
+			fbcons_unlock();
+			return ENOMEM;
+		}
+		kmem_free((caddr_t)pfn, (size >> DS_PGSHIFT) * 4);
+		kmem_free(mem, msize);
+		s->s_vmode = n + 1;	/* first: s is no guest */
+		s->s_vid = v;
+		if (s == ds_front) {	/* the console's mode is on the Videl */
+			ata_vsave(&ds_vcons);
+			ata_bsave(ds_vcons.v_blt);
+		}
+	}
+	s->s_vmode = n + 1;
+	ata_vmset(s->s_vid, n, ds_disp.d_page);
+	ds_stdcmap(s, (int)fi.fi_depth);
+	if (s == ds_front) {
+		ata_vload(s->s_vid);
+		ds_clutload(s, 0, ds_ncmap(s));
+	}
+	fbcons_unlock();
 	return 0;
 }
 
@@ -1053,7 +1143,7 @@ ds_vowner()
 
 	for (i = 1; i <= DS_NSESS; i++) {
 		s = &ds_sess[i];
-		if (s->s_used && !s->s_dead && s->s_vid && s->s_vproc == curproc &&
+		if (s->s_used && !s->s_dead && DS_GUEST(s) && s->s_vproc == curproc &&
 		    s->s_vpid == curproc->p_pid)
 			return s;
 	}

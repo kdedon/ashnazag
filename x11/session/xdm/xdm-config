@@ -1,0 +1,15 @@
+! xdm on the screen only: no XDMCP port, a cookie for the server
+DisplayManager.servers:		/usr/x11r6/lib/X11/xdm/Xservers
+DisplayManager.errorLogFile:	/usr/x11r6/lib/X11/xdm/xdm-errors
+DisplayManager.pidFile:		/usr/x11r6/lib/X11/xdm/xdm-pid
+DisplayManager.authDir:		/usr/x11r6/lib/X11/xdm
+DisplayManager.requestPort:	0
+DisplayManager._0.authorize:	true
+DisplayManager._0.startup:	/usr/x11r6/lib/X11/xdm/Xstartup
+DisplayManager._0.reset:	/usr/x11r6/lib/X11/xdm/Xreset
+DisplayManager*resources:	/usr/x11r6/lib/X11/xdm/Xresources
+DisplayManager*xrdb:		/usr/X/bin/xrdb -nocpp
+DisplayManager*session:		/usr/x11r6/bin/xsession
+DisplayManager*userPath:	/usr/bin:/usr/sbin:/usr/ucb:/usr/x11r6/bin:/usr/X/bin
+DisplayManager*systemPath:	/usr/sbin:/usr/bin:/etc:/usr/x11r6/bin:/usr/X/bin
+DisplayManager*authComplain:	false

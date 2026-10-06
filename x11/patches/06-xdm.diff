@@ -1,0 +1,235 @@
+--- a/programs/xdm/genauth.c
++++ b/programs/xdm/genauth.c
+@@ -151,6 +151,170 @@
+ }
+ #endif /* no HASXDMAUTH */
+ 
++#ifdef AMIX
++/*
++ * No random device: a pool hashed (XTEA, Davies-Meyer) from the clock,
++ * tick counts and process times, the times of the entries in /dev
++ * (terminal input moves them), and a seed kept from the last run.
++ */
++#include <sys/stat.h>
++#include <sys/times.h>
++#include <dirent.h>
++#include <fcntl.h>
++
++#define SEEDFILE	"xdm-seed"
++
++static unsigned long pool[4], pblk[4];
++static int pfill;
++
++static void
++xtea (v, k)
++unsigned long *v, *k;
++{
++    unsigned long y = v[0], z = v[1], sum = 0;
++    int n;
++
++    for (n = 0; n < 32; n++) {
++	y = (y + ((((z << 4) ^ (z >> 5)) + z) ^ (sum + k[sum & 3]))) & 0xffffffff;
++	sum = (sum + 0x9e3779b9) & 0xffffffff;
++	z = (z + ((((y << 4) ^ (y >> 5)) + y) ^ (sum + k[(sum >> 11) & 3]))) & 0xffffffff;
++    }
++    v[0] = y;
++    v[1] = z;
++}
++
++static void
++stir (w)
++unsigned long w;
++{
++    unsigned long t[2];
++
++    pblk[pfill++] = w;
++    if (pfill < 4)
++	return;
++    pfill = 0;
++    t[0] = pool[0]; t[1] = pool[1];
++    xtea (t, pblk);
++    pool[0] ^= t[0]; pool[1] ^= t[1];
++    pblk[0] ^= 0x5c5c5c5c;
++    t[0] = pool[2]; t[1] = pool[3];
++    xtea (t, pblk);
++    pool[2] ^= t[0]; pool[3] ^= t[1];
++}
++
++static void
++stirtime ()
++{
++    struct tms	tm;
++    struct timeval now;
++
++    stir ((unsigned long) times (&tm));
++    stir ((unsigned long) tm.tms_utime ^ ((unsigned long) tm.tms_stime << 16));
++    stir ((unsigned long) tm.tms_cutime ^ ((unsigned long) tm.tms_cstime << 16));
++    X_GETTIMEOFDAY (&now);
++    stir ((unsigned long) now.tv_usec);
++    stir ((unsigned long) now.tv_sec);
++}
++
++static void
++stirstat (name)
++char *name;
++{
++    struct stat st;
++
++    if (stat (name, &st) < 0)
++	return;
++    stir ((unsigned long) st.st_atime);
++    stir ((unsigned long) st.st_mtime ^ ((unsigned long) st.st_ino << 16));
++    stir ((unsigned long) st.st_ctime ^ (unsigned long) st.st_size);
++}
++
++static char *
++seedpath ()
++{
++    static char path[1100];
++
++    sprintf (path, "%.1000s/%s", authDir ? authDir : "/etc", SEEDFILE);
++    return path;
++}
++
++static void
++gather ()
++{
++    static int	seeded;
++    DIR		*dir;
++    struct dirent *de;
++    char	name[300];
++    unsigned long seed[4];
++    int		fd, i, n;
++
++    stirtime ();
++    stir ((unsigned long) getpid () ^ ((unsigned long) getppid () << 16));
++    if (!seeded) {
++	seeded = 1;
++	if ((fd = open (seedpath (), O_RDONLY)) >= 0) {
++	    if (read (fd, (char *) seed, sizeof seed) == sizeof seed)
++		for (i = 0; i < 4; i++)
++		    stir (seed[i]);
++	    close (fd);
++	}
++    }
++    stirstat ("/etc/utmp");
++    stirstat ("/var/adm/wtmp");
++    stirstat ("/tmp");
++    if ((dir = opendir ("/dev")) != 0) {
++	for (n = 0; n < 400 && (de = readdir (dir)) != 0; n++) {
++	    sprintf (name, "/dev/%.250s", de->d_name);
++	    stirstat (name);
++	}
++	closedir (dir);
++    }
++    stirtime ();
++    for (i = 0; i < 4; i++)		/* flush a partial block */
++	stir ((unsigned long) i);
++}
++
++/* the next run's seed, derived apart from the cookies */
++static void
++saveseed ()
++{
++    unsigned long seed[4];
++    int fd;
++
++    seed[0] = 0x73656564; seed[1] = 1; seed[2] = 2; seed[3] = 3;
++    xtea (seed, pool);
++    xtea (seed + 2, pool);
++    unlink (seedpath ());
++    if ((fd = open (seedpath (), O_WRONLY|O_CREAT|O_EXCL, 0600)) >= 0) {
++	write (fd, (char *) seed, sizeof seed);
++	close (fd);
++    }
++}
++
++GenerateAuthData (auth, len)
++char	*auth;
++int	len;
++{
++    static unsigned long ctr;
++    unsigned long blk[2];
++    int i;
++
++    gather ();
++    for (i = 0; i < len; i++) {
++	if (i % 8 == 0) {
++	    blk[0] = ++ctr;
++	    blk[1] = 0x636f6f6b;
++	    xtea (blk, pool);
++	}
++	auth[i] = (blk[(i % 8) / 4] >> (8 * (i % 4))) & 0xff;
++    }
++    i = len;
++    if (i > sizeof (key))
++	i = sizeof (key);
++    memmove ((char *) key, auth, i);
++    saveseed ();
++}
++#else
+ GenerateAuthData (auth, len)
+ char	*auth;
+ int	len;
+@@ -218,3 +382,4 @@
+     }
+ #endif
+ }
++#endif /* AMIX */
+--- a/programs/xdm/greeter/verify.c
++++ b/programs/xdm/greeter/verify.c
+@@ -100,6 +100,24 @@
+     return env;
+ }
+ 
++/* no password needed: a local display, and login's PASSREQ isn't YES */
++static int
++EmptyOK (d)
++struct display	*d;
++{
++	FILE	*f;
++	char	line[128];
++	int	ok = d->displayType.location == Local;
++
++	if (ok && (f = fopen ("/etc/default/login", "r"))) {
++		while (fgets (line, sizeof line, f))
++			if (!strncmp (line, "PASSREQ=YES", 11))
++				ok = 0;
++		fclose (f);
++	}
++	return ok;
++}
++
+ int
+ Verify (d, greet, verify)
+ struct display		*d;
+@@ -140,7 +158,10 @@
+ #if defined(ultrix) || defined(__ultrix__)
+ 	if (authenticate_user(p, greet->password, NULL) < 0)
+ #else
+-	if (strcmp (crypt (greet->password, user_pass), user_pass))
++	/* an account without a password takes an empty one, as login does,
++	   on the local screen only */
++	if (*user_pass ? strcmp (crypt (greet->password, user_pass), user_pass)
++		       : *greet->password != '\0' || !EmptyOK (d))
+ #endif
+ 	{
+ 		Debug ("password verify failed\n");
+--- a/programs/xdm/session.c
++++ b/programs/xdm/session.c
+@@ -540,6 +540,15 @@
+ 	    LogError("initgroups for \"%s\" failed, errno=%d\n", name, errno);
+ 	    return (0);
+ 	}
++#ifdef AMIX
++	/* the kernel lets a user's processes fork only once their session
++	   holds one of its user licences, as login takes */
++	if (verify->uid != 0 && sys3b(95, 4) < 0 && errno == EACCES)
++	{
++	    LogError("no user licence free for \"%s\"\n", name);
++	    return (0);
++	}
++#endif
+ 	if (setuid(verify->uid) < 0)
+ 	{
+ 	    LogError("setuid %d (user \"%s\") failed, errno=%d\n",
