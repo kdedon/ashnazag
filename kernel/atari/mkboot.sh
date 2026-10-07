@@ -2,6 +2,7 @@
 # mkboot.sh OUTDIR -- build the root-sector boot code (bootsec.bin) and
 # the AXB loader (axbload.bin) for instboot.py.
 # CROSS=prefix selects another m68k toolchain (e.g. m68k-linux-gnu-).
+# SVIDEL=0 builds the loader without the SuperVidel probe.
 set -e
 A=$(cd "$(dirname "$0")" && pwd)
 B=${CROSS-$A/../../toolchain/linux/bin/m68k-linux-gnu-}
@@ -16,7 +17,8 @@ ${B}objcopy -O binary -j .text "$O/bootsec.elf" "$O/bootsec.bin"
 ${B}as -m68030 -o "$O/axbstart.o" "$A/axbstart.s"
 ${B}gcc -m68030 -mtune=68060 -Os -mpcrel -ffreestanding -fno-builtin \
 	-fno-tree-loop-distribute-patterns -fomit-frame-pointer \
-	-Wall -Wno-array-bounds -Werror -c -o "$O/axbload.o" "$A/axbload.c"
+	-Wall -Wno-array-bounds -Werror $([ "${SVIDEL:-1}" = 0 ] || echo -DSVIDEL) \
+	-c -o "$O/axbload.o" "$A/axbload.c"
 $LD -e _start -o "$O/axbload.elf" "$O/axbstart.o" "$O/axbload.o"
 ${B}objcopy -O binary -j .text -j .rodata "$O/axbload.elf" "$O/axbload.bin"
 # position independent, no external references, fits with its data in 8 KB

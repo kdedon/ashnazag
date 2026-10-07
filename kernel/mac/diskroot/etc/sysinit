@@ -1,6 +1,9 @@
 #!/sbin/sh
-# Setup before single-user mode: check and record the root, name the node.
+# Setup before single-user mode: check and record the root, name the node,
+# register the drivers that load on first open.
 PATH=/sbin:/usr/sbin:/usr/bin; export PATH
+modadmin -r cdev asc 46
+modadmin -r cdev auxsnd 47
 /sbin/bcheckrc
 uname -S `cat /etc/nodename`
 echo "Node: `uname -n`"

@@ -1052,6 +1052,31 @@ ibrowse()
 	t_info("ibrowse_notice", "after Return: %s", r ? r : "no reply");
 }
 
+/* SYS:alertgo: a recoverable alert, which must show on the card */
+static void
+alert()
+{
+	char b[64], *r;
+	time_t t0;
+	int k;
+
+	settle("amiga_al0");
+	t0 = time((time_t *)0);
+	sprintf(b, "%s/alertgo", SYS);
+	close(creat(b, 0644));
+	for (k = 0; k < 30 && !used("C/alerttest", t0); k++)
+		sleep(1);
+	sleep(2);
+	host("shot amiga_alert");
+	r = host("cmp amiga_al0 amiga_alert");
+	t_check("boot_alert", k < 30 && r && strncmp(r, "diff", 4) == 0, "%s",
+	    k < 30 ? (r ? r : "no reply") : "SYS:C/alerttest never read");
+	t_info("boot_alert", "%s", r ? r : "no reply");
+	/* until it times out */
+	sleep(6);
+	unlink(b);
+}
+
 /*
  * bsdsocket.library: SYS:bsdtest starts on SYS:bsdgo and talks to
  * bsdsrv, which prints a "name ok detail" line per check.
@@ -1518,6 +1543,99 @@ logout(p, stp, o)
 }
 
 
+/* startmig --menu: the boot held by the menu, whose screen is on the card */
+static void
+menu()
+{
+	int i, st, fd, w = 0, h = 0, alive = 1;
+	char line[256];
+	FILE *f;
+	char *r = 0;
+	time_t t0, t1;
+	pid_t p;
+
+	if (system("/sbin/mount -F ufs " SYSDEV " " SYS) != 0) {
+		t_skip("boot_menu", "mount " SYSDEV " failed");
+		return;
+	}
+	t0 = time((time_t *)0);
+	if ((p = fork()) == 0) {
+		fd = open("/tmp/startmig.menu.log", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+		dup2(fd, 1);
+		dup2(fd, 2);
+		putenv("HOME=/nonexistent");
+		execl("/tests/amiga/startmig", "startmig", "--menu", "-m", "16",
+		    "-boot", "/etc/amiga/boot.rom", (char *)0);
+		_exit(127);
+	}
+	/* the status line lights a few pixels; the menu's screen most */
+	for (i = 0; p > 0 && i < 30; i++) {
+		sleep(1);
+		if ((r = host("shot amiga_menu")) == 0 || sscanf(r, "%d %d", &w, &h) != 2 ||
+		    (r = host("lit amiga_menu")) == 0 || atoi(r) > w * h / 8)
+			break;
+	}
+	if (p < 0)
+		t_check("boot_menu", 0, "fork: %s", T_ERR);
+	else if (r == 0)
+		t_skip("boot_menu", "no test host");
+	else {
+		/* the menu holds the boot: the startup has not run */
+		sleep(3);
+		if ((r = host("shot amiga_menu")) == 0 || (r = host("lit amiga_menu")) == 0)
+			r = "0";
+		alive = waitpid(p, &st, WNOHANG) == 0;
+		t_check("boot_menu", atoi(r) > w * h / 8 && !used("C/IPrefs", t0) && alive,
+		    "%s of %d pixels lit, startup %s, startmig %s: no boot menu", r, w * h,
+		    used("C/IPrefs", t0) ? "run" : "not run", alive ? "running" : "ended");
+		t_info("boot_menu", "%s of %d pixels lit after %ld s", r, w * h,
+		    (long)(time((time_t *)0) - t0));
+	}
+	if (p > 0 && alive && r != 0 && atoi(r) > w * h / 8) {
+		int v[4];
+
+		host("move -2000 -2000 50");
+		host("shot amiga_mp0");
+		host("move 40 30 50");
+		host("shot amiga_mp1");
+		t_check("boot_menu_mouse", pbox("amiga_mp0", "amiga_mp1", 0, v) &&
+		    v[2] >= 40 && v[2] < 80 && v[3] >= 30 && v[3] < 70,
+		    "pixels changed in %d,%d-%d,%d after moving 40,30", v[0], v[1], v[2], v[3]);
+		/* onto Boot With No Startup-Sequence, at 475,189 */
+		host("move 435 159 50");
+		host("shot amiga_mp2");
+		t1 = time((time_t *)0);
+		host("button 1 50");
+		host("button 0 0");
+		/* DOS starts once the menu returns */
+		for (i = 0; i < 20 && !used("DEVS/system-configuration", t1); i++)
+			sleep(1);
+		sleep(8);
+		alive = waitpid(p, &st, WNOHANG) == 0;
+		if ((r = host("shot amiga_nostart")) != 0)
+			r = host("cmp amiga_mp2 amiga_nostart");
+		t_check("boot_menu_click", used("DEVS/system-configuration", t1) && alive &&
+		    !used("C/IPrefs", t0) && r != 0 && strncmp(r, "diff", 4) == 0,
+		    "DOS %s, startup %s, startmig %s, screen %s",
+		    used("DEVS/system-configuration", t1) ? "started" : "not started",
+		    used("C/IPrefs", t0) ? "run" : "not run", alive ? "running" : "ended",
+		    r ? r : "not dumped");
+	}
+	if (p > 0 && alive) {
+		kill(p, SIGTERM);
+		waitpid(p, &st, 0);
+	}
+	for (i = 0; i < 10 && (sleep(1), system("/sbin/umount " SYS) != 0); i++)
+		;
+	if ((f = fopen("/tmp/startmig.0.log", "r")) != 0) {
+		while (fgets(line, sizeof line, f) != 0) {
+			fputs(line, stdout);
+			fflush(stdout);
+		}
+		fclose(f);
+	}
+}
+
 static void
 boot()
 {
@@ -1663,6 +1781,7 @@ boot()
 		pointer(p);
 		drag(p);
 		sound();
+		alert();
 		idle(p);
 	}
 	if (!w || !logout(p, &st, o)) {
@@ -1702,6 +1821,61 @@ boot()
 		fclose(f);
 	}
 	t_check("boot_umount", i < 10, "umount " SYS " failed");
+}
+
+/*
+ * startmig --screens: Workbench and a screen in front of it, opened before
+ * DOS.  The front one is copied to the display, Workbench is the display
+ * again once it closes, and the boot goes on to Workbench.
+ */
+static void
+screens()
+{
+	int i, st, fd, copied = 0, back = 0, alert = 0, alive, wb;
+	char line[256];
+	FILE *f;
+	time_t t0;
+	pid_t p;
+
+	if (system("/sbin/mount -F ufs " SYSDEV " " SYS) != 0) {
+		t_skip("early_screens", "mount " SYSDEV " failed");
+		return;
+	}
+	t0 = time((time_t *)0);
+	if ((p = fork()) == 0) {
+		fd = open("/tmp/startmig.screens.log", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+		dup2(fd, 1);
+		dup2(fd, 2);
+		putenv("HOME=/nonexistent");
+		execl("/tests/amiga/startmig", "startmig", "--screens", "-m", "16",
+		    "-boot", "/etc/amiga/boot.rom", (char *)0);
+		_exit(127);
+	}
+	for (i = 0; p > 0 && i < 60 && !used("C/LoadWB", t0) && waitpid(p, &st, WNOHANG) == 0; i++)
+		sleep(1);
+	sleep(3);
+	wb = used("C/LoadWB", t0);
+	alive = p > 0 && waitpid(p, &st, WNOHANG) == 0;
+	if (alive) {
+		kill(p, SIGTERM);
+		waitpid(p, &st, 0);
+	}
+	for (i = 0; i < 10 && (sleep(1), system("/sbin/umount " SYS) != 0); i++)
+		;
+	if ((f = fopen("/tmp/startmig.0.log", "r")) != 0) {
+		while (fgets(line, sizeof line, f) != 0) {
+			copied |= strstr(line, "copied to the display") != 0;
+			back |= strstr(line, "is the display again") != 0;
+			alert |= strstr(line, " alert ") != 0;
+			fputs(line, stdout);
+			fflush(stdout);
+		}
+		fclose(f);
+	}
+	t_check("early_screens", p > 0 && alive && copied && back && !alert && wb,
+	    "startmig %s, front screen %s, Workbench %s, %s, LoadWB %s", alive ? "running" : "ended",
+	    copied ? "copied" : "not copied", back ? "the display again" : "not back",
+	    alert ? "an alert" : "no alert", wb ? "run" : "not run");
 }
 
 main(argc, argv)
@@ -1784,5 +1958,7 @@ main(argc, argv)
 		return t_done();
 	}
 	boot();
+	menu();
+	screens();
 	return t_done();
 }

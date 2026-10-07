@@ -678,7 +678,12 @@ char **argv;
 	int i, n, tmo;
 	long ms;
 
-	if ((srv = open("/dev/snd/srv", O_RDWR)) < 0) {
+	/* without the relay, wait silently: init would respawn an exit */
+	if ((srv = open("/dev/snd/srv", O_RDWR)) < 0 &&
+	    (errno == ENXIO || errno == ENODEV || errno == ENOENT))
+		for (;;)
+			pause();
+	if (srv < 0) {
 		perror("sndaux: /dev/snd/srv");
 		exit(1);
 	}

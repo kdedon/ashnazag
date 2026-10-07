@@ -21,6 +21,7 @@
 #include "inputshare.h"
 #include "hostfswire.h"
 #include "sndshare.h"
+#include "earlyshare.h"
 #include "sysroot.h"
 #include "envroot.h"
 #include "miglog.h"
@@ -33,7 +34,7 @@
 #define BOOTSIZE 0x80000UL
 
 extern int mprotect(), munmap();
-extern int migdisp(), migdisp_open(), migkick;
+extern int migdisp(), migdisp_open(), migkick, migmenu;
 
 static unsigned char rombuf[ROMSIZE];
 static int displaylife = -1, gofd = -1;
@@ -48,6 +49,9 @@ static unsigned int get16();
 #define PVECLOCK (PVSTUB + 64)
 static unsigned char pvstub[128];
 static int pvstubbed;
+static char *earlyroot;
+static int twoscreens;
+static void preload();
 
 static void
 put16(p, v)
@@ -145,6 +149,8 @@ loadboot(char *path)
         memcpy((char *)PVSTUB, (char *)pvstub, sizeof pvstub);
         pvstubbed = 1;
     }
+    if (earlyroot)
+        preload(earlyroot);
     if (mprotect((caddr_t)BOOTBASE, BOOTSIZE, PROT_READ | PROT_EXEC) < 0)
         fail("boot extension protection");
 }
@@ -421,6 +427,9 @@ static char p96path[] = "Devs/Picasso96Settings";
 static char scrmpath[] = "Prefs/Env-Archive/Sys/screenmode.prefs";
 static unsigned char p96set[2][8192], scrm[2][512];
 static unsigned long clocks[] = { 25175000, 40000000, 65000000, 108000000 };
+/* the settings and Workbench mode the guest will read, for the early bind */
+static unsigned char *p96data, *smode;
+static unsigned long p96len;
 
 /* SYS:path into b; its size, or 0 */
 static unsigned long
@@ -518,6 +527,8 @@ native(fi, root, w, h)
 		memcpy(p96set[1], p96set[0], n);
 		if ((p96 = p96native(p96set[1], n, fi->fi_width, fi->fi_height)) != 0)
 			mig_hostfs_overlay(p96path, p96set[0], p96set[1], n);
+		p96data = p96set[p96 != 0];
+		p96len = n;
 	}
 	m = sysread(root, scrmpath, scrm[0], sizeof scrm[0]);
 	memcpy(scrm[1], scrm[0], m);
@@ -529,11 +540,192 @@ native(fi, root, w, h)
 				put16(scrm[1] + i + 32, 8);
 				mig_hostfs_overlay(scrmpath, scrm[0], scrm[1], m);
 			}
+			smode = scrm[1] + i + 24;
 			*w = get16(scrm[1] + i + 28);
 			*h = get16(scrm[1] + i + 30);
 			return p96 && get32(scrm[1] + i + 24) == NATIVE_ID;
 		}
 	return 0;
+}
+
+/*
+ * The board's files from SYS: into the boot extension, so the guest binds
+ * it before DOS.  Only for the rtg.library whose workings that relies on;
+ * any other binds after DOS as before.
+ */
+#define RTG_SIZE 216548UL
+#define RTG_CRC 0x7336517cUL
+static char infopath[] = "DEVS/Monitors/Container.info";
+
+static unsigned long
+crc32(p, n)
+	unsigned char *p;
+	unsigned long n;
+{
+	unsigned long c = 0xffffffffUL;
+	int k;
+	while (n--)
+		for (c ^= *p++, k = 0; k < 8; k++)
+			c = c >> 1 ^ (0xedb88320UL & -(c & 1));
+	return ~c & 0xffffffffUL;
+}
+
+/* an icon's tool types into t, each NUL-terminated; their length, or 0 */
+static unsigned long
+tooltypes(b, n, t, max)
+	unsigned char *b, *t;
+	unsigned long n, max;
+{
+	unsigned long i = 78, k, len, count, out = 0, img;
+	if (n < 78 || get16(b) != 0xe310 || !get32(b + 54))
+		return 0;
+	if (get32(b + 66))
+		i += 56;
+	/* the images, then the default tool */
+	for (k = 22; k <= 26; k += 4)
+		if (get32(b + k)) {
+			if (i + 20 > n) return 0;
+			img = get32(b + i + 10) ? (get16(b + i + 4) + 15) / 16 * 2 *
+			    get16(b + i + 6) * get16(b + i + 8) : 0;
+			i += 20 + img;
+		}
+	if (get32(b + 50)) {
+		if (i + 4 > n) return 0;
+		i += 4 + get32(b + i);
+	}
+	if (i + 4 > n) return 0;
+	count = get32(b + i) / 4 - 1;
+	for (i += 4; count--; i += len) {
+		if (i + 4 > n) return 0;
+		len = get32(b + i);
+		i += 4;
+		if (i + len > n || out + len + 1 > max) return 0;
+		for (k = 0; k < len && b[i + k]; k++)
+			t[out++] = b[i + k];
+		t[out++] = 0;
+	}
+	return out;
+}
+
+/* the value of tool type key (upper case) in a NUL-separated list, or 0 */
+static char *
+tooltype(t, n, key)
+	char *t, *key;
+	unsigned long n;
+{
+	unsigned long k;
+	char *e = t + n;
+	for (; t < e; t += strlen(t) + 1) {
+		for (k = 0; key[k] && (t[k] & ~32) == key[k]; k++)
+			;
+		if (!key[k] && t[k] == '=')
+			return t + k + 1;
+	}
+	return 0;
+}
+
+static void
+preload(root)
+	char *root;
+{
+	static unsigned char info[4096];
+	static char card[80];
+	struct mig_early *d = (struct mig_early *)MIG_EARLY_BASE;
+	unsigned char *at = (unsigned char *)d + sizeof *d, *tt;
+	unsigned long n, i;
+	char *board, *why = 0;
+	static char *files[][2] = {
+		{ "libs/picasso96/rtg.library", "LIBS/Picasso96/rtg.library" },
+		{ "libs/iffparse.library", "LIBS/iffparse.library" },
+		{ "libs/picasso96/fastlayers.library", "LIBS/Picasso96/fastlayers.library" },
+		{ "prefs/env-archive/picasso96/disableamigablitter",
+		  "Prefs/Env-Archive/Picasso96/DisableAmigaBlitter" },
+		{ "c/container-input", "C/container-input" },
+		{ card + 32, card }
+	};
+	memset((char *)d, 0, sizeof *d);
+	if (!p96len || !smode || !(get32(smode) & 0xf0000000UL)) {
+		miglog(0, "Picasso96 binds after DOS: Workbench is not in a board mode");
+		return;
+	}
+	tt = at;
+	n = tooltypes(info, sysread(root, infopath, info, sizeof info), tt, 2048);
+	board = n ? tooltype((char *)tt, n, "BOARDTYPE") : 0;
+	if (!board || strlen(board) > 20 || tooltype((char *)tt, n, "SETTINGSFILE")) {
+		miglog(0, "Picasso96 binds after DOS: %s has no BOARDTYPE, or a SETTINGSFILE", infopath);
+		return;
+	}
+	sprintf(card, "LIBS/Picasso96/%s.card", board);
+	for (i = 0; card[i]; i++)
+		card[32 + i] = card[i] >= 'A' && card[i] <= 'Z' ? card[i] + 32 : card[i];
+	card[32 + i] = 0;
+	strcpy(d->file[0].name, MIG_EARLY_TOOLTYPES);
+	d->file[0].offset = at - (unsigned char *)d;
+	d->file[0].size = n;
+	at += (n + 3) & ~3UL;
+	strcpy(d->file[1].name, MIG_EARLY_SCREENMODE);
+	d->file[1].offset = at - (unsigned char *)d;
+	d->file[1].size = 12;
+	memcpy(at, smode, 12);
+	at += 12;
+	strcpy(d->file[2].name, "devs/picasso96settings");
+	d->file[2].offset = at - (unsigned char *)d;
+	d->file[2].size = p96len;
+	memcpy(at, p96data, p96len);
+	at += (p96len + 3) & ~3UL;
+	d->count = 3;
+	for (i = 0; i < sizeof files / sizeof files[0]; i++) {
+		n = sysread(root, files[i][1], at, MIG_EARLY_END - (unsigned long)at);
+		if (!i && (n != RTG_SIZE || crc32(at, n) != RTG_CRC))
+			why = "rtg.library is not 40.3945";
+		if (!n && (i < 2 || files[i][1] == card))
+			why = "a file is missing";
+		if (why) {
+			miglog(0, "Picasso96 binds after DOS: %s", why);
+			d->count = 0;
+			return;
+		}
+		if (!n)
+			continue;
+		strcpy(d->file[d->count].name, files[i][0]);
+		d->file[d->count].offset = at - (unsigned char *)d;
+		d->file[d->count++].size = n;
+		at += (n + 3) & ~3UL;
+	}
+	if (twoscreens && d->count < MIG_EARLY_FILES) {
+		strcpy(d->file[d->count].name, MIG_EARLY_SCREENS);
+		d->file[d->count].offset = at - (unsigned char *)d;
+		d->file[d->count++].size = 0;
+	}
+	d->magic = MIG_EARLY_MAGIC;
+	miglog(0, "Picasso96 binds before DOS: %lu KB from SYS:", (unsigned long)(at - (unsigned char *)d) >> 10);
+}
+
+/*
+ * The container's startup, shown once the board bound before DOS: its
+ * output then opens the boot shell on the card.  Bound late, the shell
+ * would open Workbench in a native mode, so it stays silent.
+ */
+static char startpath[] = "S/Startup-Sequence";
+static unsigned char startup[2][4096];
+
+static void
+showstartup(root)
+	char *root;
+{
+	unsigned long n = sysread(root, startpath, startup[0], sizeof startup[0]), i;
+	unsigned char *v = startup[1], *line;
+	if (n < 20 || memcmp(startup[0], "; Container startup", 19))
+		return;
+	memcpy(v, startup[0], n);
+	for (i = 0, line = v; i + 5 <= n; i++) {
+		if (v[i] == '\n')
+			line = v + i + 1;
+		else if (!memcmp(v + i, ">NIL:", 5) && memcmp(line, "EndCLI", 6))
+			memset(v + i, ' ', 5);
+	}
+	mig_hostfs_overlay_when(startpath, startup[0], startup[1], n,
+	    &((struct mig_early_status *)MIG_EARLY_STATUS)->status, MIG_EARLY_BOUND);
 }
 
 /*
@@ -773,6 +965,8 @@ main(argc, argv)
 		else if (!strcmp(argv[i], "--census")) census = 1;
 		else if (!strcmp(argv[i], "--nokick")) kick = 0;
 		else if (!strcmp(argv[i], "--nopv")) pv = 0;
+		else if (!strcmp(argv[i], "--menu")) migmenu = 1;
+		else if (!strcmp(argv[i], "--screens")) twoscreens = 1;
 		else if ((!strcmp(argv[i], "-r") || !strcmp(argv[i], "-rom")) && i + 1 < argc)
 			rom = argv[++i], romarg = 1;
 		else if (!strcmp(argv[i], "-e") && i + 1 < argc)
@@ -890,6 +1084,7 @@ main(argc, argv)
 		if (!native(&fi, sysroot, &w, &h))
 			miglog(0, "Workbench mode %lux%lu, not the display's", w, h);
 		direct = vram(&fi, w, h);
+		showstartup(sysroot);
 		/* the helpers sleep until the guest has entered, when this closes */
 		if (pipe(go) < 0)
 			fail("pipe");
@@ -937,6 +1132,7 @@ main(argc, argv)
 		close(zerofd);
 	if (!probe) {
 		region(BOOTBASE, BOOTSIZE, 0);
+		earlyroot = sysroot;
 		loadboot(boot);
 	}
 	if (!hostrom) {
@@ -995,6 +1191,6 @@ main(argc, argv)
 #endif
 	return 0;
 usage:
-	fprintf(stderr, "usage: startmig [-rom file] [-boot file] [-e env] [-m fast-MB] [--readonly] [--census] [--nokick] [--nopv] [--check | --probe]\n");
+	fprintf(stderr, "usage: startmig [-rom file] [-boot file] [-e env] [-m fast-MB] [--readonly] [--census] [--nokick] [--nopv] [--menu] [--screens] [--check | --probe]\n");
 	return 2;
 }

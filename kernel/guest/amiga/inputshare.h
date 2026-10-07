@@ -16,6 +16,8 @@ struct mig_input {
     volatile unsigned int generation;
     struct mig_input_event event[MIG_INPUT_COUNT];
     volatile unsigned int doorbell;   /* set before the host raises PORTS */
+    /* the boot menu: 4 asked for; 1, 2 left, right button held before the guest took input */
+    volatile unsigned int menu;
 };
 struct mig_input_state {
     unsigned int generation;

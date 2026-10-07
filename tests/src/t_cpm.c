@@ -19,6 +19,7 @@
 #include <errno.h>
 #include <signal.h>
 #include <poll.h>
+#include <dirent.h>
 #include "sys/mod.h"
 #include "tosio.h"
 #include "t.h"
@@ -135,10 +136,21 @@ clean()
 {
 	static char *f[] = { E "/a.img", E "/.env", E "/lst.txt", E "/b/README.TXT",
 	    E "/b/HELLO.68K", 0 };
+	char path[300];
+	struct dirent *de;
+	DIR *dp;
 	int i;
 
 	for (i = 0; f[i]; i++)
 		unlink(f[i]);
+	if ((dp = opendir(E "/A")) != 0) {
+		while ((de = readdir(dp)) != 0) {
+			sprintf(path, E "/A/%.100s", de->d_name);
+			unlink(path);
+		}
+		closedir(dp);
+	}
+	rmdir(E "/A");
 	rmdir(E "/b");
 	rmdir(E);
 	rmdir(H "/CPM");
@@ -205,8 +217,8 @@ main()
 		t_waitchild(pid, &st, 10);
 		return t_done();
 	}
-	t_check("a_img", stat(E "/a.img", &sb) == 0 && sb.st_size == 8L << 20,
-	    "a.img: %s, %ld bytes", T_ERR, (long)sb.st_size);
+	t_check("a_dir", stat(E "/A/exit.68k", &sb) == 0 && stat(E "/a.img", &sb) < 0,
+	    "A/exit.68k: %s", T_ERR);
 	if (cmd(ofd, "DIR", "dir"))
 		t_check("dir", strstr(out + from, "STAT") && strstr(out + from, "PIP") &&
 		    strstr(out + from, "EXIT"), "output \"%.400s\"", out + from);
@@ -221,6 +233,11 @@ main()
 	if (cmd(ofd, "PIP A:COPY.TXT=B:README.TXT", "pip"))
 		t_check("pip", cmd(ofd, "TYPE COPY.TXT", "pip") &&
 		    strstr(out + from, "HELLO FROM B:") != 0, "output \"%.400s\"", out + from);
+	t_check("host_copy", stat(E "/A/copy.txt", &sb) == 0 && sb.st_size == 128,
+	    "A/copy.txt: %s", T_ERR);
+	put(E "/A/late.txt", "LATE FROM HOST\r\n\032", 17);
+	if (cmd(ofd, "TYPE LATE.TXT", "late"))
+		t_check("late", strstr(out + from, "LATE FROM HOST") != 0, "output \"%.400s\"", out + from);
 	second();
 	from = nout;
 	write(in, "EXIT\r", 5);

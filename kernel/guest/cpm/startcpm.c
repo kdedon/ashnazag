@@ -7,12 +7,11 @@
  * its own address in memory mapped at 0, and the process becomes a lone
  * guest: CP/M runs natively, its supervisor state virtual, its traps
  * through its own vector table.  The sample BIOS's init is skipped in
- * the loaded copy; trap #3 comes here instead.  The console is the
- * caller's terminal.  Drives A: to P: are ~/CPM/x.img (or, with -e,
- * ~/CPM/env/x.img) in the layout cpmfs.h describes; a directory x/
- * there instead is copied into a drive at start, and changes to that
- * drive are not kept.  Without A:, an 8 MB a.img is made holding the
- * distribution's files.  EXIT ends the session.
+ * the loaded copy; trap #3 comes here instead, and trap #2 goes to our
+ * own CP/M 3 BDOS.  The console is the caller's terminal.  Drives A: to
+ * P: are the directories ~/CPM/A to ~/CPM/P (or, with -e, ~/CPM/env/A
+ * ...).  Without A:, one is made holding links to the distribution's
+ * files.  EXIT ends the session.
  */
 
 #include <sys/types.h>
@@ -30,7 +29,7 @@
 #include <dirent.h>
 #include <termio.h>
 #include "tosio.h"
-#include "cpmfs.h"
+#include "bdos3.h"
 #include "../include/envroot.h"
 
 #define	MEM	0x400000L	/* memory at 0 */
@@ -39,19 +38,15 @@
 #define	DIST	"/cpm/dist"
 #define	QUIT	0x7f		/* BIOS function: end the session, d1 the status */
 
-extern void cpm_t3(), cpm_go();
+extern void cpm_t2(), cpm_t3(), cpm_go(), cpm_wboot();
 
 char cpm_stk[0x8000];		/* the BIOS's stack */
 long cpm_ccp;			/* the CCP's warm start */
 
-static struct drive {
-	struct cpmimg	d;
-	unsigned long	dph;
-} drv[16];
-static char root[1024];
+#define	root	b3_root
+char *b3_mem;
 static unsigned long tables = TABLES, tablim, mrt;
-static int cur = -1, trk, sec, iobyte, lst = -1;
-static unsigned long dma = 0x80;
+static int iobyte, lst = -1;
 static int tty, peeked = -1, eof;
 static struct termio tio;
 
@@ -174,190 +169,25 @@ rawtty()
 		tty = 1;
 }
 
-/* ---- files into drives ---- */
-
-static char *
-readfile(path, lenp)
-	char *path;
-	long *lenp;
-{
-	struct stat sb;
-	char *b;
-	int fd;
-
-	if ((fd = open(path, O_RDONLY)) < 0)
-		return 0;
-	if (fstat(fd, &sb) < 0 || sb.st_size > CPM_HDMAX || (b = malloc(sb.st_size + 1)) == 0 ||
-	    read(fd, b, sb.st_size) != sb.st_size) {
-		close(fd);
-		return 0;
-	}
-	close(fd);
-	*lenp = sb.st_size;
-	return b;
-}
-
-/* dir's files with 8.3 names into user 0; alias: X.REL also as X.68K */
+/* A:, made from the distribution when missing */
 static void
-putdir(d, dir, alias)
-	struct cpmimg *d;
-	char *dir;
-	int alias;
-{
-	char path[1100], n[11];
-	struct dirent *de;
-	struct stat sb;
-	DIR *dp;
-	char *b;
-	long len;
-
-	if ((dp = opendir(dir)) == 0)
-		return;
-	while ((de = readdir(dp)) != 0) {
-		sprintf(path, "%.900s/%.100s", dir, de->d_name);
-		if (stat(path, &sb) < 0 || (sb.st_mode & S_IFMT) != S_IFREG ||
-		    cpm_name(de->d_name, n) < 0)
-			continue;
-		if ((b = readfile(path, &len)) == 0)
-			continue;
-		if (cpm_put(d, 0, n, b, len) < 0)
-			fprintf(stderr, "startcpm: %s: no room or name taken\n", path);
-		if (alias && memcmp(n + 8, "REL", 3) == 0) {
-			memcpy(n + 8, "68K", 3);
-			cpm_put(d, 0, n, b, len);
-		}
-		free(b);
-	}
-	closedir(dp);
-}
-
-/* a: made from the distribution */
-static int
-newa(path, d)
-	char *path;
-	struct cpmimg *d;
-{
-	if ((d->fd = open(path, O_RDWR | O_CREAT | O_EXCL, 0644)) < 0)
-		return -1;
-	cpm_format(CPM_HDMAX, &d->f);
-	if (cpm_mkfs(d) < 0)
-		die(path);
-	putdir(d, DIST, 1);
-	cpm_put(d, 0, "EXIT    68K", (char *)exitprg, (long)sizeof exitprg);
-	fprintf(stderr, "startcpm: made A: in %s\n", path);
-	return 0;
-}
-
-/* a host directory, copied into a drive of its own size */
-static int
-snapshot(dir, d)
-	char *dir;
-	struct cpmimg *d;
-{
-	char path[1100], n[11];
-	struct dirent *de;
-	struct stat sb;
-	DIR *dp;
-	long size = 64L << 10;
-
-	if ((dp = opendir(dir)) == 0)
-		return -1;
-	while ((de = readdir(dp)) != 0) {
-		sprintf(path, "%.900s/%.100s", dir, de->d_name);
-		if (stat(path, &sb) == 0 && (sb.st_mode & S_IFMT) == S_IFREG &&
-		    cpm_name(de->d_name, n) == 0)
-			size += (sb.st_size + 4095) & ~4095L;
-	}
-	closedir(dp);
-	size = (size + (32L << 10) + 16383) & ~16383L;	/* + the directory */
-	if (size < CPM_HDMIN)
-		size = CPM_HDMIN;
-	if (size > CPM_HDMAX)
-		size = CPM_HDMAX;
-	cpm_format(size, &d->f);
-	if ((d->mem = malloc(size)) == 0)
-		return -1;
-	memset(d->mem, 0xe5, size);
-	putdir(d, dir, 0);
-	return 0;
-}
-
-/* the drive's DPH, DPB, allocation vector and sector table */
-static void
-dph(v)
-	struct drive *v;
-{
-	static unsigned long dirbuf;
-	struct cpmfmt *f = &v->d.f;
-	unsigned long dpb, xlt = 0;
-	int i;
-
-	if (!dirbuf)
-		dirbuf = galloc(128L);
-	if (f->skew) {
-		xlt = galloc((unsigned long)f->spt * 2);
-		for (i = 0; i < f->spt; i++)
-			put16(xlt + 2 * i, (unsigned long)f->skew[i]);
-	}
-	dpb = galloc(16L);
-	put16(dpb, (unsigned long)f->spt);
-	((char *)dpb)[2] = f->bsh;
-	((char *)dpb)[3] = (1 << f->bsh) - 1;
-	((char *)dpb)[4] = f->exm;
-	put16(dpb + 6, (unsigned long)f->dsm);
-	put16(dpb + 8, (unsigned long)f->drm);
-	put16(dpb + 10, (unsigned long)f->al);
-	put16(dpb + 12, 0L);			/* CKS: fixed media */
-	put16(dpb + 14, (unsigned long)f->off);
-	v->dph = galloc(26L);
-	put32(v->dph, xlt);
-	put32(v->dph + 10, dirbuf);
-	put32(v->dph + 14, dpb);
-	put32(v->dph + 18, galloc(4L));
-	put32(v->dph + 22, galloc((unsigned long)f->dsm / 8 + 1));
-}
-
-static void
-drives()
+drivea()
 {
 	char path[1100];
 	struct stat sb;
-	struct drive *v;
-	int c;
 
-	for (c = 0; c < 16; c++) {
-		v = &drv[c];
-		sprintf(path, "%s/%c.img", root, 'a' + c);
-		if (stat(path, &sb) == 0) {
-			if ((sb.st_mode & S_IFMT) != S_IFREG) {
-				fprintf(stderr, "startcpm: %s: not a file\n", path);
-				continue;
-			}
-			if ((v->d.fd = open(path, O_RDWR)) < 0) {
-				v->d.ro = 1;
-				if ((v->d.fd = open(path, O_RDONLY)) < 0)
-					die(path);
-			}
-			if (cpm_format((long)sb.st_size, &v->d.f) < 0) {
-				fprintf(stderr, "startcpm: %s: size is not a known format\n", path);
-				close(v->d.fd);
-				memset((char *)&v->d, 0, sizeof v->d);
-				continue;
-			}
-		} else {
-			sprintf(path, "%s/%c", root, 'a' + c);
-			if (stat(path, &sb) == 0 && (sb.st_mode & S_IFMT) == S_IFDIR &&
-			    snapshot(path, &v->d) < 0)
-				die(path);
-			if (c == 0 && !v->d.f.size) {
-				sprintf(path, "%s/a.img", root);
-				if (newa(path, &v->d) < 0)
-					die(path);
-			}
-		}
-		if (v->d.f.size)
-			dph(v);
-	}
+	sprintf(path, "%s/a", root);
+	if (stat(path, &sb) == 0)
+		return;
+	sprintf(path, "%s/A", root);
+	if (stat(path, &sb) == 0)
+		return;
+	if (hf_mkdist(path, DIST, (char *)exitprg, "exit.68k", (int)sizeof exitprg) < 0)
+		die(path);
+	fprintf(stderr, "startcpm: made A: in %s\n", path);
+	sprintf(path, "%s/a.img", root);
+	if (stat(path, &sb) == 0)
+		fprintf(stderr, "startcpm: %s is no longer used; cpmtools copies its files out\n", path);
 }
 
 /* ---- the BIOS ---- */
@@ -404,18 +234,6 @@ constat()
 	return 0xff;
 }
 
-static long
-rw(wr)
-	int wr;
-{
-	struct drive *v;
-
-	if (cur < 0 || dma > MEM - 128)
-		return 1;
-	v = &drv[cur];
-	return cpm_io(&v->d, cpm_secoff(&v->d.f, (long)trk, (long)sec), (char *)dma, 128, wr) ? 1 : 0;
-}
-
 long
 cpm_bios(fn, d1, d2)
 	long fn, d1, d2;
@@ -446,28 +264,9 @@ cpm_bios(fn, d1, d2)
 		return 0;
 	case 7:
 		return 0x1a;		/* no reader */
-	case 8:
-		trk = 0;
-		return 0;
-	case 9:
-		d1 &= 0xff;
-		if (d1 > 15 || !drv[d1].d.f.size)
-			return 0;
-		cur = d1;
-		return drv[cur].dph;
-	case 10:
-		trk = d1 & 0xffff;
-		return 0;
-	case 11:
-		sec = d1 & 0xffff;
-		return 0;
-	case 12:
-		dma = d1;
-		return 0;
 	case 13:
-		return rw(0);
 	case 14:
-		return rw(1);
+		return 1;		/* no disks below the BDOS */
 	case 15:
 		return 0xff;
 	case 16:
@@ -487,13 +286,54 @@ cpm_bios(fn, d1, d2)
 		if (d1 > 255)
 			return 0;
 		old = get32(d1 * 4);
-		if (d1 != 35)		/* trap #3 stays the BIOS */
+		if (d1 != 34 && d1 != 35)	/* traps #2 and #3 stay ours */
 			put32(d1 * 4, d2);
 		return old;
 	case QUIT:
 		quit((int)(d1 & 0xff));
 	}
 	return 0;
+}
+
+/* the BDOS's view of the BIOS */
+int
+b3_conin()
+{
+	return conin();
+}
+
+int
+b3_const()
+{
+	return constat();
+}
+
+void
+b3_conout(c)
+	int c;
+{
+	cpm_bios(4L, (long)c, 0L);
+}
+
+void
+b3_list(c)
+	int c;
+{
+	cpm_bios(5L, (long)c, 0L);
+}
+
+long
+b3_bios(fn, d1, d2)
+	long fn, d1, d2;
+{
+	return cpm_bios(fn, d1, d2);
+}
+
+void
+b3_wboot()
+{
+	flush();
+	cpm_wboot();
 }
 
 /* ---- start ---- */
@@ -597,7 +437,9 @@ main(argc, argv)
 		die("mmap");
 	close(fd);
 	pc = loadsys();
-	drives();
+	drivea();
+	b3_init((unsigned long)cpm_t2, get32(mrt + 2), MEM, galloc(16L + 65536L / 8 + 128));
+	put32(34 * 4L, (unsigned long)cpm_t2);
 	put32(35 * 4L, (unsigned long)cpm_t3);
 	if ((fd = open("/dev/tos", O_RDWR)) < 0)
 		die("/dev/tos");

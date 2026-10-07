@@ -1,0 +1,10 @@
+wait # 
+type uname -a\n
+wait TT030
+wait # 
+type dstest info\n
+wait TT Shifter
+wait # 
+sleep 3
+debug screenshot OUT/tt-shell.png
+debug quit 0

@@ -93,6 +93,7 @@ struct tosctr {
 	unsigned char	t_ym[16], t_ymsel;
 	unsigned char	t_dma[16];	/* $FF8600 */
 	int		t_fdcirq;
+	int		t_fdcbusy;	/* the next status read sees the command running */
 	unsigned char	t_scsi[32];	/* $FF8700-$FF878F, folded */
 	unsigned char	t_scc[16], t_sccptr[2];
 	unsigned char	t_misc[16];	/* memory controller and such */

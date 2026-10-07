@@ -30,6 +30,7 @@
       "type": "object",
       "properties": {
         "devices": {"type": "array", "items": {"$ref": "#/$defs/id"}, "uniqueItems": true},
+        "optionalDevices": {"type": "array", "items": {"$ref": "#/$defs/id"}, "uniqueItems": true},
         "rootMiB": {"type": "integer", "minimum": 64, "maximum": 2048},
         "swapMiB": {"type": "integer", "minimum": 4, "maximum": 2048},
         "diskMiB": {"type": "integer", "minimum": 64, "maximum": 8192}

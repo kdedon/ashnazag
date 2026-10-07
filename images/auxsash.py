@@ -356,6 +356,9 @@ def main(a):
         if len(a) > 3:
             with zipfile.ZipFile(a[2]) as z, z.open(a[3]) as f:
                 src = region_hashes(f, regs, size)
+        elif len(a) > 2:
+            with open(a[2], 'rb') as f:
+                src = region_hashes(f, regs, size)
         bad = 0
         for name, s, e in regs:
             line = '%s  %-44s %10d bytes' % (mine[name], name, e - s)
@@ -366,6 +369,27 @@ def main(a):
             print(line)
         if bad:
             sys.exit(1)
+    elif a[0] == 'ddm':
+        with open(a[1], 'r+b') as f:
+            _, _, _, parts = apm(f)
+            drv = [p for p in parts if p[4] == 'Apple_Driver']
+            f.seek(0)
+            b0 = f.read(512)
+            f.seek(512 * drv[0][0])
+            b0 = ddm_driver(b0, f.read(512))
+            f.seek(0)
+            f.write(b0)
+    elif a[0] == 'bootable':
+        # the CD's HFS boot blocks have their header (ID, entry, version)
+        # zeroed; the boot code after it is intact
+        with open(a[1], 'r+b') as f:
+            _, _, _, parts = apm(f)
+            at = [p for p in parts if p[4] == 'Apple_HFS'][0][1] * 512
+            f.seek(at)
+            bb = f.read(18)
+            if bb[:10] == bytes(10) and bb[10:17] == b'\x06System':
+                f.seek(at)
+                f.write(b'LK' + struct.pack('>IH', 0x60000086, 0x4418))
     elif a[0] == 'small':
         small(a[1], a[2], a[3])
     elif a[0] == 'apmcheck':

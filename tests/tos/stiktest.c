@@ -2,7 +2,7 @@
  * stiktest.c -- the STiK transport from inside TOS, run from C:\AUTO on
  * the network root: finds the cookie, resolves, talks to the TCP echo
  * at 10.0.2.100:7, is refused by 10.0.2.2:1, and sends a datagram and
- * a stream over loopback.  Calls go through the TPL table with words
+ * a stream over loopback, and pings 10.0.2.2.  Calls go through the TPL table with words
  * on the stack, as Pure C programs make them.  Each check becomes
  * "PASS name" or "FAIL name value" in U:\STIK.TXT; "DONE" ends it.
  */
@@ -64,6 +64,8 @@ static long Super(s) long s; { pw(0x20); pl(s); return go(); }
 #define	CNget_block(c, b, n)	(pw(c), pl((long)(b)), pw(n), (short)T(19))
 #define	resolve(d, r, l, n)	(pl((long)(d)), pl((long)(r)), pl((long)(l)), pw(n), (short)T(21))
 #define	CNgets(c, b, n, d)	(pw(c), pl((long)(b)), pw(n), pw(d), (short)T(31))
+#define	ICMP_send(h, t, c, b, n) (pl(h), pw(t), pw(c), pl((long)(b)), pw(n), (short)T(32))
+#define	ICMP_handler(f, c)	(pl((long)(f)), pw(c), (short)T(33))
 
 static int
 same(a, b, n)
@@ -257,6 +259,69 @@ loop()
 	TCP_close(s);
 }
 
+static volatile int got, gotseq, gotok;
+static volatile long gotsrc;
+static short hw[2];
+static char pat[16] = "Ash Nazag echo!";
+
+/* echo replies to identifier 0xaffe, from the VBL as STinG's timer would */
+static int
+echoh(dg)
+	char *dg;
+{
+	unsigned char *p = *(unsigned char **)(dg + 26);
+
+	if (p[0] != 0 || p[4] != 0xaf || p[5] != 0xfe)
+		return 0;
+	gotseq = p[6] << 8 | p[7];
+	gotsrc = *(long *)(dg + 12);
+	gotok = *(short *)(dg + 30) == 24 && same(p + 8, pat, 16);
+	got++;
+	*(long *)hw = (long)dg;
+	tcall(*(long *)(tpl + 12 + 4 * 34), hw, 2);	/* ICMP_discard */
+	return 1;
+}
+
+/* echo through the host's echo service, three tries of 2 s */
+static void
+ping()
+{
+	char eb[20];
+	long s, t0;
+	int i, k;
+
+	k = ICMP_handler(echoh, 0);
+	check("icmp_handler", k == 1, (long)k);
+	k = ICMP_handler(echoh, 3);
+	check("icmp_query", k == 1, (long)k);
+	for (i = 0; i < 3 && !got; i++) {
+		eb[0] = 0xaf;
+		eb[1] = 0xfe;
+		eb[2] = 0;
+		eb[3] = i;
+		for (k = 0; k < 16; k++)
+			eb[4 + k] = pat[k];
+		k = ICMP_send(GW, 8, 0, eb, 20);
+		if (i == 0)
+			check("icmp_send", k == 0, (long)k);
+		s = Super(0L);
+		t0 = *(volatile long *)0x4ba;
+		while (!got && *(volatile long *)0x4ba - t0 < 400)
+			;
+		Super(s);
+	}
+	check("icmp_reply", got > 0, (long)i);
+	if (got) {
+		check("icmp_src", gotsrc == GW, gotsrc);
+		check("icmp_seq", gotseq < i, (long)gotseq);
+		check("icmp_data", gotok, 0L);
+	}
+	k = ICMP_handler(echoh, 2);
+	check("icmp_remove", k == 1, (long)k);
+	k = ICMP_send(GW, 13, 0, eb, 20);
+	check("icmp_echo_only", k == -32, (long)k);
+}
+
 /* a name only DNS knows; skipped without a name server or an answer */
 static void
 dns()
@@ -309,6 +374,7 @@ main()
 		tcp();
 		refused();
 		loop();
+		ping();
 	}
 	put("DONE\r\n");
 	if ((h = Fcreate("U:\\STIK.TXT", 0)) >= 0) {

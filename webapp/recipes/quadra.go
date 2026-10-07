@@ -198,8 +198,11 @@ func QuadraRoot(entries []ufs.Entry, kernel io.ReaderAt, kernelSize int64) ([]uf
 		if err != nil {
 			return nil, err
 		}
+		if f.name == "sysinit" {
+			b = withoutLines(b, "modadmin -r") // no loadable drivers in this root
+		}
 		if f.name == "inittab" {
-			b = withoutLines(b, "/usr/lib/sndd", "/usr/lib/sndaux") // not in this root
+			b = withoutLines(b, "/usr/lib/sndd", "/usr/lib/sndaux", "/usr/lib/pingd") // not in this root
 		}
 		file(f.p, f.mode, 0, 3, b)
 	}

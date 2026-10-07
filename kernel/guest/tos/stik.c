@@ -11,6 +11,7 @@
  */
 
 #include <tosio.h>
+#include <pingio.h>
 
 #define	G16(p)	(*(unsigned short *)(p))
 #define	G32(p)	(*(unsigned long *)(p))
@@ -36,6 +37,7 @@
 #define	E_NONAMESERVER	-22
 #define	E_UNREACHABLE	-24
 #define	E_DNSNOADDR	-25
+#define	E_NOROUTINE	-26
 #define	E_PARAMETER	-30
 #define	E_BIGBUF	-31
 #define	E_FNAVAIL	-32
@@ -57,7 +59,9 @@
 #define	EHOSTUNREACH	148
 #define	EINPROGRESS	150
 #define	F_SETFL		4
+#define	O_RDWR		2
 #define	O_NONBLOCK	0x80
+#define	I_NREAD		0x5301
 #define	POLLIN		1
 #define	POLLOUT		4
 
@@ -65,7 +69,9 @@
 #define	RBUF	2048
 #define	POOL	(48 * 1024)
 
-extern long sys_read(), sys_open(), sys_close(), sys_ioctl(), sys_fcntl(), sys_poll(), sys_time();
+extern long sys_read(), sys_write(), sys_open(), sys_close(), sys_ioctl(), sys_fcntl(), sys_poll(),
+    sys_time();
+extern long stik_call();
 extern long p_tfd;
 extern char stik_drv[], stik_tpl[];
 
@@ -83,6 +89,8 @@ static struct tossock so;
 static char gap[576];
 static char cfg[512];		/* STIK_CONFIG, zeroed: no serial line */
 static char flags[64];
+#define	NJAR	64
+static long njar[NJAR * 2];
 
 /* ---- KRmalloc: a first-fit free list over a fixed pool ---- */
 
@@ -1180,6 +1188,175 @@ st_CNfree_NDB(a)
 	return 0;
 }
 
+/* ---- ICMP echo through the host's echo service ---- */
+
+#define	NIH	8
+static long ih[NIH];		/* the clients' ICMP handlers, latest first */
+static int nih, pfd = -1;
+static struct pingreq pq;
+static struct pingrep pr;
+
+/* the service's stream, opened on first use; a plain file there is refused */
+static int
+pingfd()
+{
+	long n;
+
+	if (pfd < 0 && (pfd = (int)sys_open((long)PINGPATH, (long)(O_RDWR | O_NONBLOCK), 0L)) >= 0 &&
+	    sys_ioctl((long)pfd, (long)I_NREAD, (long)&n) < 0) {
+		sys_close((long)pfd);
+		pfd = -1;
+	}
+	if (pfd < 0)
+		pfd = -1;
+	return pfd;
+}
+
+/* data follows the type, code and checksum: identifier, sequence, payload */
+long
+st_ICMP_send(a)
+	char *a;
+{
+	unsigned long dst = G32(a);
+	unsigned char *d = (unsigned char *)G32(a + 8);
+	int len = G16(a + 12);
+
+	if (a[5] != 8 || a[7] != 0)
+		return E_FNAVAIL;
+	if (dst == 0 || dst >> 24 == 0xe0)
+		return E_BADDNAME;
+	if (len < 4 || len - 4 > PING_DATA || d == 0)
+		return E_PARAMETER;
+	if (pingfd() < 0)
+		return E_FNAVAIL;
+	pq.pq_dst = dst;
+	pq.pq_id = d[0] << 8 | d[1];
+	pq.pq_seq = d[2] << 8 | d[3];
+	pq.pq_len = len - 4;
+	cpy(pq.pq_data, (char *)d + 4, len - 4);
+	return sys_write((long)pfd, (long)&pq, (long)sizeof pq) == sizeof pq ? E_NORMAL : E_NOMEM;
+}
+
+long
+st_ICMP_handler(a)
+	char *a;
+{
+	long h = G32(a);
+	int i, k;
+
+	for (i = 0; i < nih && ih[i] != h; i++)
+		;
+	switch (S16(a, 4)) {
+	case 0:		/* HNDLR_SET */
+	case 1:		/* HNDLR_FORCE */
+		if (h == 0 || i < nih || nih == NIH)
+			return 0;
+		for (k = nih++; k > 0; k--)
+			ih[k] = ih[k - 1];
+		ih[0] = h;
+		pingfd();
+		return 1;
+	case 2:		/* HNDLR_REMOVE */
+		if (i == nih)
+			return 0;
+		for (nih--; i < nih; i++)
+			ih[i] = ih[i + 1];
+		return 1;
+	case 3:		/* HNDLR_QUERY */
+		return i < nih;
+	}
+	return 0;
+}
+
+/* an IP_DGRAM: its data, its options, itself */
+long
+st_ICMP_discard(a)
+	char *a;
+{
+	char *dg = (char *)G32(a);
+
+	if (inpool(dg)) {
+		krfree((char *)G32(dg + 26));
+		krfree((char *)G32(dg + 20));
+		krfree(dg);
+	}
+	return 0;
+}
+
+static unsigned short
+cksum(p, n)
+	unsigned char *p;
+	int n;
+{
+	unsigned long s = 0;
+
+	for (; n > 1; p += 2, n -= 2)
+		s += p[0] << 8 | p[1];
+	if (n)
+		s += p[0] << 8;
+	while (s >> 16)
+		s = (s & 0xffff) + (s >> 16);
+	return ~s & 0xffff;
+}
+
+/*
+ * Each VBL, outside any TPL call: echo replies become IP_DGRAMs for the
+ * handlers, latest first, until one takes it.  Without handlers they
+ * are dropped.
+ */
+void
+st_icmppoll()
+{
+	unsigned char *pk;
+	char *dg;
+	int i, n, k;
+
+	for (k = 0; pfd >= 0 && k < 4 && sys_read((long)pfd, (long)&pr, (long)sizeof pr) == sizeof pr; k++) {
+		n = pr.pr_len > PING_DATA ? PING_DATA : pr.pr_len;
+		if (nih == 0 || (dg = kralloc(48L)) == 0)
+			continue;
+		if ((pk = (unsigned char *)kralloc(8L + n)) == 0) {
+			krfree(dg);
+			continue;
+		}
+		for (i = 0; i < 48; i++)
+			dg[i] = 0;
+		dg[0] = 0x45;
+		G16(dg + 2) = 28 + n;
+		dg[8] = pr.pr_ttl;
+		dg[9] = 1;
+		G32(dg + 12) = pr.pr_src;
+		G32(dg + 26) = (unsigned long)pk;
+		G16(dg + 30) = 8 + n;
+		pk[0] = pk[1] = pk[2] = pk[3] = 0;
+		pk[4] = pr.pr_id >> 8;
+		pk[5] = pr.pr_id;
+		pk[6] = pr.pr_seq >> 8;
+		pk[7] = pr.pr_seq;
+		cpy((char *)pk + 8, pr.pr_data, n);
+		G16(pk + 2) = cksum(pk, 8 + n);
+		for (i = 0; i < nih; i++)
+			if ((short)stik_call(ih[i], dg))
+				break;
+		if (i == nih)
+			st_ICMP_discard((char *)&dg);
+	}
+}
+
+long
+st_RAW_open(a)
+	char *a;
+{
+	return E_NOROUTINE;
+}
+
+long
+st_RAW_close(a)
+	char *a;
+{
+	return E_BADHANDLE;
+}
+
 long
 st_get_dftab(a)
 	char *a;
@@ -1216,8 +1393,16 @@ stikinit()
 	for (j = jar; j[0]; j += 2)
 		if (j[0] == 0x5354694bL)
 			return;
-	if ((j - jar) / 2 + 1 >= j[1])
-		return;
+	if ((j - jar) / 2 + 1 >= j[1]) {
+		/* full: move the cookies to a jar of our own */
+		if (j - jar + 4 > NJAR * 2)
+			return;
+		for (k = 0; k < j - jar; k++)
+			njar[k] = jar[k];
+		j = njar + k;
+		j[1] = NJAR;
+		*(long **)0x5a0 = njar;
+	}
 	j[2] = 0;
 	j[3] = j[1];
 	j[0] = 0x5354694bL;

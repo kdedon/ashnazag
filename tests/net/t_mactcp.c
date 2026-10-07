@@ -5,7 +5,10 @@
  * Runs startmac with a System Folder whose startup item is mtcp
  * (mtcp/mtcp.c): it opens .IPP, reads the address,
  * opens a TCP stream to the echo service at 10.0.2.100:7, sends, reads
- * the echo back and closes.  Its "mtcp P|F|I" lines become results.
+ * the echo back and closes, sends itself a datagram and resolves names
+ * through "MacTCP DNR".  Its "mtcp P|F|I" lines become results.
+ * Built with SYS76 (t_mactcp76.c), the same under Mac OS 7.6.1 from
+ * the System Folders' volume (SCSI disk 1).
  * Skips without guest support, the uinter module, the Mac files or a
  * working echo service.
  */
@@ -29,7 +32,20 @@
 #include "t.h"
 
 #define	MD	"/tests/aux/mod.d"
-#define	SYSDIR	"/mac/sys/MTcp"
+#define	MTDIR	"/mac/sys/MTcp"
+#ifdef SYS76
+#define	TNAME	"mactcp76"
+#define	MACVOL	"/macsys"
+#define	MACDEV	"/dev/dsk/c1d0s0"
+#define	SYSDIR	MACVOL "/S761"
+#define	TBMEM	"TBMEMORY=16M"
+#define	MACWAIT	180
+#else
+#define	TNAME	"mactcp"
+#define	SYSDIR	MTDIR
+#define	TBMEM	"TBMEMORY=8M"
+#define	MACWAIT	120
+#endif
 #define	TLOW	0x744c4f57		/* 'tLOW', the Mac RAM segment */
 #define	ECHO	0x0a000264
 #define	TBUF	8192		/* the kernel's trace ring */
@@ -39,7 +55,7 @@ static char klog[TBUF + 1];
 
 static char *macenv[] = {
 	"PATH=/usr/bin:/sbin", "HOME=/tmp", "TBVERBOSE=1", "TBWARN=1",
-	"TBSYSTEM=" SYSDIR, "TBMEMORY=8M", 0
+	"TBSYSTEM=" SYSDIR, TBMEM, 0
 };
 
 static int
@@ -103,6 +119,26 @@ pid_t pid;
 	fflush(stdout);
 }
 
+/* from a file on another file system */
+static int
+copy(from, to)
+char *from, *to;
+{
+	char b[4096];
+	int f, t, n, ok = 0;
+
+	if ((f = open(from, O_RDONLY)) < 0)
+		return -1;
+	if ((t = creat(to, 0644)) >= 0) {
+		while ((n = read(f, b, sizeof b)) > 0 && write(t, b, n) == n)
+			;
+		ok = n == 0;
+		close(t);
+	}
+	close(f);
+	return ok ? 0 : -1;
+}
+
 /* the File ID daemon, which the Mac side's file system waits for */
 static pid_t
 fidd()
@@ -119,6 +155,14 @@ fidd()
 		    (int)(major(sb.st_dev) << 8 | minor(sb.st_dev)));
 		fclose(f);
 	}
+#ifdef SYS76
+	/* and the System Folders' volume */
+	if (stat(MACVOL, &sb) == 0 && (f = fopen("/etc/mtab", "a")) != 0) {
+		fprintf(f, MACDEV " " MACVOL " 4.2 rw,noquota,dev=%x 1 1\n",
+		    (int)(major(sb.st_dev) << 8 | minor(sb.st_dev)));
+		fclose(f);
+	}
+#endif
 	if ((pid = fork()) == 0) {
 		setpgrp();
 		execl("/etc/aux/fidd", "fidd", "-d", (char *)0);
@@ -269,7 +313,7 @@ main()
 	int p[2], st, fd, id, mj = 54;
 	pid_t pid, fpg;
 
-	t_init("mactcp", 200);
+	t_init(TNAME, MACWAIT + 80);
 	if (t_kmem("guest_loading") == -1) {
 		t_skip("all", "kernel has no guest support");
 		return t_done();
@@ -280,13 +324,24 @@ main()
 	er.er_magic = 0x150;
 	er.er_flags = EXF_FIRST;
 	modadm(MOD_TY_EXEC, MOD_C_MREG, &reg);
+#ifndef SYS76
 	if (stat("/aux/bin/abi", &sb) == 0) {
 		sym("aux_trace", 2L, 1);
 		abisock();
 		sym("aux_trace", 0L, 1);
 	}
+#else
+	if (stat(MACDEV, &sb) < 0) {
+		t_skip("all", "no Mac OS 7.6.1 volume");
+		return t_done();
+	}
+	if (stat(SYSDIR, &sb) < 0 &&
+	    !t_check("macvol_mount", system("/sbin/mount -F ufs " MACDEV " " MACVOL) == 0,
+	    "mount " MACDEV " failed"))
+		return t_done();
+#endif
 	if (stat(MD "/uinter", &sb) < 0 || stat("/mac/bin/startmac", &sb) < 0 ||
-	    stat("/etc/aux/rom", &sb) < 0 || stat(SYSDIR "/mtcp", &sb) < 0) {
+	    stat("/etc/aux/rom", &sb) < 0 || stat(MTDIR "/mtcp", &sb) < 0 || stat(SYSDIR, &sb) < 0) {
 		t_skip("all", "no uinter module, startmac, ROM, fidd or mtcp on this root");
 		return t_done();
 	}
@@ -302,10 +357,16 @@ main()
 		return t_done();
 	close(fd);
 	fpg = fidd();
+#ifdef SYS76
+	copy(MTDIR "/mtcp", SYSDIR "/Startup Items/mtcp");
+	copy(MTDIR "/MacTCPDNR", SYSDIR "/MacTCP DNR");
+#else
 	link("/mac/sys/Sys7/System", SYSDIR "/System");
 	link("/mac/sys/Sys7/Finder", SYSDIR "/Finder");
 	mkdir(SYSDIR "/Startup Items", 0777);
 	link(SYSDIR "/mtcp", SYSDIR "/Startup Items/mtcp");
+	link(SYSDIR "/MacTCPDNR", SYSDIR "/MacTCP DNR");
+#endif
 	mkdir("/Desktop Folder", 0777);
 	if (pipe(p) < 0)
 		return t_done();
@@ -321,7 +382,7 @@ main()
 		_exit(127);
 	}
 	close(p[1]);
-	t_check("mtcp_done", relay(p[0], 120), "no \"mtcp done\" from the Mac side");
+	t_check("mtcp_done", relay(p[0], MACWAIT), "no \"mtcp done\" from the Mac side");
 	kill(-pid, SIGKILL);
 	close(p[0]);
 	st = 0;
@@ -331,8 +392,11 @@ main()
 	if ((id = shmget(TLOW, 0, 0)) >= 0)
 		shmctl(id, IPC_RMID, (struct shmid_ds *)0);
 	kill(-fpg, SIGTERM);
+#ifndef SYS76
 	unlink(SYSDIR "/System");
 	unlink(SYSDIR "/Finder");
+#endif
 	unlink(SYSDIR "/Startup Items/mtcp");
+	unlink(SYSDIR "/MacTCP DNR");
 	return t_done();
 }

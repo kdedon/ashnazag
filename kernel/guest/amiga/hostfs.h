@@ -38,5 +38,7 @@ void mig_hostfs_destroy(struct mig_hostfs *);
 int mig_hostfs_mount(struct mig_hostfs *, unsigned int, const char *, const char *, int);
 void mig_hostfs_dispatch(struct mig_hostfs *, struct mig_fs_request *);
 int mig_hostfs_overlay(const char *, const unsigned char *, const unsigned char *, unsigned long);
+int mig_hostfs_overlay_when(const char *, const unsigned char *, const unsigned char *,
+    unsigned long, const volatile unsigned int *, unsigned int);
 
 #endif

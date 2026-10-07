@@ -2,8 +2,8 @@
  * dstest -- exercise the display service.
  *
  *   dstest info                  display, modes, VBL count, keyboard
- *   dstest draw [-s seed] [-c steps] [-t secs] [-b] [-w|-u] [-n name]
- *                                session: pattern, CLUT, then steps CLUT
+ *   dstest draw [-s seed] [-c steps] [-t secs] [-b] [-w|-u] [-n name] [-m mode]
+ *                                session (in mode): pattern, CLUT, then steps CLUT
  *                                rotations one VBL apart; hold secs (0:
  *                                until killed), printing notes; -b stays
  *                                in the background; -u maps cache-inhibited
@@ -129,13 +129,13 @@ char **argv;
 	struct fbinfo fi;
 	struct fbnote n;
 	struct pollfd p;
-	unsigned long seed = 0, steps = 0, k;
+	unsigned long seed = 0, steps = 0, mode = 0, k;
 	long secs = 0, t0;
 	int c, fd, id, front = 1, cache = 0;
 	char *name = "dstest";
 	unsigned char *fb;
 
-	while ((c = getopt(argc, argv, "s:c:t:bwun:")) != -1)
+	while ((c = getopt(argc, argv, "s:c:t:bwun:m:")) != -1)
 		switch (c) {
 		case 's': seed = strtoul(optarg, 0, 0); break;
 		case 'c': steps = strtoul(optarg, 0, 0); break;
@@ -144,10 +144,13 @@ char **argv;
 		case 'w': cache = FBC_WT; break;
 		case 'u': cache = FBC_CI; break;
 		case 'n': name = optarg; break;
+		case 'm': mode = strtoul(optarg, 0, 0); break;
 		default: return 2;
 		}
 	fd = fbopen();
 	id = acquire(fd, front, name);
+	if (mode && ioctl(fd, FBIOSMODE, mode) < 0)
+		die("FBIOSMODE");
 	if (ioctl(fd, FBIOGINFO, &fi) < 0)
 		die("FBIOGINFO");
 	if (cache && ioctl(fd, FBIOCACHE, cache) < 0)
@@ -157,8 +160,8 @@ char **argv;
 		die("mmap");
 	setcmap(fd, &fi, seed, 0UL);
 	dspat_draw(fb, &fi, seed);
-	printf("dstest: session %d drawn, seed %lu, %lux%lu depth %lu\n",
-	    id, seed, fi.fi_width, fi.fi_height, fi.fi_depth);
+	printf("dstest: session %d drawn, seed %lu, %lux%lu depth %lu mode 0x%lx\n",
+	    id, seed, fi.fi_width, fi.fi_height, fi.fi_depth, fi.fi_mode);
 	fflush(stdout);
 	for (k = 1; k <= steps; k++) {
 		if (ioctl(fd, FBIOVBLWAIT, 1) < 0)
@@ -239,7 +242,7 @@ char **argv;
 	int fd;
 
 	if (argc < 2) {
-		fprintf(stderr, "usage: dstest info | draw [-s seed] [-c steps] [-t secs] [-b] [-w|-u] [-n name] | events [-t secs] [-n count] | switch id | state\n");
+		fprintf(stderr, "usage: dstest info | draw [-s seed] [-c steps] [-t secs] [-b] [-w|-u] [-n name] [-m mode] | events [-t secs] [-n count] | switch id | state\n");
 		return 2;
 	}
 	if (strcmp(argv[1], "info") == 0)

@@ -1,11 +1,11 @@
 wait login:
 type root\n
 wait # 
-type /tests/auxreg /tests/mod.d 54 56; echo auxreg-rc=$?\n
+type if [ -d /tests ]; then /tests/auxreg /tests/mod.d 54 56; fi; echo auxreg-rc=$?\n
 wait auxreg-rc=
-type /tests/modadmin -l /tests/mod.d/guestcore; /tests/modadmin -s | grep -c tosguest; mkdir -p /tmp/c; echo mods-done\n
+type [ ! -d /tests ] || { /tests/modadmin -l /tests/mod.d/guestcore; /tests/modadmin -s | grep -c tosguest; }; mkdir -p /tmp/c; echo mods-done\n
 wait mods-done
-type /tests/starttos -P -C /tmp/c -c /tests/tosml.img -v 2> /tmp/st.log; echo starttos-rc=$?\n
+type T=/tests; [ -d /tests ] || T=/usr/bin; C=$T/tosml.img; [ -f $C ] || C=/etc/tos/tosml.img; $T/starttos -P -C /tmp/c -c $C -v 2> /tmp/st.log; echo starttos-rc=$?\n
 sleep 120
 debug screenshot OUT/1-desktop.png
 sleep 1

@@ -80,15 +80,16 @@ if [ -f "$OUT/mod.d/uinter" ] && [ -f "$AUXROOT/mac/bin/startmac" ] && [ -f "$SY
 		cp -rp "$V/S761" "$V/S761u"
 		python3 "$AUX/images/macenv/userfinder.py" "$V/S761u/%Finder"
 	fi
-	# mtcp, t_mactcp's Mac application, a startup item there
+	# mtcp, t_mactcp's Mac application, a startup item there, and the resolver
 	LX=$AUX/toolchain/linux/bin/m68k-linux-gnu
 	if [ -x "$LX-gcc" ]; then
 		mkdir -p "$OUT/root/mac/sys/MTcp" "$OUT/obj"
-		nice -n 19 "$LX-gcc" -m68020 -mpcrel -O -ffreestanding -fno-builtin -nostdlib \
+		nice -n 19 "$LX-gcc" -m68020 -mpcrel -fcall-used-d2 -O -ffreestanding -fno-builtin -nostdlib \
 			-Wl,-Ttext=0 -Wl,--build-id=none -o "$OUT/obj/mtcp.elf" \
 			"$T/net/mtcp/mtcp0.s" "$T/net/mtcp/mtcp.c"
 		"$LX-objcopy" -O binary -j .text -j .rodata "$OUT/obj/mtcp.elf" "$OUT/obj/mtcp.bin"
 		python3 "$T/net/mtcp/mkapp.py" "$OUT/obj/mtcp.bin" "$OUT/root/mac/sys/MTcp/mtcp"
+		cp "$AUXROOT/mac/sys/System Folder/MacTCP DNR" "$OUT/root/mac/sys/MTcp/MacTCPDNR"
 	fi
 	# A/UX 2.0.1's System 6 environment, a root of its own (chroot), from
 	# its CD, when present; the test root's names have no spaces, t_mac6

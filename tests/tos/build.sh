@@ -2,13 +2,14 @@
 # build.sh -- t_tos's inputs: starttos, the machine-layer cartridge, the
 # system C: folder with C:\AUTO\UTEST.PRG (checks the host drives and
 # the XBIOS sound calls),
-# STIKTEST.PRG (checks the STiK transport), EXITTEST.PRG and SESSION.ACC
+# STIKTEST.PRG (checks the STiK transport), LATEST.PRG (the Line-A calls
+# under fVDI), EXITTEST.PRG and SESSION.ACC
 # (the session's exit),
 # EmuTOS and the user's TOS ROM image.
 #
 #   sh tests/tos/build.sh outdir
 #
-# Out: outdir/root/tos/bin/{starttos,maketos}, outdir/root/tos/{sys,stik,exit,acc,fvdi,teradesk,qed}/,
+# Out: outdir/root/tos/bin/{starttos,maketos,pingd}, outdir/root/tos/{sys,stik,exit,acc,fvdi,teradesk,qed}/,
 # outdir/root/etc/tos/{emutos.img,rom,tosml.img}.
 # EMUTOS names the EmuTOS 512 KB release zip (default: ref/emutos-release),
 # EMUTOSLANG its image (us).  TOSROM names the user's ROM: an image, or a
@@ -52,9 +53,12 @@ nice -n 19 "$TC/bin/m68k-cbm-sysv4-ld" -o "$R/tos/bin/starttos" "$SYS/usr/ccs/li
 	"$SYS/usr/lib/libc.so.1" \
 	"$T/build/obj/libextra.a" "$LIBGCC" "$SYS/usr/ccs/lib/crtn.o"
 cp "$AUX/images/tosenv/maketos" "$R/tos/bin/maketos"
+# the echo service, for STIKTEST.PRG's ping
+sh "$KDIR/net/build.sh" "$O/net" > /dev/null
+cp "$O/net/pingd" "$R/tos/bin/pingd"
 XCC="nice -n 19 $TC/bin/m68k-cbm-sysv4-gcc -O -m68020 -Wall -Wno-implicit -fno-builtin"
 $XCC -c "$G/tos/hostfs.c" -o "$O/hostfs.o"
-$XCC -I"$G/mod/tosguest" -c "$G/tos/stik.c" -o "$O/stik.o"
+$XCC -I"$G/mod/tosguest" -I"$KDIR/net" -c "$G/tos/stik.c" -o "$O/stik.o"
 $XCC -I"$G/mod/tosguest" -c "$G/tos/xsnd.c" -o "$O/xsnd.o"
 "$BIN/m68k-elf-as" -m68040 --register-prefix-optional -o "$O/tosml.o" "$G/tos/tosml.s"
 "$BIN/m68k-elf-ld" --no-warn-rwx-segments -N -Ttext=0xfa0000 -o "$O/tosml.elf" "$O/tosml.o" "$O/hostfs.o" "$O/stik.o" "$O/xsnd.o"
@@ -82,6 +86,19 @@ done
 end=$("$BIN/m68k-elf-nm" "$O/s0.elf" | awk '$3 == "_end" { print $1 }')
 python3 "$T/tos/elf2prg.py" "$O/s0.bin" "$O/s0x10000.bin" \
 	$((0x$end - $(wc -c < "$O/s0.bin"))) "$O/stiktest.prg"
+# LATEST.PRG: the Line-A calls on the fVDI screen
+$XCC -c "$T/tos/latest.c" -o "$O/latest.o"
+"$BIN/m68k-elf-as" -m68040 --register-prefix-optional -o "$O/la.o" "$T/tos/la.s"
+for base in 0 0x10000; do
+	"$BIN/m68k-elf-ld" --no-warn-rwx-segments -N -Ttext=$base -o "$O/l$base.elf" "$O/gem.o" "$O/latest.o" "$O/la.o"
+	"$BIN/m68k-elf-objcopy" -O binary "$O/l$base.elf" "$O/l$base.bin"
+	[ $(($(wc -c < "$O/l$base.bin") % 2)) = 0 ] || printf '\0' >> "$O/l$base.bin"
+done
+end=$("$BIN/m68k-elf-nm" "$O/l0.elf" | awk '$3 == "_end" { print $1 }')
+python3 "$T/tos/elf2prg.py" "$O/l0.bin" "$O/l0x10000.bin" \
+	$((0x$end - $(wc -c < "$O/l0.bin"))) "$O/latest.prg"
+mkdir -p "$R/tos/linea"
+cp "$O/latest.prg" "$R/tos/linea/LATEST.PRG"
 # EXITTEST.PRG: the session's host calls; SESSION.ACC, the accessory making them
 "$BIN/m68k-elf-as" -m68040 --register-prefix-optional -o "$O/exit.o" "$T/tos/exit.s"
 for base in 0 0x10000; do

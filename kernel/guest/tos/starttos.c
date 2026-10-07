@@ -19,7 +19,9 @@
  * and draws at the top of ST-RAM, which is the session's region.  Its
  * ST-RAM is then one contiguous block of the machine's, for the DMA.
  * -S keeps GEM on the ST screen: fVDI gets no frame buffer, for
- * programs that also write and read that screen themselves.
+ * programs that also write and read that screen themselves.  Files a -C
+ * folder lacks, such as AUTO, come from the system's fVDI folder, so
+ * it boots with fVDI unless -M or -S asks for the ST screen.
  * A second child, the sound pump, plays the guest's DMA sound on the
  * host's sound service; with -P the machine's own sound is used.
  */
@@ -57,7 +59,7 @@ static char *xdrv[26];			/* -D */
 static char *tab[26];			/* drive -> host directory */
 static char tro[26];			/* read-only */
 static long ramsize = 4L << 20;
-static int mono, stscreen, verbose, pass, romarg;
+static int mono, stscreen, verbose, pass, romarg, cfold;
 static int tfd;
 extern int fbpipe, vpass;
 
@@ -179,6 +181,7 @@ drivec()
 }
 
 #define	SYSDIR	"/tos/sys"
+#define	FVDIDIR	"/tos/fvdi"
 
 /* LETTER PATH [ro] lines of file f into the table, letters D to T */
 static void
@@ -262,6 +265,14 @@ drives()
 		if (verbose)
 			fprintf(stderr, "starttos: %c: %s%s\n", 'A' + d, path, tro[d] ? " (read-only)" : "");
 	}
+	/* the system fVDI as C:'s read-only fallback (flag 2) */
+	if (cfold && !mono && !stscreen && !pass && stat(FVDIDIR, &sb) == 0 &&
+	    p + sizeof FVDIDIR + 2 < e) {
+		*p++ = 'C';
+		*p++ = 3;
+		strcpy(p, FVDIDIR);
+		p += sizeof FVDIDIR;
+	}
 	*p = 0;
 	put32((unsigned long)CART + 0x64, (unsigned long)-(tm->tm_isdst > 0 ? altzone : timezone));
 }
@@ -341,6 +352,10 @@ envsetup()
 	struct passwd *pw;
 	struct stat sb;
 
+	if (cdir && (stat(cdir, &sb) < 0 || (sb.st_mode & S_IFMT) != S_IFDIR)) {
+		fprintf(stderr, "starttos: %s: no such folder\n", cdir);
+		return -1;
+	}
 	if (disk || cdir)
 		return 0;
 	h = getenv("HOME");
@@ -390,8 +405,8 @@ main(argc, argv)
 		switch (c) {
 		case 'r': rom = optarg; romarg = 1; break;
 		case 'c': cart = optarg; break;
-		case 'C': cdir = optarg; disk = 0; break;
-		case 'd': disk = optarg; cdir = 0; break;
+		case 'C': cdir = optarg; disk = 0; cfold = 1; break;
+		case 'd': disk = optarg; cdir = 0; cfold = 0; break;
 		case 'e': env = optarg; break;
 		case 'D':
 			c = optarg[0] & ~040;

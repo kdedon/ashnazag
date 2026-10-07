@@ -67,6 +67,22 @@ kset(char *name, long v)
 	return ok ? 0 : -1;
 }
 
+/* the long at name+off in the kernel or a loaded module, or -1 */
+static long
+kget(char *name, long off)
+{
+	unsigned long a = 0, info;
+	long v = -1;
+	int fd;
+
+	if (getksym(name, &a, &info) < 0 || (fd = open("/dev/kmem", O_RDONLY)) < 0)
+		return -1;
+	if (lseek(fd, (off_t)(a + off), 0) == -1 || read(fd, (char *)&v, 4) != 4)
+		v = -1;
+	close(fd);
+	return v;
+}
+
 /* SoundOut's self-test in a 7.6.1 session, as a Quadra 800 */
 static int sstat(int, struct sndstat *);
 
@@ -651,11 +667,19 @@ int
 main()
 {
 	struct sndstat s0, s1;
+	struct mod_mreg reg;
 	long ms, k0, k1, id, sess;
-	int a, c, fb, fd;
+	int a, c, fb, fd, mj = 46;
 	char b[4096];
 
 	t_init("sound", 120);
+	/* the drivers load on first open, as sysinit registers them */
+	strcpy(reg.md_modname, "asc");
+	reg.md_typedata = (caddr_t)&mj;
+	modadm(MOD_TY_CDEV, MOD_C_MREG, &reg);
+	strcpy(reg.md_modname, "auxsnd");
+	mj = 47;
+	modadm(MOD_TY_CDEV, MOD_C_MREG, &reg);
 	if (access(SNDD, X_OK) < 0 || ((fd = open("/dev/asc", O_RDWR)) < 0 && errno != EBUSY)) {
 		t_skip("present", "no %s or /dev/asc: %s", SNDD, T_ERR);
 		return t_done();
@@ -680,9 +704,9 @@ main()
 	}
 	t_check("bound_front", s0.ss_sess == s0.ss_front, "bound to %ld, front %ld",
 		s0.ss_sess, s0.ss_front);
-	k0 = t_kmem("snd_ev+4");
+	k0 = kget("snd_ev", 4L);
 	ms = tone(a, CHIPHZ) < 0 ? -1 : drain(a);
-	k1 = t_kmem("snd_ev+4");
+	k1 = kget("snd_ev", 4L);
 	t_info("play_ms", "%ld", ms);
 	t_check("play_paced", ms >= 800 && ms <= 3000, "1 s of samples drained in %ld ms", ms);
 	sstat(a, &s1);

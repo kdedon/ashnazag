@@ -10,6 +10,7 @@
  * accidents, not a security boundary, since TOS programs run as the
  * user and can make host calls themselves.  An environment's .env is
  * hidden: the session's lock on it would go when the guest closed it.
+ * A drive may have a read-only fallback directory for what it lacks.
  */
 
 #include <sys/types.h>
@@ -78,6 +79,7 @@ static struct search sr[NS];
 static long age;
 static struct drive dv[NDRV];
 static char dmap[32];			/* drive number -> dv index + 1 */
+static char under[NDRV];		/* dv index -> its fallback's + 1 */
 static struct drive *cur;		/* the drive of the call being served */
 static char *root;			/* its root */
 static char hp[2 * PLEN];		/* host path of the last resolve */
@@ -923,6 +925,35 @@ fail:
 	return r;
 }
 
+/*
+ * A missing file or directory a read finds in the drive's fallback
+ * instead: cur becomes the fallback, at the same path.  A wildcard
+ * search of an existing directory stays where it is.
+ */
+static int
+fallback(fn, a, t, r)
+	int fn;
+	short *a;
+	char *t;
+	long r;
+{
+	struct drive *u;
+	char *p;
+
+	if (!under[cur - dv] || (r != E_PTHNF && r != E_FILNF))
+		return 0;
+	if (!(fn == 0x4b || fn == 0x4e || (fn == 0x3d && !(a[3] & 3)) || (fn == 0x43 && !a[3])))
+		return 0;
+	for (p = t; r == E_FILNF && *p; p++)
+		if (*p == '*' || *p == '?')
+			return 0;
+	u = dv + under[cur - dv] - 1;
+	scpy(u->cwd, cur->cwd);
+	cur = u;
+	root = cur->root;
+	return 1;
+}
+
 /* the drive a call names; with a = 0 the default one */
 static int
 drv(d)
@@ -1023,6 +1054,7 @@ gemdos(a, ret)
 		*ret = E_ACCDN;
 		return 1;
 	}
+again:
 	switch (fn) {
 	case 0x39:
 		r = resolve(t, 0);
@@ -1063,6 +1095,8 @@ gemdos(a, ret)
 	default:
 		r = fsfirst(t, a[3]);
 	}
+	if (fallback(fn, a, t, r))
+		goto again;
 	*ret = r;
 	return 1;
 }
@@ -1087,13 +1121,18 @@ hinit()
 		((char *)sr)[i] = 0;
 	for (i = 0; i < sizeof dmap; i++)
 		dmap[i] = 0;
+	for (i = 0; i < NDRV; i++)
+		under[i] = 0;
 	for (i = 0, p = p_dtab; *p && i < NDRV; i++) {
 		d = up(*p) - 'A';
-		dv[i].ro = p[1] & 1;
+		dv[i].ro = p[1] & 3;
 		dv[i].root = p += 2;
 		dv[i].cwd[0] = 0;
 		p += slen(p) + 1;
-		if (d >= 0 && d < 26) {
+		if (dv[i].ro & 2) {
+			if (d >= 0 && d < 26 && dmap[d])
+				under[dmap[d] - 1] = i + 1;
+		} else if (d >= 0 && d < 26) {
 			dmap[d] = i + 1;
 			m |= 1L << d;
 		}

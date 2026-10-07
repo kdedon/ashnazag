@@ -3,8 +3,9 @@
 #
 #   sh kernel/mac/sound/build.sh [outdir]
 #
-# outdir defaults to kernel/build/mac/sound.  Produces snd.o for the
-# kernel, and sndd and sndaux, AMIX programs linked against the shared libc.
+# outdir defaults to kernel/build/mac/sound.  Produces snd.o and
+# auxsnd.o for the sound modules (mods.sh), and sndd, sndaux and sndtest,
+# AMIX programs linked against the shared libc.
 # Fails on compiler warnings, common symbols and sections the AMIX
 # loader does not bind.
 set -e
@@ -46,7 +47,7 @@ if [ ! -f "$OUT/libextra.a" ]; then
 	 ar rc ../libextra.a $(ar t "$LIB/libc.so" | grep -v '^libc.so.1$'))
 	rm -rf "$OUT/extra"
 fi
-for f in sndd sndaux; do
+for f in sndd sndaux sndtest; do
 TMPDIR="$OUT" nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -Wall -Wno-comment -D__STDC__=0 -I"$D" \
 	-c "$D/$f.c" -o "$OUT/$f.o" 2> "$OUT/$f.warn" || {
 	cat "$OUT/$f.warn"; echo "[FAIL] $f.c"; exit 1; }

@@ -1,12 +1,13 @@
 #!/bin/sh
 # mkcpm.sh -- the CP/M-68K environment's files: startcpm, DRI's CPM.SYS
 # and the nine distribution disks' files, from which startcpm makes each
-# user's A: (~/CPM/a.img) on first run.
+# user's A: (~/CPM/A) on first run.
 #
 #   sh images/cpmenv/mkcpm.sh outdir
 #
 # Out: outdir/cpm.cpio (usr/bin/startcpm, cpm/sys/CPM.SYS, cpm/dist/),
-# owned by root.  CPMZIP names DRI's release zip (default:
+# owned by root, and outdir/guest.cpio (guest's ~/CPM/A, as startcpm
+# makes it).  CPMZIP names DRI's release zip (default:
 # media/cpm68k/68kv1_3.zip); without it the archive is empty.
 set -e
 D=$(cd "$(dirname "$0")" && pwd)
@@ -45,6 +46,22 @@ if [ -f "$CPMZIP" ]; then
 	chmod -R a+rX,go-w "$S"
 	chmod 755 "$S/usr/bin/startcpm"
 	chmod 444 "$S/cpm/sys/CPM.SYS" "$S"/cpm/dist/*
+	# A: links to each file, X.68K to X.REL, and EXIT.68K
+	mkdir -p "$OUT/guest/home/guest/CPM/A"
+	for f in "$S"/cpm/dist/*; do
+		n=$(basename "$f")
+		l=$(echo "$n" | tr A-Z a-z)
+		ln -s "/cpm/dist/$n" "$OUT/guest/home/guest/CPM/A/$l"
+	done
+	for f in "$S"/cpm/dist/*.REL; do
+		n=$(basename "$f" .REL)
+		l=$OUT/guest/home/guest/CPM/A/$(echo "$n" | tr A-Z a-z).68k
+		[ -h "$l" ] || ln -s "/cpm/dist/$n.REL" "$l"
+	done
+	python3 -c "import sys; sys.stdout.buffer.write(bytes([0x60, 0x1a, 0, 0, 0, 8] + [0] * 22 +
+		[0x30, 0x3c, 0, 0x7f, 0x72, 0, 0x4e, 0x43] + [0] * 8))" > "$OUT/guest/home/guest/CPM/A/exit.68k"
+	chmod 755 "$OUT/guest/home/guest/CPM" "$OUT/guest/home/guest/CPM/A"
+	chmod 644 "$OUT/guest/home/guest/CPM/A/exit.68k"
 	echo "[ok] CP/M-68K: startcpm, $(ls "$S/cpm/dist" | wc -l | tr -d ' ') files for A:"
 else
 	echo "[skip] CP/M-68K: no $CPMZIP"
@@ -52,4 +69,7 @@ fi
 # the archive carries its parents: they must not shut others out
 chmod 755 "$S"
 (cd "$S" && find . -depth -print | cpio -o -H newc -R 0:3 --quiet) > "$OUT/cpm.cpio"
-rm -rf "$S"
+mkdir -p "$OUT/guest"
+(cd "$OUT/guest" && find home/guest/CPM -print 2> /dev/null |
+	cpio -o -H newc -R 100:1 --quiet) > "$OUT/guest.cpio"
+rm -rf "$S" "$OUT/guest"

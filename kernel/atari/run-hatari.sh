@@ -1,7 +1,8 @@
 #!/bin/sh
-# Run a Falcon in Hatari for a fixed number of frames and save a screenshot.
+# Run a Falcon or TT in Hatari for a fixed number of frames and save a screenshot.
 #
 #   run-hatari.sh [options] [-- extra hatari options]
+#     -m falcon|tt  machine (default falcon); a TT has a 68030 with 68882
 #     -c 030|060    CPU: 68030 without FPU (default) or 68060 with FPU (CT60)
 #     -s MB         ST-RAM, 0-14 (default 14)
 #     -t MB         TT-RAM/FastRAM, multiple of 4 (default 0)
@@ -26,15 +27,15 @@ if [ -z "$HATARI" ]; then
 	HATARI=$AUX/ref/hatari/build/src/hatari
 	sh "$AUX/kernel/atari/build-hatari.sh" > /dev/null	# rebuilds after a patch changes
 fi
-CPU=030 ST=14 TT=0 DISK= BUS=ide ROM= FRAMES=1500 OUT=./hatari-shot.png TMO=300 LOG=
+MACH=falcon CPU=030 ST=14 TT=0 DISK= BUS=ide ROM= FRAMES=1500 OUT=./hatari-shot.png TMO=300 LOG=
 KERNEL= KARGS= KEYS=
-while getopts c:s:t:d:b:r:f:o:T:l:k:a:K: o; do
+while getopts m:c:s:t:d:b:r:f:o:T:l:k:a:K: o; do
 	case $o in
-	c) CPU=$OPTARG ;; s) ST=$OPTARG ;; t) TT=$OPTARG ;; d) DISK=$OPTARG ;;
+	m) MACH=$OPTARG ;; c) CPU=$OPTARG ;; s) ST=$OPTARG ;; t) TT=$OPTARG ;; d) DISK=$OPTARG ;;
 	b) BUS=$OPTARG ;; r) ROM=$OPTARG ;; f) FRAMES=$OPTARG ;; o) OUT=$OPTARG ;;
 	T) TMO=$OPTARG ;; l) LOG=$OPTARG ;; k) KERNEL=$OPTARG ;; a) KARGS=$OPTARG ;;
 	K) KEYS=$OPTARG ;;
-	*) sed -n '2,20p' "$0"; exit 2 ;;
+	*) sed -n '2,21p' "$0"; exit 2 ;;
 	esac
 done
 shift $((OPTIND - 1))
@@ -56,6 +57,11 @@ case $CPU in
 030) CPUOPT="--cpulevel 3 --fpu none" ;;
 060) CPUOPT="--cpulevel 6 --fpu internal" ;;
 *) echo "cpu: 030 or 060" >&2; exit 2 ;;
+esac
+case $MACH in
+falcon) ;;
+tt) CPUOPT="--cpulevel 3 --fpu 68882" ;;
+*) echo "machine: falcon or tt" >&2; exit 2 ;;
 esac
 
 DISKOPT=
@@ -93,7 +99,7 @@ rm -f "$OUT"
 # console's, not appended at exit as if the machine had rebooted
 HOME=$RUN SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy \
 timeout -k 5 "$TMO" nice -n 19 stdbuf -oL "$HATARI" \
-	--machine falcon $CPUOPT --mmu on --addr24 off \
+	--machine $MACH $CPUOPT --mmu on --addr24 off \
 	--memsize "$ST" --ttram "$TT" --dsp none \
 	--tos "$ROM" --monitor vga $DISKOPT \
 	--fast-forward on --sound off --confirm-quit no \

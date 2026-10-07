@@ -3,8 +3,9 @@
  * (shadowcsw/shadowbsw and the counts are sized from it); the rows of
  * Amiga hardware drivers are empty.  Rows 18 and 40 are the disk driver
  * over the IDE layer.  Block row 20 is the RAM disk; row 42 (raw RAM
- * disk) is filled when the RAM disk is configured.  Character row 18,
- * the Amiga Ethernet's major, is the cartridge-port Ethernet.
+ * disk) is filled when the RAM disk is configured.  Character rows 18
+ * (the Amiga Ethernet's major: the cartridge-port Ethernet) and 58 (the
+ * SCSI Ethernet) are left for their loadable drivers.
  */
 
 #include "sys/types.h"
@@ -36,7 +37,7 @@ extern struct streamtab coinfo, nxtinfo, nsxtinfo, ptsinfo, ptminfo;
 extern struct streamtab sldinfo, loopinfo, timinfo, trwinfo, loginfo;
 extern struct streamtab spinfo, clninfo, tcoinfo, tcooinfo, tclinfo;
 extern struct streamtab ipinfo, tcpinfo, udpinfo, ripinfo, icmpinfo;
-extern struct streamtab arpinfo, sadinfo, nuinfo;
+extern struct streamtab arpinfo, sadinfo;
 
 #define B_NONE	{ ND, ND, ND, ND, ND, ND, ND, nullflag }
 #define C_NONE	{ ND, ND, ND, ND, ND, ND, ND, ND, ND, ND, notty, nostr, nullflag }
@@ -81,7 +82,7 @@ struct cdevsw cdevsw[70] = {
 	C_STR(&ptminfo, oldflag),			/* 15 ptmx */
 	C_NONE,						/* 16 ct */
 	C_NONE,						/* 17 fd */
-	C_STR(&nuinfo, nullflag),			/* 18 aen */
+	C_NONE,						/* 18 aen */
 	C_STR(&sldinfo, nullflag),			/* 19 slip */
 	C_STR(&loopinfo, oldflag),			/* 20 loop */
 	C_NONE,						/* 21 par */
@@ -118,7 +119,9 @@ struct cdevsw cdevsw[70] = {
 	{ ds_evopen, ds_evclose, ds_evread, ND, ds_evioctl,
 		ND, ND, ds_evpoll, ND, ND, notty, nostr, nullflag },	/* 53 mouse */
 	C_NONE,						/* 54 */
-	C_NONE, C_NONE, C_NONE, C_NONE, C_NONE,		/* 55-59 */
+	C_NONE, C_NONE, C_NONE,				/* 55-57 */
+	C_NONE,						/* 58 dpn */
+	C_NONE,						/* 59 */
 	C_NONE, C_NONE, C_NONE, C_NONE, C_NONE,		/* 60-64 */
 	C_NONE, C_NONE, C_NONE, C_NONE, C_NONE,		/* 65-69 */
 };

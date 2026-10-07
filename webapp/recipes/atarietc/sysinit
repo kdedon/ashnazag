@@ -1,7 +1,11 @@
 #!/sbin/sh
 # Setup before single-user mode: set the clock, check and record the root,
-# name the node.
+# name the node, register the drivers that load on first open.
 PATH=/sbin:/usr/sbin:/usr/bin; export PATH
+modadmin -r sdev aen 18
+modadmin -r cdev dmasnd 46
+modadmin -r cdev auxsnd 47
+modadmin -r sdev dpn 58
 /usr/amiga/bin/setclk
 /sbin/bcheckrc
 uname -S `cat /etc/nodename`

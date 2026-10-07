@@ -48,14 +48,20 @@ sys.stdout.buffer.write(struct.pack('>HIIIIIIH', 0x601a, len(t), 0, 0, 0, 0, 0, 
 cc -std=gnu89 -O -Wall -w -I"$G/cpm" -o "$O/fscheck" "$T/cpm/fscheck.c" "$G/cpm/cpmfs.c"
 "$O/fscheck" "$O" "$O"/all/*
 python3 "$T/cpm/fscheck.py" "$O" "$R/cpm/dist"
+# the BDOS on this host, over a scratch directory
+cc -std=gnu89 -O -Wall -w -I"$G/cpm" -o "$O/bdostest" "$T/cpm/bdostest.c" \
+	"$G/cpm/bdos3.c" "$G/cpm/con3.c" "$G/cpm/hostfs.c"
+rm -rf "$O/bdos"
+"$O/bdostest" "$O/bdos"
+rm -rf "$O/bdos"
 LIBGCC=$(ls "$TC"/lib/gcc-lib/m68k-cbm-sysv4/*/libgcc.a | tail -1)
-for c in startcpm cpmfs; do
+for c in startcpm bdos3 con3 hostfs; do
 	nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -Wall -Wno-implicit -D__STDC__=0 \
 		-I"$G/mod/tosguest" -c "$G/cpm/$c.c" -o "$O/$c.o"
 done
 nice -n 19 "$TC/bin/m68k-cbm-sysv4-as" -o "$O/cpment.o" "$G/cpm/cpment.s"
 nice -n 19 "$TC/bin/m68k-cbm-sysv4-ld" -o "$R/cpm/bin/startcpm" "$SYS/usr/ccs/lib/crt1.o" \
-	"$SYS/usr/ccs/lib/crti.o" "$O/startcpm.o" "$O/cpmfs.o" "$O/cpment.o" \
+	"$SYS/usr/ccs/lib/crti.o" "$O/startcpm.o" "$O/bdos3.o" "$O/con3.o" "$O/hostfs.o" "$O/cpment.o" \
 	"$SYS/usr/lib/libc.so.1" "$T/build/obj/libextra.a" "$LIBGCC" "$SYS/usr/ccs/lib/crtn.o"
 rm -rf "$O/zip" "$O/all" "$O"/*.img
 echo "[ok] startcpm, CP/M-68K $(ls "$R/cpm/dist" | wc -l | tr -d ' ') files"

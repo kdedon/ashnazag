@@ -30,6 +30,7 @@ else
 	cp -r "$FVDI/." "$W/src"
 fi
 patch -s -p1 -d "$W/src" < "$H/wheelv.patch"
+patch -s -p1 -d "$W/src" < "$H/linea.patch"
 cat > "$W/bin/cc" <<CC
 #!/bin/sh
 exec nice -n 19 $B/m68k-linux-gnu-gcc -m68020 -Wa,--register-prefix-optional \\
@@ -72,8 +73,10 @@ for c in init colours printf; do
 	"$W/bin/cc" $CF -c "$D/$c.c" -o "$W/$c.o"
 done
 "$W/bin/cc" $CF -c "$H/ashfb.c" -o "$W/ashfb.o"
+"$W/bin/cc" $CF -c "$H/linea.c" -o "$W/linea.o"
+"$W/bin/cc" -c "$H/../../drawops/drawops.s" -o "$W/drawops.o"
 prg "$OUT/ashfb.sys" "$D/c_common.gnu.o" "$D/common.gnu.o" "$D/clip.gnu.o" \
-	"$W/init.o" "$W/colours.o" "$W/printf.o" "$W/ashfb.o"
+	"$W/init.o" "$W/colours.o" "$W/printf.o" "$W/ashfb.o" "$W/linea.o" "$W/drawops.o"
 sed 's/$/\r/' "$H/fvdi.sys" > "$OUT/fvdi.sys"
 rm -rf "$W"
 echo "[ok] fvdi.prg, ashfb.sys, fvdi.sys"

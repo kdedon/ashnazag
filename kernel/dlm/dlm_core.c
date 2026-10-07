@@ -1005,6 +1005,13 @@ dlm_modadm(uap, rvp)
 			return EFAULT;
 		return dlm_creg(r.md_modname, mj);
 	}
+#ifndef DLM_HOST
+	if (uap->type == MOD_TY_SDEV) {
+		if (copyin(r.md_typedata, (caddr_t)&mj, sizeof mj))
+			return EFAULT;
+		return dlm_sreg(r.md_modname, mj);
+	}
+#endif
 	return EINVAL;			/* other slot types not implemented yet */
 }
 

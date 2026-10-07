@@ -80,7 +80,11 @@ Lp2snd:
 	btst	&4,%d0			| CB1: sound chip
 	beq.w	Lp2slot
 	moveb	&0x10,%a0@(0x1a00)
-	jsr	snd_intr
+	movel	snd_intrfn,%d0		| the sound module's handler, while it is in
+	beq.w	Lp2snd0
+	movel	%d0,%a0
+	jsr	%a0@
+Lp2snd0:
 	jmp	intret
 Lp2slot:
 	btst	&1,%d0			| CA1: a slot line fell
@@ -223,6 +227,8 @@ Lpsout:
 	.data
 	.globl	mac_slotstuck
 mac_slotstuck:	.long	0
+	.globl	snd_intrfn
+snd_intrfn:	.long	0
 mac_storm:	.long	0, 0, 0, 0, 0, 0, 0, 0
 Lpsmsg:	.asciz	"mac: stray level-%d interrupt\n"
 Lpspanic:	.asciz	"mac: level-%d interrupt storm"

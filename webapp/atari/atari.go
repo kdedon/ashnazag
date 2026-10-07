@@ -16,6 +16,8 @@ var (
 	bootSector []byte
 	//go:embed axbload.bin
 	loader []byte
+	//go:embed axbload-nosv.bin
+	loaderNoSV []byte
 )
 
 const (
@@ -40,6 +42,7 @@ type Params struct {
 	CmdLine          string
 	Root, Home       io.ReaderAt
 	RootMiB, HomeMiB int
+	NoSuperVidel     bool // boot with the loader that has no SuperVidel probe
 }
 
 // Sizes returns the boot partition and /home sizes in MiB for a disk, both
@@ -116,7 +119,9 @@ func kernelSum(k []byte) (uint32, error) {
 }
 
 // Boot returns the AXB contents: loader, command line, kernel.
-func Boot(kernel []byte, cmd string) ([]byte, error) {
+func Boot(kernel []byte, cmd string) ([]byte, error) { return boot(loader, kernel, cmd) }
+
+func boot(loader, kernel []byte, cmd string) ([]byte, error) {
 	if len(cmd) > 255 {
 		return nil, fmt.Errorf("command line longer than 255 bytes")
 	}
@@ -139,14 +144,18 @@ func Assemble(ctx context.Context, dst io.Writer, p Params) error {
 	if err != nil {
 		return err
 	}
-	if home != p.HomeMiB || len(loader) > loadMax || len(bootSector) > codeMax || p.DiskMiB > 8192 {
+	if home != p.HomeMiB || len(loader) > loadMax || len(loaderNoSV) > loadMax || len(bootSector) > codeMax || p.DiskMiB > 8192 {
 		return fmt.Errorf("layout does not match the filesystems")
 	}
-	boot, err := Boot(p.Kernel, p.CmdLine)
+	ld := loader
+	if p.NoSuperVidel {
+		ld = loaderNoSV
+	}
+	axbImg, err := boot(ld, p.Kernel, p.CmdLine)
 	if err != nil {
 		return err
 	}
-	if len(boot) > axb*mib*sector {
+	if len(axbImg) > axb*mib*sector {
 		return fmt.Errorf("boot partition is too small for the kernel")
 	}
 	pos := int64(0)
@@ -188,7 +197,7 @@ func Assemble(ctx context.Context, dst io.Writer, p Params) error {
 	steps := []func() error{
 		func() error { return put(RootSector(p.DiskMiB, axb, p.RootMiB, p.SwapMiB, home)) },
 		func() error { return zero(axbStart * sector) },
-		func() error { return put(boot) },
+		func() error { return put(axbImg) },
 		func() error { return zero(int64(axbStart+axb*mib) * sector) },
 		func() error { return copyFS(p.Root, int64(p.RootMiB)<<20) },
 		func() error { return zero(int64(axbStart+(axb+p.RootMiB+p.SwapMiB)*mib) * sector) },

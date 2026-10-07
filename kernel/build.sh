@@ -9,7 +9,8 @@
 #
 # PLATFORM=atari builds the Falcon030 kernel (build/unix-atari030.elf)
 # from the stage-1 base instead of the Mac kernel; PLATFORM=atari060 the
-# Falcon 040/060 kernel (build/unix-atari060.elf) from the stage-2 base.
+# Falcon 040/060 kernel (build/unix-atari060.elf) from the stage-2 base;
+# with SVIDEL=0, without SuperVidel support (build/unix-atari060-nosv.elf).
 #
 # Logs go to kernel/build/logs/.  One PASS/FAIL line per stage; stops at
 # the first failure with a non-zero exit.
@@ -61,6 +62,7 @@ IMG="$K/mac/ramdisk/build/root.img"
 if [ -f "${AMIX_TAPE:-/nonexistent}/02" ]; then
 	sh "$K/mac/display/build.sh" > "$LOG/root.log" 2>&1 || fail root "display build (dstest) failed"
 	sh "$K/mac/sound/build.sh" >> "$LOG/root.log" 2>&1 || fail root "sound build (sndd) failed"
+	sh "$K/net/build.sh" >> "$LOG/root.log" 2>&1 || fail root "echo service build (pingd) failed"
 	sh "$K/mac/ramdisk/mkroot.sh" >> "$LOG/root.log" 2>&1 || fail root "mkroot.sh failed"
 fi
 if [ -f "$IMG" ]; then

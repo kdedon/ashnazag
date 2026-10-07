@@ -380,6 +380,7 @@ struct mod_operations mod_hookops = { hook_install, hook_remove, hook_info };
 
 #define	CDEV_SLOTS	8
 #define	CDEV_NOPEN	32
+#define	SDEV_MAX	4		/* majors of one STREAMS driver */
 #define	DRVSZ		100		/* struct mod_drv_data */
 #define	DRV_BCOUNT	36
 #define	DRV_CDEVSW	40
@@ -456,6 +457,15 @@ cempty(cp)
 }
 
 int dlm_cdev_open(), dlm_cdev_close();
+extern int dlm_sdev_install();
+extern void dlm_sdev_remove(), dlm_sdev_info();
+
+int
+dlm_cempty(cp)
+	struct cdevsw *cp;
+{
+	return cempty(cp);
+}
 
 /* the placeholder: trampolines, everything else nodev */
 static void
@@ -572,6 +582,28 @@ dlm_cdev_open(devp, flag, otyp, cr)
 	return e;
 }
 
+/* Loads module name for a static driver that calls through a pointer it sets. */
+int
+dlm_loadname(name)
+	char *name;
+{
+	struct dlm_guard g;
+	label_t save;
+	struct dlm_mod *m;
+	int e;
+
+	bzero((caddr_t)&g, sizeof g);
+	bcopy((caddr_t)&u.u_qsav, (caddr_t)&save, sizeof (label_t));
+	if (DLM_SETJMP(&u.u_qsav)) {
+		bcopy((caddr_t)&save, (caddr_t)&u.u_qsav, sizeof (label_t));
+		dlm_abort(&g);
+		DLM_LONGJMP(&u.u_qsav);
+	}
+	e = dlm_load(name, DL_SYS, 1, &g, &m);
+	bcopy((caddr_t)&save, (caddr_t)&u.u_qsav, sizeof (label_t));
+	return e;
+}
+
 /* cdevsw d_close: the driver's close, then the key's hold goes */
 int
 dlm_cdev_close(dev, flag, otyp, cr)
@@ -628,7 +660,7 @@ drv_install(m, td)
 	n = (int)S32(G32(r + DRV_CCOUNT));
 	if (G32(r + DRV_BCOUNT) != 0 || n < 1 || n > CDEV_SLOTS)
 		return EINVAL;
-	if (G32(DLM_RP(m, c) + CD_TTYS) || G32(DLM_RP(m, c) + CD_STR))
+	if (G32(DLM_RP(m, c) + CD_TTYS))
 		return EINVAL;
 	if ((fl = G32(DLM_RP(m, c) + CD_FLAG)) != 0) {
 		if (!inimg(m, fl, 4L))
@@ -636,6 +668,13 @@ drv_install(m, td)
 		if (G32(DLM_RP(m, fl)) & D_OLD)
 			return EINVAL;
 	}
+	if (G32(DLM_RP(m, c) + CD_STR))
+#ifdef DLM_HOST
+		return EINVAL;
+#else
+		return n > SDEV_MAX ? EINVAL : dlm_sdev_install(m, mj, n,
+		    G32(DLM_RP(m, c) + CD_STR), fl ? (int *)DLM_RP(m, fl) : (int *)0);
+#endif
 	for (k = 0; k < CD_NFN; k++) {
 		f = G32(DLM_RP(m, c) + 4 * k);
 		if (f && (f < DLM_KLO || f >= DLM_KHI) && !inimg(m, f, 2L))
@@ -671,6 +710,9 @@ drv_remove(m, td)
 {
 	int k, s;
 
+#ifndef DLM_HOST
+	dlm_sdev_remove(m);
+#endif
 	for (k = 0; k < CDEV_SLOTS; k++)
 		if (dlm_cslot[k].cs_name[0] && dlm_cslot[k].cs_mod == m) {
 			s = dlm_splhi();
@@ -701,6 +743,9 @@ drv_info(m, td, st)
 				st->mss_p1[0] = dlm_cslot[k].cs_major;
 			st->mss_p1[1]++;
 		}
+#ifndef DLM_HOST
+	dlm_sdev_info(m, &st->mss_p1[0], &st->mss_p1[1]);
+#endif
 }
 
 struct mod_operations mod_drvops = { drv_install, drv_remove, drv_info };

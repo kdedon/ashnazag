@@ -42,6 +42,44 @@ struct sndev {
 	long		se_front;	/* display session in front, 0 console */
 	long		se_fuid;	/* its owner */
 	unsigned long	se_serial;	/* front changes so far */
+	long		se_hold;	/* a passthrough guest in front has the hardware */
+};
+
+/*
+ * /dev/dmasnd (major DMA_MAJ, one open, root): the Atari DMA sound.  The
+ * driver plays a ring in ST-RAM; write() queues samples in the format set
+ * by DMA_SETFMT, taking whole frames up to the limit (O_NONBLOCK: what
+ * fits, EAGAIN if none; EBUSY while held).  read() and poll() give struct
+ * sndev events as /dev/asc does; se_irq carries DMA_EVEMPTY when all
+ * queued data has played.  POLLOUT: room for more.
+ */
+#define DMA_MAJ		46
+#define DMA_EVEMPTY	1
+#define DMA_IOC		('D' << 8)
+#define DMA_SETFMT	(DMA_IOC | 1)	/* struct dmafmt *: nearest the hardware has, written back */
+#define DMA_GETDELAY	(DMA_IOC | 2)	/* bytes queued, not yet played */
+#define DMA_SETLIMIT	(DMA_IOC | 3)	/* most bytes queued at once */
+#define DMA_SETVOL	(DMA_IOC | 4)	/* 0..7 */
+#define DMA_FLUSH	(DMA_IOC | 5)	/* drop what is queued, stop */
+#define DMA_STATS	(DMA_IOC | 6)	/* struct dmastat * */
+
+struct dmafmt {
+	long		d_rate;		/* Hz */
+	short		d_bits;		/* 8 (signed) or 16 (signed, big-endian) */
+	short		d_chans;	/* 1 or 2, left first */
+};
+
+struct dmastat {
+	unsigned long	d_intrs;	/* frame interrupts */
+	unsigned long	d_skips;	/* ... that found the DMA past the expected block */
+	unsigned long	d_repeats;	/* blocks played twice (a late interrupt) */
+	unsigned long	d_fallbacks;	/* lost interrupts: back to one repeating frame */
+	unsigned long	d_under;	/* queue ran dry */
+	unsigned long	d_played;	/* bytes of data played */
+	unsigned long	d_starts;	/* DMA starts */
+	long		d_chained;
+	long		d_playing;
+	long		d_held;
 };
 
 /* records; a reply has the request's r_cmd */

@@ -15,6 +15,8 @@
 # The compiler turns a constant division into a 64-bit multiply, which the
 # 060 emulates through a trap.  Objects with such code build -m68000 and
 # call 32-bit helpers; chk64.py fails the build if one of ours still has any.
+# SVIDEL=0 leaves the SuperVidel console out (default out
+# build/unix-atari060-nosv); SVIDEL=1, the default, links it in.
 set -e
 
 A=$(cd "$(dirname "$0")" && pwd)
@@ -27,8 +29,12 @@ PATH="$AUX/toolchain/linux/bin:$AUX/toolchain/bin:$PATH"
 export PATH
 
 BASE="${1:-$PORT/build/unix-040}"
-OUT="${2:-$K/build/unix-atari060}"
-W="$K/build/atari060"
+SVIDEL=${SVIDEL:-1}
+case $SVIDEL in
+1)	OUT="${2:-$K/build/unix-atari060}" W="$K/build/atari060" SV=-DATA_SV ;;
+0)	OUT="${2:-$K/build/unix-atari060-nosv}" W="$K/build/atari060-nosv" SV= ;;
+*)	echo "[FAIL] SVIDEL=$SVIDEL: 0 or 1"; exit 1 ;;
+esac
 mkdir -p "$W"
 [ -f "$BASE" ] || { echo "[FAIL] no base image: $BASE"; exit 1; }
 m68k-linux-gnu-nm "$BASE" | grep -q ' [DdBb] kptr040$' ||
@@ -36,7 +42,7 @@ m68k-linux-gnu-nm "$BASE" | grep -q ' [DdBb] kptr040$' ||
 
 CC="m68k-cbm-sysv4-gcc -m68040"
 AS="$CC -Wa,--defsym,ATA060=1"
-CFLAGS="$AMIX_KERNEL_CFLAGS -m68040 -DATA060 -Wall -Wno-comment"
+CFLAGS="$AMIX_KERNEL_CFLAGS -m68040 -DATA060 $SV -Wall -Wno-comment"
 SOFTMUL=-m68000
 cc_nobss() {
 	o="$W/$(basename "$1" .c).o"
@@ -68,9 +74,6 @@ for c in ataide ahdi; do
 done
 cc_nobss "$A/atartc.c" "-I$AMIX_ROOT/usr/sys/amiga/alien $SOFTMUL"
 cc_nobss "$MAC/s5dir/uiomod.c"
-for c in nuchip nudlpi; do
-	cc_nobss "$A/netusbee/$c.c" "-I$A/netusbee"
-done
 $CC -c "$MAC/vtop/vtop.s" -o "$W/vtop.o"
 $CC -c "$MAC/ptalloc/ptalloc.s" -o "$W/ptalloc.o"
 m68k-linux-gnu-objcopy --redefine-sym hat_ptalloc=ata_ptalloc_mac "$W/ptalloc.o"
@@ -94,7 +97,7 @@ sh "$K/guest/build.sh" -k "$BASE" "$W/guest"
 OBJS="$W/dlm/dlm.o $W/guest/guest.o $W/ataentry.o $W/ataintr.o $W/pstartata.o $W/ata060math.o $W/cfgorig.o
 $W/ataconf.o $W/ikbd.o $W/fbcons.o $W/fbfont.o $W/atadevsw.o $W/atacons.o $W/ds.o $W/dsdev.o
 $W/dsseg.o $W/atads.o $W/ataide.o $W/ahdi.o $W/atartc.o $W/rd.o $RDB/rdimage.o
-$W/uiomod.o $W/vtop.o $W/ptalloc.o $W/nuchip.o $W/nudlpi.o"
+$W/uiomod.o $W/vtop.o $W/ptalloc.o"
 
 OVR="pstart config config_orig putchar getchar callrom sysdump haltsys rtnfirm
 hw_clkstart clkreld p1int p2int p3int p4int p5int p6int parinit qlintr slpoll
@@ -140,7 +143,7 @@ echo "[*] no 64-bit multiply or divide in the Atari objects"
 python3 "$A/chk64.py" $W/ataentry.o $W/ataintr.o $W/pstartata.o $W/ata060math.o $W/cfgorig.o \
 	$W/ataconf.o $W/ikbd.o $W/fbcons.o $W/fbfont.o $W/atadevsw.o $W/atacons.o \
 	$W/ds.o $W/dsdev.o $W/dsseg.o $W/atads.o $W/ataide.o $W/ahdi.o $W/atartc.o \
-	$W/uiomod.o $W/vtop.o $W/ptalloc.o $W/rd.o $W/nuchip.o $W/nudlpi.o
+	$W/uiomod.o $W/vtop.o $W/ptalloc.o $W/rd.o
 
 echo "[*] linking the Atari overrides over the base"
 m68k-cbm-sysv4-ld -r -o "$OUT" "$W/base.weak" $OBJS
@@ -201,4 +204,5 @@ python3 "$A/mkreltab.py" -c "$OUT.elf"
 m68k-elf-readelf -h "$OUT.elf" | grep -E 'Type|Entry'
 m68k-elf-size "$OUT.elf"
 python3 "$A/chk64.py" -r "$OUT.elf"
+sh "$A/mods.sh" "$OUT.elf" "$W/mods"
 echo "[OK] built $OUT and $OUT.elf"

@@ -14,12 +14,15 @@
 #include "dsio.h"
 #include "rtgshare.h"
 #include "inputshare.h"
+#include "earlyshare.h"
 #include "hostfswire.h"
 #include "miglog.h"
 
 extern int munmap();
 
 int migkick = -1;
+/* the boot menu asked for: the guest finds it in the input page */
+int migmenu;
 extern int mig_fs_bell;
 
 /* 5x7 glyphs, a row per byte, for the startup status */
@@ -322,8 +325,67 @@ static int movecard(pid_t guest, int ack, int ram)
  * request moved the startup status on.  Copying, it also looks every 40 ms
  * until a second passes without change, for pixels P96 wrote itself.
  */
+/* how the board bound before DOS, and the DOS calls made until DOS existed */
+static void earlylog(volatile struct mig_early_status *e)
+{
+    static const char *what[] = { "", "stopped", "a library did not initialize",
+        "the board did not bind", "bound" };
+    char line[400];
+    int n = 0, i;
+    for (i = 1; i < 256 && n < 380; i++)
+        if (e->calls[i / 32] & 1U << i % 32)
+            n += sprintf(line + n, " -%d", i * 6);
+    line[n] = 0;
+    miglog(0, "board before DOS: %s at step %u; DOS calls before DOS:%s",
+        e->status < 5 ? what[e->status] : "?", e->step, n ? line : " none");
+    for (i = 0; i < 2 && i < (int)e->screens; i++)
+        miglog(0, "screen %#x: %s, screen %#x", e->screen[2 * i] & 0x7fffffff,
+            e->screen[2 * i] >> 31 ? "in the board's mode and depth" : "kept", e->screen[2 * i + 1]);
+    miglog(0, "input %s", ((struct mig_input *)MIG_INPUT_BASE)->ready == 1 ? "taken" : "not taken");
+}
+
+/*
+ * The guest's alert as a band of text at the top of the display, until a
+ * button or its time; the pixels under it come back after.
+ */
+static void alert(unsigned char *fb, struct fbinfo *fi, volatile struct mig_early_alert *a)
+{
+    char buf[sizeof a->text + 1], *line, *nl;
+    unsigned int lines = 0, rows, i;
+    unsigned char *save, *top = fb + fi->fi_offset;
+    long end;
+    memcpy(buf, (char *)a->text, sizeof a->text);
+    buf[sizeof a->text] = 0;
+    for (line = buf; (nl = strchr(line, '\n')) != 0; line = nl + 1)
+        lines++;
+    rows = 16 * lines + 16;
+    if (a->height > rows) rows = a->height;
+    if (rows > fi->fi_height) rows = fi->fi_height;
+    if ((save = (unsigned char *)malloc(rows * fi->fi_rowbytes)) != 0)
+        memcpy(save, top, rows * fi->fi_rowbytes);
+    for (i = 0; i < rows; i++)
+        memset(top + i * fi->fi_rowbytes, i < 2 || i >= rows - 2 ? 1 : 0, fi->fi_width);
+    for (i = 0, line = buf; (nl = strchr(line, '\n')) != 0; line = nl + 1, i++) {
+        *nl = 0;
+        if (8 + 16 * i + 16 <= rows - 2) text(fb, fi, 8 + 16 * i, line);
+    }
+    miglog(0, "alert %08x: %.200s", a->number, buf);
+    end = a->frames ? miglog_ms() + (long)a->frames * 20 : -1;
+    while (!a->click && (end < 0 || miglog_ms() < end))
+        poll((struct pollfd *)0, 0, 20);
+    a->answer = a->click == 1;
+    if (save) {
+        memcpy(top, save, rows * fi->fi_rowbytes);
+        free(save);
+    }
+    a->done = a->seq;
+}
+
 static void watch(int fd, int go, int ack, unsigned char *fb, struct fbinfo *fi, pid_t guest)
 {
+    volatile struct mig_early_status *early = (volatile struct mig_early_status *)MIG_EARLY_STATUS;
+    volatile struct mig_early_alert *al = (volatile struct mig_early_alert *)MIG_EARLY_ALERT;
+    unsigned int earlyseen = 0;
     struct mig_rtg rtg;
     struct amigawait aw;
     struct fbcmap cm;
@@ -362,10 +424,16 @@ static void watch(int fd, int go, int ack, unsigned char *fb, struct fbinfo *fi,
         else if (ioctl(mig_fs_bell, AMIGAIOC_WAITN, &aw) < 0 && errno != EINTR) {
             if (errno != ESRCH)
                 miglog(0, "display doorbell: %s", strerror(errno));
+            if (early->status)
+                earlylog(early);
             return;
         }
         live->wakes++;
         if (getppid() == 1) return;
+        if (al->seq != al->done)
+            alert(fb, fi, al);
+        if (early->status > MIG_EARLY_STARTED && early->status != earlyseen)
+            earlylog(early), earlyseen = early->status;
         status = mig_rtg_snapshot((const volatile struct mig_rtg *)MIG_RTG_BASE,
             &rtg, fi->fi_width, fi->fi_height);
         /* mid-update or invalid: the card rings when it completes an update */
@@ -553,6 +621,7 @@ int migdisp(int ready, int life, int go, int ack, int fd, struct fbinfo *fip)
     memset(fb + fi.fi_offset, 0, fi.fi_rowbytes * fi.fi_height);
     miglog(0, "display session %ux%u", fi.fi_width, fi.fi_height);
     mig_input_init(input);
+    input->menu = migmenu ? 4 : 0;
     memset(&inputstate, 0, sizeof inputstate);
     memset(&keyinfo, 0, sizeof keyinfo);
     memset(&mouseinfo, 0, sizeof mouseinfo);

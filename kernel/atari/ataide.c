@@ -1,10 +1,10 @@
 /*
  * Falcon IDE under the AMIX SCSI layer (sd.h).  The disk driver's SCSI
  * commands run as polled ATA PIO commands with 28-bit LBA; slices come
- * from the AHDI root sector.
+ * from the AHDI root sector.  Card 1 is the SCSI bus, through a module.
  *
- * Minor number (sd.h): bits 0-2 unit (0 master, 1 slave), bit 3 card
- * (only 0), bits 4-6 slice.
+ * Minor number (sd.h): bits 0-2 unit (IDE: 0 master, 1 slave; SCSI: the
+ * ID), bit 3 card, bits 4-6 slice.
  */
 
 #include	"sys/types.h"
@@ -15,9 +15,10 @@
 #include	"rico.h"
 #include	"sd.h"
 #include	"ahdi.h"
+#include	"sdhook.h"
 #include	"vm/bootconf.h"
 
-extern int	printf(), sleep(), ata_busprobe();
+extern int	printf(), sleep(), ata_busprobe(), dlm_loadname();
 extern void	delayus(), wakeup(), iodone();
 
 #ifndef BSIZE
@@ -74,7 +75,9 @@ static struct partab	partab[0x100];
 static struct ahdi_slice sl[AHDI_NSLICE];
 static struct unit	un[NUNIT];
 static bool		busy;
-static bool		shown[NUNIT];
+#define DISK(dev)	((dev) & (SDCARDS * SDUNITS - 1))	/* card and unit */
+static bool		shown[SDCARDS * SDUNITS];
+static bool		scanned[SDCARDS * SDUNITS];
 static bool		reset;
 static bool		noide;		/* no interface: bus error */
 static struct sdcom	*qhead, *qtail;
@@ -84,6 +87,8 @@ extern dev_t		dumpdev;
 extern struct bootobj	swapfile;
 
 static char	hwname[] = "Falcon IDE";
+
+struct sdhook *volatile	ata_sdscsi;
 
 /* Wait until BSY is clear; then until all of want are set, if any. */
 static int
@@ -302,10 +307,19 @@ struct sdcom *cp;
 	return 2;
 }
 
+/* Card 1's module, loaded on first use. */
+static struct sdhook *
+scsihook()
+{
+	if (ata_sdscsi == 0)
+		(void)dlm_loadname("sd");
+	return ata_sdscsi;
+}
+
 int
 sdopen(card)
 {
-	return card != 0 ? ENXIO : 0;
+	return card == 0 || scsihook() ? 0 : ENXIO;
 }
 
 /*
@@ -316,8 +330,18 @@ void
 sdqueue(cp)
 struct sdcom	*cp;
 {
+	struct sdhook	*h;
 	int	x;
 
+	if (cp->card == 1) {
+		if ((h = ata_sdscsi) != 0)
+			(*h->queue)(cp);
+		else {
+			cp->okay = FALSE;
+			(*cp->intr)(cp);
+		}
+		return;
+	}
 	x = sdspl();
 	cp->next = 0;
 	if (qhead)
@@ -350,7 +374,7 @@ char *
 sdhardwarename(card)
 uint	card;
 {
-	return hwname;
+	return card == 1 && ata_sdscsi ? ata_sdscsi->name : hwname;
 }
 
 static int
@@ -362,13 +386,26 @@ uchar	*buf;
 	return ide_rw((int)arg, (ulong)bn, (ushort *)buf, 1L, TRUE) ? EIO : 0;
 }
 
+static int
+scsiblk(arg, bn, buf)
+char	*arg;
+long	bn;
+uchar	*buf;
+{
+	return (*ata_sdscsi->rdblk)((int)arg, bn, buf);
+}
+
 static void
-show(u)
-int	u;
+show(c, u, nblk)
+int	c, u;
+ulong	nblk;
 {
 	int	s;
 
-	printf("%s: disk c%dd0: %s, %d blocks\n", hwname, u, un[u].model, (int)un[u].nblk);
+	if (c == 0)
+		printf("%s: disk c%dd0: %s, %d blocks\n", hwname, u, un[u].model, (int)nblk);
+	else
+		printf("%s: disk ID %d: %d blocks\n", ata_sdscsi->name, u, (int)nblk);
 	for (s = 1; s < AHDI_NSLICE; s++)
 		if (sl[s].len)
 			printf("  s%d: %d+%d %s\n", s, (int)sl[s].base, (int)sl[s].len, sl[s].id);
@@ -383,47 +420,59 @@ sdpartition(dev, strat)
 dev_t	dev;
 int	(*strat)();
 {
-	uint	d0, s, u;
+	uint	c, d0, s, u;
+	ulong	nblk;
+	bool	present;
 	int	error, x;
 
-	if (sdcard(dev) != 0 || sdunit(dev) >= NUNIT)
-		return ENXIO;
+	c = sdcard(dev);
 	u = sdunit(dev);
+	if (c == 0 ? u >= NUNIT : scsihook() == 0)
+		return ENXIO;
 	while (busy)
 		sleep(&busy, PRIBIO);
 	busy = TRUE;
-	x = sdspl();
-	if (!un[u].probed)
-		ide_probe((int)u);
-	error = un[u].present ? ahdi_scan(rdblk, (char *)u, sl) : ENXIO;
-	splx(x);
+	if (c == 0) {
+		x = sdspl();
+		if (!un[u].probed)
+			ide_probe((int)u);
+		present = un[u].present;
+		nblk = un[u].nblk;
+		error = present ? ahdi_scan(rdblk, (char *)u, sl) : ENXIO;
+		splx(x);
+	} else {
+		present = (*ata_sdscsi->probe)((int)u) == 0;
+		nblk = present ? (*ata_sdscsi->nblk)((int)u) : 0;
+		error = present ? ahdi_scan(scsiblk, (char *)u, sl) : ENXIO;
+	}
 	d0 = MINOR(sddev0p(dev));
 	if (error == 0) {
-		if (sl[0].len == 0 || sl[0].len > un[u].nblk)
-			sl[0].len = un[u].nblk;
+		if (sl[0].len == 0 || sl[0].len > nblk)
+			sl[0].len = nblk;
 		for (s = 1; s < AHDI_NSLICE; s++)
-			if (sl[s].base > un[u].nblk || sl[s].len > un[u].nblk - sl[s].base)
+			if (sl[s].base > nblk || sl[s].len > nblk - sl[s].base)
 				sl[s].len = 0;
 		for (s = 0; s < AHDI_NSLICE; s++) {
 			partab[d0 | s << 4].base = sl[s].base;
 			partab[d0 | s << 4].len = sl[s].len;
 		}
-		if (!shown[u]) {
-			shown[u] = TRUE;
-			show((int)u);
+		if (!shown[DISK(dev)]) {
+			shown[DISK(dev)] = TRUE;
+			show((int)c, (int)u, nblk);
 		}
 		/* swap on this disk: use its whole slice */
 		if (sddev0p(dumpdev) == sddev0p(dev) && partab[MINOR(dumpdev)].len)
 			swapfile.bo_size = partab[MINOR(dumpdev)].len;
 	} else {
 		partab[d0].base = 0;
-		partab[d0].len = un[u].present ? un[u].nblk : 0;
+		partab[d0].len = present ? nblk : 0;
 		for (s = 1; s < AHDI_NSLICE; s++)
 			partab[d0 | s << 4].len = 0;
 	}
+	scanned[DISK(dev)] = present;
 	busy = FALSE;
 	wakeup(&busy);
-	if (!un[u].present)
+	if (!present)
 		return ENXIO;
 	if (sdpart(dev) == 0)
 		return 0;
@@ -458,5 +507,12 @@ uint
 sddevsize(dev)
 dev_t	dev;
 {
+	/*
+	 * A block device's size is taken when its node is looked up, which
+	 * can be before the open that reads the slices: until then, the most
+	 * a byte offset can address.  sdvalid still bounds every transfer.
+	 */
+	if (!scanned[DISK(dev)])
+		return 0x3fffff;
 	return partab[MINOR(dev)].len;
 }

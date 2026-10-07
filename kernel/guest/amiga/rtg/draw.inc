@@ -90,25 +90,28 @@ drew:
  rts
 .endm
 
-| d4: the low byte of d4 in all four
-spread:
- and.l #255,%d4
- move.l %d4,%d5
- lsl.l #8,%d5
- or.l %d5,%d4
- move.l %d4,%d5
- swap %d5
- or.l %d5,%d4
- rts
-
-| the start of rectangle d0,d1 in the bitmap at a2, rows d6 apart, to a2
-locate:
- move.l %d1,-(%sp)
- mulu.l %d6,%d1
- add.l %d0,%d1
- add.l %d1,%a2
- move.l (%sp)+,%d1
- rts
+| an operation block on the stack for the drawing library, a0 at it
+.macro opinit kind
+ lea -OP_SIZE(%sp),%sp
+ move.l %sp,%a0
+ .rept OP_SIZE/4
+ clr.l (%a0)+
+ .endr
+ move.l %sp,%a0
+ move.l #\kind,OP_KIND(%a0)
+ move.l #8,OP_DEPTH(%a0)
+ move.l #255,OP_PMASK(%a0)
+.endm
+| the rectangle d0-d3 of the bitmap at a2, rows d6 apart
+.macro opdst
+ move.l %a2,OP_DST(%a0)
+ move.l %d6,OP_DSTRIDE(%a0)
+ movem.l %d0-%d3,OP_X(%a0)
+.endm
+.macro oprun
+ bsr do_run
+ lea OP_SIZE(%sp),%sp
+.endm
 
 | d0-d3 from P96's words
 words:
@@ -134,34 +137,11 @@ fill_rect:
  moveq #0,%d6
  move.w 4(%a1),%d6
  bsr hide
- bsr locate
- bsr spread
- sub.l %d2,%d6
- subq.l #1,%d3
-1: move.l %d2,%d1
-2: move.l %a2,%d0
- and.l #3,%d0
- beq 3f
- move.b %d4,(%a2)+
- subq.l #1,%d1
- bne 2b
- bra 6f
-3: move.l %d1,%d0
- lsr.l #4,%d0
- beq 5f
- subq.l #1,%d0
-4: move.l %d4,(%a2)+
- move.l %d4,(%a2)+
- move.l %d4,(%a2)+
- move.l %d4,(%a2)+
- dbra %d0,4b
-5: and.l #15,%d1
- beq 6f
- subq.l #1,%d1
-7: move.b %d4,(%a2)+
- dbra %d1,7b
-6: add.l %d6,%a2
- dbra %d3,1b
+ opinit DO_FILL
+ opdst
+ move.l #1,OP_MODE(%a0)
+ move.l %d4,OP_FG(%a0)
+ oprun
  bsr show
 8: movem.l (%sp)+,%d2-%d7/%a2-%a3
  rts
@@ -181,113 +161,15 @@ invert_rect:
  moveq #0,%d6
  move.w 4(%a1),%d6
  bsr hide
- bsr locate
- bsr spread
- sub.l %d2,%d6
- subq.l #1,%d3
-1: move.l %d2,%d1
-2: move.l %a2,%d0
- and.l #3,%d0
- beq 3f
- eor.b %d4,(%a2)+
- subq.l #1,%d1
- bne 2b
- bra 6f
-3: move.l %d1,%d0
- lsr.l #2,%d0
- beq 5f
- subq.l #1,%d0
-4: eor.l %d4,(%a2)+
- dbra %d0,4b
-5: and.l #3,%d1
- beq 6f
- subq.l #1,%d1
-7: eor.b %d4,(%a2)+
- dbra %d1,7b
-6: add.l %d6,%a2
- dbra %d3,1b
+ opinit DO_FILL
+ opdst
+ move.l #3,OP_MODE(%a0)
+ move.l %d4,OP_PMASK(%a0)
+ oprun
  bsr show
 8: movem.l (%sp)+,%d2-%d7/%a2-%a3
  rts
 9: fallback gbi_InvertRectDefault
-
-| Copies d4 bytes a row, d5 rows, from a2 to a3; rows d6 (source) and
-| d7 (destination) apart.  Backwards from the ends when a3 is after a2
-| in the same row; rows bottom up when the destination is lower.
-| d0: 0 forward, 1 rows bottom up, 2 each row backwards.
-copy:
- tst.l %d0
- beq 1f
- cmp.l #2,%d0
- beq 20f
- | bottom up: start at the last rows, step back
- move.l %d5,%d1
- subq.l #1,%d1
- move.l %d1,%d0
- mulu.l %d6,%d0
- add.l %d0,%a2
- mulu.l %d7,%d1
- add.l %d1,%a3
- neg.l %d6
- neg.l %d7
-1: sub.l %d4,%d6
- sub.l %d4,%d7
- subq.l #1,%d5
-2: move.l %d4,%d1
-3: move.l %a3,%d0
- and.l #3,%d0
- beq 4f
- move.b (%a2)+,(%a3)+
- subq.l #1,%d1
- bne 3b
- bra 7f
-4: move.l %d1,%d0
- lsr.l #4,%d0
- beq 6f
- subq.l #1,%d0
-5: move.l (%a2)+,(%a3)+
- move.l (%a2)+,(%a3)+
- move.l (%a2)+,(%a3)+
- move.l (%a2)+,(%a3)+
- dbra %d0,5b
-6: and.l #15,%d1
- beq 7f
- subq.l #1,%d1
-8: move.b (%a2)+,(%a3)+
- dbra %d1,8b
-7: add.l %d6,%a2
- add.l %d7,%a3
- dbra %d5,2b
- rts
- | each row from its end
-20: add.l %d4,%a2
- add.l %d4,%a3
- add.l %d4,%d6
- add.l %d4,%d7
- subq.l #1,%d5
-21: move.l %d4,%d1
-22: move.l %a3,%d0
- and.l #3,%d0
- beq 23f
- move.b -(%a2),-(%a3)
- subq.l #1,%d1
- bne 22b
- bra 26f
-23: move.l %d1,%d0
- lsr.l #2,%d0
- beq 25f
- subq.l #1,%d0
-24: move.l -(%a2),-(%a3)
- dbra %d0,24b
-25: and.l #3,%d1
- beq 26f
- subq.l #1,%d1
-27: move.b -(%a2),-(%a3)
- dbra %d1,27b
-26: add.l %d6,%a2
- add.l %d7,%a3
- dbra %d5,21b
- rts
 
 | BlitRect: a1 RenderInfo, d0,d1 source, d2,d3 destination, d4,d5 w,h,
 | d6 mask, d7 format
@@ -343,28 +225,19 @@ blit_common:
  exg %a2,%a3
  exg %d6,%d7
  movem.l (%sp)+,%d0-%d3
- | direction, when both are one bitmap
- sub.l %a1,%a1
- cmp.l %a2,%a3
- bne 1f
- cmp.l %d1,%d3
- blo 1f
- bhi 2f
- cmp.l %d0,%d2
- bls 1f
- move.w #2,%a1
- bra 1f
-2: move.w #1,%a1
-1: bsr locate
- exg %a2,%a3
- exg %d6,%d7
- move.l %d2,%d0
- move.l %d3,%d1
- bsr locate
- exg %a2,%a3
- exg %d6,%d7
- move.l %a1,%d0
- bsr copy
+ opinit DO_BLIT
+ move.l %a3,OP_DST(%a0)
+ move.l %d7,OP_DSTRIDE(%a0)
+ move.l %d2,OP_X(%a0)
+ move.l %d3,OP_Y(%a0)
+ move.l %d4,OP_W(%a0)
+ move.l %d5,OP_H(%a0)
+ move.l #3,OP_MODE(%a0)
+ move.l %a2,OP_SRC(%a0)
+ move.l %d6,OP_SSTRIDE(%a0)
+ move.l %d0,OP_SX(%a0)
+ move.l %d1,OP_SY(%a0)
+ oprun
  bsr show
 8: movem.l (%sp)+,%d2-%d7/%a2-%a3
  rts
@@ -391,88 +264,33 @@ blit_template:
  moveq #0,%d6
  move.w 4(%a1),%d6
  bsr hide
- bsr locate
- sub.l %d2,%d6
- move.l %d6,-(%sp)
- move.l %d2,%a1
- | a5: the template row; d7: the first pixel's bit in its byte
- move.l (%a4),%a5
- moveq #0,%d7
- move.b 6(%a4),%d7
- move.l %d7,%d0
- lsr.l #3,%d0
- add.l %d0,%a5
- and.l #7,%d7
- | d5 foreground, d4 high word background, d1 inversion
- move.b 11(%a4),%d5
- move.w 14(%a4),%d1
- swap %d4
- move.w %d1,%d4
- swap %d4
- move.b 7(%a4),%d0
- moveq #0,%d1
- btst #2,%d0
- beq 2f
- moveq #-1,%d1
-2: and.l #3,%d0
- move.l %d0,-(%sp)
- subq.l #1,%d3
-3: move.l %a5,%a3
- move.b (%a3)+,%d0
- eor.b %d1,%d0
- lsl.b %d7,%d0
- moveq #8,%d6
- sub.l %d7,%d6
- move.l %a1,%d2
- subq.l #1,%d2
- tst.l (%sp)
- beq 10f
- cmp.l #1,(%sp)
- beq 20f
- | complement
-30: add.b %d0,%d0
- bcc 31f
- eor.b %d4,(%a2)
-31: addq.l #1,%a2
- subq.b #1,%d6
- bne 32f
- move.b (%a3)+,%d0
- eor.b %d1,%d0
- moveq #8,%d6
-32: dbra %d2,30b
- bra 40f
- | JAM1
-10: add.b %d0,%d0
- bcc 11f
- move.b %d5,(%a2)
-11: addq.l #1,%a2
- subq.b #1,%d6
- bne 12f
- move.b (%a3)+,%d0
- eor.b %d1,%d0
- moveq #8,%d6
-12: dbra %d2,10b
- bra 40f
- | JAM2
-20: swap %d4
-21: add.b %d0,%d0
- bcc 22f
- move.b %d5,(%a2)+
- bra 23f
-22: move.b %d4,(%a2)+
-23: subq.b #1,%d6
- bne 24f
- move.b (%a3)+,%d0
- eor.b %d1,%d0
- moveq #8,%d6
-24: dbra %d2,21b
- swap %d4
-40: add.l 4(%sp),%a2
+ opinit DO_EXPAND
+ opdst
+ move.l #DOF_TEXT,OP_FLAGS(%a0)
+ move.l (%a4),OP_SRC(%a0)
  move.w 4(%a4),%d0
  ext.l %d0
- add.l %d0,%a5
- dbra %d3,3b
- addq.l #8,%sp
+ move.l %d0,OP_SSTRIDE(%a0)
+ moveq #0,%d0
+ move.b 6(%a4),%d0
+ move.l %d0,OP_SX(%a0)
+ move.l 8(%a4),OP_FG(%a0)
+ move.l 12(%a4),OP_BG(%a0)
+ | JAM1 transparent, JAM2 replace, COMPLEMENT xor under the mask
+ moveq #2,%d1
+ move.b 7(%a4),%d0
+ btst #2,%d0
+ beq 1f
+ move.l #DOF_TEXT+DOF_INVERT,OP_FLAGS(%a0)
+1: and.l #3,%d0
+ beq 2f
+ moveq #1,%d1
+ subq.l #1,%d0
+ beq 2f
+ moveq #3,%d1
+ move.l %d4,OP_PMASK(%a0)
+2: move.l %d1,OP_MODE(%a0)
+ oprun
  bsr show
 8: movem.l (%sp)+,%d2-%d7/%a2-%a5
  rts

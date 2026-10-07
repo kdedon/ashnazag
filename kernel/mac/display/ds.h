@@ -183,6 +183,8 @@ void	ds_sndedge();		/* (aer): the guest's MFP edges */
 void	ds_sndexit();		/* (proc): the owner exits: DMA off */
 void	ds_sndintr();		/* the DMA sound end, from the MFP */
 extern void (*ds_sndcb)();	/* (events): bit 0 input 7, bit 2 Timer A */
+extern void (*ds_sndhw)();	/* the DMA sound end with no guest in front */
+extern void (*ds_sndown)();	/* (on): a passthrough guest takes (1) or leaves (0) the sound */
 void	ds_bltgo();		/* (registers) */
 int	ds_gralloc();		/* (bytes) -> errno: the caller's contiguous ST-RAM */
 void	ds_grfree();

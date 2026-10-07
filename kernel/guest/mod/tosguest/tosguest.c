@@ -16,6 +16,12 @@
 #include "tos.h"
 #include "sys/vnode.h"
 #include "sys/file.h"
+#include "sys/mman.h"
+#include "vm/seg.h"
+#include "vm/as.h"
+#include "vm/hat.h"
+#include "vm/seg_dev.h"
+#include "vm/page.h"
 #include "hsock.h"
 
 extern int nodev(), ttimeout(), untimeout();
@@ -44,6 +50,13 @@ extern int ds_grmmap();
 static int (*volatile grmmap_p)() = ds_grmmap;
 /* the weak ones above are absent on the Mac; the compiler would take their addresses as nonzero */
 extern int spec_segmap();
+extern struct seg *as_segat();
+extern page_t *page_numtookpp();
+#if defined(DS_ATARI) && !defined(ATA060)
+#define ST_PGSIZE	0x800		/* the block's page frames, as ds_grmmap counts them */
+#else
+#define ST_PGSIZE	0x1000
+#endif
 
 struct tosctr tosc;
 int	tos_trace = 0;		/* 1: console lines for bus errors and odd accesses */
@@ -574,6 +587,87 @@ tosmmap(dev, off, prot)
 	return grmmap_p ? grmmap_p(off) : -1;
 }
 
+/*
+ * The block is managed memory: its faults load it with its page
+ * structures, so that the mapping lists the exit's teardown walks hold
+ * every translation.  segdev would load it as device memory.
+ */
+static struct seg_ops st_segops, *st_devops;
+
+static faultcode_t
+st_fault(seg, addr, len, type, rw)
+	struct seg *seg;
+	addr_t addr;
+	u_int len;
+	enum fault_type type;
+	enum seg_rw rw;
+{
+	struct segdev_data *sd = (struct segdev_data *)seg->s_data;
+	unsigned long va;
+	page_t *pp;
+	u_int pv[1];
+	int pf;
+
+	if (type != F_INVAL && type != F_SOFTLOCK)
+		return (*st_devops->fault)(seg, addr, len, type, rw);
+	for (va = (unsigned long)addr & ~(ST_PGSIZE - 1); va < (unsigned long)addr + len;
+	    va += ST_PGSIZE) {
+		pv[0] = 0;
+		(void)(*st_devops->getprot)(seg, (addr_t)va, 0, pv);
+		if ((pv[0] & (PROT_READ | PROT_WRITE | PROT_EXEC)) == 0 ||
+		    (rw == S_WRITE && !(pv[0] & PROT_WRITE)))
+			return FC_PROT;
+		pf = tosmmap(sd->vp->v_rdev, (off_t)(sd->offset + (va - (unsigned long)seg->s_base)), (int)pv[0]);
+		if (pf == -1 || (pp = page_numtookpp((u_int)pf)) == 0)
+			return FC_MAKE_ERR(EFAULT);
+		hat_memload(seg, (addr_t)va, pp, pv[0], type == F_SOFTLOCK ? HAT_LOCK : HAT_NOFLAGS);
+	}
+	return 0;
+}
+
+static int
+st_dup(seg, nseg)
+	struct seg *seg, *nseg;
+{
+	int e;
+
+	if ((e = (*st_devops->dup)(seg, nseg)) == 0)
+		nseg->s_ops = &st_segops;
+	return e;
+}
+
+/* a hole in the middle leaves a second segment, made with the device's operations */
+static int
+st_unmap(seg, addr, len)
+	struct seg *seg;
+	addr_t addr;
+	u_int len;
+{
+	struct as *as = seg->s_as;
+	struct seg *n;
+	int mid = addr > seg->s_base && addr + len < seg->s_base + seg->s_size;
+	int e;
+
+	if ((e = (*st_devops->unmap)(seg, addr, len)) == 0 && mid &&
+	    (n = as_segat(as, addr + len)) != 0 && n->s_ops == st_devops)
+		n->s_ops = &st_segops;
+	return e;
+}
+
+static void
+st_wrap(seg)
+	struct seg *seg;
+{
+	if (st_devops == 0) {
+		st_devops = seg->s_ops;
+		st_segops = *st_devops;
+		st_segops.fault = st_fault;
+		st_segops.dup = st_dup;
+		st_segops.unmap = st_unmap;
+	}
+	seg->s_ops = &st_segops;
+}
+
 int
 tossegmap(dev, off, as, addrp, len, prot, maxprot, flags, cr)
 	dev_t dev;
@@ -583,9 +677,15 @@ tossegmap(dev, off, as, addrp, len, prot, maxprot, flags, cr)
 	u_int len, prot, maxprot, flags;
 	struct cred *cr;
 {
+	struct seg *seg;
+	int e;
+
 	if (curproc != tos_stproc || curproc->p_pid != tos_stpid)
 		return EACCES;
-	return spec_segmap(dev, off, as, addrp, len, prot, maxprot, flags, cr);
+	if ((e = spec_segmap(dev, off, as, addrp, len, prot, maxprot, flags, cr)) == 0 &&
+	    (seg = as_segat(as, *addrp)) != 0)
+		st_wrap(seg);
+	return e;
 }
 
 static int

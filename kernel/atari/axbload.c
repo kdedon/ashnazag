@@ -32,6 +32,7 @@ extern char go_kernel[], go_end[];
 extern void go(char *, struct go *);
 extern unsigned long ax_timeout, ax_ksum;
 extern unsigned long peek(unsigned long a, int *ok);
+extern unsigned long ramprobe(unsigned long base, unsigned long max);
 
 static unsigned char frame[16];
 static int nframe;
@@ -177,6 +178,7 @@ mfree(unsigned long p)
 	sys(1);
 }
 
+#ifdef SVIDEL
 /* Line-A init: the VDI's screen variables, as $A000 returns them in a0 */
 static short *
 linea(void)
@@ -222,6 +224,7 @@ svidel(void)
 	sv[5] = (unsigned short)la[-1];
 	birec(0x8f01, sv, sizeof sv);
 }
+#endif
 
 static long
 fail(const char *s)
@@ -333,11 +336,14 @@ loader(long dev, unsigned long axb, unsigned char *root)
 	mem[0] = 0;
 	mem[1] = PHYSTOP;
 	birec(5, mem, 8);
-	if (RAMVALID == 0x1357bd13 && RAMTOP > TTRAM) {
-		mem[0] = TTRAM;
+	mem[0] = TTRAM;
+	mem[1] = 0;
+	if (RAMVALID == 0x1357bd13 && RAMTOP > TTRAM)
 		mem[1] = RAMTOP - TTRAM;
+	else if (cpu < 40 && cookie(0x5f4d4348, 0) >> 16 == 2)	/* a TT whose TOS did not size TT-RAM */
+		mem[1] = ramprobe(TTRAM, 0x10000000);
+	if (mem[1])
 		birec(5, mem, 8);
-	}
 	for (n = 0; cmd[n]; n++)
 		;
 	birec(7, cmd, n + 1);
@@ -346,8 +352,10 @@ loader(long dev, unsigned long axb, unsigned char *root)
 	/* the running TOS image, logical here: go() makes it physical */
 	osoff = nbi + 4;
 	bilong(0x8f00, (unsigned long)SYSBASE);
+#ifdef SVIDEL
 	if (cpu >= 60)
 		svidel();
+#endif
 	nbi += 2;					/* BI_LAST */
 
 	/* hand-off code, its parameters and the boot record below the file */

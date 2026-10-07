@@ -1,6 +1,7 @@
 #include <string.h>
 #include "dsio.h"
 #include "inputshare.h"
+#include "earlyshare.h"
 
 /* Physical US key positions; the guest keymap supplies characters. */
 static unsigned char adb[128] = {
@@ -106,11 +107,21 @@ int mig_input_event(struct mig_input *q, struct mig_input_state *s,
 {
     int k, i;
     unsigned short bit;
+    volatile struct mig_early_alert *al = (volatile struct mig_early_alert *)MIG_EARLY_ALERT;
     if (s->generation != q->generation) {
         memset(s, 0, sizeof *s);
         s->generation = q->generation;
     }
     if (type == IE_DROP) { mig_input_reset(q, s); return 0; }
+    /* a button answers an alert the guest waits on */
+    if (type == IE_BTN && value && al->seq != al->done) {
+        al->click = code;
+        return 0;
+    }
+    /* both buttons held from the start open the boot menu */
+    if (type == IE_BTN && (code == 1 || code == 2) && !q->ready) {
+        if (value) q->menu |= code; else q->menu &= ~code;
+    }
     if (q->ready != 1 || q->reset != q->ack) return 0;
     switch (type) {
     case IE_KEY:

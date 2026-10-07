@@ -11,8 +11,7 @@
 #   --patch FILE      AMIX 2.1 patch disk (ADF)
 #   --q800-rom FILE   Quadra 800 ROM
 #   --q700-rom FILE   Quadra 700 ROM (420DBFF3)
-#   --aux-cd FILE     A/UX 3.1 CD (partition map and Apple driver)
-#   --aux-disk FILE   A/UX 3.1 disk image (fallback for images/mkimage.sh)
+#   --aux-cd FILE     A/UX 3.1 CD (partition map, Apple driver, A/UX root)
 #   --macos761 FILE   Mac OS 7.6.1 CD (.iso or .7z)
 #   --macos81 FILE    Mac OS 8.1 CD (.iso or .7z)
 #   --tos FILE        TOS 3.06 ROM zip
@@ -115,7 +114,6 @@ while [ $# -gt 0 ]; do
 	--q800-rom) Q800=$2 ;;
 	--q700-rom) Q700=$2 ;;
 	--aux-cd) AUXCD=$2 ;;
-	--aux-disk) AUXDISK=$2 ;;
 	--macos761) MAC761=$2 ;;
 	--macos81) MAC81=$2 ;;
 	--tos) TOSZIP=$2 ;;
@@ -147,11 +145,8 @@ fi
 [ -z "${Q800:-}" ] || link "$Q800" "$AUX/Quadra 800.ROM"
 [ -z "${Q700:-}" ] || link "$Q700" "$AUX/420DBFF3 - Quadra 700&900 & PB140&170.ROM"
 [ -z "${AUXCD:-}" ] || link "$AUXCD" "$AUX/media/aux-3.1.iso"
-case ${AUXDISK:-} in
-"") ;;
-*.zip) link "$AUXDISK" "$AUX/AUX_3_1_1GB_Use_In_Shoebill.zip" ;;
-*) link "$AUXDISK" "$AUX/AUX_3_1_1GB.dsk" ;;
-esac
+[ ! -e "$AUX/media/aux-3.1.iso" ] || [ -d "$AUX/images/work/auxroot-cd/mac" ] ||
+	sh "$AUX/images/mkauxroot.sh" >/dev/null
 [ -z "${MAC761:-}" ] || cdimage "$(abs "$MAC761")" "$AUX/media/Mac OS 7.6.1.iso"
 [ -z "${MAC81:-}" ] || cdimage "$(abs "$MAC81")" "$AUX/media/MacOS8_1.iso"
 [ -z "${TOSZIP:-}" ] || link "$TOSZIP" "$AUX/tos306us-american-24-09-1991.zip"

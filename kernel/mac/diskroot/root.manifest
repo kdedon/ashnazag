@@ -56,6 +56,13 @@ c /dev/snd/reset	666 0 3 47 255
 c /dev/snd/srv	600 0 3 47 128
 f /usr/lib/sndd 755 0 3 ../../build/mac/sound/sndd
 f /usr/lib/sndaux 755 0 3 ../../build/mac/sound/sndaux
+f /usr/lib/pingd 755 0 3 ../../build/net/pingd
+# their drivers, registered by sysinit and loaded on first open
+f /sbin/modadmin 555 0 3 ../../build/mac/sound/modadmin
+d /etc/conf 755 0 3
+d /etc/conf/mod.d 755 0 3
+f /etc/conf/mod.d/asc 644 0 3 ../../build/mac/sound/mod.d/asc
+f /etc/conf/mod.d/auxsnd 644 0 3 ../../build/mac/sound/mod.d/auxsnd
 
 # console: ldterm and ttcompat by autopush, Mac key bindings
 d /etc/ap	755 0 3

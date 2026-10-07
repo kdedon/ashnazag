@@ -152,6 +152,51 @@ trap_frame:
 	moveml	%sp@+,%d2-%d7/%a2-%a6
 	rts
 
+| ramprobe(base, max): bytes of RAM from base, in 1 MB steps up to max,
+| 68030 data cache off.  Each step's first long gets its own address;
+| a bus error, a value that does not stick or base losing its mark
+| (an alias) ends the count.
+	.globl	ramprobe
+ramprobe:
+	moveml	%d2-%d3/%a2,%sp@-
+	moveal	%sp@(16),%a0
+	movel	%sp@(20),%d2
+	movew	%sr,%sp@-
+	oriw	#0x0700,%sr
+	movec	%cacr,%d0
+	movel	%d0,%sp@-
+	andiw	#0xfeff,%d0		| data cache off
+	oriw	#0x0800,%d0		| and cleared
+	movec	%d0,%cacr
+	movec	%vbr,%a2
+	movel	%a2@(8),%sp@-
+	lea	%pc@(2f),%a1
+	movel	%a1,%a2@(8)
+	movel	%sp,%d3
+	moveq	#0,%d1
+	movel	#0x54545242,%a0@	| 'TTRB'; a bus error here leaves 0
+1:	cmpl	%d2,%d1
+	bcc.s	2f
+	lea	%a0@(0,%d1:l),%a1
+	tstl	%d1
+	beq.s	3f
+	movel	%a1,%a1@
+	nop
+	cmpl	%a1@,%a1
+	bne.s	2f
+3:	cmpil	#0x54545242,%a0@
+	bne.s	2f
+	addil	#0x100000,%d1
+	bra.s	1b
+2:	movel	%d3,%sp
+	movel	%sp@+,%a2@(8)
+	movel	%sp@+,%d0
+	movec	%d0,%cacr
+	movew	%sp@+,%sr
+	movel	%d1,%d0
+	moveml	%sp@+,%d2-%d3/%a2
+	rts
+
 | peek(addr, int *ok): the long at addr, in supervisor mode.  A bus
 | error returns 0 with *ok 0 instead of reaching TOS.
 	.globl	peek
