@@ -1,0 +1,4 @@
+# opci: openpci.library on amilib, the PCI bus for other modules
+$depend amilib
+$modtype misc
+opci	opci	m	0	0	0
