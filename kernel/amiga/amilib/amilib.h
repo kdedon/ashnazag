@@ -267,8 +267,9 @@ extern void am_hook();			/* h_Entry calling C: see amexec.c */
 
 /* amexec.c */
 extern char *am_sysbase;
-extern int am_init();			/* (attnflags) */
+extern int am_init();			/* (attnflags); counted, per user */
 extern void am_fini();
+extern int am_users;
 extern void am_dispatch();
 extern char *am_alloc();		/* (size, flags) AllocMem */
 extern void am_free();			/* (p, size) FreeMem */
@@ -296,6 +297,10 @@ extern struct amlib am_utility, am_expansion, am_timer;
 /* amdos.c */
 extern char am_confdir[64];		/* the one directory files come from */
 extern struct amlib am_dos, am_intuition;
+
+/* ammmu.c */
+extern int am_mmuinit();
+extern void am_mmufini();
 extern int am_inboard();		/* (va) inside a mapped board */
 
 /* amhunk.c: errors */
@@ -316,6 +321,7 @@ extern void amx_cacheflush();
 extern int amx_zorro();			/* (i, struct amx_zboard *) 0 = none */
 extern char *amx_iomap();		/* (pa, size) -> kernel va, 0 = fail */
 extern unsigned long amx_vtop();	/* kernel va -> physical, for DMA */
+extern unsigned long amx_pagesize();
 extern void amx_iounmap();
 extern int amx_intattach();		/* (intnum) route that chain to us */
 extern void amx_intdetach();

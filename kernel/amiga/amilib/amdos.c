@@ -72,6 +72,8 @@ am_path(name, path, dirp)
 	char *last = name, *p, *q;
 	int n;
 
+	if (am_confdir[0] == 0)
+		return -1;
 	for (p = name; *p; p++)
 		if (*p == ':' || *p == '/')
 			last = p + 1;

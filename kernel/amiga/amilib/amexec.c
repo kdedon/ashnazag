@@ -23,6 +23,7 @@ static void x_lopen(), x_lclose(), x_lnull();
 
 char *am_sysbase;
 int am_intmask;
+int am_users;				/* am_init calls not yet undone */
 char *am_stkbot, *am_stktop;		/* amglue.s switches to it */
 
 static char *am_task;			/* our one Task */
@@ -1760,14 +1761,18 @@ am_init(attn)
 	char *b;
 	int i;
 
+	if (am_users++)
+		return 0;
 	am_attn = attn;
 	am_nlibs = 0;
 	am_dis = am_forb = 0;
 	am_intmask = 0;
 	for (i = 0; i < EXEC_NLVO; i++)
 		am_said[i] = 0;
-	if ((b = am_addlib(&am_exec)) == 0)
+	if ((b = am_addlib(&am_exec)) == 0) {
+		am_users = 0;
 		return -1;
+	}
 	am_sysbase = b;
 	AW(b, LIB_REVISION) = 0;
 	AW(b, 34) = 40;				/* SoftVer */
@@ -1794,6 +1799,7 @@ am_init(attn)
 	am_task = am_alloc((unsigned long)PR_SIZE + 8, MEMF_PUBLIC | MEMF_CLEAR);
 	am_ints = am_alloc((unsigned long)AM_NINT * LH_SIZE, MEMF_PUBLIC);
 	if (am_task == 0 || am_ints == 0 || am_stkbot == 0) {
+		am_users = 1;
 		am_fini();
 		return -1;
 	}
@@ -1813,25 +1819,30 @@ am_init(attn)
 		am_newlist(am_ints + i * LH_SIZE);
 
 	if (am_addlib(&am_utility) == 0 || am_addlib(&am_timer) == 0 ||
-	    am_addlib(&am_intuition) == 0 ||
-	    (am_confdir[0] && am_addlib(&am_dos) == 0) || am_expinit() != 0) {
+	    am_addlib(&am_intuition) == 0 || am_addlib(&am_dos) == 0 ||
+	    am_mmuinit() != 0 || am_expinit() != 0) {
+		am_users = 1;
 		am_fini();
 		return -1;
 	}
 	return 0;
 }
 
-/* everything am_init made; the caller has stopped the guest library */
+/* everything am_init made, when its last user is done; each user has
+ * stopped its libraries first */
 void
 am_fini()
 {
 	int i;
 
+	if (am_users == 0 || --am_users)
+		return;
 	for (i = 0; i < AM_NINT; i++)
 		if (am_intmask & (1 << i))
 			amx_intdetach(i);
 	am_intmask = 0;
 	am_expfini();
+	am_mmufini();
 	am_dellib(&am_dos);
 	am_dellib(&am_intuition);
 	am_dellib(&am_timer);

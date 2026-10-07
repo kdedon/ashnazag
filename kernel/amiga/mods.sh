@@ -3,10 +3,11 @@
 #
 #   sh amiga/mods.sh kernel.elf outdir
 #
-# Out: outdir/mod.d/opci, built for that kernel's CPU and checked against
-# its exports (the kernel must carry DLM: dlm_cacheflush).  Install it in
-# /etc/conf/mod.d; /etc/conf/pci gets openpci.library (the openpci
-# archive's Libs/openpci.library) and, optionally, PCI-Configuration.
+# Out: outdir/mod.d/{amilib,opci}, built for that kernel's CPU; amilib is
+# checked against the kernel's exports (it must carry DLM: dlm_cacheflush),
+# opci against those and amilib's.  Install them in /etc/conf/mod.d;
+# /etc/conf/pci gets openpci.library (the openpci archive's
+# Libs/openpci.library) and, optionally, PCI-Configuration.
 set -e
 
 A=$(cd "$(dirname "$0")" && pwd)
@@ -33,14 +34,14 @@ CC="$CC -I$DLM/include -I$A/include -I$A/amilib"
 
 srcs() {
 	case $1 in
-	opci)	echo "$A/amilib/amexec.c $A/amilib/amlibs.c $A/amilib/amhunk.c" \
-		    "$A/amilib/amdos.c" \
-		    "$A/amilib/amglue.s $A/opci/opci.c $A/opci/amxplat.c" \
-		    "$A/mod/opci/opcimod.c" ;;
+	amilib)	echo "$A/amilib/amexec.c $A/amilib/amlibs.c $A/amilib/amhunk.c" \
+		    "$A/amilib/amdos.c $A/amilib/ammmu.c $A/amilib/amglue.s" \
+		    "$A/amilib/amxplat.c $A/mod/amilib/amilibmod.c" ;;
+	opci)	echo "$A/opci/opci.c $A/mod/opci/opcimod.c" ;;
 	esac
 }
 rm -rf "$O/mod.d"
-for m in opci; do
+for m in amilib opci; do	# amilib first: opci depends on it
 	d=$O/src/$m
 	rm -rf "$d"; mkdir -p "$d"
 	objs=

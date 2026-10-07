@@ -1,5 +1,7 @@
 /*
  * amxplat.c -- amilib's platform part for the AMIX kernel on an Amiga.
+ * Part of the amilib module; opci (and any later library wrapper) use
+ * amilib through it.
  *
  * The Amiga-specific services come from the host kernel's platform
  * layer through these weak hooks (absent: the module still loads into
@@ -12,6 +14,7 @@
  *   void plat_iounmap(va, size)
  *   unsigned long plat_vtop(va)               physical address of a
  *                                             kernel address
+ *   unsigned long plat_pagesize()             the MMU page size (4096)
  *   int  plat_zintr(intnum, fn)               call fn(intnum) from the
  *                                             level 2 (INTB_PORTS, 3) or
  *                                             level 6 (INTB_EXTER, 13)
@@ -45,6 +48,7 @@ asm(".weak plat_zorro");
 asm(".weak plat_iomap");
 asm(".weak plat_iounmap");
 asm(".weak plat_vtop");
+asm(".weak plat_pagesize");
 asm(".weak plat_zintr");
 asm(".weak plat_zunintr");
 asm(".weak delayus");
@@ -54,7 +58,7 @@ asm(".weak cputype");
 extern int plat_zorro(), plat_zintr();
 extern char *plat_iomap();
 extern void plat_iounmap(), plat_zunintr();
-extern unsigned long plat_vtop();
+extern unsigned long plat_vtop(), plat_pagesize();
 extern void delayus();
 extern long hrestime[2];		/* timestruc_t: seconds, nanoseconds */
 extern long cputype;			/* 30, 40, 60: the 040/060 port */
@@ -67,14 +71,15 @@ static char *(*volatile p_iomap)() = plat_iomap;
 static void (*volatile p_iounmap)() = plat_iounmap;
 static void (*volatile p_zunintr)() = plat_zunintr;
 static unsigned long (*volatile p_vtop)() = plat_vtop;
+static unsigned long (*volatile p_pagesize)() = plat_pagesize;
 static void (*volatile p_delayus)() = delayus;
 static long *volatile p_hrestime = hrestime;
 static long *volatile p_cputype = &cputype;
 
-extern long opci_loops_us;		/* Space.c: busy loops per microsecond */
+extern long amilib_loops_us;		/* Space.c: busy loops per microsecond */
 
-static int opci_locked, opci_wanted;
-static char opci_noboards;
+static int amx_locked, amx_wanted;
+static char amx_noboards;
 
 char *
 amx_alloc(size, cansleep)
@@ -129,7 +134,7 @@ amx_delayus(n)
 		return;
 	}
 	while (n-- > 0)
-		for (i = opci_loops_us; i > 0; i--)
+		for (i = amilib_loops_us; i > 0; i--)
 			;
 }
 
@@ -169,9 +174,9 @@ amx_zorro(i, zb)
 	struct amx_zboard *zb;
 {
 	if (p_zorro == 0 || p_iomap == 0) {
-		if (!opci_noboards)
-			printf("opci: this kernel lists no Zorro boards (plat_zorro)\n");
-		opci_noboards = 1;
+		if (!amx_noboards)
+			printf("amilib: this kernel lists no Zorro boards (plat_zorro)\n");
+		amx_noboards = 1;
 		return -1;
 	}
 	return (*p_zorro)(i, zb);
@@ -200,6 +205,12 @@ amx_vtop(va)
 	return p_vtop ? (*p_vtop)(va) : (unsigned long)va;
 }
 
+unsigned long
+amx_pagesize()
+{
+	return p_pagesize ? (*p_pagesize)() : 4096;
+}
+
 static void
 amx_zint(n)
 	int n;
@@ -224,17 +235,17 @@ amx_intdetach(n)
 		(*p_zunintr)(n);
 }
 
-/* one caller inside the library at a time */
+/* one caller inside amilib's libraries at a time */
 int
 amx_lock()
 {
 	int s = amx_spl7();
 
-	while (opci_locked) {
-		opci_wanted = 1;
-		(void)sleep((caddr_t)&opci_locked, PZERO);
+	while (amx_locked) {
+		amx_wanted = 1;
+		(void)sleep((caddr_t)&amx_locked, PZERO);
 	}
-	opci_locked = 1;
+	amx_locked = 1;
 	amx_splx(s);
 	return 0;
 }
@@ -244,8 +255,8 @@ amx_trylock()
 {
 	int s = amx_spl7(), e = -1;
 
-	if (!opci_locked) {
-		opci_locked = 1;
+	if (!amx_locked) {
+		amx_locked = 1;
 		e = 0;
 	}
 	amx_splx(s);
@@ -257,10 +268,10 @@ amx_unlock()
 {
 	int s = amx_spl7();
 
-	opci_locked = 0;
-	if (opci_wanted) {
-		opci_wanted = 0;
-		wakeup((caddr_t)&opci_locked);
+	amx_locked = 0;
+	if (amx_wanted) {
+		amx_wanted = 0;
+		wakeup((caddr_t)&amx_locked);
 	}
 	amx_splx(s);
 }
