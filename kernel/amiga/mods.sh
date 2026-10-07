@@ -5,8 +5,8 @@
 #
 # Out: outdir/mod.d/opci, built for that kernel's CPU and checked against
 # its exports (the kernel must carry DLM: dlm_cacheflush).  Install it in
-# /etc/conf/mod.d, and openpci.library (from the openpci archive's Libs/)
-# as /etc/conf/pci/openpci.library.
+# /etc/conf/mod.d; /etc/conf/pci gets openpci.library (the openpci
+# archive's Libs/openpci.library) and, optionally, PCI-Configuration.
 set -e
 
 A=$(cd "$(dirname "$0")" && pwd)
@@ -34,6 +34,7 @@ CC="$CC -I$DLM/include -I$A/include -I$A/amilib"
 srcs() {
 	case $1 in
 	opci)	echo "$A/amilib/amexec.c $A/amilib/amlibs.c $A/amilib/amhunk.c" \
+		    "$A/amilib/amdos.c" \
 		    "$A/amilib/amglue.s $A/opci/opci.c $A/opci/amxplat.c" \
 		    "$A/mod/opci/opcimod.c" ;;
 	esac

@@ -119,6 +119,12 @@
 #define	TC_SIGWAIT	22
 #define	TC_SIGRECVD	26
 #define	TC_SIZE		92
+/* dos/dosextens.h: struct Process */
+#define	PR_RESULT2	148
+#define	PR_CURRENTDIR	152
+#define	PR_WINDOWPTR	184
+#define	PR_SIZE		228
+#define	NT_PROCESS	13
 
 /* ---- exec/semaphores.h ---- */
 #define	SS_NESTCOUNT	14
@@ -286,6 +292,10 @@ extern long am_meminuse();
 extern int am_expinit();		/* expansion: the host's boards */
 extern void am_expfini();
 extern struct amlib am_utility, am_expansion, am_timer;
+
+/* amdos.c */
+extern char am_confdir[64];		/* the one directory files come from */
+extern struct amlib am_dos, am_intuition;
 extern int am_inboard();		/* (va) inside a mapped board */
 
 /* amhunk.c: errors */
@@ -310,6 +320,9 @@ extern void amx_iounmap();
 extern int amx_intattach();		/* (intnum) route that chain to us */
 extern void amx_intdetach();
 extern void amx_log();			/* (fmt, a, b, c, d): %s %d %x */
+extern int amx_readfile();		/* (path, &buf, &len, max) 0 or errno */
+extern void amx_freefile();		/* (buf, len) */
+#define	AMX_EISDIR	21		/* amx_readfile: a directory */
 extern int amx_attnflags();		/* ExecBase AttnFlags for this CPU */
 extern int amx_lock();			/* serialise callers; 0 = held */
 extern int amx_trylock();		/* the same without sleeping */

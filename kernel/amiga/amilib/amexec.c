@@ -24,7 +24,7 @@ int am_intmask;
 
 static char *am_task;			/* our one Task */
 static char *am_ints;			/* AM_NINT server Lists */
-static struct amlib *am_libs[8];
+static struct amlib *am_libs[10];
 static int am_nlibs;
 static int am_dis, am_dissr, am_forb;
 static long am_inuse;			/* bytes from AllocMem, for checks */
@@ -1787,22 +1787,27 @@ am_init(attn)
 	AP(b, EB_MEMHANDLERS + 8) = b + EB_MEMHANDLERS;
 	am_addtail(b + EB_LIBLIST, b);
 
-	am_task = am_alloc((unsigned long)TC_SIZE + 8, MEMF_PUBLIC | MEMF_CLEAR);
+	am_task = am_alloc((unsigned long)PR_SIZE + 8, MEMF_PUBLIC | MEMF_CLEAR);
 	am_ints = am_alloc((unsigned long)AM_NINT * LH_SIZE, MEMF_PUBLIC);
 	if (am_task == 0 || am_ints == 0) {
 		am_fini();
 		return -1;
 	}
-	AB(am_task, LN_TYPE) = NT_TASK;
-	AP(am_task, LN_NAME) = am_task + TC_SIZE;
-	am_copy("amilib", am_task + TC_SIZE, 7L);
+	/* a Process: dos and its callers use pr_Result2, pr_CurrentDir and
+	 * pr_WindowPtr; the rest stays zero */
+	AB(am_task, LN_TYPE) = NT_PROCESS;
+	AP(am_task, LN_NAME) = am_task + PR_SIZE;
+	am_copy("amilib", am_task + PR_SIZE, 7L);
+	am_newlist(am_task + 92 + MP_MSGLIST);		/* pr_MsgPort */
+	AB(am_task, 92 + LN_TYPE) = NT_MSGPORT;
 	AL(am_task, TC_SIGALLOC) = ~AM_SIGFREE;
 	AP(b, EB_THISTASK) = am_task;
 	for (i = 0; i < AM_NINT; i++)
 		am_newlist(am_ints + i * LH_SIZE);
 
 	if (am_addlib(&am_utility) == 0 || am_addlib(&am_timer) == 0 ||
-	    am_expinit() != 0) {
+	    am_addlib(&am_intuition) == 0 ||
+	    (am_confdir[0] && am_addlib(&am_dos) == 0) || am_expinit() != 0) {
 		am_fini();
 		return -1;
 	}
@@ -1820,12 +1825,14 @@ am_fini()
 			amx_intdetach(i);
 	am_intmask = 0;
 	am_expfini();
+	am_dellib(&am_dos);
+	am_dellib(&am_intuition);
 	am_dellib(&am_timer);
 	am_dellib(&am_utility);
 	if (am_ints)
 		am_free(am_ints, (unsigned long)AM_NINT * LH_SIZE);
 	if (am_task)
-		am_free(am_task, (unsigned long)TC_SIZE + 8);
+		am_free(am_task, (unsigned long)PR_SIZE + 8);
 	am_ints = am_task = 0;
 	am_dellib(&am_exec);
 	am_sysbase = 0;

@@ -2,9 +2,9 @@
  * opci.c -- the PCI bus for Unix modules (<sys/opci.h>), through
  * openpci.library running on amilib.
  *
- * opci_init takes the library's load file (read by the module from
- * /etc/conf/pci/openpci.library; it is not ours to ship), loads it as
- * LoadSeg would, initialises its Resident (which finds the bridges and
+ * opci_init reads the library's load file from the configuration
+ * directory (/etc/conf/pci/openpci.library; it is not ours to ship),
+ * loads it as LoadSeg would, initialises its Resident (which finds the bridges and
  * configures the bus), opens it, and lists what it found.  Every call
  * below is one LVO of the library, made under one lock: the library
  * expects AmigaOS's tasks and semaphores, and here only one caller at a
@@ -67,6 +67,8 @@ lcall(lvo, r)
 {
 	return am_lvo(opci_base, lvo, r);
 }
+
+static int opci_start();
 
 static int
 opci_isr(oi)
@@ -390,7 +392,33 @@ opci_list()
 }
 
 int
-opci_init(buf, len)
+opci_init(dir)
+	char *dir;
+{
+	char *buf, path[96];
+	unsigned long len;
+	int e, i, j;
+
+	if (opci_base)
+		return OPCI_EBUSY;
+	for (i = 0; dir[i] && i < sizeof am_confdir - 1 &&
+	    i < sizeof path - 20; i++)
+		am_confdir[i] = path[i] = dir[i];
+	am_confdir[i] = 0;
+	for (j = 0; "/openpci.library"[j]; j++)
+		path[i + j] = "/openpci.library"[j];
+	path[i + j] = 0;
+	if ((e = amx_readfile(path, &buf, &len, 1024L * 1024)) != 0) {
+		amx_log("opci: %s: error %d\n", (long)path, (long)e, 0L, 0L);
+		return e;
+	}
+	e = opci_start(buf, len);
+	amx_freefile(buf, len);		/* the hunks are copied out */
+	return e;
+}
+
+static int
+opci_start(buf, len)
 	char *buf;
 	unsigned long len;
 {
@@ -398,8 +426,6 @@ opci_init(buf, len)
 	unsigned long r[16];
 	int e;
 
-	if (opci_base)
-		return OPCI_EBUSY;
 	if (am_init(amx_attnflags()) != 0)
 		return OPCI_ENOMEM;
 	opci_seg = am_loadseg(buf, len, &e);

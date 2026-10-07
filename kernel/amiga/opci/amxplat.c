@@ -19,12 +19,25 @@
  *   void plat_zunintr(intnum)
  *
  * From the kernel: kmem_alloc/kmem_free, printf, dlm_cacheflush (DLM),
- * sleep/wakeup; delayus and hrestime when the kernel has them.
+ * sleep/wakeup, vn_open/vn_rdwr; delayus and hrestime when the kernel
+ * has them.
  */
 
 #include "sys/types.h"
 #include "sys/param.h"
 #include "sys/systm.h"
+#include "sys/errno.h"
+#include "sys/immu.h"
+#include "sys/signal.h"
+#include "sys/fs/s5dir.h"
+#include "sys/psw.h"
+#include "sys/pcb.h"
+#include "sys/user.h"
+#include "sys/cred.h"
+#include "sys/vnode.h"
+#include "sys/vfs.h"
+#include "sys/uio.h"
+#include "sys/file.h"
 #include "sys/kmem.h"
 #include "amilib.h"
 
@@ -258,4 +271,53 @@ amx_log(f, a, b, c, d)
 	long a, b, c, d;
 {
 	printf(f, a, b, c, d);
+}
+
+/* a whole regular file into kernel memory: process context only */
+int
+amx_readfile(path, bufp, lenp, max)
+	char *path, **bufp;
+	unsigned long *lenp, max;
+{
+	struct vnode *vp;
+	struct vattr va;
+	char *b;
+	unsigned long size;
+	int e, resid = 0;
+
+	e = vn_open(path, UIO_SYSSPACE, FREAD, 0, &vp, (enum create)0);
+	if (e)
+		return e;
+	va.va_mask = AT_SIZE;
+	e = VOP_GETATTR(vp, &va, 0, u.u_cred);
+	if (e == 0 && vp->v_type == VDIR)
+		e = AMX_EISDIR;
+	else if (e == 0 && (vp->v_type != VREG || va.va_size <= 0 ||
+	    va.va_size > max))
+		e = EFBIG;
+	size = va.va_size;
+	if (e == 0) {
+		b = (char *)kmem_alloc((size_t)size, KM_SLEEP);
+		e = vn_rdwr(UIO_READ, vp, (caddr_t)b, (int)size, (off_t)0,
+		    UIO_SYSSPACE, 0, 0x7fffffffL, u.u_cred, &resid);
+		if (e == 0 && resid)
+			e = EIO;
+		if (e)
+			kmem_free((_VOID *)b, (size_t)size);
+	}
+	(void)VOP_CLOSE(vp, FREAD, 1, (off_t)0, u.u_cred);
+	VN_RELE(vp);
+	if (e)
+		return e;
+	*bufp = b;
+	*lenp = size;
+	return 0;
+}
+
+void
+amx_freefile(b, len)
+	char *b;
+	unsigned long len;
+{
+	kmem_free((_VOID *)b, (size_t)len);
 }
