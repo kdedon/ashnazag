@@ -10,7 +10,7 @@
 #include "fbcons.h"
 #include "ds.h"
 
-extern int ata_spltty();
+extern int ata_spltty(), ata_tt, ata_ttmono;
 extern void ata_splx(), ikbd_dsmode(), ikbd_cons(), ds_relmouse();
 
 struct adbdev adb_dev[16] = { { ADB_ADDR_KBD, 2 }, { ADB_ADDR_MOUSE, 1 } };
@@ -200,6 +200,17 @@ register struct dsvid *d;
 {
 	register int i;
 
+	if (ata_tt) {
+		d->v_reg[0x01] = V8(0x8201);
+		d->v_reg[0x03] = V8(0x8203);
+		d->v_reg[0x0D] = V8(0x820D);
+		d->v_reg[0x62] = V8(0x8262);
+		d->v_reg[0x63] = V8(0x8263);
+		for (i = 0; i < 256; i++)
+			d->v_pal[i] = V16(0x8400 + 2 * i);
+		d->v_st = 0;
+		return;
+	}
 	for (i = 0; i < 0xC4; i += 2)
 		d->v_reg[i] = V8(0x8200 + i), d->v_reg[i + 1] = V8(0x8201 + i);
 	for (i = 0; i < 256; i++)
@@ -217,6 +228,17 @@ register struct dsvid *d;
 {
 	register int i, x;
 
+	if (ata_tt) {
+		x = DS_SPL(7);
+		V8(0x8201) = d->v_reg[0x01];
+		V8(0x8203) = d->v_reg[0x03];
+		V8(0x820D) = d->v_reg[0x0D];
+		V16(0x8262) = R16(d, 0x8262);
+		for (i = 0; i < 256; i++)
+			V16(0x8400 + 2 * i) = d->v_pal[i];
+		DS_SPLX(x);
+		return;
+	}
 	ad_vsync();
 	x = DS_SPL(7);
 	V8(0x8201) = d->v_reg[0x01];
@@ -328,9 +350,20 @@ static struct advm {
 	    0x419, 0x3FF, 0x3F, 0x3F, 0x3FF, 0x415 } },
 };
 #define AD_NVM	(sizeof ad_vm / sizeof ad_vm[0])
+
+/* TT shifter modes; id & 7 and m_vm are the shifter's resolution */
+static struct advm ad_ttvm[] = {
+	{ 0x97, 320, 480, 8, 7 },
+	{ 0x94, 640, 480, 4, 4 },
+	{ 0x92, 640, 400, 1, 2 },
+	{ 0x91, 640, 200, 2, 1 },
+	{ 0x90, 320, 200, 4, 0 },
+	{ 0x96, 1280, 960, 1, 6 },	/* monochrome monitor only */
+};
+#define AD_NTTVM	5		/* on a colour monitor */
 #define PUT16(d, o, v)	((d)->v_reg[(o) - 0x8200] = (v) >> 8, (d)->v_reg[(o) - 0x8200 + 1] = (v) & 0xFF)
 
-#ifdef ATA060
+#ifdef ATA_SV
 extern int ata_svfb;
 #endif
 
@@ -338,11 +371,23 @@ extern int ata_svfb;
 int
 ata_nvmode()
 {
-#ifdef ATA060
+#ifdef ATA_SV
 	if (ata_svfb)
 		return 0;	/* Videl modes would end the SuperVidel's */
 #endif
+	if (ata_tt)
+		return ata_ttmono ? 1 : AD_NTTVM;
 	return (V8(0x8006) >> 6) == 2 ? AD_NVM : 0;
+}
+
+/* session mode n */
+static struct advm *
+ad_vmode(n)
+int n;
+{
+	if (!ata_tt)
+		return &ad_vm[n];
+	return &ad_ttvm[ata_ttmono ? AD_NTTVM : n];
 }
 
 /* index of mode id, or -1 */
@@ -353,7 +398,7 @@ unsigned long id;
 	register int i;
 
 	for (i = 0; i < ata_nvmode(); i++)
-		if (ad_vm[i].m_id == id)
+		if (ad_vmode(i)->m_id == id)
 			return i;
 	return -1;
 }
@@ -364,7 +409,7 @@ ata_vminfo(n, fi)
 int n;
 register struct fbinfo *fi;
 {
-	register struct advm *m = &ad_vm[n];
+	register struct advm *m = ad_vmode(n);
 
 	fi->fi_width = m->m_w;
 	fi->fi_height = m->m_h;
@@ -392,9 +437,17 @@ register struct dsvid *d;
 int n;
 unsigned long base;
 {
-	register struct advm *m = &ad_vm[n];
+	register struct advm *m = ad_vmode(n);
 	register int i, sh;
 
+	if (ata_tt) {
+		d->v_reg[0x01] = base >> 16;
+		d->v_reg[0x03] = base >> 8;
+		d->v_reg[0x0D] = base;
+		PUT16(d, 0x8262, m->m_vm << 8);
+		d->v_st = 0;
+		return;
+	}
 	for (i = 0; i < 12; i++)
 		PUT16(d, ad_vtime[i], m->m_t[i]);
 	d->v_reg[0x01] = base >> 16;
@@ -434,6 +487,8 @@ register unsigned char *b;
 {
 	register int i;
 
+	if (ata_tt)
+		return;			/* no blitter */
 	(void)ab_idle();
 	for (i = 0; i < 0x3E; i++)
 		b[i] = V8(0x8A00 + i);
@@ -446,6 +501,8 @@ register unsigned char *b;
 {
 	register int i;
 
+	if (ata_tt)
+		return;
 	(void)ab_idle();
 	for (i = 0; i < 0x3C; i++)
 		V8(0x8A00 + i) = b[i];
@@ -467,7 +524,7 @@ register struct dsbrun *r;
 {
 	register int i;
 
-	if (ab_idle())
+	if (ata_tt || ab_idle())
 		return -1;
 	for (i = 0; i < 16; i++)
 		V16(0x8A00 + 2 * i) = r->r_ht[i];

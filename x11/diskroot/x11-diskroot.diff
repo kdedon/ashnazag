@@ -1,6 +1,6 @@
 --- a/kernel/mac/diskroot/root.manifest
 +++ b/kernel/mac/diskroot/root.manifest
-@@ -67,3 +67,72 @@
+@@ -98,3 +98,72 @@
  
  e /var/adm/utmp	644 0 2
  e /var/adm/utmpx 644 0 2
@@ -79,8 +79,8 @@
  PY="nice -n 19 python3"
  
  mkdir -p "$B/tape"
--for s in 02 03 10; do
-+for s in 02 03 10 13 14; do
+-for s in 02 03 07 10; do
++for s in 02 03 07 10 13 14; do
  	[ -f "$B/tape/$s" ] && continue
  	[ -f "$TAPE/$s" ] || { echo "[FAIL] no tape segment $s in '$TAPE'"; exit 1; }
  	cp "$TAPE/$s" "$B/tape/$s"

@@ -27,6 +27,23 @@ func FalconSizes(s Selection, kernelSize int64) (rootMiB, homeMiB int, err error
 	return s.Settings.RootMiB, home, err
 }
 
+// SuperVidel reports whether the selection includes the SuperVidel driver.
+func (s Selection) SuperVidel() bool { return contains(s.Settings.Devices, "supervidel") }
+
+// FalconVariant names the 68060 kernel medium the selection needs (empty on
+// other machines) and whether the
+// loader without the SuperVidel probe goes with it. Only the 68060 kernel
+// comes in both variants.
+func FalconVariant(s Selection) (kernel string, noSuperVidel bool) {
+	switch {
+	case s.Machine != "falcon060":
+		return "", false
+	case s.SuperVidel():
+		return "unix-atari060.elf", false
+	}
+	return "unix-atari060-nosv.elf", true
+}
+
 // Falcon builds a Falcon disk image from verified media: the AMIX tape
 // segments, then the kernel, then packages. root and home are zeroed scratch
 // of FalconSizes; the disk streams to out.
@@ -60,6 +77,7 @@ func Falcon(ctx context.Context, r Recipe, media []Media, root, home Scratch, ou
 	if m, err := kernel.Reader.ReadAt(elf, 0); m != len(elf) {
 		return fmt.Errorf("read kernel: %v", err)
 	}
+	_, noSV := FalconVariant(s)
 	rootMiB, homeMiB, err := FalconSizes(s, kernel.Size)
 	if err != nil {
 		return err
@@ -81,6 +99,6 @@ func Falcon(ctx context.Context, r Recipe, media []Media, root, home Scratch, ou
 	if _, err = ufs.Build(ctx, home, ufs.Options{SizeMiB: homeMiB, Timestamp: QuadraTimestamp, MountPoint: "/home"}, recipes.AtariHome()); err != nil {
 		return err
 	}
-	return atari.Assemble(ctx, out, atari.Params{DiskMiB: s.Settings.DiskMiB, SwapMiB: s.Settings.SwapMiB, Kernel: elf, CmdLine: FalconCmdLine,
+	return atari.Assemble(ctx, out, atari.Params{DiskMiB: s.Settings.DiskMiB, SwapMiB: s.Settings.SwapMiB, Kernel: elf, CmdLine: FalconCmdLine, NoSuperVidel: noSV,
 		Root: root, RootMiB: rootMiB, Home: home, HomeMiB: homeMiB})
 }

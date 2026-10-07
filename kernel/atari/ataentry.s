@@ -39,7 +39,6 @@ Lnext:
 	bne.w	Lscan
 	suba	%a0,%a0
 Lfound:
-.ifdef ATA060
 	| copied to FastRAM: enter the copy, which finds the record past its end
 	moveal	%a0,%a2
 	movel	%a0,%sp@-
@@ -52,7 +51,6 @@ Lfound:
 	jmp	%a0@
 Lstay:
 	moveal	%a2,%a0
-.endif
 	movel	%a0,%sp@-
 	jsr	ata_shim_main
 	addql	&4,%sp

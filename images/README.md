@@ -4,10 +4,10 @@ There are two images. Both boot the same way and start the same kernel. A third,
 
 | Image | Size | Contents |
 |---|---|---|
-| `q800-test.img` | 1,048,576,000 bytes (2,048,000 blocks) | The whole A/UX 3.1 disk: HFS, A/UX root, swap. You can still boot normal A/UX from it. |
-| `q800-test-small.img` | 16,826,368 bytes (32,864 blocks) | Partition map, driver, and a 16 MB copy of the HFS volume. **No A/UX partitions**, so it cannot boot normal A/UX. |
+| `q800-test.img` | 426,253,824 bytes (832,527 blocks) | The whole A/UX 3.1 CD as a disk: HFS, A/UX root, install archives, swap. |
+| `q800-test-small.img` | 18,923,520 bytes (36,960 blocks) | Partition map, driver, and an 18 MB copy of the HFS volume. **No A/UX partitions**, so it cannot boot normal A/UX. |
 
-`q800-test.img` is the A/UX 3.1 disk with our kernel added. The Mac boots System 7.1 from the disk's HFS partition, the Finder opens **A/UX Startup** (it is in Startup Items), and A/UX Startup starts our kernel on its own. You don't need to type anything.
+`q800-test.img` is the A/UX 3.1 CD, written as a disk, with our kernel added. The Mac boots System 7.1 from the disk's HFS partition, the Finder opens **A/UX Startup** (it is in Startup Items), and A/UX Startup starts our kernel on its own. You don't need to type anything.
 
 The images are for local use only. They contain Apple's A/UX and System software, so do not publish them.
 
@@ -15,9 +15,11 @@ The images are for local use only. They contain Apple's A/UX and System software
 
 | Part | State |
 |---|---|
-| Partition map, driver, A/UX root, swap, "Eschatology 1" | Byte-identical to the A/UX 3.1 image. Our kernel does not mount the A/UX partitions. |
-| HFS "Macintosh HD": `unix.coff` | New: our kernel (data fork only, type `COFF`, creator `SASH`), next to A/UX Startup |
-| HFS "Macintosh HD": A/UX Startup | Autoboot command `launch -m -n unix.coff`. The A/UX file system check is replaced by a message. Countdown is 10 s. |
+| Partition map, driver, A/UX partitions | Byte-identical to the A/UX 3.1 CD. Our kernel does not mount the A/UX partitions. |
+| DDM (block 0) | Gains the driver entry the CD leaves out, so the ROM loads the driver |
+| HFS boot blocks | The header (`LK`, entry, version) the CD zeroes is restored; the boot code is the CD's |
+| HFS "A/UX CDInstall": `unix.coff` | New: our kernel (data fork only, type `COFF`, creator `SASH`), next to A/UX Startup |
+| HFS "A/UX CDInstall": A/UX Startup | Autoboot command `launch -m -n unix.coff`. The A/UX file system check is replaced by a message. Countdown is 10 s. |
 
 A/UX Startup's memory size stays at 512 KB. It loads kernels into free memory outside its own partition, up to 4000 KB. A larger Get Info size would leave less memory for the kernel.
 
@@ -29,7 +31,7 @@ A/UX Startup's memory size stays at 512 KB. It loads kernels into free memory ou
 |---|---|
 | 1–63 | Partition map (3 entries) |
 | 64–95 | Apple_Driver, byte-identical to the A/UX disk |
-| 96–32863 | Apple_HFS "MacOS", volume "Macintosh HD", 16 MB, about 7 MB free |
+| 96–36959 | Apple_HFS "MacOS", volume "A/UX CDInstall", 18 MB, about 3.4 MB free |
 
 The HFS volume holds the same files as the big image. The build copies the catalog as it is, so every file and folder keeps its catalog ID, name, dates and Finder info. The volume keeps its name, creation date and boot blocks, and the System Folder stays blessed. Only the file positions change, so the Startup Items alias still finds A/UX Startup. The free space leaves room for a kernel up to A/UX Startup's 4000 KB limit.
 
@@ -98,12 +100,12 @@ sh images/mkimage.sh [kernel.coff]              # q800-test.img
 sh images/mkimage.sh --small [kernel.coff]      # q800-test-small.img
 ```
 
-The default kernel is `kernel/build/unix-mac.coff`. The script rebuilds from the zip each time and writes a sparse file. `--small` builds the big image in a temporary directory and makes the small one from it, and it leaves `q800-test.img` alone. It needs `unzip`, `python3` and `cc`. On first use it builds hfsutils into `toolchain/`. It checks its result in these ways:
+The default kernel is `kernel/build/unix-mac.coff`. The script rebuilds from the A/UX 3.1 CD (`media/aux-3.1.iso`) each time and writes a sparse file. `--small` builds the big image in a temporary directory and makes the small one from it, and it leaves `q800-test.img` alone. It needs `python3` and `cc`. On first use it builds hfsutils into `toolchain/`. It checks its result in these ways:
 - `hfsck` passes.
 - `unix.coff` is read back and matches the kernel byte for byte.
 - `elf2coff -c` accepts it.
 - The A/UX Startup settings are printed.
-- Everything outside the HFS partition hashes the same as the source image.
+- Everything outside the HFS partition hashes the same as the CD.
 
 With `--small` it also checks:
 - The partition map: the DDM block count equals the image size, the DDM driver entry points into the driver partition, every entry is consistent, and no partitions overlap.
@@ -224,6 +226,8 @@ EmuTOS 1.4 (GPL-2) starts in its own display session; the TeraDesk desktop appea
 
 Drive C: is your folder `~/TOS` (AUTO, accessories, the saved desktop); `maketos` makes it from `/tos/sys`, and guest already has one. Without it C: is `/tos/sys`, read-only. G: holds the system's games (`/usr/games/tos`), U: the Unix tree; files are reached with your own permissions. `/tos/sys/drives` and `~/TOS/drives` name more drives (`G /usr/games/tos ro`), `tosdrive` edits yours, `starttos -D H=dir` adds one for a run, `-C dir` picks another C: folder, `-d FILE` a FAT image as C:. The sample apps are in `images/tosenv/APPS.md`.
 
+A `-C` folder without its own AUTO boots with the system's fVDI (`/tos/fvdi`), at the screen's full size; `-M` or `-S` keep the ST screen. Cubase, when `images/tosenv/mkcubase.sh` added your copies: `starttos -C $HOME/TOS/CUBASE/CUBASE31` (or `SCORE`, `CAF`).
+
 `starttos -rom FILE` runs your own TOS ROM image instead. The image never contains one.
 
 `/etc/rc2.d/S05aux` registers the `tosguest` module (`/dev/tos`, major 56, group `display`) with the A/UX modules. Rebuild with `images/macenv/mkmacimage.sh`; `images/tosenv/mktos.sh` makes the container's files.
@@ -236,6 +240,7 @@ The Quadra image, and the Falcon image built with `TOSENV=1`, also run Digital R
 startcpm
 ```
 
-or pick "CP/M-68K environment" at the xdm session chooser (last in the list) or in the twm and XView menus, which open it in an xterm. The first run makes your A: drive, `~/CPM/a.img` (8 MB), from the nine distribution disks' files in `/cpm/dist`; `X.REL` programs are also there as `X.68K`, which the CCP runs. `EXIT` ends the session, as does end of input. Drives B: to P: are `~/CPM/b.img` and so on, or directories `~/CPM/b/` copied in at each start; `startcpm -e NAME` uses `~/CPM/NAME/` instead. The console is your terminal. One session per environment at a time.
+or pick "CP/M-68K environment" at the xdm session chooser (last in the list) or in the twm and XView menus, which open it in an xterm. Each drive is a directory of plain files: A: is `~/CPM/A`, B: `~/CPM/B` and so on; user areas 1-15 are subdirectories `1` to `15`. The first run makes A: with links to the nine distribution disks' files in `/cpm/dist`; `X.REL` programs are also there as `X.68K`, which the CCP runs. `EXIT` ends the session, as does end of input. `startcpm -e NAME` uses `~/CPM/NAME/` instead. The console is your terminal. One session per environment at a time.
 
 The image builds put in the files from DRI's release zip (`media/cpm68k/68kv1_3.zip`, `CPMZIP`); without it there is no CP/M. `images/cpmenv/mkcpm.sh` makes the archive; details in `kernel/guest/cpm/CPM.md`.
+

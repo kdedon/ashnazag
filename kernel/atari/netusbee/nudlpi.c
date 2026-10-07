@@ -184,10 +184,8 @@ nu_find()
 		return nu_found > 0;
 	nu_found = -1;
 	if (!ata_busprobe(NU_RDBASE) || !ata_busprobe(NU_WRBASE) ||
-	    nu_probe(&nu_sc) < 0) {
-		printf("nu0: no NetUSBee Ethernet on the cartridge port\n");
-		return 0;
-	}
+	    nu_probe(&nu_sc) < 0)
+		return 0;		/* optional hardware: the open's ENXIO says it */
 	if (nu_usable(nu_eaddr))
 		bcopy((caddr_t)nu_eaddr, (caddr_t)nu_sc.ea, 6);
 	else if (nu_usable(nu_sc.prom))
@@ -250,6 +248,23 @@ nu_tick()
 	nu_splx(s);
 	if (nu_up > 0)
 		nu_tid = timeout(nu_tick, (caddr_t)0, 1);
+}
+
+/* the module goes: the statistics leave the interface list */
+int
+nu_unload()
+{
+	register struct ifstats **p;
+	int s;
+
+	s = nu_spl();
+	for (p = &ifstats; *p; p = &(*p)->ifs_next)
+		if (*p == &nu_ifstats) {
+			*p = nu_ifstats.ifs_next;
+			break;
+		}
+	nu_splx(s);
+	return 0;
 }
 
 /* ------------------------------------------------------------ open/close */

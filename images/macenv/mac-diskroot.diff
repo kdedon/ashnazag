@@ -20,7 +20,7 @@
  f /sbin/shutdown 755 0 3 build/shutdown
  h /usr/sbin/shutdown /sbin/shutdown
  f /sbin/rc0	744 0 3 build/rc0
-@@ -56,6 +56,63 @@
+@@ -56,6 +56,64 @@
  # date(1) runs setclk -s after stime(2); the kernel keeps the RTC
  f /usr/amiga/bin/setclk 755 0 3 etc/setclk
  
@@ -79,8 +79,9 @@
 +a macpkg/tos/guest.cpio
 +# CP/M-68K: startcpm, CPM.SYS and the files for each user's new A:
 +a macpkg/cpm/cpm.cpio
++a macpkg/cpm/guest.cpio
 +c /dev/kmem	640 0 3 3 1	# macdiag relies on root-only kernel memory
 +
- # no Amiga port monitors (screens, serial boards) or Ethernet board
+ # no Amiga port monitors (screens, serial boards)
  f /etc/saf/_sactab 644 0 3 etc/_sactab
  f /etc/inet/network-config 444 0 3 etc/network-config

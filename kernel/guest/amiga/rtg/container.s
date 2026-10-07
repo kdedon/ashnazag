@@ -1,5 +1,6 @@
 .include "p96offsets.inc"
 .include "rtgabi.inc"
+.equ DO_STATE_TEXT,1
 
 .equ LIB_FLAGS, 14
 .equ LIB_NEGSIZE, 16
@@ -117,6 +118,16 @@ find_card:
 1: move.l #\target,\field(%a0)
 .endm
 init_card:
+ | MOVE16 rows on a 68040 or 68060 (AttnFlags)
+ move.l 4,%a1
+ moveq #30,%d1
+ move.w 296(%a1),%d0
+ and.w #0x88,%d0
+ beq 1f
+ moveq #40,%d1
+1: move.l %d1,-(%sp)
+ bsr do_init
+ addq.l #4,%sp
  move.l #board_name,gbi_BoardName(%a0)
  clr.l gbi_BoardType(%a0)
  clr.l gbi_PaletteChipType(%a0)
@@ -463,6 +474,7 @@ wait_vsync:
  move.w #255,%d0
 1: dbra %d0,1b
  rts
+ .include "drawops.s"
  .include "draw.inc"
  .balign 4
 clocks: .long 25175000,40000000,65000000,108000000

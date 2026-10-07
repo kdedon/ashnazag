@@ -61,8 +61,7 @@ instead of building it.
 | `--patch FILE` | AMIX 2.1 patch disk ADF | kernel (2.1c sources `c0.c`, `aen.c`, `kernel.c`) |
 | `--q800-rom FILE` | Quadra 800 ROM | ROM boot in QEMU, Mac environment desktop |
 | `--q700-rom FILE` | Quadra 700 ROM `420DBFF3` | A/UX guest tests, Mac environment on hosts without a ROM |
-| `--aux-cd FILE` | A/UX 3.1 CD | Apple driver and map for ROM-bootable disks |
-| `--aux-disk FILE` | prebuilt A/UX 3.1 disk image (fallback, see below) | `images/mkimage.sh` |
+| `--aux-cd FILE` | A/UX 3.1 CD | Apple driver and map for ROM-bootable disks, `images/mkimage.sh`, the A/UX root tree |
 | `--macos761 FILE` | Mac OS 7.6.1 CD (`.iso` or `.7z`) | Mac environment, Mac guest tests |
 | `--macos81 FILE` | Mac OS 8.1 CD | Mac OS 8 guest tests, Open Transport bridge tests |
 | `--tos FILE` | TOS 3.06 ROM zip | optional TOS test (EmuTOS is the default) |
@@ -82,9 +81,9 @@ Optional open-source downloads: `--tos-src` (EmuTOS 1.4, fVDI), `--x11` (X11R6.3
 |---|---|---|
 | kernel | `sh kernel/build.sh` | tape (02, 04, 19), patch disk, toolchains |
 | suite (minimum) | `sh tests/run-qemu.sh` | kernel + patched QEMU. No ROM: QEMU boots the kernel directly. Guest tests skip without their media. |
-| disk | `sh images/mkimage.sh --small`, `images/mkboot.sh`, `kernel/mac/diskroot/mkdiskimage.sh` | suite + A/UX 3.1 CD (A/UX disk image for `mkimage.sh`), hfsutils, tape 03, 07 and 10; Quadra 800 ROM to boot it |
+| disk | `sh images/mkimage.sh --small`, `images/mkboot.sh`, `kernel/mac/diskroot/mkdiskimage.sh` | suite + A/UX 3.1 CD, hfsutils, tape 03, 07 and 10; Quadra 800 ROM to boot it |
 | x11 | `x11/build.sh`, `x11/mkimage.sh` | disk + tape 13, 14, `--x11` |
-| mac | `images/macenv/mkmacimage.sh` | x11 + Mac OS 7.6.1 CD, Quadra 700 ROM, the A/UX root tree (`tests/aux/auxroot`) |
+| mac | `images/macenv/mkmacimage.sh` | x11 + Mac OS 7.6.1 CD, Quadra 700 ROM, the A/UX root tree (`tests/aux/auxroot`, from `--aux-cd`) |
 | tos | `tests/run-qemu.sh` (t_tos) | suite + `--tos-src` |
 | amiga | `tests/run-qemu.sh` (t_amiga), `images/amigaenv/mkamiga.sh` | suite + AmigaOS 3.2 CD |
 | falcon | `PLATFORM=atari sh kernel/build.sh`, `kernel/atari/mkdisk.sh` | kernel + tape 02, 03, 10, `--tos-src`; Hatari for tests (`kernel/atari/build-hatari.sh`) |
@@ -98,10 +97,11 @@ direct-boot path (`tests/run-qemu.sh`, `images/qemu/run-direct.sh`) needs neithe
 (`--aux-cd`) at build time; nothing of Apple's is stored in the repository. Any disk with one
 `Apple_Driver` partition at block 64 and one HFS partition also works (`BOOT_SOURCE=disk.img`).
 
-`images/mkimage.sh` (A/UX Startup boot) still reads a prebuilt A/UX 3.1 disk image
-(`AUX_3_1_1GB_Use_In_Shoebill.zip`, or the unzipped `AUX_3_1_1GB.dsk`, via `--aux-disk`).
-Get it from the "A/UX 3.0.1 + 3.1 update" listing on Macintosh Repository or Macintosh
-Garden. The file is 59,762,632 bytes, MD5 `e03b0c41bad70fa23a804afc7a2f7a2c`. The A/UX 3.1
-update CD on archive.org is not this image.
+`images/mkimage.sh` (A/UX Startup boot) writes the CD as a disk and adds our kernel to its
+HFS partition.
+
+`--aux-cd` also extracts the A/UX root (`images/mkauxroot.sh`, from the CD's `UNIX Root&Usr`
+partition) into `images/work/auxroot-cd`, the tree `tests/aux/auxroot` names. Device nodes
+become `NAME.__special__` files; `auxroot-cd.meta` lists every entry's mode, owner and time.
 
 A/UX 2.x media will be needed later for a System 6 environment on smaller machines.

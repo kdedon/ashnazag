@@ -49,10 +49,11 @@ extern void ata_sput(), ata_sirq();
 extern int ata_vnative(), ata_brun(), ata_nvmode(), ata_vmfind();
 extern void ata_vminfo(), ata_vmset();
 extern unsigned long ata_pool;
+extern int ata_tt;
 static void ds_sndsave(), ds_sndload();
 static struct dsvid ds_vcons;		/* the mode under a Videl session */
 #endif
-#if defined(DS_ATARI) && defined(ATA060)
+#if defined(DS_ATARI) && defined(ATA_SV)
 extern int ata_svfb;
 #define DS_SV	ata_svfb	/* the display is the SuperVidel's native mode */
 #else
@@ -173,6 +174,8 @@ int depth;
 #define HWCLUT	1
 #define FAL_PAL(i)	(*(VOL unsigned long *)(0xFFFF9800 + 4 * (i)))
 #define ST_PAL(i)	(*(VOL unsigned short *)(0xFFFF8240 + 2 * (i)))
+#define TT_PAL(i)	(*(VOL unsigned short *)(0xFFFF8400 + 2 * (i)))
+#define TT_STHIGH	((*(VOL unsigned short *)0xFFFF8262 & 0x700) == 0x200)
 
 /* 16-bit gun to the STE's 4 bits, low bit on top */
 #define STE4(v)		((((v) >> 13) & 7) | (((v) >> 9) & 8))
@@ -193,6 +196,14 @@ int lo, hi;
 		r = s->s_blank ? 0 : s->s_cmap[0][i];
 		g = s->s_blank ? 0 : s->s_cmap[1][i];
 		b = s->s_blank ? 0 : s->s_cmap[2][i];
+		/* 4 bits a gun; ST high shows entries 254 and 255, which bit 1 of entry 0 inverts */
+		if (ata_tt) {
+			TT_PAL(TT_STHIGH && i < 2 ? 254 + i : i) =
+			    (r & 0xF000) >> 4 | (g & 0xF000) >> 8 | (b & 0xF000) >> 12;
+			if (TT_STHIGH && i == 0)
+				TT_PAL(0) = 0;
+			continue;
+		}
 #if defined(ATA060)
 		/* 8 bits a gun; no ST palette, a Videl register */
 		if (DS_SV) {
@@ -732,10 +743,14 @@ register struct dssess *to;
 		ata_vload(&ds_vcons);
 		ata_bload(ds_vcons.v_blt);
 	}
+	if (DS_GUEST(to) && !DS_GUEST(from) && ds_sndown)
+		(*ds_sndown)(1);
 	if (DS_GUEST(from))
 		ds_sndsave(from);
 	if (DS_GUEST(to))
 		ds_sndload(to);
+	if (DS_GUEST(from) && !DS_GUEST(to) && ds_sndown)
+		(*ds_sndown)(0);
 #endif
 	ds_lcopy((unsigned long *)vram, (unsigned long *)to->s_shadow, to->s_size);
 	if (to == &ds_sess[0])
@@ -976,7 +991,7 @@ ds_init()
 	ds_disp.d_page = m->fm_base & ~DS_PGOFF;
 #ifdef DS_ATARI
 	ds_disp.d_dafb = 0;
-	fi->fi_type = DS_SV ? FBT_SVIDEL : FBT_VIDEL;
+	fi->fi_type = DS_SV ? FBT_SVIDEL : ata_tt ? FBT_TTSHIFT : FBT_VIDEL;
 	fi->fi_layout = d == 1 || d > 8 || DS_SV ? FBL_PACKED : FBL_IPLAN2;
 #else
 	ds_disp.d_dafb = m->fm_base >= DAFB_VRAM && m->fm_base < DAFB_REG;
@@ -997,7 +1012,7 @@ ds_init()
 		ds_disp.d_vsize = ata_pool + DS_VPOOL - ds_disp.d_page;
 #endif
 	end = ds_disp.d_dafb ? DAFB_REG : (ds_disp.d_page & 0xFF000000) + 0x01000000;
-#ifdef ATA060
+#ifdef ATA_SV
 	if (DS_SV)
 		end = 0xA8000000;	/* the SuperVidel's RAM */
 #endif
@@ -1030,14 +1045,18 @@ ds_init()
 	fi->fi_cmapbits = 8;
 	fi->fi_mode = (fbp_cur >= 0 && fbp_cur < fbp_nmode) ? fbp_mode[fbp_cur].pm_id : 0x80;
 #ifdef DS_ATARI
-	fi->fi_cmapbits = DS_SV ? 8 : 6;
+	fi->fi_cmapbits = DS_SV ? 8 : ata_tt ? 4 : 6;
 	fi->fi_flags = d <= 8 ? FBF_BLANK | FBF_CMAP : 0;
-#ifdef ATA060
+#ifdef ATA_SV
 	if (DS_SV)
 		for (i = 0; "SuperVidel"[i]; i++)
 			fi->fi_name[i] = "SuperVidel"[i];
 	else
 #endif
+	if (ata_tt)
+		for (i = 0; "TT Shifter"[i]; i++)
+			fi->fi_name[i] = "TT Shifter"[i];
+	else
 	for (i = 0; "Videl"[i]; i++)
 		fi->fi_name[i] = "Videl"[i];
 #else
@@ -1565,11 +1584,13 @@ register struct proc *p;
 }
 
 void (*ds_sndcb)();
+void (*ds_sndhw)();
+void (*ds_sndown)();
 
 /*
  * The DMA sound end, at the MFP: the front guest's events, as its control
- * register and edges ask.  With the two on different edges the host takes
- * them in turn.
+ * register and edges ask, or the host driver's with no guest in front.
+ * With the two on different edges the host takes them in turn.
  */
 void
 ds_sndintr()
@@ -1578,7 +1599,12 @@ ds_sndintr()
 	register struct dsvid *d;
 	register int ev = 0, cur, e7, eA;
 
-	if (ds_sndcb == 0 || s == 0 || !DS_GUEST(s) || s->s_vproc == 0)
+	if (s == 0 || !DS_GUEST(s)) {
+		if (ds_sndhw)
+			(*ds_sndhw)();
+		return;
+	}
+	if (ds_sndcb == 0 || s->s_vproc == 0)
 		return;
 	d = s->s_vid;
 	cur = d->v_scur != 0;

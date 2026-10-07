@@ -12,8 +12,9 @@
  * host calls: a halt asked for by a user's session is refused, root's
  * reaches uadmin (recorded, not run), and the exit ends the session;
  * Desk > Session... then Return logs out.  The kernel's counters are
- * logged.  On the network root only STIKTEST.PRG runs:
- * the STiK transport against the network.
+ * logged.  On the network root only STIKTEST.PRG runs, under EmuTOS
+ * and the user ROM: the STiK transport against the network, its ping
+ * through the echo service pingd, which a plain user also reaches.
  * Skips without guest support, the module or the local ROM.
  */
 #include <sys/types.h>
@@ -37,6 +38,7 @@
 #include "sys/mod.h"
 #include "dsio.h"
 #include "tosio.h"
+#include "pingio.h"
 #include "t.h"
 
 extern int getksym();
@@ -317,9 +319,11 @@ static int stscreen;			/* fVDI kept off the frame buffer */
 #define	STIKPRG	"/tos/stik/STIKTEST.PRG"
 static int stik;			/* C:\AUTO starts it */
 #define	ACCPRG	"/tos/acc/SESSION.ACC"
+#define	LAPRG	"/tos/linea/LATEST.PRG"	/* the Line-A calls under fVDI */
 static int acc;				/* C: holds the session accessory */
 #define	EXITPRG	"/tos/exit/EXITTEST.PRG"
 #define	XDIR	"/tmp/tosx"		/* C: for EXITTEST.PRG, any user's */
+#define	FDIR	"/tmp/tosf"		/* C: without AUTO: the system's fVDI */
 
 static char *utree[] = {
 	"sub/new.txt", "sub/renamed.txt", "result.txt", "readme.txt", "hello.prg",
@@ -504,6 +508,8 @@ cmake()
 
 	unlink(CDIR "/AUTO/UTEST.PRG");
 	unlink(CDIR "/AUTO/STIKTEST.PRG");
+	unlink(CDIR "/AUTO/LATEST.PRG");
+	unlink(UDIR "/linea.txt");
 	unlink(CDIR "/SESSION.ACC");
 	for (i = 0; i < 3; i++) {
 		sprintf(b, "%s/%s", CDIR, fvdifiles[i]);
@@ -537,6 +543,9 @@ cmake()
 		sprintf(b, "%s/%s", CDIR, fvdifiles[i]);
 		fcopy(a, b);
 	}
+	/* after FVDI.PRG in AUTO's order: the directory's */
+	if (fvdi && strcmp(pf, "emutos_fvdi") == 0)
+		fcopy(LAPRG, CDIR "/AUTO/LATEST.PRG");
 	for (i = 0; baller && ballerfiles[i + 1]; i++) {
 		sprintf(a, "%s/%s", BALLERDIR, ballerfiles[i]);
 		sprintf(b, "%s/%s", CDIR, ballerfiles[i]);
@@ -645,7 +654,7 @@ start(rom)
 		close(p[0]);
 		dup2(p[1], 1);
 		dup2(p[1], 2);
-		if (rom && fvdi)
+		if (rom && (fvdi || stik))
 			execl("/tos/bin/starttos", "starttos", "-v", "-u", UDIR, "-C", CDIR,
 			    "-rom", rom, (char *)0);
 		else if (rom) {
@@ -866,6 +875,42 @@ rezitem()
 		t_check(N("rez_item_off"), n == 0, "diff %d", n);
 	else
 		t_check(N("rez_item_on"), n > 2000, "diff %d", n);
+}
+
+/* what LATEST.PRG found drawing with Line A on the fVDI screen */
+static void
+lacheck()
+{
+	static char *names[] = {
+		"la_vars", "la_rect", "la_rect_clip", "la_putget", "la_line", "la_hline",
+		"la_polygon", "la_bitblt_mono", "la_bitblt_screen", "la_textblt", "la_mouse",
+		"la_mouse_form", "la_sprite", "la_raster", "la_raster_trans", "la_seedfill",
+		"la_setscreen_alias", "la_console", 0
+	};
+	char b[2048], n[48], why[40], *l;
+	int fd, i, len = 0;
+
+	if ((fd = open(UDIR "/linea.txt", O_RDONLY)) >= 0) {
+		len = read(fd, b, sizeof b - 1);
+		close(fd);
+	}
+	b[len > 0 ? len : 0] = 0;
+	for (i = 0; names[i]; i++) {
+		sprintf(n, "PASS %s\r", names[i]);
+		if (strstr(b, n)) {
+			t_check(N(names[i]), 1, "");
+			continue;
+		}
+		sprintf(n, "FAIL %s ", names[i]);
+		if ((l = strstr(b, n)) != 0)
+			sscanf(l, "%*s %*s %39s", why);
+		else
+			strcpy(why, "no result");
+		t_check(N(names[i]), 0, "%s", why);
+	}
+	for (l = b; (l = strstr(l, "INFO ")) != 0; l += 5)
+		if (sscanf(l, "INFO %47s %39s", n, why) == 2)
+			t_info(N(n), "%s", why);
 }
 
 /* GEM through fVDI: a drive window opens and closes, the screen survives a switch */
@@ -1601,6 +1646,8 @@ run(rom)
 		if (hfd >= 0) {
 			background();
 		}
+		if (fvdi && strcmp(pf, "emutos_fvdi") == 0 && access(LAPRG, 0) == 0)
+			lacheck();
 		if (fvdi)
 			fvdichecks();
 		else {
@@ -1952,6 +1999,57 @@ exitprg(uid)
 }
 
 /*
+ * A -C folder without AUTO boots with the system's fVDI; with -M on
+ * the ST screen.  The desktop starts LATEST.PRG, whose la_vars says which.
+ */
+static void
+fallrun(mono)
+	int mono;
+{
+	char b[2048];
+	int st, fd, n = 0;
+	pid_t p;
+	long t0;
+
+	unlink(UDIR "/linea.txt");
+	unlink(FDIR "/LATEST.PRG");
+	unlink(FDIR "/EMUDESK.INF");
+	rmdir(FDIR);
+	mkdir(FDIR, 0755);
+	mkdir(UDIR, 0755);
+	fcopy(LAPRG, FDIR "/LATEST.PRG");
+	wfile(FDIR "/EMUDESK.INF", "#Z 01 C:\\LATEST.PRG@\r\n");
+	if ((p = fork()) == 0) {
+		setpgrp();
+		if ((fd = open("/dev/null", O_RDWR)) >= 0) {
+			dup2(fd, 1);
+			dup2(fd, 2);
+		}
+		execl("/tos/bin/starttos", "starttos", "-u", UDIR, "-C", FDIR,
+		    mono ? "-M" : (char *)0, (char *)0);
+		_exit(127);
+	}
+	t0 = t_now_ms();
+	while (access(UDIR "/linea.txt", 0) < 0 && t_now_ms() - t0 < 150000)
+		nap(1000);
+	nap(1000);
+	kill(p, SIGTERM);
+	t_waitchild(p, &st, 10);
+	if ((fd = open(UDIR "/linea.txt", O_RDONLY)) >= 0) {
+		n = read(fd, b, sizeof b - 1);
+		close(fd);
+	}
+	b[n > 0 ? n : 0] = 0;
+	if (mono)
+		t_check("fvdi_fallback_mono", strstr(b, "FAIL la_vars") != 0, "%.20s", n > 0 ? b : "no result");
+	else
+		t_check("fvdi_fallback", strstr(b, "PASS la_vars") != 0, "%.20s", n > 0 ? b : "no result");
+	t0 = t_now_ms();
+	while (front() != 0 && t_now_ms() - t0 < 10000)
+		nap(200);
+}
+
+/*
  * The session's host calls, as the accessory makes them: a halt asked
  * for by a user is refused and the exit ends the session; root's halt
  * is recorded in place of running, the session killed instead.
@@ -2027,16 +2125,17 @@ accrun()
 
 /* STIKTEST.PRG's results, up to 120 s for them */
 static void
-stikrun()
+stikrun(rom)
+	char *rom;
 {
 	char b[2048], n[48], why[40], *l, *e;
 	int fd, len = 0, status;
 	long t0;
 
 	stik = 1;
-	pf = "stik";
+	pf = rom ? "stik_tos306" : "stik";
 	unlink(UDIR "/stik.txt");
-	start((char *)0);
+	start(rom);
 	t0 = t_now_ms();
 	b[0] = 0;
 	while (t_now_ms() - t0 < 120000 && strstr(b, "DONE") == 0) {
@@ -2072,12 +2171,61 @@ stikrun()
 	stik = 0;
 }
 
+#define	PINGD	"/tos/bin/pingd"
+
+/* as uid 100: burst echoes of 10.0.2.2; the exit status counts the replies */
+static int
+pinguser(burst)
+	int burst;
+{
+	struct pingreq q;
+	struct pingrep r;
+	struct pollfd pf;
+	long t0;
+	int fd, i, n = 0;
+
+	if (setgid(1) < 0 || setuid(100) < 0 || (fd = open(PINGPATH, O_RDWR)) < 0)
+		return 255;
+	memset((char *)&q, 0, sizeof q);
+	q.pq_dst = 0x0a000202L;
+	q.pq_id = 0x1234;
+	q.pq_len = 8;
+	strcpy(q.pq_data, "echo me");
+	for (i = 0; i < burst; i++) {
+		q.pq_seq = i;
+		if (write(fd, (char *)&q, sizeof q) != sizeof q)
+			return 254;
+	}
+	pf.fd = fd;
+	pf.events = POLLIN;
+	t0 = t_now_ms();
+	while (n < burst && t_now_ms() - t0 < 3000 && poll(&pf, 1L, 200) >= 0)
+		if ((pf.revents & POLLIN) && read(fd, (char *)&r, sizeof r) == sizeof r &&
+		    r.pr_src == 0x0a000202L && r.pr_id == 0x1234 && r.pr_len == 8 &&
+		    strcmp(r.pr_data, "echo me") == 0)
+			n++;
+	return n;
+}
+
+static int
+pingrun(burst)
+	int burst;
+{
+	int pid, st;
+
+	if ((pid = fork()) == 0)
+		_exit(pinguser(burst));
+	if (pid < 0 || t_waitchild(pid, &st, 10) < 0 || !WIFEXITED(st))
+		return -1;
+	return WEXITSTATUS(st);
+}
+
 int
 main()
 {
 	struct mod_mreg reg;
 	struct stat sb;
-	int mj = TOS_MAJOR;
+	int mj = TOS_MAJOR, pdpid, k;
 
 	t_init("tos", 900);
 	if (t_kmem("guest_loading") == -1) {
@@ -2103,10 +2251,37 @@ main()
 		return t_done();
 	/* the network root */
 	if (stat("/etc/inet/strcf", &sb) == 0) {
+		/* the loopback tests need lo0, whichever test ran first */
+		if (fork() == 0) {
+			close(1);
+			close(2);
+			execl("/usr/sbin/ifconfig", "ifconfig", "lo0", "127.0.0.1", "up", (char *)0);
+			_exit(1);
+		}
+		wait(0);
+		/* the echo service: ping without raw sockets */
+		if ((pdpid = fork()) == 0) {
+			execl(PINGD, "pingd", "-f", (char *)0);
+			_exit(127);
+		}
+		for (k = 0; k < 50 && stat(PINGPATH, &sb) < 0; k++)
+			nap(100);
+		nap(200);
+		k = pingrun(1);
+		t_check("pingd_user", k == 1, "%d replies to 1 echo as uid 100", k);
+		nap(1500);
+		k = pingrun(25);
+		t_check("pingd_rate", k >= 10 && k <= 12, "%d replies to a burst of 25", k);
 		if (stat(STIKPRG, &sb) < 0 || stat(EMUTOS, &sb) < 0)
 			t_skip("stik", "no STIKTEST.PRG or EmuTOS");
 		else
-			stikrun();
+			stikrun((char *)0);
+		if (stat(STIKPRG, &sb) < 0 || stat(USERROM, &sb) < 0)
+			t_skip("stik_tos306", "no STIKTEST.PRG or user TOS ROM");
+		else
+			stikrun(USERROM);
+		kill(pdpid, SIGTERM);
+		t_check("pingd_ended", t_waitchild(pdpid, &k, 5) == pdpid, "pingd still running");
 		return t_done();
 	}
 	t_skip("stik", "no network");
@@ -2165,6 +2340,12 @@ main()
 		ballerburg();
 	}
 	baller = stscreen = fvdi = 0;
+	if (stat(LAPRG, &sb) < 0 || stat(FVDIDIR "/FVDI.SYS", &sb) < 0 || stat(EMUTOS, &sb) < 0)
+		t_skip("fvdi_fallback", "no LATEST.PRG, fVDI or EmuTOS");
+	else {
+		fallrun(0);
+		fallrun(1);
+	}
 	/* a halt that slips through is recorded, never run */
 	if (stat(EXITPRG, &sb) < 0 || stat(EMUTOS, &sb) < 0)
 		t_skip("exit", "no EXITTEST.PRG or EmuTOS");

@@ -12,9 +12,9 @@
 # A/UX Startup's 4000 KB limit.  Boot blocks, the catalog and extents B-trees and every
 # catalog record are copied unchanged, so catalog node IDs, names, dates,
 # Finder info and the blessed folder stay the same.  Only the extent records
-# change: each fork is laid out in one extent, with the same physical length.
-# The allocation block size stays the same.  The volume must have an empty
-# extents overflow tree.
+# change: each fork is laid out in one extent, with the same physical length,
+# and the extents overflow tree is emptied.  The allocation block size stays
+# the same.
 #
 # compare checks that both volumes have the same MDB (apart from layout
 # fields), the same catalog records (apart from extents) and the same fork
@@ -119,6 +119,32 @@ def rec_forks(v, at):
     return [('data', at + 74, lg, py), ('rsrc', at + 86, rlg, rpy)]
 
 
+def fork_exts(v, at, name, eoff):
+    # the catalog's extents, then the overflow tree's for this fork
+    out = exts(v.ct[eoff:eoff + 12])
+    fid = v.ct[at + 20:at + 24]
+    typ = b'\0' if name == 'data' else b'\xff'
+    for n, off, ln in v.xnodes:
+        k = v.xt[n * BLK + off:n * BLK + off + 8]
+        if k[1:2] == typ and k[2:6] == fid:
+            out += exts(v.xt[n * BLK + off + 8:n * BLK + off + 20])
+    return out
+
+
+def empty_btree(data):
+    # header node only: no records, every other node free
+    t = bytearray(len(data))
+    t[:BLK] = data[:BLK]
+    total = struct.unpack('>I', t[36:40])[0]
+    struct.pack_into('>HIIII', t, 14, 0, 0, 0, 0, 0)
+    struct.pack_into('>I', t, 40, total - 1)
+    if total > 256 * 8 or struct.unpack('>I', t[:4])[0]:
+        sys.exit('hfsshrink: extents tree has map nodes')
+    t[0xf8:0xf8 + 256] = bytes(256)
+    t[0xf8] = 0x80
+    return bytes(t)
+
+
 def used_blocks(v):
     n = (v.xtsize + v.ctsize) // v.bsz
     for key, at, ln in catrecs(v):
@@ -140,8 +166,6 @@ def info(v):
 
 
 def shrink(v, out, blocks):
-    if v.xnodes:
-        sys.exit('hfsshrink: extents overflow tree is not empty')
     if len(v.xtext) != 1 or len(v.ctext) != 1:
         sys.exit('hfsshrink: B-tree files are fragmented')
     used = used_blocks(v)
@@ -170,13 +194,13 @@ def shrink(v, out, blocks):
         nxt[0] += nab
         return s
 
-    xs = place(v.xt, v.xtsize // v.bsz)
+    xs = place(empty_btree(v.xt), v.xtsize // v.bsz)
     cs = place(b'', v.ctsize // v.bsz)        # catalog written last
     for key, at, ln in catrecs(v):
         if v.ct[at] != 2:
             continue
         for name, eoff, lg, py in rec_forks(v, at):
-            old = exts(v.ct[eoff:eoff + 12])
+            old = fork_exts(v, at, name, eoff)
             if sum(n for _, n in old) * v.bsz != py:
                 sys.exit('hfsshrink: fork extents do not match its physical length')
             new = place(v.fork(old, py), py // v.bsz) if py else 0
@@ -238,7 +262,7 @@ def compare(a, b):
         if da[0] == 2:
             files += 1
             for (n, ea, lg, py), (_, eb, _, _) in zip(rec_forks(a, pa), rec_forks(b, pb)):
-                if a.fork(exts(a.ct[ea:ea + 12]), py) != b.fork(exts(b.ct[eb:eb + 12]), py):
+                if a.fork(fork_exts(a, pa, n, ea), py) != b.fork(fork_exts(b, pb, n, eb), py):
                     bad.append('%s fork differs in %s' % (n, what))
                 forks += py > 0
             for off, n in ((24, 2), (34, 2), (74, 24)):

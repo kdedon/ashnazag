@@ -110,7 +110,7 @@ diagnostic_end:
  * anything opens a screen, so Workbench opens on it. */
 rtg_resident:
  .word 0x4afc
- .long rtg_resident,extension_payload_end
+ .long rtg_resident,rtg_res_name
  .byte 4,1,0,-110
  .long rtg_res_name,rtg_res_name,rtg_init
 rtg_res_name: .asciz "container.rtg"
@@ -165,7 +165,15 @@ env_missing:
  move.l %d2,%d1
  jsr -90(%a6)
 env_ready:
- move.l 4,%a6
+ /* bound before DOS: start what it deferred, then only watch Workbench */
+ move.l %d7,-(%sp)
+ jsr early_late
+ addq.l #4,%sp
+ tst.l %d0
+ beq 1f
+ bsr start_watch
+ bra rtg_close_dos
+1: move.l 4,%a6
  lea icon_name,%a1
  moveq #36,%d0
  jsr -552(%a6)
@@ -198,7 +206,11 @@ env_ready:
  jsr -36(%a6)
  tst.l %d0
  beq rtg_close
- /* CreateNewProc: NP_Entry, NP_Name, NP_StackSize */
+ jsr early_alerts
+ bsr start_watch
+ bra rtg_close
+/* CreateNewProc: NP_Entry, NP_Name, NP_StackSize */
+start_watch:
  move.l %a6,-(%sp)
  move.l %d7,%a6
  clr.l -(%sp)
@@ -212,6 +224,7 @@ env_ready:
  jsr -498(%a6)
  lea 28(%sp),%sp
  move.l (%sp)+,%a6
+ rts
 rtg_close:
  move.l 4,%a6
  move.l %d4,%a1

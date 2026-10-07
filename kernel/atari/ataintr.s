@@ -96,6 +96,48 @@ ata_mfpstray:
 	addql	&1,ata_spurious+28
 	rte
 
+| TT MFP, vectors 80-95: the channel's handler from ata_ttmfp, after
+| its end of interrupt; a channel without one is counted and turned off.
+TTMFP	=	0xfffffa81
+IERA	=	0x06
+IERB	=	0x08
+
+	.globl	ata_ttmfpint
+ata_ttmfpint:
+	moveml	&0xfffe,%sp@-
+	movel	sup_cacr,%d0
+	movec	%d0,%cacr
+	movew	%sp@(66),%d0		| format/vector word
+	andiw	&0x03c,%d0		| channel * 4
+	moveq	&-1,%d1
+	lsrw	&2,%d0
+	bclr	%d0,%d1			| ~(1 << channel)
+	lslw	&3,%d0
+	lea	ata_ttfn,%a0
+	addaw	%d0,%a0
+	cmpiw	&64,%d0
+	bge.s	Ltt_a
+	moveb	%d1,TTMFP+ISRB
+	tstl	%a0@
+	bne.s	Ltt_call
+	andb	%d1,TTMFP+IERB
+	bra.s	Ltt_stray
+Ltt_a:
+	rorw	&8,%d1
+	moveb	%d1,TTMFP+ISRA
+	tstl	%a0@
+	bne.s	Ltt_call
+	andb	%d1,TTMFP+IERA
+Ltt_stray:
+	addql	&1,ata_spurious+28
+	jmp	intret
+Ltt_call:
+	movel	%a0@(4),%sp@-
+	moveal	%a0@,%a0
+	jsr	%a0@
+	addql	&4,%sp
+	jmp	intret
+
 | int ata_spltty(): at least IPL 6 (masks the MFP), never lowers; returns
 | the old SR for ata_splx.  No immediate move to SR: the spl site count
 | covers those.
@@ -395,6 +437,9 @@ Lbp_sp:		.long	0
 	.globl	ata_ticks
 	.globl	ata_vbls
 ata_spurious:	.long	0, 0, 0, 0, 0, 0, 0, 0
+| TT MFP channel handlers: function, argument
+	.globl	ata_ttfn
+ata_ttfn:	.space	128
 ata_ticks:	.long	0
 ata_tdiv:	.long	4
 ata_vbls:	.long	0

@@ -34,6 +34,9 @@ func AtariRoot(entries []ufs.Entry, zone string) ([]ufs.Entry, error) {
 		if err != nil {
 			return nil, err
 		}
+		if f.name == "sysinit" {
+			b = withoutLines(b, "modadmin -r") // no loadable drivers in this root
+		}
 		file(f.p, f.mode, 0, 3, b)
 	}
 	file("/etc/TIMEZONE", 0444, 0, 3, []byte("TZ="+zone+"\nexport TZ\n"))

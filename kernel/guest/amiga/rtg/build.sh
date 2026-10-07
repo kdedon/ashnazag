@@ -13,6 +13,6 @@ trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 ${CC:-cc} -std=c99 -Wall -Wextra -Werror "$HERE/abi.c" -o "$TMP/abi"
 "$TMP/abi" > "$TMP/rtgabi.inc"
 nice -n 19 "${M68K_AS:-$ROOT/toolchain/bin/m68k-elf-as}" -m68020 \
-    -I "$HERE" -I "$TMP" "$HERE/container.s" -o "$TMP/container.o"
+    -I "$HERE" -I "$HERE/../../drawops" -I "$TMP" "$HERE/container.s" -o "$TMP/container.o"
 python3 "$HERE/elf2hunk.py" "$TMP/container.o" "$OUT/container.card"
 python3 "$HERE/check.py" "$OUT/container.card"

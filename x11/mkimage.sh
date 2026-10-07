@@ -8,7 +8,7 @@
 # Builds the server, client libraries, clients and package as needed.  BOOTX=1 boots to xdm (/etc/default/x).
 # XPKGS="manx xview" also installs those
 # packages (x11/NAME/build.sh, after build.sh clibs) as pkgadd would.
-# Tape segments from $AMIX_TAPE or, for 02 03 10, the live diskroot's
+# Tape segments from $AMIX_TAPE or, for 02 03 07 10, the live diskroot's
 # build/tape.
 set -e
 
@@ -33,7 +33,7 @@ for d in bootblk scsi; do ln -s "$AUX/kernel/mac/$d" "$T/kernel/mac/$d"; done
 	mks5fs.py s5check.py addparts.py "$R/" && cp -rp etc "$R/" &&
  mkdir "$R/pkg" && cp -p pkg/pkginst.py "$R/pkg/")
 mkdir -p "$R/build/tape"
-for s in 02 03 10; do
+for s in 02 03 07 10; do
 	cp "${AMIX_TAPE:-$AUX/kernel/mac/diskroot/build/tape}/$s" "$R/build/tape/$s"
 done
 # the X pieces it installs, built or refreshed here

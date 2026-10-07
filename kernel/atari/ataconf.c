@@ -25,8 +25,12 @@
 #define MAXCHUNK	4
 #define BISIZE		1024
 #define POOLSIZE	0x80000		/* ST-RAM kept from the VM: screen, DMA */
+#define SNDBUF		0x10000		/* below it, the DMA sound's ring */
+#define FASTRAM		0x01000000
+#define ATA_MAXRAM	0x8000000	/* the 040's kvsegmap: 512 segments of 256 KB; kept on the 030 */
 #ifdef ATA060
 #define BI_ATARI_OSBASE	0x8f00		/* ours: physical start of the TOS image */
+#ifdef ATA_SV
 #define BI_ATARI_SVIDEL	0x8f01		/* ours: SuperVidel native mode */
 #define SV_CTRL		0x80010000
 #define SV_MODE		0x40		/* SV_CTRL: the SuperVidel registers set the mode */
@@ -35,8 +39,7 @@
 #define SV_VERSION	0x8001007C	/* low 10 bits: firmware */
 #define SV_RAM		0xA1000000	/* graphics DDR; below it mirrors ST-RAM */
 #define SV_RAMEND	0xA8000000
-#define FASTRAM		0x01000000
-#define ATA_MAXRAM	0x8000000	/* kvsegmap holds 512 segments of 256 KB */
+#endif
 #define RAM_VA		0x60000000
 #define RAM_WIN		0x1000000
 #define CM_CB		0x20		/* page descriptor cache modes */
@@ -53,6 +56,8 @@
 #define ST_PAL(i)	IO16(0xFFFF8240 + 2 * (i))
 
 #define MFP(r)		IO8(0xFFFFFA01 + (r))
+#define TTMFP(r)	IO8(0xFFFFFA81 + (r))
+#define MFP_GPIP	0x00
 #define MFP_AER		0x02
 #define MFP_DDR		0x04
 #define MFP_IERA	0x06
@@ -69,10 +74,18 @@
 #define MFP_TCDCR	0x1C
 #define MFP_TADR	0x1E
 #define MFP_VBASE	0x40		/* vectors 64-79 */
+#define TTMFP_VBASE	0x50		/* vectors 80-95 */
 #define MFP_TIMERA	13		/* channel numbers */
 #define MFP_GPIP4	6
 #define MFP_GPIP7	15
 #define SCC_CTLA	IO8(0xFFFF8C81)
+#define SCU_SYSMASK	IO8(0xFFFF8E01)
+#define SCU_VMEMASK	IO8(0xFFFF8E0D)
+#define TT_SHIFT	IO16(0xFFFF8262)	/* mode in bits 10-8, palette bank in 3-0 */
+#define TT_PAL(i)	IO16(0xFFFF8400 + 2 * (i))
+#define TT_STHIGH	0x200
+#define TT_HIGH		0x600
+#define MCH_TT		2
 
 extern char end[], stext[];
 extern unsigned long boot_arg0, boot_arg1;
@@ -80,6 +93,8 @@ extern unsigned long MAINSTORE, VSIZOFMEM, chipmem;
 extern int kernel_load_address;
 extern unsigned long M68Kvec[];
 extern void ata_clkint(), ata_aciaint(), ata_sndint(), ata_mfpstray(), ata_fline();
+extern void ata_ttmfpint();
+extern unsigned long ata_ttfn[16][2];
 extern void ata_stop();
 extern unsigned long ata_nfid();
 extern void ata_nfcall();
@@ -100,9 +115,12 @@ unsigned long ata_bilen = 1;
 
 unsigned long ata_machtype = 1, ata_cputype = 1, ata_fputype = 1;
 unsigned long ata_mmutype = 1, ata_mch = 1;
+int ata_tt = 1;				/* a TT: TT shifter, second MFP, SCU */
+int ata_ttmono = 1;			/* the TT's console is in TT high */
 unsigned long ata_chunk[MAXCHUNK][2] = { { 1, 1 } };
 int ata_nchunk = 1;
 unsigned long ata_pool = 1;		/* ST-RAM pool base */
+unsigned long ata_sndbuf = 1;		/* the sound ring, SNDBUF bytes of ST-RAM; 1 none */
 unsigned long ata_screen = 1;
 unsigned long ata_nf = 1;		/* debug channel id, 0 off */
 int ata_nfwant = 1;
@@ -110,11 +128,13 @@ long mac_socktrace = 1;		/* socktrace: log A/UX socket calls */
 long ata_rootarg = 1;			/* dd minor from root=, -1 none */
 #ifdef ATA060
 unsigned long ata_osbase = 1;
+#ifdef ATA_SV
 unsigned long ata_sv[6] = { 1 };	/* firmware, screen, width, height, depth, row */
 int ata_svfb = 1;			/* the console is on the SuperVidel */
 static int ata_nosv = 1;
 static int ata_svhw = 1;		/* the loader found the card */
 static unsigned long ata_svmode[3] = { 1 };	/* sv=: width, height, depth */
+#endif
 extern long cputype;
 extern unsigned long hat_cm_ram;
 extern void ata_isp61();
@@ -341,7 +361,7 @@ register char *s;
 	}
 }
 
-#ifdef ATA060
+#ifdef ATA_SV
 static void
 ata_putdec(v)
 unsigned long v;
@@ -525,6 +545,34 @@ ata_svidel()
 }
 #endif
 
+/*
+ * TT shifter console: TT high (1280x960) on a monochrome monitor, else
+ * ST high (640x400), which the TT shows in palette entries 254 and 255.
+ * Pixel 0 white, 1 black.
+ */
+static void
+tt_video()
+{
+	struct fbmode m;
+	register int hi;
+
+	hi = ata_ttmono = !(MFP(MFP_GPIP) & 0x80);	/* GPIP7 low: monochrome monitor */
+	IO8(0xFFFF8201) = ata_screen >> 16;
+	IO8(0xFFFF8203) = ata_screen >> 8;
+	IO8(0xFFFF820D) = ata_screen;
+	TT_PAL(0) = 0;			/* bit 1 clear: pixel 0 is entry 254 */
+	TT_PAL(254) = 0xFFF;
+	TT_PAL(255) = 0;
+	TT_SHIFT = hi ? TT_HIGH : TT_STHIGH;
+	m.fm_base = ata_screen;
+	m.fm_row = hi ? 160 : 80;
+	m.fm_depth = 1;
+	m.fm_width = hi ? 1280 : 640;
+	m.fm_height = hi ? 960 : 400;
+	(void)fbcons_attach(&m);
+	ata_puts(hi ? "video: TT 1280x960\n" : "video: TT 640x400\n");
+}
+
 static void
 ata_video()
 {
@@ -541,10 +589,16 @@ ata_video()
 		return;
 	ata_pool = top - POOLSIZE;
 	ata_screen = ata_pool;
-#ifdef ATA060
+	ata_sndbuf = ata_pool - SNDBUF;
+#ifdef ATA_SV
 	if (ata_svidel())
 		return;
 #endif
+	if (ata_tt) {
+		ata_vbad = 0;
+		tt_video();
+		return;
+	}
 	for (;;) {
 		mon = ata_vmon >= 0 ? ata_vmon : MONTYPE >> 6;
 		cls = mon == MON_TV ? MON_RGB : mon;
@@ -639,9 +693,11 @@ bi_parse()
 	ata_vh = ata_vhz = ata_vbad = 0;
 #ifdef ATA060
 	ata_osbase = 0;
+#ifdef ATA_SV
 	ata_sv[0] = ata_sv[1] = 0;
 	ata_svfb = ata_nosv = ata_svhw = 0;
 	ata_svmode[0] = 0;
+#endif
 #endif
 	for (n = 0; n + 4 <= ata_bilen; n += size) {
 		tag = *(unsigned short *)(ata_bi + n);
@@ -659,6 +715,7 @@ bi_parse()
 		case BI_ATARI_MCH:	ata_mch = p[0]; break;
 #ifdef ATA060
 		case BI_ATARI_OSBASE:	ata_osbase = p[0]; break;
+#ifdef ATA_SV
 		case BI_ATARI_SVIDEL:
 			if (size >= 4 + sizeof ata_sv) {
 				register int i;
@@ -668,6 +725,7 @@ bi_parse()
 				ata_svhw = 1;
 			}
 			break;
+#endif
 #endif
 		case BI_MEMCHUNK:
 			if (ata_nchunk < MAXCHUNK) {
@@ -681,13 +739,16 @@ bi_parse()
 			mac_socktrace = ata_word((char *)p, "socktrace");
 			ata_rootparse((char *)p);
 			ata_vparse((char *)p);
-#ifdef ATA060
+#ifdef ATA_SV
 			ata_nosv = ata_word((char *)p, "nosv");
 			ata_svparse((char *)p);
 #endif
 			break;
 		}
 	}
+	/* the _MCH cookie, or its machine number as Linux boot info gives it */
+	ata_tt = (ata_mch >= 0x10000 ? ata_mch >> 16 : ata_mch) == MCH_TT;
+	ata_ttmono = 0;
 }
 
 /*
@@ -761,6 +822,55 @@ mfp_quiet()
 	SCC_CTLA = 9;
 	(void)MFP(MFP_IPRA);
 	SCC_CTLA = 0xC0;		/* hardware reset: interrupts off */
+	if (!ata_tt)
+		return;
+	TTMFP(MFP_IERA) = 0;
+	TTMFP(MFP_IERB) = 0;
+	TTMFP(MFP_IPRA) = 0;
+	TTMFP(MFP_IPRB) = 0;
+	TTMFP(MFP_ISRA) = 0;
+	TTMFP(MFP_ISRB) = 0;
+	TTMFP(MFP_IMRA) = 0;
+	TTMFP(MFP_IMRB) = 0;
+	TTMFP(MFP_TACR) = 0;
+	TTMFP(MFP_TBCR) = 0;
+	TTMFP(MFP_TCDCR) = 0;
+	TTMFP(MFP_VR) = TTMFP_VBASE | 0x08;
+	TTMFP(MFP_DDR) = 0;
+	/* the SCU passes VBL, both MFPs (IPL 6) and the SCC (5); no HBL */
+	SCU_SYSMASK = 0x10;
+	SCU_VMEMASK = 0x60;
+}
+
+/*
+ * Handler fn(arg) for TT MFP channel c (0-15), called at IPL 6 after
+ * the channel's end of interrupt; fn 0 turns the channel off.  -1 if
+ * there is no TT MFP.
+ */
+int
+ata_ttmfp(c, fn, arg)
+int c;
+void (*fn)();
+unsigned long arg;
+{
+	register int x, bit, reg;
+
+	if (!ata_tt || c < 0 || c > 15)
+		return -1;
+	bit = 1 << (c & 7);
+	reg = c < 8 ? MFP_IERB : MFP_IERA;
+	x = ata_spltty();
+	TTMFP(reg) &= ~bit;
+	TTMFP(reg + MFP_IMRA - MFP_IERA) &= ~bit;
+	TTMFP(reg + MFP_IPRA - MFP_IERA) = ~bit;
+	ata_ttfn[c][0] = (unsigned long)fn;
+	ata_ttfn[c][1] = arg;
+	if (fn) {
+		TTMFP(reg) |= bit;
+		TTMFP(reg + MFP_IMRA - MFP_IERA) |= bit;
+	}
+	ata_splx(x);
+	return 0;
 }
 
 static void
@@ -773,6 +883,8 @@ ata_vectors()
 	M68Kvec[MFP_VBASE + MFP_TIMERA] = (unsigned long)ata_clkint;
 	M68Kvec[MFP_VBASE + MFP_GPIP4] = (unsigned long)ata_aciaint;
 	M68Kvec[MFP_VBASE + MFP_GPIP7] = (unsigned long)ata_sndint;
+	for (i = 0; ata_tt && i < 16; i++)
+		M68Kvec[TTMFP_VBASE + i] = (unsigned long)ata_ttmfpint;
 #ifndef ATA060
 	M68Kvec[11] = (unsigned long)ata_fline;
 #else
@@ -808,7 +920,8 @@ unsigned long arg0, arg1;
 	putkv(" fpu ", ata_fputype);
 	putkv(" mmu ", ata_mmutype);
 	putkv(" _MCH ", ata_mch);
-	putkv(" monitor ", (unsigned long)(MONTYPE >> 6));
+	if (!ata_tt)
+		putkv(" monitor ", (unsigned long)(MONTYPE >> 6));
 	ata_puts("\n");
 	if (ata_machtype != MACH_ATARI)
 		ata_halt("config: boot record is not for an Atari");
@@ -834,19 +947,19 @@ unsigned long arg0, arg1;
 	if (VSIZOFMEM == 0)
 		ata_halt("config: no memory chunk holds the kernel");
 	if (MAINSTORE == 0 && VSIZOFMEM == ata_pool + POOLSIZE)
-		VSIZOFMEM = ata_pool;
-#ifdef ATA060
+		VSIZOFMEM = ata_sndbuf;
 	/* VM in FastRAM: ST-RAM is device memory */
 	for (i = 0; i < ata_nchunk; i++)
 		if (MAINSTORE && ata_chunk[i][0] == 0)
 			chipmem = ata_chunk[i][1];
-	/* VM in ST-RAM: uncached like the rest of ST-RAM, so no alias differs */
-	if (MAINSTORE < FASTRAM)
-		hat_cm_ram = CM_NCS;
 	if (MAINSTORE + VSIZOFMEM > ATA_MAXRAM) {
 		VSIZOFMEM = ATA_MAXRAM - MAINSTORE;
 		ata_puts("config: memory limited to 128 MB\n");
 	}
+#ifdef ATA060
+	/* VM in ST-RAM: uncached like the rest of ST-RAM, so no alias differs */
+	if (MAINSTORE < FASTRAM)
+		hat_cm_ram = CM_NCS;
 	if (ata_osbase < MAINSTORE + VSIZOFMEM && ata_osbase + 0x100000 > MAINSTORE)
 		ata_osbase = 0;
 #endif
@@ -861,8 +974,8 @@ unsigned long arg0, arg1;
 	putkv(" VSIZOFMEM ", VSIZOFMEM);
 	putkv(" end ", k);
 	putkv(" pool ", ata_pool);
-#ifdef ATA060
 	putkv(" chipmem ", chipmem);
+#ifdef ATA060
 	putkv(" TOS ", ata_osbase);
 	putkv(" cm ", hat_cm_ram);
 #endif
@@ -1135,16 +1248,16 @@ inituname()
 	r = __amix_inituname();
 	d = utsname + UTS_MACHINE;
 #ifdef ATA060
-	for (s = "Atari Falcon"; (*d++ = *s++) != 0; )
+	s = "Atari Falcon";
 #else
-	for (s = "Atari Falcon030"; (*d++ = *s++) != 0; )
+	s = ata_tt ? "Atari TT030" : "Atari Falcon030";
 #endif
+	while ((*d++ = *s++) != 0)
 		;
 	return r;
 }
 
-#ifdef ATA060
-/* ------------------------------------------------- FastRAM, RAM window */
+/* ------------------------------------------------------------ FastRAM */
 
 #define ATA_LOAD	0x1000		/* link address of the image */
 #define RELTAB_MAGIC	0x52544142	/* 'RTAB' */
@@ -1214,6 +1327,9 @@ unsigned char *bi;
 	}
 	return delta;
 }
+
+#ifdef ATA060
+/* ------------------------------------------------------------ RAM window */
 
 /* 64 page tables of 64 entries, 256-byte aligned */
 unsigned long ata_rampt[(RAM_WIN >> 18) * 64 + 64] = { 1 };

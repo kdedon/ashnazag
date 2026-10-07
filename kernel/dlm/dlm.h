@@ -299,8 +299,9 @@ extern void dlm_undef();
 /* dlm_slot.c */
 extern void dlm_slot_init();
 extern int dlm_xreg();
-extern int dlm_creg();
+extern int dlm_creg(), dlm_sreg();
 extern int dlm_autoload();
+extern int dlm_loadname();
 
 /* dlm_str.c */
 extern void dlm_str_init();

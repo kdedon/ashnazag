@@ -1,3 +1,3 @@
 is:s:initdefault:
 ap::sysinit:/sbin/autopush -f /etc/ap/chan.ap
-tt::sysinit:/tests/runall t_display:360 t_net:300 t_otb:300 t_mactcp:260 t_tos:240 t_mint:120 </dev/console >/dev/console 2>&1
+tt::sysinit:/tests/runall t_display:360 t_net:300 t_otb:300 t_mactcp:260 t_mactcp76:340 t_tos:240 t_mint:120 </dev/console >/dev/console 2>&1

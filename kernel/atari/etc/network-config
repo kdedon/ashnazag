@@ -1,0 +1,6 @@
+# Interfaces beyond loopback: NETIF aen0 (NetUSBee) or dpn0 (BlueSCSI or
+# DaynaPORT); none until ADDR is set.
+NETIF=aen0 ADDR= MASK=255.255.255.0 GATEWAY=
+[ -z "$ADDR" ] || { /usr/sbin/slink addaen /dev/$NETIF $NETIF &&
+	/usr/sbin/ifconfig $NETIF $ADDR netmask $MASK up -trailers &&
+	{ [ -z "$GATEWAY" ] || /usr/sbin/route add default $GATEWAY 1 > /dev/null; }; }

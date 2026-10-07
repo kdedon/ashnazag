@@ -14,6 +14,7 @@
 # rest (at most 508 MB) is a TOS FAT partition (BGM, s4) instead of /home.
 # ZONE: /etc/TIMEZONE's TZ (default CST6CDT); not TZ, which the host's shell sets.
 # BOOTARGS: kernel command line (default root=c?d0s1, ? = boot unit).
+# SVIDEL=0: the loader without the SuperVidel probe, for a kernel built so.
 # TESTS: programs from tests/build/bin to put in /tests, with /tests/ksyms
 # (e.g. TESTS=t_page).  MODS: a module directory (guest/build.sh -m's
 # mod.d) to put in /tests/mod.d, with /tests/auxreg, /dev/uinter0 and
@@ -29,6 +30,7 @@
 # default media/AUX_2.0.1_CD_Image.iso) in its own root /a201 on the ROM
 # file ROM6 (default the IIci's), with startmac6 and the guest modules.
 # With X11, TOSENV or MACENV, guest is in group display.
+# /etc/motd lists what the image holds and how to start it.
 # The tape segments come from the Mac build or $AMIX_TAPE.
 set -e
 
@@ -55,15 +57,42 @@ ln -sfn "$A/etc" "$W/src/atari"
 (. "$K/../toolchain/src/gcc-cross-amix/build/env.sh"
  m68k-cbm-sysv4-gcc -O -o "$W/src/build/setclk" "$A/setclk.c")
 nice -n 19 sh "$K/mac/display/build.sh" "$W/display" > "$W/display.log"
+# the optional-hardware drivers for this kernel; the sound service
+nice -n 19 sh "$A/mods.sh" "$KERNEL" "$W/src/build/mods" > "$W/mods.log"
+nice -n 19 sh "$K/mac/sound/build.sh" "$W/src/build/sound" > "$W/sound.log"
+nice -n 19 sh "$K/net/build.sh" "$W/src/build/net" > "$W/net.log"
+# sndaux relays the Mac environment's sound only
+if [ "$MACENV" = 1 ]; then cp "$DR/etc/inittab" "$W/src/build/inittab"
+else grep -v '^sa:' "$DR/etc/inittab" > "$W/src/build/inittab"; fi
 # the display test built here; Atari node name; the RTC through /dev/clock
 printf 'TZ=%s\nexport TZ\n' "$ZONE" > "$W/src/build/TIMEZONE"
-{ grep -v -e '^f /usr/bin/dstest' -e '^r /dev/clock$' -e '^f /etc/TIMEZONE' "$DR/root.manifest"
+{ grep -v -e '^f /usr/bin/dstest' -e '^r /dev/clock$' -e '^f /etc/TIMEZONE' -e '^f /etc/conf/mod.d/' -e '^f /sbin/modadmin' \
+	-e '^c /dev/asc' -e '^f /usr/lib/snd' -e '^f /usr/lib/pingd' -e '^f /etc/inittab' -e '^f /etc/motd' -e '^f /etc/inet/network-config' "$DR/root.manifest"
+  echo 'f /etc/motd 644 2 2 build/motd.atari'
+  echo 'f /usr/sbin/bootline 744 0 3 atari/bootline'
   echo 'f /etc/TIMEZONE	444 0 3 build/TIMEZONE'
   echo "f /usr/bin/dstest	755 2 2 $W/display/dstest"
   echo 'f /etc/nodename	644 0 3 atari/nodename'
   echo 'f /etc/sysinit	744 0 3 atari/sysinit'
   echo 'f /usr/amiga/bin/setclk 755 0 3 build/setclk'
   echo 'd /home 755 0 3'
+  echo 'c /dev/dpn0 600 0 3 58 0'
+  echo 'f /sbin/modadmin 555 0 3 build/mods/modadmin'
+  echo 'd /etc/conf 755 0 3'
+  echo 'd /etc/conf/mod.d 755 0 3'
+  for m in scsi sd aen dpn dmasnd auxsnd; do echo "f /etc/conf/mod.d/$m 644 0 3 build/mods/mod.d/$m"; done
+  # SCSI ID n is controller 8+n: minor slice<<4 | 8 | n
+  for n in 0 1 2 3 4 5 6; do for sl in 0 1 2 3 4 5 6 7; do
+	echo "b /dev/dsk/c$((8 + n))d0s$sl 600 0 3 18 $((sl * 16 + 8 + n))"
+	echo "c /dev/rdsk/c$((8 + n))d0s$sl 600 0 3 40 $((sl * 16 + 8 + n))"
+  done; done
+  echo 'c /dev/dmasnd 600 0 3 46 0'
+  echo 'f /usr/lib/sndd 755 0 3 build/sound/sndd'
+  echo 'f /usr/lib/sndaux 755 0 3 build/sound/sndaux'
+  echo 'f /usr/lib/pingd 755 0 3 build/net/pingd'
+  echo 'f /usr/bin/sndtest 755 2 2 build/sound/sndtest'
+  echo 'f /etc/inittab 644 0 3 build/inittab'
+  echo 'f /etc/inet/network-config 644 0 3 atari/network-config'
   echo 'f /etc/vfstab 744 0 3 vfstab'; } > "$W/root.manifest"
 if [ "$X11" = 1 ]; then
 	X11W=${X11W:-$(cd "$K/.." && pwd)/images/work/x11-atari}
@@ -128,10 +157,11 @@ if [ "$TOSENV" = 1 ]; then
 		{ tail "$E/tos.log"; exit 1; }
 	sh "$K/../images/cpmenv/mkcpm.sh" "$E/cpm" > "$E/cpm.log" 2>&1 ||
 		{ tail "$E/cpm.log"; exit 1; }
-	# guest's TOS folder goes on /home, which is mounted over the root's
+	# guest's folders go on /home, which is mounted over the root's
 	mkdir -p "$E/gt"
-	(cd "$E/gt" && cpio -id --quiet < "$E/tos/guest.cpio")
-	(cd "$E/gt/home" && find guest/TOS | cpio -o -H newc -R 100:1 --quiet) > "$E/homeguest.cpio"
+	for a in tos cpm; do (cd "$E/gt" && cpio -id --quiet < "$E/$a/guest.cpio"); done
+	(cd "$E/gt/home" && find guest/TOS guest/CPM 2> /dev/null |
+		cpio -o -H newc -R 100:1 --quiet) > "$E/homeguest.cpio"
 	rm -rf "$E/gt"
 	{ echo 'd /etc/tos 755 0 3'
 	  echo "f /etc/tos/emutos.img 444 0 3 $E/tos/emutos.img"
@@ -194,6 +224,23 @@ if [ -n "$TESTS" ]; then
 			echo "f /tests/tosml.img 644 0 3 $TOSOUT/tosml.img"; }
 	  fi; } >> "$W/root.manifest"
 fi
+{ printf '\tSystem V Release 4.0\t\tAsh Nazag\n\n'
+  [ "$MACENV" != 1 ] || echo ' Mac    startmac6       System 6.0.7 (root); leave with Special > Logout'
+  [ "$TOSENV" != 1 ] || { echo ' TOS    starttos        EmuTOS and TeraDesk; -P this machine'"'"'s TOS, -M mono'
+	cpio -it < "$E/cpm/cpm.cpio" 2> /dev/null | grep -q CPM.SYS &&
+		printf '%s\n' ' CP/M   startcpm        CP/M-68K in this terminal; EXIT ends it' \
+		'                        drives A: to P: are ~/CPM/A to ~/CPM/P'
+	:; }
+  [ -z "$X11" ] || echo ' X      startx          twm; or  xsession  for a menu of sessions'
+  echo ' Sound  sndtest         a tone through the DMA sound'
+  echo
+  echo ' Ctrl-Alt-0 shows the console, Ctrl-Alt-1 to -9 the sessions.'
+  echo ' Network: set ADDR in /etc/inet/network-config and reboot; NETIF=aen0'
+  echo ' is the NetUSBee, NETIF=dpn0 a BlueSCSI or DaynaPORT.'
+  "$K/../toolchain/linux/bin/m68k-linux-gnu-nm" "$KERNEL" | grep -q ' ata_svidel$' &&
+	echo " SuperVidel mode: bootline 'root=c?d0s1 sv=1024x768x16' (8, 16, 32 bpp)"
+  echo ' bootline shows or sets the kernel command line (root).'
+  echo ' exit logs out; root shuts down with  shutdown -y -g0 -i0'; } > "$W/src/build/motd.atari"
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
 	/dev/dsk/c0d0s1 /dev/rdsk/c0d0s1 / ${ROOTFS:-ufs} 1 no - \
 	proc - /proc proc 0 no - \

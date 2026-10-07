@@ -6,7 +6,9 @@ mkdir -p build/site
 cp ../etc/default/mac ../etc/default/tos ../etc/default/amiga provision/policies/
 # Boot code and test fixtures are built from source (CROSS=<m68k prefix>).
 sh ../kernel/atari/mkboot.sh build/atari
+SVIDEL=0 sh ../kernel/atari/mkboot.sh build/atari-nosv
 cp build/atari/axbload.bin build/atari/bootsec.bin atari/
+cp build/atari-nosv/axbload.bin atari/axbload-nosv.bin
 python3 atari/mkfixtures.py build/atari/bootsec.bin build/atari/axbload.bin atari/testdata
 "$GO" test ./...
 "$GO" build -trimpath -o build/auxplan ./cmd/auxplan

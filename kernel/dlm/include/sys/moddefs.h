@@ -56,8 +56,10 @@ struct mod_exec_data {
 
 /*
  * A driver: its switch rows and majors.  Character drivers only, one
- * or more consecutive majors, not STREAMS; drv_bcount must be 0.
- * d_open and d_close of a loaded row stay the loader's trampolines.
+ * or more consecutive majors; drv_bcount must be 0.  d_open and
+ * d_close of a loaded row stay the loader's trampolines.  A STREAMS
+ * driver (d_str set) is held from the open that sets q_ptr to the
+ * close, as a STREAMS module; its majors are registered MOD_TY_SDEV.
  */
 #ifdef _SYS_CONF_H
 struct mod_drv_data {

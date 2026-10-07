@@ -1,0 +1,8 @@
+is:s:initdefault:
+ap::sysinit:/sbin/autopush -f /etc/ap/chan.ap
+sl::sysinit:/usr/sbin/slink
+sa::sysinit:/usr/sbin/slink addaen /dev/aen0 aen0
+if::sysinit:/usr/sbin/ifconfig aen0 10.0.2.15 netmask 0xffffff00 up -trailers
+rt::sysinit:/usr/sbin/route add default 10.0.2.2 1
+lo::sysinit:/usr/sbin/ifconfig lo0 127.0.0.1 up
+tt::sysinit:/tests/runall t_display:360 t_otb:300 t_mactcp:260 t_tos:240 t_mint:120 </dev/console >/dev/console 2>&1

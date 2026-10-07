@@ -1,0 +1,7 @@
+; waits for the host test's go file, then shows an alert
+Lab wait
+If NOT EXISTS SYS:alertgo
+  Wait 1
+  Skip wait BACK
+EndIf
+C:alerttest

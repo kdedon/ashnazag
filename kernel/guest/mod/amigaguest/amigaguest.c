@@ -115,6 +115,37 @@ amiga_postlevel(gp)
 	d->intena = e;
 	return l;
 }
+/* a host signal handler runs on the alternate stack: not the guest's code */
+static int
+amiga_onstack(p)
+	struct proc *p;
+{
+	return p == u.u_procp && (u.u_sigaltstack.ss_flags & SS_ONSTACK);
+}
+/*
+ * Whether an interrupt may go to the frame r returns to; nonzero when it
+ * may.  A sigreturn rebuilds the frame saved in u_sigsave over r, which
+ * would undo the interrupt's PC and SR but keep its stack: once that frame
+ * has nothing left to finish, r returns in its place.
+ */
+static int
+amiga_tail(r)
+	char *r;
+{
+	char *f = (char *)u.u_sigsave;
+	int fmt = G16(f + 6) >> 12;
+	if (amiga_onstack(u.u_procp))
+		return 0;
+	if (!(u.u_sigflag & USTKRESTORE))
+		return 1;
+	if (fmt == 7 ? (G16(f + 12) & 0xf000) || ((G16(f + 14) | G16(f + 16) | G16(f + 18)) & 0x80) :
+	    fmt != 0 && fmt != 2)
+		return 0;
+	GR_SR(r) = G16(f);
+	GR_PC(r) = G32(f + 2);
+	u.u_sigflag &= ~USTKRESTORE;
+	return 1;
+}
 static void
 amiga_intr(gp, r)
 	struct guest_proc *gp;
@@ -126,7 +157,7 @@ amiga_intr(gp, r)
 	gp->gp_vpend = amiga_postlevel(gp) << 8;
 	amiga_splx(s);
 	/* the frame goes to guest memory, which may fault */
-	if (l > ((gp->gp_vsr >> 8) & 7)) {
+	if (l > ((gp->gp_vsr >> 8) & 7) && amiga_tail(r)) {
 		if (guest_reflect(gp, r, GR_PC(r), (24 + l) << 2,
 		    (char *)0, 2, l) < 0)
 			psignal(curproc, SIGSEGV);
@@ -164,6 +195,8 @@ amiga_fsig(p, gp)
 		sigaddset(&p->p_hold, AMIGA_SIG);
 		held = m == 0 && amiga_postlevel(gp) > ipl;
 	}
+	if (amiga_onstack(p))
+		sigaddset(&p->p_hold, AMIGA_SIG);
 	n = __amix_fsig(p);
 	p->p_hold = h;
 	amiga_splx(s);

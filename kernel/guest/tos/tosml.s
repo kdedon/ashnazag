@@ -140,7 +140,7 @@ iks:	.long	0
 pvk:	.long	0			| PV_KEYS when TOS has kbdvec
 pkt:	.byte	0, 0, 0, 0		| relative mouse packet
 
-| the last free VBL queue slot runs pv: GEM takes the first for its cursor
+| the last free VBL queue slots run pv and icv: GEM takes the first for its cursor
 pvinit:	move.w	#34,-(sp)		| Kbdvbase
 	trap	#14
 	addq.l	#2,sp
@@ -158,13 +158,17 @@ pvinit:	move.w	#34,-(sp)		| Kbdvbase
 	cmp.w	#0x0200,2(a0)		| TOS 2 and later: kbdvec before the vectors
 	bcs.s	1f
 	move.l	#2,pvk
-1:	move.w	0x454,d0		| nvbls
+1:	lea	pv,a1
+	bsr.s	vblslot
+	lea	icv,a1
+| the last free VBL queue slot gets a1
+vblslot: move.w	0x454,d0		| nvbls
 	move.l	0x456,a0		| _vblqueue
 	lea	(a0,d0.w*4),a0
 	bra.s	3f
 2:	tst.l	-(a0)
 	bne.s	3f
-	move.l	#pv,(a0)
+	move.l	a1,(a0)
 	rts
 3:	dbra	d0,2b
 	rts
@@ -412,6 +416,10 @@ hstke:
 pvstk:	.space	2048
 pvstke:
 pvsp:	.space	4
+icstk:	.space	4096
+icstke:
+icsp:	.space	4
+stik_busy: .space 4
 	.text
 
 | GEMDOS from C: arguments as longs
@@ -477,16 +485,42 @@ hostcall: trap	#0
 | STiK: clients call through these tables with cdecl arguments on the
 | stack; the C side gets their address.  d0-d1/a0-a1 are scratch, and
 | pointers come back in d0 and a0.
+| stik_busy counts the calls in progress, so the VBL's ICMP
+| delivery never runs inside one.
 	.macro	tc name
 	.long	1f
 	.pushsection .text
-1:	pea	4(sp)
+1:	addq.l	#1,stik_busy
+	pea	4(sp)
 	jsr	st_\name
 	addq.l	#4,sp
+	subq.l	#1,stik_busy
 	move.l	d0,a0
 	rts
 	.popsection
 	.endm
+
+| ICMP replies go to the clients' handlers each VBL, on a stack of our own
+icv:	tst.l	stik_busy
+	bne.s	1f
+	move.l	sp,icsp
+	lea	icstke,sp
+	movem.l	d0-d7/a0-a6,-(sp)
+	jsr	st_icmppoll
+	movem.l	(sp)+,d0-d7/a0-a6
+	move.l	icsp,sp
+1:	rts
+
+| d0 = a client's cdecl handler(arg), whatever registers it uses
+	.globl	stik_call
+stik_call:
+	movem.l	d2-d7/a2-a6,-(sp)
+	move.l	52(sp),-(sp)
+	move.l	52(sp),a0
+	jsr	(a0)
+	addq.l	#4,sp
+	movem.l	(sp)+,d2-d7/a2-a6
+	rts
 
 	.data
 	.globl	stik_drv, stik_tpl
@@ -531,15 +565,15 @@ stik_tpl:
 	tc	setvstr
 	tc	on_port			| query_port
 	tc	CNgets
-	tc	cntrl_port		| ICMP_send: E_FNAVAIL
-	tc	cntrl_port		| ICMP_handler
-	tc	housekeep		| ICMP_discard
+	tc	ICMP_send
+	tc	ICMP_handler
+	tc	ICMP_discard
 	tc	TCP_info
 	tc	cntrl_port
 	tc	TCP_info		| UDP_info
-	tc	cntrl_port		| RAW_open
-	tc	cntrl_port		| RAW_close
-	tc	cntrl_port		| RAW_out
+	tc	RAW_open
+	tc	RAW_close
+	tc	RAW_close		| RAW_out
 	tc	cntrl_port		| CN_setopt
 	tc	cntrl_port		| CN_getopt
 	tc	CNfree_NDB

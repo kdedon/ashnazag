@@ -7,8 +7,8 @@
 #include "driver.h"
 #include "tosfb.h"
 #include "string/memset.h"
-
-typedef unsigned char Pix;
+#include "fbops.h"
+#include "../../drawops/drawops.h"
 
 static char const red[] = { 8 };
 static char const green[] = { 8 };
@@ -27,6 +27,11 @@ static Pix pens[256];
 static long pen(long c)
 {
 	return pens[c & 0xff];
+}
+
+long fb_pen(long c)
+{
+	return pen(c);
 }
 
 long CDECL c_get_colour(Virtual *vwk, long colour)
@@ -81,7 +86,7 @@ void CDECL c_set_colours(Virtual *vwk, long start, long entries, unsigned short 
 /* a destination or source: the screen, or an 8-bit bitmap; 0 if neither */
 static Pix *where(Workstation *wk, MFDB *m, long *wrap)
 {
-	if (!m || !m->address || m->address == wk->screen.mfdb.address) {
+	if (!m || !m->address || m->address == wk->screen.mfdb.address || la_alias(m->address)) {
 		*wrap = wk->screen.wrap;
 		return (Pix *)wk->screen.mfdb.address;
 	}
@@ -114,93 +119,88 @@ long CDECL c_read_pixel(Virtual *vwk, MFDB *src, long x, long y)
 	return a[y * wrap + x];
 }
 
-/* one pixel by mode: 1 replace, 2 transparent, 3 xor, 4 reverse transparent */
-#define	PUT(d, bit, mode, fg, bg) \
-	switch (mode) { \
-	case 1: *(d) = (bit) ? (fg) : (bg); break; \
-	case 2: if (bit) *(d) = (fg); break; \
-	case 3: if (bit) *(d) = ~*(d); break; \
-	default: if (!(bit)) *(d) = (fg); break; \
-	}
+/* the drawing library on the driver's screen or an 8-bit bitmap */
+static void dop(struct do_op *o, long kind, Pix *d, long dwrap, long x, long y, long w, long h)
+{
+	o->kind = kind;
+	o->depth = 8;
+	o->dst = d;
+	o->dstride = dwrap;
+	o->x = x;
+	o->y = y;
+	o->w = w;
+	o->h = h;
+	o->pmask = 0xff;
+	o->src = 0;
+	o->sstride = o->sx = o->sy = 0;
+	o->pat = 0;
+	o->style = 0;
+	o->flags = 0;
+}
+
+static void sw_fill(Workstation *wk, long x, long y, long w, long h,
+    unsigned short const *pattern, long fg, long bg, long mode)
+{
+	struct do_op o;
+
+	dop(&o, DO_FILL, (Pix *)wk->screen.mfdb.address, wk->screen.wrap, x, y, w, h);
+	o.pat = pattern;
+	o.fg = fg;
+	o.bg = bg;
+	o.mode = mode;
+	do_draw(&o);
+}
 
 long CDECL c_fill_area(Virtual *vwk, long x, long y, long w, long h,
     short *pattern, long colour, long mode, long interior_style)
 {
-	Workstation *wk;
-	unsigned long fg, bg, pl[4];
-	unsigned short pw, tpw = 0;
-	Pix *row, *d, *pix = (Pix *)pl;
-	long i, j;
+	unsigned long fg, bg;
 
 	(void)interior_style;
 	if ((long)vwk & 1)
 		return -1;
-	if (w <= 0 || h <= 0)
-		return 1;
-	wk = vwk->real_address;
-	c_get_colours(vwk, colour, &fg, &bg);
-	row = (Pix *)wk->screen.mfdb.address + y * wk->screen.wrap + x;
-	for (j = 0; j < h; j++, row += wk->screen.wrap) {
-		pw = pattern[(y + j) & 15];
-		/* replace: the pattern row by x & 15, then four pixels per write where aligned */
-		if (mode == 1) {
-			if (j == 0 || pw != tpw)
-				for (tpw = pw, i = 0; i < 16; i++)
-					pix[i] = (pw << i) & 0x8000 ? fg : bg;
-			d = row;
-			i = x;
-			if ((((long)row - x) & 3) == 0) {
-				for (; i < x + w && ((long)d & 3); i++)
-					*d++ = pix[i & 15];
-				for (; i + 4 <= x + w; i += 4, d += 4)
-					*(unsigned long *)d = pl[(i & 15) >> 2];
-			}
-			for (; i < x + w; i++)
-				*d++ = pix[i & 15];
-			continue;
-		}
-		pw = (pw << (x & 15)) | (pw >> (16 - (x & 15)));
-		for (d = row, i = 0; i < w; i++, d++) {
-			PUT(d, pw & 0x8000, mode, fg, bg);
-			pw = (pw << 1) | (pw >> 15);
-		}
+	if (w > 0 && h > 0) {
+		c_get_colours(vwk, colour, &fg, &bg);
+		fb->fill(vwk->real_address, x, y, w, h, (unsigned short *)pattern, fg, bg, mode);
 	}
 	return 1;
+}
+
+static void sw_expand(unsigned short const *src, long swrap, long sx,
+    Pix *drow, long dwrap, long w, long h, long fg, long bg, long mode)
+{
+	struct do_op o;
+
+	dop(&o, DO_EXPAND, drow, dwrap, 0, 0, w, h);
+	o.src = src;
+	o.sstride = swrap;
+	o.sx = sx;
+	o.fg = fg;
+	o.bg = bg;
+	o.mode = mode;
+	do_draw(&o);
 }
 
 long CDECL c_expand_area(Virtual *vwk, MFDB *src, long src_x, long src_y,
     MFDB *dst, long dst_x, long dst_y, long w, long h, long operation, long colour)
 {
-	Workstation *wk = vwk->real_address;
 	unsigned long fg, bg;
-	unsigned short *s, word, mask;
-	long swrap, dwrap, i, j;
-	Pix *drow, *d;
+	long swrap, dwrap;
+	Pix *d;
 
 	if (w <= 0 || h <= 0)
 		return 1;
-	if (!(drow = where(wk, dst, &dwrap)))
+	if (!(d = where(vwk->real_address, dst, &dwrap)))
 		return 0;
 	c_get_colours(vwk, colour, &fg, &bg);
 	swrap = (long)src->wdwidth * 2;
-	drow += dst_y * dwrap + dst_x;
-	for (j = 0; j < h; j++, drow += dwrap) {
-		s = (unsigned short *)((char *)src->address + (src_y + j) * swrap) + (src_x >> 4);
-		word = *s++;
-		mask = 0x8000 >> (src_x & 15);
-		for (d = drow, i = 0; i < w; i++, d++) {
-			PUT(d, word & mask, operation, fg, bg);
-			if (!(mask >>= 1)) {
-				mask = 0x8000;
-				word = *s++;
-			}
-		}
-	}
+	fb->expand((unsigned short *)((char *)src->address + src_y * swrap), swrap, src_x,
+	    d + dst_y * dwrap + dst_x, dwrap, w, h, fg, bg, operation);
 	return 1;
 }
 
 /* the 16 logic operations on a source and destination pixel */
-static Pix op(long o, Pix s, Pix d)
+Pix fb_op(long o, Pix s, Pix d)
 {
 	switch (o) {
 	case 0: return 0;
@@ -222,88 +222,64 @@ static Pix op(long o, Pix s, Pix d)
 	}
 }
 
+static void sw_blit(Pix *s, long swrap, Pix *d, long dwrap, long w, long h, long operation)
+{
+	struct do_op o;
+
+	dop(&o, DO_BLIT, d, dwrap, 0, 0, w, h);
+	o.src = s;
+	o.sstride = swrap;
+	o.mode = operation;
+	do_draw(&o);
+}
+
 long CDECL c_blit_area(Virtual *vwk, MFDB *src, long src_x, long src_y,
     MFDB *dst, long dst_x, long dst_y, long w, long h, long operation)
 {
 	Workstation *wk = vwk->real_address;
 	Pix *s, *d;
-	long swrap, dwrap, i, j, step = 1;
+	long swrap, dwrap;
 
 	if (w <= 0 || h <= 0)
 		return 1;
 	if (!(s = where(wk, src, &swrap)) || !(d = where(wk, dst, &dwrap)))
 		return 0;
-	s += src_y * swrap + src_x;
-	d += dst_y * dwrap + dst_x;
-	if (s == d && operation == 3)
-		return 1;
-	if (s < d && s + h * swrap > d) {	/* overlapping, source above: bottom up */
-		s += (h - 1) * swrap;
-		d += (h - 1) * dwrap;
-		swrap = -swrap;
-		dwrap = -dwrap;
-	}
-	if (s < d && s + w > d && swrap == dwrap) {	/* same rows, source to the left */
-		step = -1;
-		s += w - 1;
-		d += w - 1;
-	}
-	for (j = 0; j < h; j++, s += swrap, d += dwrap) {
-		if (operation == 3 && step == 1) {
-			Pix *a = s, *b = d;
-			for (i = w; i >= 4 && !(((long)a | (long)b) & 1); i -= 4, a += 4, b += 4)
-				*(unsigned long *)b = *(unsigned long *)a;
-			for (; i > 0; i--)
-				*b++ = *a++;
-		} else
-			for (i = 0; i < w; i++)
-				d[i * step] = op(operation, s[i * step], d[i * step]);
-	}
+	fb->blit(s + src_y * swrap + src_x, swrap, d + dst_y * dwrap + dst_x, dwrap, w, h, operation);
 	return 1;
+}
+
+static void sw_line(Workstation *wk, long x1, long y1, long x2, long y2,
+    long pattern, long fg, long bg, long mode)
+{
+	struct do_op o;
+
+	dop(&o, DO_LINE, (Pix *)wk->screen.mfdb.address, wk->screen.wrap, x1, y1, x2, y2);
+	o.style = pattern & 0xffff;
+	o.fg = fg;
+	o.bg = bg;
+	o.mode = mode;
+	do_draw(&o);
 }
 
 long CDECL c_line_draw(Virtual *vwk, long x1, long y1, long x2, long y2,
     long pattern, long colour, long mode)
 {
-	Workstation *wk;
 	unsigned long fg, bg;
-	unsigned short mask = 0x8000;
-	long dx, dy, sx, sy, err, e2, wrap;
-	Pix *d;
 
 	if ((long)vwk & 1)
 		return -1;
-	if (!clip_line(vwk, &x1, &y1, &x2, &y2))
-		return 1;
-	wk = vwk->real_address;
-	c_get_colours(vwk, colour, &fg, &bg);
-	wrap = wk->screen.wrap;
-	d = (Pix *)wk->screen.mfdb.address + y1 * wrap + x1;
-	dx = x2 > x1 ? x2 - x1 : x1 - x2;
-	dy = y2 > y1 ? y2 - y1 : y1 - y2;
-	sx = x2 > x1 ? 1 : -1;
-	sy = y2 > y1 ? wrap : -wrap;
-	err = dx - dy;
-	for (;;) {
-		PUT(d, pattern & mask, mode, fg, bg);
-		if (!(mask >>= 1))
-			mask = 0x8000;
-		if (x1 == x2 && y1 == y2)
-			break;
-		e2 = 2 * err;
-		if (e2 > -dy) {
-			err -= dy;
-			x1 += sx;
-			d += sx;
-		}
-		if (e2 < dx) {
-			err += dx;
-			y1 += sy > 0 ? 1 : -1;
-			d += sy;
-		}
+	if (clip_line(vwk, &x1, &y1, &x2, &y2)) {
+		c_get_colours(vwk, colour, &fg, &bg);
+		fb->line(vwk->real_address, x1, y1, x2, y2, pattern, fg, bg, mode);
 	}
 	return 1;
 }
+
+static struct fbops const soft = { sw_fill, sw_expand, sw_blit, sw_line };
+
+/* the host's own drawing when it has one; the CPU otherwise */
+struct fbops const *fb = &soft;
+Workstation *fb_wk;
 
 /* the pointer: 16x16, what it covers saved while it shows */
 static unsigned short mdata[32] = {
@@ -461,6 +437,9 @@ long CDECL initialize(Virtual *vwk)
 	wk->mouse.position.y = fc->fc_height / 2;
 	share->fs_on = 1;
 	access->funcs.set_cookie("AshF", (long)share);
+	fb_wk = wk;
+	do_init(access->funcs.get_cookie("_CPU", 0));
+	linea_init(wk);
 	return 1;
 }
 

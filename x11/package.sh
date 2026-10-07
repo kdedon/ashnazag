@@ -94,8 +94,8 @@ W=$X11W/diffwork
 rm -rf "$W"; mkdir -p "$W/a" "$W/b"
 cp "$L/root.manifest" "$L/mkdiskroot.sh" "$W/a/"
 cp "$W/a/root.manifest" "$W/a/mkdiskroot.sh" "$W/b/"
-sed -i 's/^for s in 02 03 10; do$/for s in 02 03 10 13 14; do/' "$W/b/mkdiskroot.sh"
-grep -q '^for s in 02 03 10 13 14; do$' "$W/b/mkdiskroot.sh"
+sed -i 's/^for s in 02 03 07 10; do$/for s in 02 03 07 10 13 14; do/' "$W/b/mkdiskroot.sh"
+grep -q '^for s in 02 03 07 10 13 14; do$' "$W/b/mkdiskroot.sh"
 {
 	echo
 	echo "# X11: AMIX X11R4 clients (Xcore, Xbasic); the Amiga servers go"

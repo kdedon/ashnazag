@@ -153,7 +153,8 @@
       "deviceIds": [
         "falcon-ide",
         "ikbd",
-        "falcon-video"
+        "falcon-video",
+        "supervidel"
       ],
       "defaultDevices": [
         "falcon-ide",
@@ -437,6 +438,17 @@
       ],
       "builtIn": true,
       "required": true,
+      "module": ""
+    },
+    {
+      "id": "supervidel",
+      "label": "SuperVidel",
+      "status": "experimental",
+      "description": "SuperVidel graphics card driver, linked into the 68060 kernel; the kernel and boot loader are built with it.",
+      "machineIds": [
+        "falcon060"
+      ],
+      "builtIn": true,
       "module": ""
     },
     {

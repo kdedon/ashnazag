@@ -10,6 +10,9 @@
  *	modadmin -S			full status of every loaded module
  *	modadmin -d dir[:dir]		prepend to the module search path
  *	modadmin -D			reset the search path
+ *	modadmin -r cdev|sdev name major ...
+ *					register character or STREAMS
+ *					driver majors: the first open loads
  *
  * Exit status 1 if any operand failed.  Built for AMIX with libmod.a.
  *
@@ -154,7 +157,8 @@ void
 usage()
 {
 	fprintf(stderr, "usage: %s -l name|path ... | -u id ... | -U name ... |\n"
-	    "\t-q id ... | -Q name ... | -s | -S | -d dir[:dir] | -D\n", progname);
+	    "\t-q id ... | -Q name ... | -s | -S | -d dir[:dir] | -D |\n"
+	    "\t-r cdev|sdev name major ...\n", progname);
 	exit(2);
 }
 
@@ -163,7 +167,8 @@ main(argc, argv)
 	int argc;
 	char **argv;
 {
-	int i, id;
+	struct mod_mreg reg;
+	int i, id, mj;
 	char *op;
 
 	if (argc < 2 || argv[1][0] != '-' || strlen(argv[1]) != 2)
@@ -212,6 +217,27 @@ main(argc, argv)
 	case 'D':
 		if (modpath((char *)0) < 0)
 			fail("cannot reset path", "");
+		break;
+	case 'r':
+		if (argc < 5)
+			usage();
+		if (strcmp(argv[2], "cdev") == 0)
+			id = MOD_TY_CDEV;
+		else if (strcmp(argv[2], "sdev") == 0)
+			id = MOD_TY_SDEV;
+		else
+			usage();
+		if (strlen(argv[3]) >= MODMAXNAMELEN)
+			usage();
+		strcpy(reg.md_modname, argv[3]);
+		reg.md_typedata = (caddr_t)&mj;
+		for (i = 4; i < argc; i++)
+			if ((mj = atoi(argv[i])) < 1 || mj > 255 ||
+			    modadm(id, MOD_C_MREG, &reg) < 0) {
+				if (mj < 1 || mj > 255)
+					errno = EINVAL;
+				fail("cannot register", argv[i]);
+			}
 		break;
 	default:
 		usage();

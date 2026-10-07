@@ -59,6 +59,7 @@ static struct {
 	{ "t_tos", 700 },
 	{ "t_mint", 300 },
 	{ "t_cpm", 600 },
+	{ "t_smsqe", 400 },
 	{ "t_amiga", 680 },
 	{ "t_env", 240 },
 	{ 0, 0 }
@@ -124,8 +125,8 @@ int secs;
 	long t0;
 
 	sprintf(path, "/tests/%s", name);
-	/* a GROUP run leaves out the tests it didn't choose */
-	if (access(path, 0) < 0 && access("/tests/.group", 0) == 0)
+	/* tests left out by a GROUP run or by the build */
+	if (access(path, 0) < 0)
 		return 0;
 	sprintf(buf, "=== %s\n", name);
 	say(buf);

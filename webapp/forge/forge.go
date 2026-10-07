@@ -38,6 +38,8 @@ var (
 
 type Settings struct {
 	Devices []string `json:"devices"`
+	// OptionalDevices may be added to Devices.
+	OptionalDevices []string `json:"optionalDevices,omitempty"`
 	RootMiB int      `json:"rootMiB,omitempty"`
 	SwapMiB int      `json:"swapMiB,omitempty"`
 	DiskMiB int      `json:"diskMiB,omitempty"`
@@ -115,7 +117,7 @@ func init() {
 	}
 	presets = file.Presets
 	for _, p := range presets {
-		if err := checkDevices(p.Machine, p.Settings.Devices); err != nil {
+		if err := checkDevices(p.Machine, append(append([]string{}, p.Settings.Devices...), p.Settings.OptionalDevices...)); err != nil {
 			panic("preset " + p.ID + ": " + err.Error())
 		}
 		if p.Status == "available" && !p.Runnable {
@@ -271,7 +273,13 @@ func (s Selection) Runnable() error {
 		}
 		return fmt.Errorf("the %s preset is planned and cannot build yet", p.Label)
 	}
-	if want := sorted(p.Settings.Devices); !reflect.DeepEqual(s.Settings.Devices, want) {
+	var have []string
+	for _, d := range s.Settings.Devices {
+		if !contains(p.Settings.OptionalDevices, d) {
+			have = append(have, d)
+		}
+	}
+	if want := sorted(p.Settings.Devices); !reflect.DeepEqual(have, want) {
 		return fmt.Errorf("the supplied kernel requires exactly the default devices: %s", strings.Join(want, ", "))
 	}
 	return nil

@@ -31,7 +31,7 @@
       "description": "Falcon with a 68060 accelerator.",
       "status": "planned",
       "machine": "falcon060",
-      "settings": {"devices": ["falcon-ide", "falcon-video", "ikbd"], "diskMiB": 512}
+      "settings": {"devices": ["falcon-ide", "falcon-video", "ikbd"], "optionalDevices": ["supervidel"], "diskMiB": 512}
     },
     {
       "id": "tt030",

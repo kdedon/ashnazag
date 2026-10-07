@@ -35,18 +35,27 @@ struct mig_hostfs { struct volume volumes[MIG_FS_VOLUMES]; struct handle handles
 
 /*
  * Files SYS: shows changed: while a file on volume 0 still holds orig, its
- * reads return view, of the same size.
+ * reads return view, of the same size; with when, only while *when is value.
  */
-static struct overlay { const char *rel; const unsigned char *orig, *view; unsigned long size; } overlays[2];
+static struct overlay {
+    const char *rel; const unsigned char *orig, *view; unsigned long size;
+    const volatile unsigned int *when; unsigned int value;
+} overlays[3];
 
-int mig_hostfs_overlay(const char *rel, const unsigned char *orig, const unsigned char *view, unsigned long size)
+int mig_hostfs_overlay_when(const char *rel, const unsigned char *orig, const unsigned char *view,
+    unsigned long size, const volatile unsigned int *when, unsigned int value)
 {
     unsigned int i;
     for (i=0;i<sizeof overlays/sizeof overlays[0];i++) if (!overlays[i].rel) {
         overlays[i].rel=rel; overlays[i].orig=orig; overlays[i].view=view; overlays[i].size=size;
+        overlays[i].when=when; overlays[i].value=value;
         return 0;
     }
     return -1;
+}
+int mig_hostfs_overlay(const char *rel, const unsigned char *orig, const unsigned char *view, unsigned long size)
+{
+    return mig_hostfs_overlay_when(rel,orig,view,size,0,0);
 }
 
 static int doserr(int e)
@@ -179,7 +188,8 @@ static struct overlay *overlaid(struct handle *h)
 {
     unsigned int i;
     for (i=0;i<sizeof overlays/sizeof overlays[0];i++)
-        if (overlays[i].rel && !h->volume && same(h->rel,overlays[i].rel)) return &overlays[i];
+        if (overlays[i].rel && !h->volume && same(h->rel,overlays[i].rel) &&
+            (!overlays[i].when || *overlays[i].when==overlays[i].value)) return &overlays[i];
     return 0;
 }
 static void info(struct mig_fs_request *r,const struct stat *s,const char *name)

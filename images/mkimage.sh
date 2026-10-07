@@ -1,25 +1,22 @@
 #!/bin/sh
-# Build images/q800-test.img: the A/UX 3.1 disk with our kernel as unix.coff
-# next to A/UX Startup, and A/UX Startup set to autoboot it.
+# Build images/q800-test.img: the A/UX 3.1 CD as a disk, with our kernel as
+# unix.coff next to A/UX Startup, and A/UX Startup set to autoboot it.
 #
 #	sh images/mkimage.sh [--small] [kernel.coff]
 #
-# Only the HFS partition changes.  The A/UX partitions, the driver and the
-# partition map stay byte-identical to the source image (checked at the end).
+# Only the HFS partition and the driver descriptor change.  The A/UX
+# partitions, the driver and the partition map stay byte-identical to the CD.
 #
 # --small builds images/q800-test-small.img instead: the same HFS volume,
 # compacted to a smaller size, right after the driver, with no A/UX
 # partitions.  Catalog records keep their node IDs, so the Startup Items
 # alias to A/UX Startup still resolves.
-# Needs: unzip, python3, cc; hfsutils is built into toolchain/ on first use.
+# Needs: python3, cc; hfsutils is built into toolchain/ on first use.
 set -eu
 
 IMAGES=$(cd "$(dirname "$0")" && pwd)
 AUX=$(dirname "$IMAGES")
-ZIP=$AUX/AUX_3_1_1GB_Use_In_Shoebill.zip
-MEMBER=AUX_3_1_1GB.dsk
-# the unzipped disk, when present, instead of the zip
-DSK=$AUX/$MEMBER
+CD=$AUX/media/aux-3.1.iso
 SMALL=
 if [ "${1:-}" = --small ]; then
 	SMALL=$IMAGES/q800-test-small.img
@@ -31,7 +28,7 @@ TC=$AUX/toolchain
 T=$TC/bin
 HFSSRC=$TC/src/hfsutils-3.2.6
 ELF2COFF=$AUX/kernel/mac/boot/build/elf2coff
-WORK=$IMAGES/work
+WORK=$IMAGES/work/mkimage
 PY="nice -n 19 python3 $IMAGES/auxsash.py"
 SHRINK="nice -n 19 python3 $IMAGES/hfsshrink.py"
 
@@ -42,7 +39,7 @@ DELAY=10
 
 die() { echo "mkimage: $*" >&2; exit 1; }
 
-[ -f "$ZIP" ] || [ -f "$DSK" ] || die "missing $ZIP"
+[ -f "$CD" ] || die "missing $CD (tools/setup.sh --aux-cd)"
 [ -f "$KERNEL" ] || die "missing $KERNEL (run sh kernel/build.sh)"
 
 # hfsutils (hmount, hcopy, hattrib, hls, humount), hfsck and hfsfork
@@ -63,7 +60,7 @@ if [ ! -x "$T/hfsfork" ] || [ "$IMAGES/hfsfork.c" -nt "$T/hfsfork" ]; then
 fi
 
 rm -rf "$WORK"
-mkdir "$WORK"
+mkdir -p "$WORK"
 # hmount keeps its state in $HOME/.hcwd
 HOME=$WORK
 export HOME
@@ -71,13 +68,9 @@ trap 'rm -rf "$WORK"' EXIT
 FULL=$OUT.new
 [ -z "$SMALL" ] || FULL=$WORK/full.img
 
-echo "== extracting $MEMBER (sparse)"
+echo "== copying the CD (sparse)"
 rm -f "$FULL"
-if [ -f "$DSK" ]; then
-	nice -n 19 dd if="$DSK" of="$FULL" bs=64k conv=sparse status=none
-else
-	nice -n 19 unzip -p "$ZIP" "$MEMBER" | dd of="$FULL" bs=64k conv=sparse status=none
-fi
+nice -n 19 dd if="$CD" of="$FULL" bs=64k conv=sparse status=none
 
 echo "== adding unix.coff ($(wc -c < "$KERNEL") bytes)"
 "$T/hmount" "$FULL" 1 >/dev/null
@@ -92,6 +85,7 @@ $PY patch "$WORK/sash.rsrc" "$WORK/sash.new" \
     --var "autolaunch=$AUTOLAUNCH" --var "autorecovery=$AUTORECOVERY" \
     --recovery 2 --delay $DELAY
 "$T/hfsfork" "$FULL" 1 ":A/UX Startup" r "$WORK/sash.new"
+$PY bootable "$FULL"
 
 echo "== checking"
 "$T/hfsck" -n "$FULL" 1 || die "hfsck reports errors"
@@ -110,7 +104,9 @@ $PY macbin "$WORK/check.bin" "$WORK/check.rsrc"
 cmp "$WORK/sash.new" "$WORK/check.rsrc" || die "A/UX Startup resource fork mismatch"
 $PY show "$WORK/check.rsrc"
 $PY apm "$FULL"
-$PY hashes "$FULL" "$ZIP" "$MEMBER" || die "non-HFS areas differ from the source"
+$PY hashes "$FULL" "$CD" || die "non-HFS areas differ from the CD"
+# the ROM loads the driver only from a disk whose DDM describes it
+$PY ddm "$FULL"
 
 if [ -z "$SMALL" ]; then
 	mv "$FULL" "$OUT"

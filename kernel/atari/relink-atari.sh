@@ -5,7 +5,8 @@
 #
 # base: the relocatable stock kernel (default amix-2.1p2a/stand/unix).
 # out:  build/unix-atari030 (ld -r image) and build/unix-atari030.elf
-#       (fully linked at 0x1000, a jump to the entry first).
+#       (fully linked at 0x1000, a jump to the entry first, with a
+#       relocation table that lets it move itself into TT-RAM).
 # Weakens the Amiga platform entry points, raises the inlined splhi to
 # IPL 6, links the Atari objects over the base, checks that every
 # override bound to our object, validates, then links.  Root is the RAM
@@ -65,13 +66,6 @@ for c in ataide ahdi atartc; do
 	[ -s "$W/$c.o.warn" ] && { cat "$W/$c.o.warn"; echo "[FAIL] $c.c: warnings"; exit 1; }
 done
 
-# the cartridge-port Ethernet, after main() has cleared BSS
-for c in nuchip nudlpi; do
-	$CC $CFLAGS -I"$A/netusbee" -c "$A/netusbee/$c.c" -o "$W/$c.o" 2> "$W/$c.o.warn" || {
-		cat "$W/$c.o.warn"; exit 1; }
-	[ -s "$W/$c.o.warn" ] && { cat "$W/$c.o.warn"; echo "[FAIL] $c.c: warnings"; exit 1; }
-done
-
 # FPU emulator from the pinned tarball, with its glue.  The glue maps only
 # CPU types 40 and 60 and counts any other as an error; the emulator runs
 # the same on every CPU, so the glue reads 40.
@@ -121,7 +115,6 @@ sh "$K/guest/build.sh" -k "$BASE" "$W/guest"
 
 OBJS="$W/dlm/dlm.o $W/guest/guest.o $W/ataentry.o $W/ataintr.o $W/ataconf.o $W/ikbd.o $W/fbcons.o $W/fbfont.o
 $W/atadevsw.o $W/atacons.o $W/ds.o $W/dsdev.o $W/dsseg.o $W/atads.o $W/ataide.o $W/ahdi.o $W/atartc.o $W/rd.o $RDB/rdimage.o
-$W/nuchip.o $W/nudlpi.o
 $W/fpe030.o $FPEOBJS $W/fpe-obj/fpe_glue.o $W/fpe040.o"
 
 OVR="config putchar getchar callrom sysdump haltsys rtnfirm hw_clkstart clkreld
@@ -210,11 +203,27 @@ python3 "$PORT/src/check_relink_relocs.py" "$OUT" > "$W/validator.log" || {
 	tail -20 "$W/validator.log"; exit 1; }
 tail -1 "$W/validator.log"
 
+# Link twice: the first link gives the relocation sites, the second
+# carries their table, which sits past .data and so moves none of them.
+link() {
+	(cd "$W" && m68k-linux-gnu-objcopy -I binary -O elf32-m68k -B m68k \
+		--rename-section .data=.reltab,alloc,load,data,contents \
+		--set-section-alignment .reltab=4 --strip-symbol _binary_reltab_bin_start \
+		--strip-symbol _binary_reltab_bin_end --strip-symbol _binary_reltab_bin_size \
+		reltab.bin reltab.o)
+	m68k-elf-ld -q -T "$A/atari.ld" -Map "$OUT.map" -o "$OUT.elf" \
+		"$W/ataboot.o" "$OUT" "$W/reltab.o"
+	python3 "$A/patch_spl.py" -c "$OUT.elf" $SPL_SITES
+	"$W/dlm/mkksym" "$OUT.elf"
+}
 echo "[*] final link at 0x1000"
-m68k-elf-ld -T "$A/atari.ld" -Map "$OUT.map" -o "$OUT.elf" "$W/ataboot.o" "$OUT"
-python3 "$A/patch_spl.py" -c "$OUT.elf" $SPL_SITES
-"$W/dlm/mkksym" "$OUT.elf"
+python3 "$A/mkreltab.py" -e "$W/reltab.bin"
+link
+python3 "$A/mkreltab.py" "$OUT.elf" "$W/reltab.bin"
+link
 "$W/dlm/mkksym" -c "$OUT.elf"
+python3 "$A/mkreltab.py" -c "$OUT.elf"
 m68k-elf-readelf -h "$OUT.elf" | grep -E 'Type|Entry'
 m68k-elf-size "$OUT.elf"
+sh "$A/mods.sh" "$OUT.elf" "$W/mods"
 echo "[OK] built $OUT and $OUT.elf"

@@ -12,7 +12,7 @@
 # TOSROM: the TOS 4.04 image or its zip (default: tos404*.zip in the
 # repo root).  Skips (exit 0) without the ROM or Hatari.
 # STAGES: any of vga rgb mod tos tosloop x xtos xdm xdmboots mac6 (mod, tos and tosloop need an
-# image made with TESTS=modadmin MODS=<mod.d>; x one made with X11=<pkg>)
+# image made with TESTS=modadmin MODS=<mod.d>, tos also takes TOSENV=1; x one made with X11=<pkg>)
 # (default "vga rgb").  x: startx in 256 colours, typing into xterm, the
 # server stopped and the console back; then in 2 colours with the German
 # layout (x-4-de.png shows "keyz"), stopped from the console.

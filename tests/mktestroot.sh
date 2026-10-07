@@ -8,7 +8,8 @@
 # TESTKB grows by the size of the A/UX files (the Mac environment's are
 # several MB).  INITTAB replaces etc/inittab (e.g. to run fewer tests).
 # NET=1: the network root instead (build/netroot.img, 6 MB): net/net.manifest,
-# build/netbin, and init runs only t_net.
+# build/netbin, and init runs only t_net.  Under GROUP/ONLY without t_net,
+# init brings the network up itself (net/inittab.up).
 # AMIGANET=1: the test root with TCP/IP (the net files, loopback up) as well
 # as the Amiga SYS: disk, for t_amiga's bsdsocket.library checks (build/
 # amiganetroot.img; run-qemu.sh does this under AMIGANET=1).
@@ -32,6 +33,8 @@ if [ -n "$NET" ]; then
 		M=$B/amiganetroot.manifest
 		IMG=${IMG0:-$B/amiganetroot.img}
 		INITTAB=$T/net/inittab.amiga
+	elif [ -n "$ONLY" ]; then
+		case " $ONLY " in *"/t_net.c "*) ;; *) INITTAB=$T/net/inittab.up ;; esac
 	fi
 	[ -f "$B/net07/usr/sbin/ping" ] || { echo "[FAIL] no build/net07 (run net/getnet.sh)"; exit 1; }
 else
@@ -43,7 +46,7 @@ fi
 [ -f "$RD/build/core/sbin/init" ] || { echo "[FAIL] no $RD/build/core (run mkroot.sh)"; exit 1; }
 [ -x "$B/bin/runall" ] || { echo "[FAIL] no tests/build/bin (run build.sh)"; exit 1; }
 
-nm "$KERNEL" | awk '$3 ~ /^(freemem|availrmem|availsmem|lbolt|fpu_present|anoninfo|ticks_til_clock|mac_ticks|dlm_inited|sn_nintr|sn_nslot|guest_loading|M68Kvec|guest_chain|guest_nftrap|guest_nfpriv|idle|rd_unit|adb_nintr|adb_nsrq|segmapcnt|snd_ev)$/ && ($3 != "idle" || $2 == "T") { print $3, $1 }' \
+nm "$KERNEL" | awk '$3 ~ /^(freemem|availrmem|availsmem|lbolt|fpu_present|anoninfo|ticks_til_clock|mac_ticks|dlm_inited|sn_nintr|sn_nslot|guest_loading|M68Kvec|guest_chain|guest_nftrap|guest_nfpriv|idle|rd_unit|adb_nintr|adb_nsrq|segmapcnt)$/ && ($3 != "idle" || $2 == "T") { print $3, $1 }' \
 	> "$B/ksyms"
 # t_dlm's modules, built against this kernel (none without module support)
 KDIR=$KDIR sh "$T/dlm/build.sh" "$KERNEL" "$B/dlm"
@@ -66,6 +69,9 @@ KDIR=$KDIR sh "$T/mint/build.sh" "$MINTB"
 # t_cpm's startcpm and CP/M-68K
 CPMB=$B/cpm
 KDIR=$KDIR sh "$T/cpm/build.sh" "$CPMB"
+# t_smsqe's startsmsq and SMSQ/E
+SMQB=$B/smsqe
+[ ! -f "$T/smsqe/build.sh" ] || KDIR=$KDIR sh "$T/smsqe/build.sh" "$SMQB"
 # t_amiga's guest image, startmig and ROM
 AMIB=$B/amiga
 KDIR=$KDIR sh "$T/amiga/build.sh" "$AMIB"
@@ -88,6 +94,7 @@ if [ -z "$TESTKB" ]; then
 	[ -d "$AUXB/root" ] && TESTKB=$((TESTKB + 256 + $(du -sk "$AUXB/root" | cut -f1)))
 	[ -d "$TOSB/root" ] && TESTKB=$((TESTKB + 1152 + $(du -sk "$TOSB/root" | cut -f1)))
 	[ -d "$AMIB/root" ] && TESTKB=$((TESTKB + 64 + $(du -sk "$AMIB/root" | cut -f1)))
+	[ -d "$SMQB/root" ] && TESTKB=$((TESTKB + 64 + 2 * $(du -sk "$SMQB/root" | cut -f1)))
 	# t_cpm's A: holds the distribution twice
 	[ -d "$CPMB/root" ] && TESTKB=$((TESTKB + 128 + 3 * $(du -sk "$CPMB/root" | cut -f1)))
 fi
@@ -127,6 +134,7 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 	done
 	if [ -n "$NET" ]; then
 		[ -n "$AMIGANET" ] || for f in "$B"/netbin/*; do
+			case " $ONLY " in "  ") ;; *"/$(basename "$f").c "*) ;; *) continue ;; esac
 			echo "f /tests/$(basename "$f") 755 0 3 $f"
 		done
 		sed -e "s#@CORE@#$RD/build/core#" -e "s#@NET07@#$B/net07#" -e "s#@NETDIR@#$T/net#" "$T/net/net.manifest"
@@ -200,6 +208,16 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 			echo "f $f 755 0 3 $CPMB/root$f"
 		done
 	fi
+	if [ -d "$SMQB/root" ] && [ -d "$TOSB/root" ] && [ -f "$AUXB/mod.d/tosguest" ]; then
+		(cd "$SMQB/root" && find . -type d | sed 's#^\.##' | sort) | while read -r d; do
+			if [ -n "$d" ] && ! grep -q "^d $d[ 	]" "$M"; then
+				echo "d $d 755 0 3"
+			fi
+		done
+		(cd "$SMQB/root" && find . -type f | sed 's#^\.##' | sort) | while read -r f; do
+			echo "f $f 755 0 3 $SMQB/root$f"
+		done
+	fi
 	if [ -d "$TOSB/root" ] && [ -f "$AUXB/mod.d/tosguest" ]; then
 		echo "c /dev/tos 660 0 25 56 0"
 		# maketos's tools
@@ -241,6 +259,14 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 		echo "d /tests/otb 755 0 3"
 		echo "f /tests/otb/otbridge 644 0 3 $B/otb/mod.d/otbridge"
 		grep -q '^c /dev/otbridge' "$M" || echo "c /dev/otbridge 666 0 3 55 0"
+	fi
+	# t_sound's drivers, built with the kernel; the default module path
+	if [ -f "$KDIR/build/mac/sound/mod.d/asc" ]; then
+		echo "d /etc/conf 755 0 3"
+		echo "d /etc/conf/mod.d 755 0 3"
+		for f in asc auxsnd; do
+			echo "f /etc/conf/mod.d/$f 644 0 3 $KDIR/build/mac/sound/mod.d/$f"
+		done
 	fi
 	if [ -d "$B/dlm/mod.d" ]; then
 		echo "d /tests/mod.d 755 0 3"

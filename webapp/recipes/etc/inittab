@@ -13,3 +13,4 @@ sac:234:respawn:/usr/lib/saf/sac -t 300
 co:234:respawn:/etc/getty console console
 sd:234:respawn:/usr/lib/sndd -f
 sa:234:respawn:/usr/lib/sndaux -f
+pd:234:respawn:/usr/lib/pingd -f

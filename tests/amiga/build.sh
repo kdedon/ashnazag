@@ -35,7 +35,7 @@ mkdir -p "$O" "$R/tests/amiga"
 RTG=$KDIR/guest/amiga/rtg
 ${HOSTCC:-cc} -std=c99 -Wall -Werror "$RTG/abi.c" -o "$O/abi"
 "$O/abi" > "$O/rtgabi.inc"
-"$BIN/m68k-elf-as" -m68020 -I "$RTG" -I "$O" -o "$O/drawtest.o" "$T/amiga/drawtest.s"
+"$BIN/m68k-elf-as" -m68020 -I "$RTG" -I "$KDIR/guest/drawops" -I "$O" -o "$O/drawtest.o" "$T/amiga/drawtest.s"
 "$BIN/m68k-elf-ld" --no-warn-rwx-segments -N -e 0x24000000 -Ttext=0x24000000 -o "$O/drawtest.elf" "$O/drawtest.o"
 "$BIN/m68k-elf-objcopy" -O binary "$O/drawtest.elf" "$R/tests/amiga/draw.bin"
 if [ -f "$AMIGAROM" ]; then
@@ -109,10 +109,16 @@ sys.stdout.buffer.write(donotwait(open(sys.argv[2], "rb").read()))' \
 		*) echo "f /$f 755 0 3 $O/ahigen/$f" ;;
 		esac
 	done < "$O/ahigen.list" >> "$M"
+	# an alert on SYS:alertgo
+	"$BIN/m68k-elf-as" -m68020 -o "$O/alerttest.o" "$T/amiga/alert/alerttest.s"
+	python3 "$KDIR/guest/amiga/rtg/elf2hunk.py" "$O/alerttest.o" "$O/alerttest"
+	echo "f /C/alerttest 755 0 3 $O/alerttest" >> "$M"
+	echo "f /S/alertwait 755 0 3 $T/amiga/alert/alertwait" >> "$M"
 	# User-Startup also runs dragtest and, with IBrowse in SYS:, ibtest
 	U=$(cd "$AMIGASYS/S" && ls | grep -i '^user-startup$' || :)
 	{ [ -z "$U" ] || { cat "$AMIGASYS/S/$U"; echo; }; echo 'Run >NIL: Execute S:dragtest'
 	  echo 'Run >NIL: Execute S:sndtest'
+	  echo 'Run >NIL: Execute S:alertwait'
 	  [ ! -f "$AMIGASYS/IBrowse/IBrowse" ] || echo 'Run >NIL: Execute S:ibtest'; } > "$O/User-Startup"
 	[ -z "$U" ] || { sed "/ \/S\/$U /d" "$M" > "$M.new"; mv "$M.new" "$M"; }
 	echo "f /S/${U:-User-Startup} 755 0 3 $O/User-Startup" >> "$M"

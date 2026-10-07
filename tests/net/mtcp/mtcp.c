@@ -12,7 +12,13 @@
 #define	ECHOPORT	7
 #define	MSGLEN		24
 
+#define	UDPPORT		7007
+#define	CACHEFAULT	-23042
+
 extern long auxwrite(), trapopen(), trapctl(), newptr();
+extern long findsys(), openrf(), getrsrc(), dnrcall();
+extern void resproc();
+static void udp();
 extern void idle(), probe0(), probe15();
 
 typedef struct {
@@ -134,6 +140,7 @@ test()
 	pb_t pb;
 	char name[6], msg[MSGLEN], got[MSGLEN];
 	long wds[3], rbuf, n;
+	unsigned long us = 0x7f000001;
 	short ref;
 	int i;
 
@@ -147,6 +154,7 @@ test()
 	ref = pb.cref;
 	clear(&pb, ref, 15);			/* ipctlGetAddr */
 	if (check("get_addr", trapctl(&pb))) {
+		us = pb.stream;
 		ip("our_address", (unsigned long)pb.stream);	/* csParam at 28 */
 		ip("our_netmask", *(unsigned long *)&pb.p[0]);
 	}
@@ -193,6 +201,121 @@ test()
 	}
 	clear(&pb, ref, 42);			/* TCPRelease */
 	check("tcp_release", trapctl(&pb));
+	udp(ref, us);
+}
+
+/* a datagram to our own address and port, read back */
+static void
+udp(ref, us)
+short ref;
+unsigned long us;
+{
+	pb_t pb;
+	char msg[MSGLEN], *rb;
+	long wds[3], rbuf, stream;
+	int i, n;
+
+	if ((rbuf = newptr(4096L)) == 0) {
+		check("udp_buffer", -108L);
+		return;
+	}
+	clear(&pb, ref, 20);			/* UDPCreate */
+	pb.stream = 0;
+	*(long *)&pb.p[0] = rbuf;
+	*(long *)&pb.p[4] = 4096;
+	*(short *)&pb.p[12] = UDPPORT;
+	if (!check("udp_create", trapctl(&pb)))
+		return;
+	stream = pb.stream;
+	for (i = 0; i < MSGLEN; i++)
+		msg[i] = 'a' + i;
+	wds[0] = (long)MSGLEN << 16 | ((unsigned long)msg >> 16);
+	wds[1] = (long)msg << 16;
+	wds[2] = 0;
+	clear(&pb, ref, 23);			/* UDPWrite */
+	pb.stream = stream;
+	*(long *)&pb.p[2] = us;
+	*(short *)&pb.p[6] = UDPPORT;
+	*(long *)&pb.p[8] = (long)wds;
+	pb.p[12] = 1;				/* checkSum */
+	check("udp_write", trapctl(&pb));
+	clear(&pb, ref, 21);			/* UDPRead */
+	pb.stream = stream;
+	*(short *)&pb.p[0] = 10;		/* timeOut, s */
+	if (check("udp_read", trapctl(&pb))) {
+		rb = *(char **)&pb.p[8];
+		n = *(unsigned short *)&pb.p[12];
+		for (i = 0; i < n && i < MSGLEN && rb[i] == msg[i]; i++)
+			;
+		line(n == MSGLEN && i == MSGLEN ? "P " : "F ", "udp_echo",
+		    n == MSGLEN && i == MSGLEN ? (char *)0 : ": bytes ", (long)n);
+		if (*(unsigned short *)&pb.p[6] != UDPPORT)
+			line("F ", "udp_from", ": port ", (long)*(unsigned short *)&pb.p[6]);
+		clear(&pb, ref, 22);		/* UDPBfrReturn */
+		pb.stream = stream;
+		*(char **)&pb.p[8] = rb;
+		check("udp_bfr_return", trapctl(&pb));
+	}
+	clear(&pb, ref, 24);			/* UDPRelease */
+	pb.stream = stream;
+	check("udp_release", trapctl(&pb));
+}
+
+/* StrToAddr(name): 0 and the first address, else the error */
+static long
+lookup(dnr, name, addr)
+long dnr;
+char *name;
+unsigned long *addr;
+{
+	/* hostInfo: rtnCode, cname[255], addr[4]; the resolver also clears addr[4] and addr[5] */
+	long info[72], done = 0, r;
+	int i;
+
+	r = (short)dnrcall(dnr, 3L, name, info, resproc, &done);
+	for (i = 0; r == CACHEFAULT && !done && i < 60; i++)
+		idle();
+	if (r == CACHEFAULT)
+		r = done ? info[0] : 1;
+	*addr = info[65];
+	return r;
+}
+
+/* the resolver from "MacTCP DNR" in the System Folder, as OpenResolver finds it */
+static void
+dns()
+{
+	char *file = "\012MacTCP DNR";
+	unsigned long a;
+	long vref = 0, dirid = 0, dnr, r;
+
+	if (findsys((short *)&vref + 1, &dirid) != 0)
+		vref = dirid = 0;
+	if (!check("dnr_file", openrf(vref, dirid, file) < 0 ? -43L : 0L))
+		return;
+	if ((dnr = getrsrc(0x646e7270L, 0L)) == 0) {	/* 'dnrp' */
+		check("dnr_code", -192L);
+		return;
+	}
+	if (!check("open_resolver", (short)dnrcall(dnr, 1L, 0L, 0L, 0L, 0L)))
+		return;
+	r = lookup(dnr, "10.0.2.100", &a);
+	check("resolve_dotted", r == 0 && a != 0x0a000264 ? 1L : r);
+	/* the host's resolver: the name server first, the hosts file if it refuses */
+	r = lookup(dnr, "localhost", &a);
+	if (r == 0)
+		check("resolve_localhost", a != 0x7f000001 ? 1L : 0L);
+	else
+		line("I ", "resolve_localhost", " ", r);
+	r = lookup(dnr, "example.com", &a);
+	if (r == 0) {
+		check("resolve_dns", a == 0 ? 1L : 0L);
+		ip("example.com", a);
+	} else
+		line("I ", "resolve_dns_none", " ", r);
+	r = lookup(dnr, "nosuchhost.invalid", &a);
+	line(r != 0 ? "P " : "F ", "resolve_none", r != 0 ? (char *)0 : ": found ", 0L);
+	check("close_resolver", (short)dnrcall(dnr, 2L, 0L, 0L, 0L, 0L));
 }
 
 void
@@ -202,6 +325,7 @@ start()
 	probe15("/mtcp-trap15");
 	out("mtcp I started 1\n");
 	test();
+	dns();
 	out("mtcp done\n");
 	for (;;)
 		idle();

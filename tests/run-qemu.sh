@@ -7,8 +7,8 @@
 # record, so the kernel under test is unchanged.  --rom: ROM boot through
 # A/UX Startup from mkromimage.sh's disk.  --net: direct boot of the
 # network root (t_net only) on user-mode networking, with a TCP echo
-# service (cat) at 10.0.2.100:7.  --kernel-dir: a kernel/ tree
-# (built) to test instead of ../kernel.  ROM, MEM (MB), TMO (s), GEOM
+# service (cat) at 10.0.2.100:7 and the Mac System Folders' volume.
+# --kernel-dir: a kernel/ tree (built) to test instead of ../kernel.  ROM, MEM (MB), TMO (s), GEOM
 # (QEMU -g: WxHxDEPTH), CMDLINE (one boot option), QEMUX (QEMU options)
 # override.
 # Direct boot also serves t_display's host requests on SCC channel B
@@ -17,7 +17,7 @@
 # line), screen.png, summary.txt.
 # AMIGANET=1 (direct boot): the root also has TCP/IP, for t_amiga's
 # bsdsocket.library checks (user-mode network, no echo service).
-# GROUP=smoke|core|mac|tos|mint|cpm|amiga|display|sound runs that set only.
+# GROUP=smoke|core|mac|tos|mint|cpm|smsqe|amiga|display|sound runs that set only.
 # Exit: 0 all PASS, 1 any FAIL, 2 timeout, panic or no TESTS DONE.
 # up to QSLOTS QEMUs at once (tools/qslot.sh)
 # one run per checkout at a time: they share tests/build
@@ -55,10 +55,11 @@ mac)	G="t_aux t_mac t_mac6 t_mac76 t_mac81 t_env" ;;
 tos)	G="t_tos t_env" ;;
 mint)	G="t_mint" ;;
 cpm)	G="t_cpm" ;;
+smsqe)	G="t_smsqe" ;;
 amiga)	G="t_amiga t_env" ;;
 display) G="t_display" ;;
 sound)	G="t_sound" ;;
-*)	echo "GROUP: smoke core mac tos mint cpm amiga display sound"; exit 2 ;;
+*)	echo "GROUP: smoke core mac tos mint cpm smsqe amiga display sound"; exit 2 ;;
 esac
 if [ -n "${G:-}" ]; then
 	ONLY="$T/src/runall.c"
@@ -124,6 +125,9 @@ elif [ $MODE = net ]; then
 	MEM=${MEM:-128}
 	set -- -m "$MEM" -kernel "$KERNEL" -initrd "$T/build/netroot.img" \
 		-nic user,guestfwd=tcp:10.0.2.100:7-cmd:cat
+	[ -f "$T/build/aux/macsys.img" ] && set -- "$@" \
+		-drive file="$T/build/aux/macsys.img",format=raw,if=none,id=hd1,snapshot=on \
+		-device scsi-hd,scsi-id=1,drive=hd1
 else
 	MEM=${MEM:-32}
 	DISK=$T/build/rom/q800-test-small-tests.img

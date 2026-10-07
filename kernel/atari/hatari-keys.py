@@ -10,6 +10,7 @@ Script lines:
     sleep SECS
     debug CMD     a debugger command, e.g. "screenshot x.png" or "quit 0"
     event EV      an input event, e.g. "keydown 0x1d" or "mousemove 10 5"
+    cmd CMD       a control command, e.g. "hatari-shortcut recsound"
     shot FILE MODE [REF]
                   screenshot FILE every few seconds until the screen is ready, then
                   go on (after the wait limit too, so the check reports it):
@@ -134,6 +135,8 @@ def main():
                     os.remove(x)
         elif op == 'event':
             send('hatari-event ' + arg)
+        elif op == 'cmd':
+            send(arg)
         elif op:
             sys.exit('bad line: %s' % line)
 

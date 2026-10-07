@@ -1425,8 +1425,13 @@ dma_rd(o)
 	case 4:
 		return 0;
 	case 5:
-		if (!(t->t_dma[7] & 0x18) && !(t->t_dma[7] & 6))
+		if (!(t->t_dma[7] & 0x18) && !(t->t_dma[7] & 6)) {
+			if (t->t_fdcbusy) {
+				t->t_fdcbusy = 0;
+				return 1;	/* busy: drivers wait for it, then for the interrupt */
+			}
 			t->t_fdcirq = 0;	/* status read ends the interrupt */
+		}
 		return t->t_dma[7] & 0x10 ? 0 : t->t_dma[7] & 6 ? t->t_dma[0x8 + (t->t_dma[7] & 6)] : 0;
 	case 6:
 		return 0;
@@ -1445,12 +1450,18 @@ dma_wr(o, v)
 	if (o == 5 && !(t->t_dma[7] & 0x18)) {
 		if (t->t_dma[7] & 6)
 			t->t_dma[0x8 + (t->t_dma[7] & 6)] = v;	/* track, sector, data */
-		else {
+		else if ((v & 0xf8) == 0xd0) {
+			t->t_fdcirq = 0;	/* force interrupt, not immediate: no interrupt */
+			t->t_fdcbusy = 0;
+		} else {
 			t->t_fdcirq = 1;	/* command done at once */
+			t->t_fdcbusy = 1;
 			mfp_irq(&t->t_mfp, CH_FDC);
 		}
 		return;
 	}
+	if (o == 7 && (v & 8))
+		t->t_fdcirq = 0;	/* the hard disk's line now: drop an unread floppy interrupt */
 	if (o != 5)
 		t->t_dma[o] = v;
 }

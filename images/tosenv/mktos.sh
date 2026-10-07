@@ -1,7 +1,8 @@
 #!/bin/sh
 # mktos.sh -- the TOS container's files for the disk image: starttos,
 # maketos, tosdrive, EmuTOS, the machine-layer cartridge, the C: folder
-# template /tos/sys, guest's copy of it and the system apps (drive G:).
+# template /tos/sys, guest's copy of it, /tos/fvdi and the system apps
+# (drive G:).
 #
 #   sh images/tosenv/mktos.sh outdir
 #
@@ -47,7 +48,7 @@ done
 nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -m68020 -Wall -Wno-implicit -fno-builtin \
 	-c "$G/tos/hostfs.c" -o "$O/hostfs.o"
 nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -m68020 -Wall -Wno-implicit -fno-builtin \
-	-I"$G/mod/tosguest" -c "$G/tos/stik.c" -o "$O/stik.o"
+	-I"$G/mod/tosguest" -I"$AUX/kernel/net" -c "$G/tos/stik.c" -o "$O/stik.o"
 nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -m68020 -Wall -Wno-implicit -fno-builtin \
 	-I"$G/mod/tosguest" -c "$G/tos/xsnd.c" -o "$O/xsnd.o"
 "$BIN/m68k-elf-as" -m68040 --register-prefix-optional -o "$O/tosml.o" "$G/tos/tosml.s"
@@ -81,6 +82,9 @@ if AUX=$AUX sh "$G/tos/fvdi/build.sh" "$O/fvdi" > "$O/fvdi.log" 2>&1; then
 	cp "$O/fvdi/fvdi.sys" "$T/tos/sys/FVDI.SYS"
 	cp "$O/fvdi/ashfb.sys" "$T/tos/sys/ASHFB.SYS"
 	cp "$O/fvdi/fvdi.prg" "$T/tos/sys/AUTO/FVDI.PRG"
+	# starttos -C: what a folder without its own fVDI boots with
+	mkdir -p "$T/tos/fvdi"
+	(cd "$T/tos/sys" && cp -p FVDI.SYS ASHFB.SYS "$T/tos/fvdi/" && cp -rp AUTO "$T/tos/fvdi/")
 	mkdir -p "$T/tos/src/fvdi/ashfb"
 	tar -C "$(dirname "${FVDI:-$AUX/ref/fvdi}")" --exclude=.git -czf "$T/tos/src/fvdi/fvdi.tar.gz" \
 		"$(basename "${FVDI:-$AUX/ref/fvdi}")"

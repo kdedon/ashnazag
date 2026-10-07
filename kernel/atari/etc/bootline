@@ -1,0 +1,11 @@
+#!/sbin/sh
+# bootline -- show or set the kernel command line, which the loader reads
+# from the boot partition's sector 15 (disk sector 79); "c?" is the boot
+# unit.  E.g.  bootline 'root=c?d0s1 sv=1024x768x16'
+D=/dev/rdsk/c0d0s0
+if [ $# -eq 0 ]; then
+	dd if=$D bs=512 skip=79 count=1 2> /dev/null | tr -d '\000'
+	echo
+	exit
+fi
+echo "$*" | tr -d '\012' | dd of=$D bs=512 seek=79 conv=sync 2> /dev/null
