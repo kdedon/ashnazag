@@ -1,0 +1,4 @@
+# amilib: AmigaOS libraries in the kernel (exec, expansion, utility,
+# dos, mmu, timer.device), for the modules that wrap one (opci)
+$modtype misc
+amilib	amilib	m	0	0	0
