@@ -10,7 +10,9 @@
 | am_call       long am_call(fn, unsigned long r[15]): d0-a6 from r, call
 |               fn, store all fifteen back (RawDoFmt's PutChProc moves
 |               a3, for one).  Returns d0 (also in a0, for callers
-|               declared to return a pointer).
+|               declared to return a pointer).  At process level it runs
+|               on amilib's own stack (am_stkbot..am_stktop), not the
+|               caller's kernel stack: a library's call chains are deep.
 | am_super      long am_super(unsigned long r[15]): exec Supervisor().
 |               A format-0 frame (SR, PC, 0) is pushed and r[a5] is
 |               entered with r's registers; it leaves by rte.  The kernel
@@ -37,6 +39,27 @@ am_entry:
 
 	.globl	am_call
 am_call:
+	movel	am_stktop,%d0		| our stack, 0 = none
+	beq.b	Lcall
+	movew	%sr,%d1
+	andiw	&0x0700,%d1
+	bne.b	Lcall			| interrupt level: stay
+	cmpl	am_stkbot,%sp
+	bcs.b	Lswitch
+	cmpl	%d0,%sp
+	bls.b	Lcall			| already on it
+Lswitch:
+	moveal	%sp,%a0
+	moveal	%d0,%sp
+	movel	%a0,%sp@-		| the caller's sp
+	movel	%a0@(8),%sp@-		| r
+	movel	%a0@(4),%sp@-		| fn
+	bsr.b	Lcall
+	addql	&8,%sp
+	moveal	%sp@,%sp
+	rts
+
+Lcall:
 	moveml	&0x3f3e,%sp@-		| d2-d7/a2-a6, 44 bytes
 	moveal	%sp@(52),%a0		| r
 	movel	%sp@(48),%d0		| fn

@@ -19,8 +19,11 @@
 
 static void x_lopen(), x_lclose(), x_lnull();
 
+#define	AM_STACK	16384
+
 char *am_sysbase;
 int am_intmask;
+char *am_stkbot, *am_stktop;		/* amglue.s switches to it */
 
 static char *am_task;			/* our one Task */
 static char *am_ints;			/* AM_NINT server Lists */
@@ -1787,9 +1790,10 @@ am_init(attn)
 	AP(b, EB_MEMHANDLERS + 8) = b + EB_MEMHANDLERS;
 	am_addtail(b + EB_LIBLIST, b);
 
+	am_stkbot = am_alloc((unsigned long)AM_STACK, MEMF_PUBLIC);
 	am_task = am_alloc((unsigned long)PR_SIZE + 8, MEMF_PUBLIC | MEMF_CLEAR);
 	am_ints = am_alloc((unsigned long)AM_NINT * LH_SIZE, MEMF_PUBLIC);
-	if (am_task == 0 || am_ints == 0) {
+	if (am_task == 0 || am_ints == 0 || am_stkbot == 0) {
 		am_fini();
 		return -1;
 	}
@@ -1802,6 +1806,9 @@ am_init(attn)
 	AB(am_task, 92 + LN_TYPE) = NT_MSGPORT;
 	AL(am_task, TC_SIGALLOC) = ~AM_SIGFREE;
 	AP(b, EB_THISTASK) = am_task;
+	am_stktop = am_stkbot + AM_STACK;	/* from here on, calls use it */
+	AP(am_task, 58) = am_stkbot;		/* tc_SPLower */
+	AP(am_task, 62) = am_stktop;		/* tc_SPUpper */
 	for (i = 0; i < AM_NINT; i++)
 		am_newlist(am_ints + i * LH_SIZE);
 
@@ -1834,6 +1841,9 @@ am_fini()
 	if (am_task)
 		am_free(am_task, (unsigned long)PR_SIZE + 8);
 	am_ints = am_task = 0;
+	if (am_stkbot)
+		am_free(am_stkbot, (unsigned long)AM_STACK);
+	am_stkbot = am_stktop = 0;
 	am_dellib(&am_exec);
 	am_sysbase = 0;
 	if (am_dis)

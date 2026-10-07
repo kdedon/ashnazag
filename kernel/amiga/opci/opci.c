@@ -69,6 +69,7 @@ lcall(lvo, r)
 }
 
 static int opci_start();
+static void opci_list();
 
 static int
 opci_isr(oi)
@@ -412,8 +413,15 @@ opci_init(dir)
 		amx_log("opci: %s: error %d\n", (long)path, (long)e, 0L, 0L);
 		return e;
 	}
+	if (amx_lock()) {
+		amx_freefile(buf, len);
+		return OPCI_EBUSY;
+	}
 	e = opci_start(buf, len);
+	amx_unlock();
 	amx_freefile(buf, len);		/* the hunks are copied out */
+	if (e == 0)
+		opci_list();
 	return e;
 }
 
@@ -458,7 +466,6 @@ opci_start(buf, len)
 	(void)lcall(PCI_BUS, r);
 	opci_flags = r[D0] & 0xffff;
 	amx_log("opci: bridges %x\n", (long)opci_flags, 0L, 0L, 0L);
-	opci_list();
 	return 0;
 fail:
 	if (opci_lib) {			/* let it release what it can */

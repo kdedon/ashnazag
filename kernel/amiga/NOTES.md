@@ -34,6 +34,7 @@ On an Amiga host the PCI bridges (Elbox Mediator A1200/Z4, Matay Prometheus, DCE
 ## How the library sees the kernel
 
 - **Calls into our libraries.** Each jump-table entry is `jmp stub`, and each stub is `jsr am_entry`. `am_dispatch` finds the library and LVO from the stub address, not from a6, so `SetFunction` works. It patches the jump-table entry and returns the stub as the old function, which still reaches our handler. An LVO we don't provide is logged once and returns 0.
+- **Its own stack.** At process level, every call into the library runs on a 16 KB stack of amilib's, not the caller's kernel stack. openpci's call chains are deep: a 516-byte line buffer while parsing configuration, a 128-byte vector table while probing, and exec callbacks nested inside both. Calls at interrupt level (server chains) stay on the interrupt stack. Only one process is ever inside, under the opci lock, so a sleep in `kmem_alloc` there is safe.
 - **One process, no scheduler.** The library runs as a Process; dos keeps `pr_Result2` and `pr_CurrentDir` in it, and openpci sets `pr_WindowPtr` there. Forbid and Permit only count. Disable raises the IPL to 7 and Enable restores it. Semaphores never block, because `opci` lets one caller into the library at a time. `Wait` returns what it was asked for. Devices complete requests in `BeginIO`, and `timer.device` busy-waits.
 - **Memory** comes from `kmem_alloc`, with `KM_NOSLEEP` under Disable or at interrupt level. Chip memory is refused. `TypeOfMem` reports public fast memory.
 - **Zorro boards.** Each board becomes a `ConfigDev` on ExpansionBase's BoardList (+60). `cd_BoardAddr` is the board's kernel mapping, so every address the library derives from it (BARs, legacy IO, config space) is a kernel address. openpci adds and removes ConfigDevs on that list itself.
@@ -43,7 +44,16 @@ On an Amiga host the PCI bridges (Elbox Mediator A1200/Z4, Matay Prometheus, DCE
 - **Files.** Every AmigaOS name means the file named by its last component in `/etc/conf/pci` (`opci_confdir`), so nothing outside that directory can be named. That covers `ENVARC:PCI-Configuration` (openpci tries `DEVS:`, `ENV:` and `ENVARC:` in turn, and all three resolve to the same file) and plugins it loads for unknown configuration commands. `LIBS:PCI` resolves to the directory itself, because the directory is known by its own name. Files are read-only and read whole, at most 256 KB.
 - **ReadArgs** follows AmigaDOS: aliases, `/A /K /S /N /T /M /F`, `KEY=value`, quoted strings with `*` escapes, and `/M` giving its last words to later `/A` arguments. openpci uses it for each `PCI-Configuration` line.
 - **Configuration errors.** openpci reports them with intuition `DisplayAlert`, and those lines go to the console as `alert: ...`.
-- **Not provided:** mmu.library, so the A1200 Mediators get no virtual window (`VirtualMapping` falls back to physical mapping). Nothing writes files.
+- **Not provided:** mmu.library (below). Nothing writes files.
+
+## mmu.library
+
+The real mmu.library (MMULib 47) cannot run in the kernel: through 68040.library and 68060.library it takes over the MMU, which AMIX owns. openpci uses it in two places.
+
+- **Every bridge.** On the first open, openpci makes the bridge windows cache-inhibited in the default and supervisor contexts (`GetMapping`, `SetPropertiesA`, `RebuildTreesA`, `SetPropertyList`, `ReleaseMapping`). In the kernel `plat_iomap` already maps boards cache-inhibited and serialized, so nothing is lost without it.
+- **A1200 Mediators, `VirtualMapping` (mmu v46+).** openpci creates three private contexts (LVO -114), fills indirect descriptors (-426, -432, -438, -450) and installs a context exception hook (-168, -192, -174). The hook moves the Mediator's window bank when an access faults inside the 68K window. Without mmu.library openpci maps those boards physically, so fewer devices fit in the small window.
+
+Emulating that second part means modelling the needed mmu.library calls on AMIX's page tables and its supervisor access-fault path, through further `plat_*` hooks. It needs the exact API: tag values and indirect-descriptor semantics, which are in the MMULib developer archive (Aminet `dev/c/MMULib.lha`, with the autodocs and `mmu_lib.fd`).
 
 ## What the Amiga host layer must supply (with DLM)
 
@@ -61,5 +71,5 @@ From the kernel: `kmem_alloc`, `kmem_free`, `printf`, `sleep`, `wakeup`, `vn_ope
 ## Open
 
 1. The `plat_*` hooks in the Amiga host layer, built with DLM on `unix-040`/`unix-060`. Nothing here has been built with the AMIX toolchain or run on hardware yet. The C was checked with a modern m68k gcc against stand-in headers only.
-2. mmu.library, for the A1200 Mediators' virtual window.
+2. mmu.library emulation for the A1200 Mediators' virtual window (above).
 3. A `/dev/pci` with an `lspci`, for users. The load already lists the bus on the console.
