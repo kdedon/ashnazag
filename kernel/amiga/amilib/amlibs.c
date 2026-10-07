@@ -45,7 +45,7 @@ am_tagnext(lp)
 	}
 }
 
-static unsigned char *
+unsigned char *
 am_tagfind(tag, l)
 	unsigned long tag;
 	unsigned char *l;
@@ -272,6 +272,7 @@ struct amlib am_utility = {
 
 static char *am_expbase;
 static char *am_cd[AM_NBOARD];		/* the ConfigDevs we made */
+static unsigned long am_cdpa[AM_NBOARD];	/* their physical bases */
 static unsigned char am_bind[16];	/* CurrentBinding */
 
 static void
@@ -408,6 +409,7 @@ am_expinit()
 		AP(cd, CD_BOARDADDR) = va;
 		AL(cd, CD_BOARDSIZE) = zb.zb_size;
 		am_addtail(am_expbase + EXB_BOARDLIST, cd);
+		am_cdpa[n] = zb.zb_pa;
 		am_cd[n++] = cd;
 	}
 	return 0;
@@ -425,6 +427,21 @@ am_inboard(va)
 		    va - AP(cd, CD_BOARDADDR) < AL(cd, CD_BOARDSIZE))
 			return 1;
 	return 0;
+}
+
+/* the physical address behind a board's kernel address, or ~0 */
+unsigned long
+am_boardpa(va)
+	char *va;
+{
+	int i;
+	char *cd;
+
+	for (i = 0; i < AM_NBOARD; i++)
+		if ((cd = am_cd[i]) != 0 && va >= AP(cd, CD_BOARDADDR) &&
+		    va - AP(cd, CD_BOARDADDR) < AL(cd, CD_BOARDSIZE))
+			return am_cdpa[i] + (va - AP(cd, CD_BOARDADDR));
+	return ~0UL;
 }
 
 void

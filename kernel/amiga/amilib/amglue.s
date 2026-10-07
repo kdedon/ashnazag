@@ -13,6 +13,10 @@
 |               declared to return a pointer).  At process level it runs
 |               on amilib's own stack (am_stkbot..am_stktop), not the
 |               caller's kernel stack: a library's call chains are deep.
+|               am_stkbusy marks it taken from the switch to the return,
+|               sleeps inside included, so a call that comes in meanwhile
+|               (an MMU fault in a window, from any process) stays on
+|               its own stack.
 | am_super      long am_super(unsigned long r[15]): exec Supervisor().
 |               A format-0 frame (SR, PC, 0) is pushed and r[a5] is
 |               entered with r's registers; it leaves by rte.  The kernel
@@ -23,6 +27,12 @@
 |               is_Data; Z from its result, as exec's server chains want.
 | am_hook       h_Entry for C hooks: h_SubEntry is called as
 |               long (*)(hook, object, message).
+
+	.data
+	.globl	am_stkbusy
+am_stkbusy:
+	.byte	0
+	.even
 
 	.text
 
@@ -44,11 +54,9 @@ am_call:
 	movew	%sr,%d1
 	andiw	&0x0700,%d1
 	bne.b	Lcall			| interrupt level: stay
-	cmpl	am_stkbot,%sp
-	bcs.b	Lswitch
-	cmpl	%d0,%sp
-	bls.b	Lcall			| already on it
-Lswitch:
+	tstb	am_stkbusy
+	bne.b	Lcall			| on it, or another process sleeps on it
+	st	am_stkbusy
 	moveal	%sp,%a0
 	moveal	%d0,%sp
 	movel	%a0,%sp@-		| the caller's sp
@@ -57,6 +65,7 @@ Lswitch:
 	bsr.b	Lcall
 	addql	&8,%sp
 	moveal	%sp@,%sp
+	sf	am_stkbusy
 	rts
 
 Lcall:

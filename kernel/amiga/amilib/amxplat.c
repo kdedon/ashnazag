@@ -15,6 +15,24 @@
  *   unsigned long plat_vtop(va)               physical address of a
  *                                             kernel address
  *   unsigned long plat_pagesize()             the MMU page size (4096)
+ *
+ * and, for mmu.library's context windows (all three, or none):
+ *
+ *   int  plat_winrange(&lo, &hi)              a kernel VA range kept
+ *                                             unmapped for windows, in
+ *                                             [16 MB, 2 GB) and inside one
+ *                                             512 MB-aligned block; 0 = ok
+ *   int  plat_remap(va, pa, len, mode)        map [va, va+len) to pa
+ *                                             (AMX_MAP_IO), or unmap it
+ *                                             (AMX_MAP_INVALID); page
+ *                                             multiples; any IPL; flushes
+ *                                             the ATC; 0 = done
+ *   int  plat_faulthook(lo, hi, fn)           a supervisor access fault at
+ *                                             va in [lo, hi] calls
+ *                                             fn(va, len, write); fn 0 =
+ *                                             repaired, retry the access;
+ *                                             else the kernel's own fault
+ *   void plat_unfaulthook(lo, hi)
  *   int  plat_zintr(intnum, fn)               call fn(intnum) from the
  *                                             level 2 (INTB_PORTS, 3) or
  *                                             level 6 (INTB_EXTER, 13)
@@ -49,6 +67,10 @@ asm(".weak plat_iomap");
 asm(".weak plat_iounmap");
 asm(".weak plat_vtop");
 asm(".weak plat_pagesize");
+asm(".weak plat_winrange");
+asm(".weak plat_remap");
+asm(".weak plat_faulthook");
+asm(".weak plat_unfaulthook");
 asm(".weak plat_zintr");
 asm(".weak plat_zunintr");
 asm(".weak delayus");
@@ -59,6 +81,8 @@ extern int plat_zorro(), plat_zintr();
 extern char *plat_iomap();
 extern void plat_iounmap(), plat_zunintr();
 extern unsigned long plat_vtop(), plat_pagesize();
+extern int plat_winrange(), plat_remap(), plat_faulthook();
+extern void plat_unfaulthook();
 extern void delayus();
 extern long hrestime[2];		/* timestruc_t: seconds, nanoseconds */
 extern long cputype;			/* 30, 40, 60: the 040/060 port */
@@ -72,6 +96,10 @@ static void (*volatile p_iounmap)() = plat_iounmap;
 static void (*volatile p_zunintr)() = plat_zunintr;
 static unsigned long (*volatile p_vtop)() = plat_vtop;
 static unsigned long (*volatile p_pagesize)() = plat_pagesize;
+static int (*volatile p_winrange)() = plat_winrange;
+static int (*volatile p_remap)() = plat_remap;
+static int (*volatile p_faulthook)() = plat_faulthook;
+static void (*volatile p_unfaulthook)() = plat_unfaulthook;
 static void (*volatile p_delayus)() = delayus;
 static long *volatile p_hrestime = hrestime;
 static long *volatile p_cputype = &cputype;
@@ -209,6 +237,41 @@ unsigned long
 amx_pagesize()
 {
 	return p_pagesize ? (*p_pagesize)() : 4096;
+}
+
+/* the window hooks come as a set */
+int
+amx_winrange(lop, hip)
+	unsigned long *lop, *hip;
+{
+	if (!p_winrange || !p_remap || !p_faulthook || !p_unfaulthook)
+		return -1;
+	return (*p_winrange)(lop, hip);
+}
+
+int
+amx_remap(va, pa, len, mode)
+	char *va;
+	unsigned long pa, len;
+	int mode;
+{
+	return p_remap ? (*p_remap)(va, pa, len, mode) : -1;
+}
+
+int
+amx_faulthook(lo, hi, fn)
+	unsigned long lo, hi;
+	int (*fn)();
+{
+	return p_faulthook ? (*p_faulthook)(lo, hi, fn) : -1;
+}
+
+void
+amx_unfaulthook(lo, hi)
+	unsigned long lo, hi;
+{
+	if (p_unfaulthook)
+		(*p_unfaulthook)(lo, hi);
 }
 
 static void

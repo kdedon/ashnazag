@@ -1,6 +1,7 @@
 /*
- * amilib -- run an AmigaOS shared library (a hunk load file) inside the
- * kernel, against a small exec, expansion and utility and a timer.device.
+ * amilib -- load an AmigaOS shared library (a hunk load file) into the
+ * kernel and call it.  A shim answers the calls it makes into exec,
+ * expansion, utility, dos, mmu and timer.device; no AmigaOS runs.
  *
  * The library sees AmigaOS structures at their AmigaOS offsets.  We
  * reach them by byte offset (AB/AW/AL), not by C structs, so the layout
@@ -12,11 +13,10 @@
  *                   finds the library and LVO from the stub address and
  *                   runs the handler on the saved registers.
  *   us -> library   am_call(fn, regs) loads d0-a6 from regs, calls fn and
- *                   stores d0/d1/a0/a1 back.
+ *                   stores them all back.
  *
- * The platform part (amx_*) is the only code that knows the host kernel:
- * kernel/amiga/opci/amxplat.c for AMIX, kernel/amiga/test/hplat.c for the
- * emulator harness.
+ * The platform part (amx_*, amxplat.c) is the only code that knows the
+ * host kernel.
  */
 
 #ifndef _AMILIB_H
@@ -302,6 +302,8 @@ extern struct amlib am_dos, am_intuition;
 extern int am_mmuinit();
 extern void am_mmufini();
 extern int am_inboard();		/* (va) inside a mapped board */
+extern unsigned long am_boardpa();	/* (va) its physical address, or ~0 */
+extern unsigned char *am_tagfind();	/* (tag, taglist) the TagItem, or 0 */
 
 /* amhunk.c: errors */
 #define	AMH_EFORMAT	1
@@ -309,7 +311,7 @@ extern int am_inboard();		/* (va) inside a mapped board */
 extern unsigned long am_loadseg();	/* (buf, len, &err) -> BPTR seglist */
 extern void am_unloadseg();
 
-/* platform (amxplat.c / hplat.c) */
+/* platform (amxplat.c) */
 extern char *amx_alloc();		/* (size, cansleep) */
 extern void amx_free();			/* (p, size) */
 extern int amx_spl7();			/* returns the old SR */
@@ -322,6 +324,12 @@ extern int amx_zorro();			/* (i, struct amx_zboard *) 0 = none */
 extern char *amx_iomap();		/* (pa, size) -> kernel va, 0 = fail */
 extern unsigned long amx_vtop();	/* kernel va -> physical, for DMA */
 extern unsigned long amx_pagesize();
+extern int amx_winrange();		/* (&lo, &hi) VA kept for windows */
+extern int amx_remap();			/* (va, pa, len, mode) any IPL */
+extern int amx_faulthook();		/* (lo, hi, fn) faults there call fn */
+extern void amx_unfaulthook();		/* (lo, hi) */
+#define	AMX_MAP_INVALID	0		/* amx_remap: no page; access faults */
+#define	AMX_MAP_IO	1		/* cache-inhibited, serialized */
 extern void amx_iounmap();
 extern int amx_intattach();		/* (intnum) route that chain to us */
 extern void amx_intdetach();
