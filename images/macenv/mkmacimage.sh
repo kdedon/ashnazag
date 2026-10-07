@@ -133,6 +133,7 @@ cp -rp "$M/mac/lib/System Folder" "$M/mac/sys/"
 # users' Special menu: Log Out in place of Restart and Shut Down
 python3 "$D/userfinder.py" "$M/mac/lib/System Folder/%Finder"
 find "$M" -type d -exec chmod 755 {} +
+chmod 700 "$M/.mac"
 find "$M" -type f -perm -u+x -exec chmod 755 {} +
 find "$M" -type f ! -perm -u+x -exec chmod 644 {} +
 # /usr and its directories keep the manifest's owners

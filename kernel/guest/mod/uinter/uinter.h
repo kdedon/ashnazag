@@ -60,6 +60,7 @@ struct uilayer {
 	int		l_kchrlen;
 	int		l_lapchk;	/* the AppleTalk queue calls looked at */
 	int		l_sdchk;	/* 1 + (real uid != 0) at the last Shut Down patch */
+	int		l_dmchk;	/* the .mac modes looked at */
 };
 #define	LS_EMPTY	0
 #define	LS_INUSE	2

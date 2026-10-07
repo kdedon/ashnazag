@@ -61,6 +61,7 @@ static char tro[26];			/* read-only */
 static long ramsize = 4L << 20;
 static int mono, stscreen, verbose, pass, romarg, cfold;
 static int tfd;
+static struct fbinfo hfi;		/* -P: the host screen */
 extern int fbpipe, vpass;
 
 extern void disp(), tossnd();
@@ -299,6 +300,7 @@ fbmap(fd)
 		    MAP_SHARED | MAP_FIXED, rf.fd, 0) == (caddr_t)-1 ||
 		    ioctl(rf.fd, FBIOVIDEL, ramsize - fi.fi_size) < 0)
 			die("display");
+		hfi = fi;
 		close(rf.fd);
 		return;
 	}
@@ -525,7 +527,11 @@ main(argc, argv)
 	sigaction(TOS_SIG, &sa, (struct sigaction *)0);
 	/* a guest's send on a reset connection fails instead of ending the session */
 	signal(SIGPIPE, SIG_IGN);
+	memset((char *)&te, 0, sizeof te);
 	te.te_ramsize = ramsize;
+	te.te_w = hfi.fi_width;
+	te.te_h = hfi.fi_height;
+	te.te_depth = hfi.fi_depth;
 	te.te_flags = (mono ? TEF_MONO : 0) | (pass ? TEF_FALCON : 0);
 	if (ioctl(tfd, TOSIOC_ENTER, &te) < 0)
 		die("TOSIOC_ENTER");

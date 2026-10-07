@@ -41,6 +41,7 @@ p_tfd:	.long	-1			| /dev/tos, for socket calls
 p_dtab:	.space	0x1000			| host drives: letter, flags, path; ... 0
 
 init:
+	jsr	vminit
 	jsr	pvinit
 	jsr	stikinit
 	jsr	xsndinit
@@ -118,6 +119,45 @@ old_bios: .long	0
 fvdiprg: .asciz	"C:\\AUTO\\FVDI.PRG"
 	.even
 
+| The machine's TOS opens GEM's screen in the mode NEWDESK.INF names, ST
+| low by default: the first Validmode answers the mode TOS started in,
+| the host's.
+vminit:	move.l	0x4f2,a0		| _sysbase
+	move.l	8(a0),a0		| os_beg
+	cmp.l	#0x45544f53,0x2c(a0)	| "ETOS"
+	beq.s	1f
+	move.l	0xb8,old_vm
+	move.l	#vm,0xb8
+1:	rts
+
+	.long	0x58425241		| XBRA
+	.long	0x41555856		| AUXV
+old_vm:	.long	0
+vmdone:	.word	0
+vm:	movem.l	d0-d2/a0-a2,-(sp)
+	lea	24+6(sp),a0		| a supervisor caller's arguments
+	tst.w	0x59e			| _longframe
+	beq.s	1f
+	addq.l	#2,a0
+1:	btst	#5,24(sp)
+	bne.s	2f
+	move.l	usp,a0
+2:	cmp.w	#95,(a0)		| Validmode
+	bne.s	3f
+	tst.w	vmdone
+	bne.s	3f
+	move.w	#1,vmdone
+	move.l	a0,-(sp)
+	move.w	#-1,-(sp)
+	move.w	#88,-(sp)		| VsetMode(-1)
+	trap	#14
+	addq.l	#4,sp
+	move.l	(sp)+,a0
+	move.w	d0,2(a0)
+3:	movem.l	(sp)+,d0-d2/a0-a2
+	move.l	old_vm,-(sp)
+	rts
+
 | input posted by the display process (struct tospv)
 	.set	PV, 0xfbf000
 	.set	pv_on, 0
@@ -132,6 +172,7 @@ fvdiprg: .asciz	"C:\\AUTO\\FVDI.PRG"
 	.set	PV_NEV, 256
 	.set	pv_vbl, pv_ev+PV_NEV*8
 	.set	pv_drop, pv_vbl+4
+	.set	pv_la, pv_drop+4
 
 kbv:	.long	0			| Kbdvbase()
 kio:	.long	0			| the keyboard's Iorec
@@ -141,7 +182,9 @@ pvk:	.long	0			| PV_KEYS when TOS has kbdvec
 pkt:	.byte	0, 0, 0, 0		| relative mouse packet
 
 | the last free VBL queue slots run pv and icv: GEM takes the first for its cursor
-pvinit:	move.w	#34,-(sp)		| Kbdvbase
+pvinit:	.word	0xa000			| Line A base: where GEM keeps the mouse
+	move.l	a0,PV+pv_la
+	move.w	#34,-(sp)		| Kbdvbase
 	trap	#14
 	addq.l	#2,sp
 	move.l	d0,kbv

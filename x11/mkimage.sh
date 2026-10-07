@@ -8,6 +8,7 @@
 # Builds the server, client libraries, clients and package as needed.  BOOTX=1 boots to xdm (/etc/default/x).
 # XPKGS="manx xview" also installs those
 # packages (x11/NAME/build.sh, after build.sh clibs) as pkgadd would.
+# APKG=dir installs apkg from the datastreams getapkg.sh fetched.
 # Tape segments from $AMIX_TAPE or, for 02 03 07 10, the live diskroot's
 # build/tape.
 set -e
@@ -55,7 +56,23 @@ for p in $XPKGS; do
 	[ -f "$f" ] || X11W=$X11W sh "$D/$p/build.sh"
 	pk="$pk $f"
 done
+[ -z "$APKG" ] || pk="$pk $(ls "$APKG"/APKGENG-*.pkg "$APKG"/APKG-*.pkg)"
 [ -z "$pk" ] || python3 "$R/pkg/pkginst.py" "$X11W/xpkgs" $pk >> "$R/root.manifest"
+# apkg on the stock pkgadd and pkgrm (the engine's pkginstall faults);
+# the repository is a name-based virtual host, found through the hosts file
+if [ -n "$APKG" ]; then
+	c=$X11W/xpkgs/root/etc/apkg.conf
+	sed -i -e 's,^# pkgadd=/usr/sbin/pkgadd$,pkgadd=/usr/sbin/pkgadd,' \
+		-e 's,^# pkgrm=/usr/sbin/pkgrm$,pkgrm=/usr/sbin/pkgrm,' "$c"
+	[ "$(grep -c '^pkg\(add\|rm\)=/usr/sbin/' "$c")" = 2 ] ||
+		{ echo "[FAIL] apkg.conf changed"; exit 1; }
+	ip=$(getent hosts pkg.amigaux.org | awk '{ print $1; exit }')
+	[ -n "$ip" ] || { echo "[FAIL] cannot resolve pkg.amigaux.org"; exit 1; }
+	(cd "$R/build" && cpio -i --quiet --to-stdout etc/inet/hosts < tape/02) > "$X11W/xpkgs/hosts"
+	printf '%s\tpkg.amigaux.org\n' "$ip" >> "$X11W/xpkgs/hosts"
+	printf 'f /etc/inet/hosts 444 0 3 %s\nd /usr/local 755 0 3\nd /usr/local/bin 755 0 3\n' \
+		"$X11W/xpkgs/hosts" >> "$R/root.manifest"
+fi
 if [ "$BOOTX" = 1 ]; then
 	sed 's/^BOOT=.*/BOOT=xdm/' "$X11W/pkg/xdm/default-x" > "$R/default-x"
 	echo "f /etc/default/x 644 0 3 default-x" >> "$R/root.manifest"

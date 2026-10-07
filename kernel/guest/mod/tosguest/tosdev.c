@@ -1530,6 +1530,13 @@ falcon_rd(o)
 			return v;
 		return t->t_snd[o - 0xff8900];
 	}
+	/*
+	 * TOS's probe finds no blitter, so its VDI draws with the CPU: here
+	 * each register access traps.  Programs still find one.
+	 */
+	if (o == 0xff8a00 && t->t_st.ts_lastpc >= TOS_ROMBASE &&
+	    t->t_st.ts_lastpc < TOS_ROMBASE + 0x100000)
+		return -1;
 	if (o >= 0xff8a00 && o < 0xff8a40)
 		return t->t_blt[o - 0xff8a00];
 	if (o >= 0xffa200 && o < 0xffa208)	/* host port: transmit always empty */
@@ -1562,6 +1569,58 @@ falcon_wr(o, v)
 	else
 		return falcon_rd(o) == -1 ? -1 : -2;
 	return 0;
+}
+
+__asm__(".weak ata_tt");
+extern int ata_tt;
+static int *volatile atatt = &ata_tt;
+
+/*
+ * A Falcon's NVRAM: the machine's own while its checksum holds, its boot
+ * video mode the host screen's (w x h, d bits) so that TOS starts in
+ * it.  The guest's writes stay in this copy.
+ */
+void
+tos_nvinit(w, h, d)
+	int w, h, d;
+{
+	struct tosctr *t = &tosc;
+	volatile unsigned char *rtc = (volatile unsigned char *)0xffff8961;
+	int i, s, sum, m, mon, pal;
+
+	if (!machtype || (atatt && *atatt) || !(t->t_flags & TEF_FALCON))
+		return;
+	s = splhi_();
+	for (i = 14; i < 64; i++) {
+		rtc[0] = i;
+		t->t_rtc[i] = rtc[2];
+	}
+	mon = *(volatile unsigned char *)0xffff8006 >> 6;
+	pal = *(volatile unsigned char *)0xffff820a & 2;
+	splx_(s);
+	for (sum = 0, i = 14; i < 62; i++)
+		sum += t->t_rtc[i];
+	if (t->t_rtc[62] != (~sum & 0xff) || t->t_rtc[63] != (sum & 0xff))
+		bzero((caddr_t)t->t_rtc + 14, 50);
+	/* the VsetMode word: planes, 80 columns, VGA, PAL, ST modes, line doubling or interlace */
+	m = d == 1 ? 0 : d == 2 ? 1 : d == 4 ? 2 : d == 8 ? 3 : d == 16 ? 4 : -1;
+	if (mon == 0 || (w != 320 && w != 640))
+		m = -1;
+	if (m >= 0 && w == 640)
+		m |= 8;
+	if (m >= 0 && mon == 2)
+		m = d == 16 && w == 640 ? -1 : h == 480 ? m | 0x10 : h == 240 ? m | 0x110 :
+		    h == 200 || h == 400 ? m | 0x90 : -1;
+	else if (m >= 0)
+		m = h == 200 ? m | (pal ? 0x20 : 0) : h == 400 ? m | (pal ? 0x120 : 0x100) : -1;
+	if (m >= 0) {
+		t->t_rtc[28] = m >> 8;
+		t->t_rtc[29] = m;
+	}
+	for (sum = 0, i = 14; i < 62; i++)
+		sum += t->t_rtc[i];
+	t->t_rtc[62] = ~sum;
+	t->t_rtc[63] = sum;
 }
 
 extern struct proc *prfind();

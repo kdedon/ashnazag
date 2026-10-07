@@ -31,6 +31,8 @@
 struct tosenter {
 	unsigned long	te_ramsize;	/* ST-RAM at 0 */
 	unsigned long	te_flags;	/* TEF_* */
+	unsigned short	te_w, te_h;	/* TEF_FALCON: the host screen, TOS's boot mode */
+	unsigned short	te_depth, te_pad;
 };
 
 #define	TEF_MONO	0x01		/* monochrome monitor */
@@ -138,6 +140,7 @@ struct tospv {
 	}		pv_ev[PV_NEV];
 	unsigned long	pv_vbl;		/* guest: VBLs run */
 	unsigned long	pv_drop;	/* events before this went by the IKBD */
+	unsigned long	pv_la;		/* guest: its Line A base */
 };
 
 #define	PV_MOUSE	1

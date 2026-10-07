@@ -73,10 +73,16 @@ def desktop(path):
             count[p] = count.get(p, 0) + 1
     # the screen without its borders: the desktop colour's columns
     colour, n = max(count.items(), key=lambda kv: kv[1])
-    if colour in (white, black):
+    if set(count) <= {white, black}:
+        # two colours: the desktop is a dither, black and white in turn
+        x0, x1 = 0, w
+        n = sum(1 for y in range(bar + 1, h) for x in range(w - 1) if rows[y][x] != rows[y][x + 1])
+        colour = None
+    elif colour in (white, black):
         return 'no desktop colour'
-    xs = [x for x in range(w) if rows[h - 1][x] == colour or rows[bar + 2][x] == colour]
-    x0, x1 = min(xs), max(xs) + 1
+    else:
+        xs = [x for x in range(w) if rows[h - 1][x] == colour or rows[bar + 2][x] == colour]
+        x0, x1 = min(xs), max(xs) + 1
     area = (x1 - x0) * (h - bar - 1)
     if n < area * 80 // 100:
         return 'desktop %d%% background, under 80%%' % (100 * n // area)

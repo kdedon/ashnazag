@@ -12,6 +12,7 @@
 
  Ctrl-Option-Command-0 shows the console, -1 to -9 the sessions.
  Ctrl-C on the console ends TOS or the Amiga.
+ apkg update, apkg install NAME: packages, in /opt/amix/bin
  makemac, maketos, makeamiga make ~/System Folder, ~/TOS, ~/Amiga;
  -f refreshes one from the system's copy, keeping your files.
  exit logs out; root shuts down with  shutdown -y -g0 -i0

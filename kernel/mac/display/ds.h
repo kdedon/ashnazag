@@ -188,6 +188,7 @@ extern void (*ds_sndown)();	/* (on): a passthrough guest takes (1) or leaves (0)
 void	ds_bltgo();		/* (registers) */
 int	ds_gralloc();		/* (bytes) -> errno: the caller's contiguous ST-RAM */
 void	ds_grfree();
+void	ds_grdrop();
 int	ds_grmmap();		/* (offset) -> its page frame, or -1 */
 #endif
 

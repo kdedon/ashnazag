@@ -45,6 +45,9 @@ uid=0\(*)
 	H=$HOME ;;
 esac
 S="$H/System Folder"
+# the Trash and Temporary Items: $HOME/.mac/<host>, owner only
+case $HOME in ""|/) d=/.mac ;; *) d=$HOME/.mac ;; esac
+[ ! -d "$d" ] || chmod 700 "$d" 2> /dev/null
 # the session locks the environment's metadata file, or the legacy
 # folder's stamp; a missing stamp comes with the refresh below
 F="$S/.stamp"

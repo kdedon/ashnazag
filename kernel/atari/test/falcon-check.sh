@@ -3,21 +3,23 @@
 # boot to a login on a VGA and an RGB monitor, root and guest logins,
 # ps -ef, a display session hidden and shown with the hot key, then
 # the guest modules loaded and a restart, the TOS environment on the
-# machine's ROM: its GEM desktop, the hot key to the console and back,
-# and Ctrl-C back to the shell.
+# machine's ROM: its GEM desktop in the console's mode, a window redrawn
+# and timed, mouse moves, the hot key to the console and back, and Ctrl-C
+# back to the shell.
 #
 #   sh kernel/atari/test/falcon-check.sh OUTDIR [IMAGE]
 #
 # IMAGE defaults to kernel/build/atari/disk/falcon-disk.img; it is copied.
 # TOSROM: the TOS 4.04 image or its zip (default: tos404*.zip in the
 # repo root).  Skips (exit 0) without the ROM or Hatari.
-# STAGES: any of vga rgb mod tos tosloop x xtos xdm xdmboots mac6 (mod, tos and tosloop need an
+# STAGES: any of vga rgb mod tos tosint tosloop x xtos xdm xdmboots mac6 (mod, tos and tosloop need an
 # image made with TESTS=modadmin MODS=<mod.d>, tos also takes TOSENV=1; x one made with X11=<pkg>)
 # (default "vga rgb").  x: startx in 256 colours, typing into xterm, the
 # server stopped and the console back; then in 2 colours with the German
 # layout (x-4-de.png shows "keyz"), stopped from the console.
 # tosloop starts the TOS environment BOOTS times (default 15) in one
-# session and checks each desktop.  xtos (an image made with X11=<pkg>
+# session and checks each desktop.  tosint: three -P starts in a row, each
+# ended by SIGINT, each reaching the desktop.  xtos (an image made with X11=<pkg>
 # TOSENV=1): guest starts X, then starttos -P from the console; the hot
 # keys switch between X, the GEM desktop and the console; each ends.
 # xdm (an image made with X11=<pkg> TOSENV=1 BOOTX=1 XPKGS=xview): guest
@@ -89,7 +91,9 @@ for s in $STAGES; do
 		# Ctrl-C in front is a key for TOS, not SIGINT: the session survives it
 		python3 "$T/tosshot.py" differ "$OUT/tos-1-ctrlc.png" "$OUT/tos-2-console.png" || fail=1
 		python3 "$T/tosshot.py" same "$OUT/tos-1-ctrlc.png" "$OUT/tos-3-back.png" || fail=1
-		python3 "$T/tosshot.py" differ "$OUT/tos-3-back.png" "$OUT/tos-4-exit.png" || fail=1 ;;
+		python3 "$T/tosshot.py" differ "$OUT/tos-3-back.png" "$OUT/tos-4-exit.png" || fail=1
+		# the console's Videl mode, a whole mouse move, the time G:'s window took to redraw
+		python3 "$T/tospass.py" "$OUT/tos-1-desktop.png" "$OUT/tos-2-console.png" "$OUT/tos.log.out" || fail=1 ;;
 	x)	run x vga
 		check "$OUT/x.log.out" 'x-2-up' 'key-42-ok' 'x-7-ended' 'fb: /dev/fb0 Videl 640x480 depth 8' \
 			'x-4-up' 'x-11-ended' 'fb: /dev/fb0 Videl 640x480 depth 1' 'x-9-done'
@@ -131,6 +135,22 @@ for s in $STAGES; do
 		! grep -q 'BUS ERROR\|PANIC\|panic' "$OUT/mac6.log.out" || { echo "[FAIL] mac6: fault notice or kernel error"; fail=1; }
 		python3 "$T/tosshot.py" differ "$OUT/mac6-1-desktop.png" "$OUT/mac6-2-open.png" || fail=1
 		python3 "$T/tosshot.py" differ "$OUT/mac6-2-open.png" "$OUT/mac6-3-console.png" || fail=1 ;;
+	tosint)
+		# each start must find its ST-RAM again after the last one's SIGINT
+		{ sed -n '1,/^wait mods-done/p' "$T/falcon-tos-keys.txt"
+		for i in 1 2 3; do
+			printf '%s\n' 'type T=/tests; [ -d /tests ] || T=/usr/bin; C=$T/tosml.img; [ -f $C ] || C=/etc/tos/tosml.img; $T/starttos -P -C /tmp/c -c $C 2> /tmp/st.log\n' 'sleep 120'
+			echo "debug screenshot $OUT/tosint-$i.png"
+			printf 'event keydown 0x1d\nevent keydown 0x38\nevent keypress 0x01\nevent keyup 0x38\nevent keyup 0x1d\nsleep 5\n'
+			printf 'event keydown 0x1d\nevent keypress 0x2e\nevent keyup 0x1d\nwait ^C\n'
+			# a process that outlives the session, as a daemon would
+			printf 'type sleep 1200 & cat /tmp/st.log; echo int-%s-done\\n\nwait int-%s-done\n' $i $i
+		done
+		echo "debug quit 0"; } > "$OUT/tosint-keys.txt"
+		run tosint vga 1200
+		check "$OUT/tosint.log.out" 'int-1-done' 'int-2-done' 'int-3-done'
+		! grep -q 'contiguous\|PANIC\|panic' "$OUT/tosint.log.out" || { echo "[FAIL] tosint: no ST-RAM or kernel error"; fail=1; }
+		for i in 1 2 3; do python3 "$T/tosshot.py" desktop "$OUT/tosint-$i.png" || fail=1; done ;;
 	tosloop)
 		n=${BOOTS:-15}
 		{ sed -n '1,/^wait mods-done/p' "$T/falcon-tos-keys.txt"

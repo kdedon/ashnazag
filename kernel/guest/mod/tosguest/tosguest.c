@@ -45,6 +45,9 @@ static int (*volatile gralloc_p)() = ds_gralloc;
 __asm__(".weak ds_grfree");
 extern void ds_grfree();
 static void (*volatile grfree_p)() = ds_grfree;
+__asm__(".weak ds_grdrop");
+extern void ds_grdrop();
+static void (*volatile grdrop_p)() = ds_grdrop;
 __asm__(".weak ds_grmmap");
 extern int ds_grmmap();
 static int (*volatile grmmap_p)() = ds_grmmap;
@@ -756,6 +759,7 @@ enter(arg, cr)
 	t->t_flags = te.te_flags;
 	t->t_st.ts_pid = curproc->p_pid;
 	tos_devinit(t);
+	tos_nvinit((int)te.te_w, (int)te.te_h, (int)te.te_depth);
 	dlm_cacheflush();		/* the launcher's ROM and cartridge stores reach memory */
 	t->t_state = 1;
 	if ((t->t_tid = ttimeout(tos_tick, (caddr_t)0, 1L)) == -1)
@@ -984,6 +988,8 @@ tosguest_unload()
 	guest_profile_del(&tos_profile);
 	if (sndcb_p)
 		*sndcb_p = 0;
+	if (grdrop_p)
+		grdrop_p();
 	return 0;
 }
 
