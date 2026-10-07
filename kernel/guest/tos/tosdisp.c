@@ -68,6 +68,8 @@ static int hidden;			/* in the background: input is dropped */
 static int pvs;				/* PV_* in use */
 static unsigned long lvbl;		/* the cartridge's VBL count */
 static unsigned long lvg;		/* gvbl() when it last changed */
+static long tkey, tmove;		/* -v: when the last key and motion came */
+static unsigned long *scr;		/* -v: the session's screen, read-only */
 static long now();
 
 /* keys, motion and buttons to the kernel, which makes the mouse packets */
@@ -209,6 +211,7 @@ hide()
 {
 	int k;
 
+	tkey = 0;
 	pvpoll();
 	for (k = 1; k < 128; k++)
 		if (kdown[k])
@@ -235,6 +238,8 @@ events(fd)
 	for (i = 0; i < n / (int)sizeof ev[0]; i++)
 		switch (ev[i].ie_type) {
 		case IE_KEY:
+			if (scr && ev[i].ie_value)
+				tkey = now();
 			if (ev[i].ie_code >= 128 ||
 			    (k = native ? ev[i].ie_code : adb2ikbd[ev[i].ie_code]) == 0)
 				break;
@@ -245,6 +250,8 @@ events(fd)
 				key(ev[i].ie_value ? k : k | 0x80);
 			break;
 		case IE_REL:
+			if (scr)
+				tmove = now();
 			motion(ev[i].ie_code, ev[i].ie_value);
 			break;
 		case IE_BTN:
@@ -484,12 +491,62 @@ vtrace()
 	struct tosvideo tv;
 	static int n;
 
-	if (n >= 30 || ioctl(tfd, TOSIOC_STAT, &st) < 0 || ioctl(tfd, TOSIOC_VIDEO, &tv) < 0)
+	if (n >= 60 || ioctl(tfd, TOSIOC_STAT, &st) < 0 || ioctl(tfd, TOSIOC_VIDEO, &tv) < 0)
 		return;
 	n++;
 	fprintf(stderr, "starttos: pc %lx vbl %lu held %lu io %lu absent %lu last %lx at %lx, screen %lx mode %x\n",
 	    st.ts_lastpc, st.ts_vbl, st.ts_held, st.ts_io, st.ts_absent, st.ts_lastio,
 	    st.ts_lastiopc, tv.tv_base, tv.tv_stmode);
+}
+
+/* -v: a sum of every other long of the guest's screen, at most the host's size */
+static unsigned long
+scrsum()
+{
+	struct tosvideo tv;
+	unsigned long s = 0, o, n, i;
+
+	if (ioctl(tfd, TOSIOC_VIDEO, &tv) < 0 || tv.tv_base < ramsize - fi.fi_size ||
+	    tv.tv_base >= ramsize)
+		return 0;
+	o = (tv.tv_base - (ramsize - fi.fi_size)) / 4;
+	n = fi.fi_rowbytes * fi.fi_height / 4;
+	if (n > fi.fi_size / 4 - o)
+		n = fi.fi_size / 4 - o;
+	for (i = 0; i < n; i += 2)
+		s = s * 31 + scr[o + i];
+	return s;
+}
+
+/*
+ * -v with the session owning the video: how long the guest drew after a
+ * key, to the last change before two seconds without one; where GEM has
+ * the mouse once motion stops and the guest has taken all of it.
+ */
+static void
+measure()
+{
+	static unsigned long sum;
+	static long tdraw;
+	unsigned long v, la = pv->pv_la;
+	long t = now();
+
+	if ((v = scrsum()) != sum) {
+		sum = v;
+		if (tkey)
+			tdraw = t;
+	}
+	if (tkey && t - (tdraw ? tdraw : tkey) > 2000) {
+		if (tdraw)
+			fprintf(stderr, "starttos: redraw %ld ms\n", tdraw - tkey);
+		tkey = tdraw = 0;
+	}
+	if (tmove && t - tmove > 500 && pv->pv_cxy == pv->pv_xy) {
+		tmove = 0;
+		if (la > 0x25a && la < ramsize && !(la & 1))
+			fprintf(stderr, "starttos: mouse at %d,%d, sent %d,%d\n", *(short *)(la - 0x25a),
+			    *(short *)(la - 0x258), (short)px, (short)py);
+	}
 }
 
 void
@@ -525,6 +582,9 @@ disp(fd, verbose, ram)
 		return;
 	}
 	if (vpass) {
+		if (verbose && (scr = (unsigned long *)mmap((caddr_t)0, fi.fi_size, PROT_READ,
+		    MAP_SHARED, fbfd, 0)) == (unsigned long *)-1)
+			scr = 0;
 		if (fbpipe >= 0) {
 			ioctl(fbpipe, I_SENDFD, fbfd);
 			close(fbpipe);
@@ -584,6 +644,8 @@ input:
 			t = now();
 			vtrace();
 		}
+		if (scr && !hidden)
+			measure();
 		if (vpass || hidden || now() - t < REFRESH)
 			continue;
 		/* a fixed cadence: the clock moves in ticks, not ms */

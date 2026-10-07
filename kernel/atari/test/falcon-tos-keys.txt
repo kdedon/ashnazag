@@ -10,6 +10,16 @@ sleep 120
 debug screenshot OUT/1-desktop.png
 sleep 1
 debug info videl
+event keydown 0x38
+event keypress 0x22
+event keyup 0x38
+sleep 40
+event keypress 0x01
+sleep 30
+event mousemove 40 30
+sleep 4
+event mousemove -20 10
+sleep 4
 event keydown 0x1d
 event keypress 0x2e
 event keyup 0x1d

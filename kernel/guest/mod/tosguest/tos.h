@@ -125,6 +125,7 @@ extern int tos_berr();
 /* tosdev.c */
 extern int tos_fault();
 extern void tos_devinit();
+extern void tos_nvinit();
 extern void tos_input();
 extern void tos_timers();
 extern int mfp_level();

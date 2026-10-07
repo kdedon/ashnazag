@@ -29,7 +29,7 @@
  * Built with SYS76 (t_mac76.c), the startmac run uses the Mac OS 7.6.1
  * System Folder /macsys/S761, on a ufs volume (SCSI disk 1), as a
  * Quadra 800 (box flag 29) and checks 'boot' 3's second _AUXDispatch(36)
- * (it makes /tmp/.mac/unix), the Finder desktop, SysVersion $0761, the
+ * (it makes $HOME/.mac/unix, 0700), the Finder desktop, SysVersion $0761, the
  * About This Computer window, SimpleText opened from the desktop and
  * quit, the disk window and root's Shut Down, which halts.  Before it a
  * user's session (/macsys/S761u) shows Log Out in the Special menu, then
@@ -1590,6 +1590,54 @@ int uid;
 }
 
 /*
+ * $HOME/.mac/<host> (HOME=/tmp), the Trash and Temporary Items: mode
+ * 0700, which uid other cannot open.  A file moved to the Trash and
+ * back keeps its mode.
+ */
+#define	DOTMAC	"/tmp/.mac/unix"
+static void
+dotmac(n, uid, other)
+char *n;
+int uid, other;
+{
+	struct stat sb;
+	char m[40];
+	pid_t pid;
+	int st, fd, k;
+
+	sb.st_mode = 0;
+	t_check(n, stat(DOTMAC, &sb) == 0, "no " DOTMAC " from 'boot' 3's _AUXDispatch(36, 0)");
+	sprintf(m, "%s_mode", n);
+	t_check(m, (sb.st_mode & 07777) == 0700 && sb.st_uid == uid, "mode %o, uid %d",
+	    (int)sb.st_mode & 07777, (int)sb.st_uid);
+	/* other cannot open it; uid moves a file to the Trash and back */
+	for (k = 0; k < 2; k++) {
+		st = -1;
+		if ((pid = fork()) == 0) {
+			if (setuid(k ? uid : other) < 0)
+				_exit(2);
+			if (k == 0)
+				_exit(open(DOTMAC, O_RDONLY) < 0 && errno == EACCES ? 0 : 1);
+			umask(0);
+			unlink("/tmp/dmfile");
+			if ((fd = open("/tmp/dmfile", O_WRONLY | O_CREAT, 0640)) < 0)
+				_exit(3);
+			close(fd);
+			mkdir(DOTMAC "/Trash", 0700);
+			if (rename("/tmp/dmfile", DOTMAC "/Trash/dmfile") < 0 ||
+			    rename(DOTMAC "/Trash/dmfile", "/tmp/dmfile") < 0)
+				_exit(4);
+			_exit(stat("/tmp/dmfile", &sb) == 0 && (sb.st_mode & 0777) == 0640 &&
+			    sb.st_uid == uid && unlink("/tmp/dmfile") == 0 ? 0 : 5);
+		}
+		if (pid > 0)
+			t_waitchild(pid, &st, 10);
+		sprintf(m, k ? "%s_roundtrip" : "%s_private", n);
+		t_check(m, st == 0, "status %x", st);
+	}
+}
+
+/*
  * A session as uid with the System Folder sys: its desktop, for a user
  * the Special menu, then the Apple menu's Log Out ends it.
  */
@@ -2054,6 +2102,7 @@ char **argv;
 			return t_done();
 		}
 		session76(atoi(OTHERUID), USERSYS, "user");
+		dotmac("user_dotmac", atoi(OTHERUID), atoi(OTHERUID) + 1);
 #endif
 		session76(0, SYSDIR, "root");
 		/* made by _AUXDispatch(36, 0); t_mac's run leaves one */
@@ -2064,8 +2113,7 @@ char **argv;
 		startmac();
 		unlink("/Desktop Folder/SimpleText");
 		unlink("/Desktop Folder/%SimpleText");
-		t_check("auxdispatch_36", stat("/tmp/.mac/unix", &sb) == 0,
-		    "no /tmp/.mac/unix from 'boot' 3's _AUXDispatch(36, 0)");
+		dotmac("auxdispatch_36", 0, atoi(OTHERUID));
 		setsym("uinter_boxflag", -1L);
 		if (e >= 0)
 			close(e);

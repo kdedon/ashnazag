@@ -485,6 +485,7 @@ uisetup(gp, cmd, arg, b, rvp)
 		ui.l_evmask = 0xffef;
 		ui.l_lapchk = 0;
 		ui.l_sdchk = 0;
+		ui.l_dmchk = 0;
 		AUXP(gp)->ap_mac |= APM_TASK;
 		prampin();
 		*rvp = 0;
@@ -675,6 +676,40 @@ ui_sdchk()
 }
 
 /*
+ * Patch.067C keeps the Trash and Temporary Items in $HOME/.mac/<host>
+ * and makes both directories with mode 0777, less the umask.  Here both
+ * mkdir calls get 0700, so other users cannot read them.
+ */
+static struct dmsite {
+	long	a;			/* the pea #mode */
+	unsigned char next[8];		/* what follows it */
+} dmsite[] = {
+	{ 0x7706, { 0x48, 0x6f, 0x00, 0x04, 0x61, 0xff, 0x00, 0x00 } },	/* host dir */
+	{ 0xb37c, { 0x2f, 0x0b, 0x61, 0xff, 0x00, 0x03, 0x6c, 0x4c } }	/* .mac */
+};
+static unsigned char dmold[] = { 0x48, 0x78, 0x01, 0xff };
+static unsigned char dmnew[] = { 0x48, 0x78, 0x01, 0xc0 };
+
+static void
+ui_dmchk()
+{
+	unsigned char b[12];
+	int i;
+
+	if (ui.l_dmchk)
+		return;
+	ui.l_dmchk = 1;
+	for (i = 0; i < 2; i++)
+		if (copyin((caddr_t)dmsite[i].a, b, 12) || bcmp(b + 4, dmsite[i].next, 8) ||
+		    (bcmp(b, dmold, 4) && bcmp(b, dmnew, 4)))
+			return;
+	for (i = 0; i < 2; i++)
+		if (copyout(dmnew, (caddr_t)dmsite[i].a, 4))
+			return;
+	dlm_cacheflush();
+}
+
+/*
  * UI_ATTACHLAYER: the caller, which has the Mac memory at 0, joins the
  * session: the ROM at the first task's address, room for the global
  * fds.  It returns its slot once it is to run.
@@ -815,6 +850,7 @@ uimisc(gp, cmd, arg, b, rvp)
 			t->t_tick = 1;
 		ui_lapchk();
 		ui_sdchk();
+		ui_dmchk();
 		if (ui.l_tid == 0 && (ui.l_tid = ttimeout(uitick, (caddr_t)0, 1L)) == -1) {
 			ui.l_tid = 0;
 			return EAGAIN;

@@ -1129,15 +1129,15 @@ ds_init()
 /*
  * A passthrough guest's ST-RAM: one run of free physical pages, so its
  * DMA (sound, the Videl) reaches guest address g at ds_gpa + g.  One
- * guest at a time; the block goes on its device's last close, which
- * follows the last mapping.
+ * guest at a time.  The block outlives the guest for the next one:
+ * freed, the next processes would take its pages and split the run.
  */
 extern int availrmem;
 extern u_int pages_pp_kernel;
 extern struct tune tune;
 static page_t *ds_gpp;			/* the block's first page */
 static unsigned long ds_gpa, ds_gsize;
-static pid_t ds_gpid;			/* the process that took it */
+static pid_t ds_gpid;			/* the process that took it, 0 while idle */
 
 /* size bytes of ST-RAM for the caller, zeroed; errno */
 int
@@ -1148,10 +1148,13 @@ unsigned long size;
 	register unsigned long i, n;
 
 	n = (size + DS_PGOFF) >> DS_PGSHIFT;
-	if (ds_gpp)
+	if (ds_gpid)
 		return EBUSY;
 	if (n == 0 || size > 0xE00000L)
 		return EINVAL;
+	if (ds_gsize >= n << DS_PGSHIFT)
+		goto zero;		/* the last guest's */
+	ds_grdrop();
 	if (availrmem - (int)n < tune.t_minarmem)
 		return ENOMEM;
 	availrmem -= n;
@@ -1168,27 +1171,41 @@ unsigned long size;
 	ds_gpp = lo;
 	ds_gpa = (pages_base + (lo - pages)) << DS_PGSHIFT;
 	ds_gsize = n << DS_PGSHIFT;
-	ds_gpid = curproc->p_pid;
 	if (ds_gpa + ds_gsize > 0xE00000L) {
-		ds_grfree();
+		ds_grdrop();
 		return ENOMEM;
 	}
+zero:
+	ds_gpid = curproc->p_pid;
 	bzero((caddr_t)ds_gpa, ds_gsize);
 	DS_CPUSHA();
 	return 0;
 }
 
+/* the guest is done; the block stays */
 void
 ds_grfree()
 {
-	register page_t *pp;
-	register unsigned long i, n = ds_gsize >> DS_PGSHIFT;
+	register unsigned long i;
 
 	if (ds_gpp == 0)
 		return;
 	for (i = 1; i <= DS_NSESS; i++)
 		if (ds_sess[i].s_gpa == ds_gpa)
 			ds_sess[i].s_gtop = 0;
+	ds_gpid = 0;
+}
+
+/* frees the block */
+void
+ds_grdrop()
+{
+	register page_t *pp;
+	register unsigned long i, n = ds_gsize >> DS_PGSHIFT;
+
+	if (ds_gpp == 0)
+		return;
+	ds_grfree();
 	for (i = 0, pp = ds_gpp; i < n; i++, pp++)
 		if (--pp->p_keepcnt == 0)
 			page_abort(pp);
@@ -1203,7 +1220,7 @@ int
 ds_grmmap(off)
 off_t off;
 {
-	if (ds_gpp == 0 || off < 0 || (unsigned long)off >= ds_gsize)
+	if (ds_gpid == 0 || off < 0 || (unsigned long)off >= ds_gsize)
 		return -1;
 	return (ds_gpa + off) >> DS_PGSHIFT;
 }
