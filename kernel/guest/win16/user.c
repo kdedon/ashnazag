@@ -948,7 +948,11 @@ wnd_create(ex, cname, title, style, x, y, cx, cy, hparent, hmenu, hinst, param)
 	if (!wnd_get(w->h))
 		return 0;
 	w->flags |= WF_CREATED;
-	/* as Windows 3.1: a window made hidden hears its size when first shown (programs set up in between) */
+	/*
+	 * as Windows 3.1: a window made hidden hears its size when first
+	 * shown (programs set up in between), even when moved or sized
+	 * meanwhile: PIF Editor fits its scroll bars only while visible
+	 */
 	if (style & WS_VISIBLE)
 		sizemsgs(w);
 	else

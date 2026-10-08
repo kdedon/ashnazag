@@ -931,8 +931,6 @@ user_defproc(w, msg, wp, lp)
 				wnd_send(w, WM_MOVE, 0, FP(w->cr.t - (w->parent == desktop ? 0 : w->parent->cr.t),
 				    w->cr.l - (w->parent == desktop ? 0 : w->parent->cr.l)));
 			if (!(fl & SWP_NOSIZE))
-				w->flags &= ~WF_NEEDSIZE;
-			if (!(fl & SWP_NOSIZE))
 				wnd_send(w, WM_SIZE, (w->style & WS_MAXIMIZE) ? 2 : (w->style & WS_MINIMIZE) ? 1 : 0,
 				    FP(w->cr.b - w->cr.t, w->cr.r - w->cr.l));
 		}

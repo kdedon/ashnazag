@@ -193,6 +193,30 @@ hasres(face, res)
 	return 0;
 }
 
+/* the Windows face a built-in one stands in for */
+static char *
+windows(face)
+	char *face;
+{
+	if (!strcmp(face, "Helv"))
+		return "MS Sans Serif";
+	if (!strcmp(face, "Tms Rmn"))
+		return "MS Serif";
+	return face;
+}
+
+static int
+hasface(face)
+	char *face;
+{
+	int i;
+
+	for (i = 0; i < nloaded; i++)
+		if (!w16_stricmp(loaded[i].f_face, face))
+			return 1;
+	return 0;
+}
+
 /* the list GDI chooses from: the loaded fonts, then the built-in ones */
 static void
 rebuild()
@@ -206,13 +230,14 @@ rebuild()
 	nloaded = j;
 	for (nb = 0; bfonts[nb].f_face; nb++)
 		;
-	nfontlist = nloaded + nb;
 	free((char *)fontlist);
-	fontlist = (struct bfont *)calloc(nfontlist + 1, sizeof *fontlist);
+	fontlist = (struct bfont *)calloc(nloaded + nb + 1, sizeof *fontlist);
 	for (i = 0; i < nloaded; i++)
 		fontlist[i] = loaded[i];
-	for (i = 0; i < nb; i++)
-		fontlist[nloaded + i] = bfonts[i];
+	/* a built-in face only where Windows' own counterpart is missing */
+	for (nfontlist = nloaded, i = 0; i < nb; i++)
+		if (!hasface(windows(bfonts[i].f_face)))
+			fontlist[nfontlist++] = bfonts[i];
 }
 
 /* a font file named as Windows names them (in SYSTEM, or a path): its fonts */
