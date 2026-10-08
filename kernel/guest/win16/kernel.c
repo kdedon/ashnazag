@@ -826,6 +826,16 @@ k_AllocResource(a)
 	return g_alloc(GMEM_MOVEABLE, a[2] ? a[2] : res_size(mod_byhandle(a[0]), a[1]), a[0]);
 }
 
+/* DirectResAlloc(hInstance, flags, size): a resource's memory, the module's */
+static u32
+k_DirectResAlloc(a)
+	u32 *a;
+{
+	struct module *m = mod_byhandle(a[0]);
+
+	return g_alloc(GMEM_MOVEABLE, a[2], m ? m->m_hmod : a[0]);
+}
+
 static u32 k_SetResourceHandler(a) u32 *a; { return 0; }
 
 /* ---- files ---- */
@@ -1644,6 +1654,7 @@ struct impl k_impl[] = {
 	{ "KERNEL", "SizeofResource", k_SizeofResource },
 	{ "KERNEL", "AccessResource", k_AccessResource },
 	{ "KERNEL", "AllocResource", k_AllocResource },
+	{ "KERNEL", "DirectResAlloc", k_DirectResAlloc },
 	{ "KERNEL", "SetResourceHandler", k_SetResourceHandler },
 	{ "KERNEL", "_lopen", k_lopen },
 	{ "KERNEL", "_lcreat", k_lcreat },

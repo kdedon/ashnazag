@@ -435,13 +435,13 @@ user_drawnc(w)
 			dc->st.font = stockobj[SYSTEM_FONT];
 			dc->st.text = sys_color(active ? COLOR_CAPTIONTEXT : COLOR_INACTIVECAPTIONTEXT);
 			dc->st.bkmode = TRANSPARENT;
-			draw_text(dc, w->text, strlen(w->text), &t, DT_CENTER | DT_VCENTER | DT_SINGLELINE |
-			    DT_NOPREFIX);
+			/* one too long for it starts at the left, cut on the right */
+			draw_text(dc, w->text, strlen(w->text), &t, DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX |
+			    (text_width(f, w->text, strlen(w->text)) > t.r - t.l ? DT_LEFT : DT_CENTER));
 			dc->st.font = keepf;
 			dc->st.text = kt;
 			dc->st.bkmode = km;
 		}
-		(void)f;
 	}
 	if (!(w->style & WS_CHILD) && w->id && menu_barheight(w))
 		menu_drawbar(w, dc);

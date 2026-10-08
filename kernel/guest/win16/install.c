@@ -851,7 +851,11 @@ copytree(src, dst)
 	return bad ? -1 : 0;
 }
 
-/* `wabimergefile -P': each key of src's sections set in the DOS file dst, src's value winning */
+/*
+ * `wabimergefile -P': each key of src's sections set in the DOS file dst,
+ * src's value winning; but not [Windows Help]'s window places, made for
+ * a Sun's screen and off ours.
+ */
 static void
 mergeini(src, dst)
 	char *src, *dst;
@@ -876,7 +880,7 @@ mergeini(src, dst)
 			sect[sizeof sect - 1] = 0;
 			continue;
 		}
-		if (!sect[0] || (v = strchr(p, '=')) == 0)
+		if (!sect[0] || (v = strchr(p, '=')) == 0 || w16_stricmp(sect, "Windows Help") == 0)
 			continue;
 		for (q = v; q > p && (q[-1] == ' ' || q[-1] == '\t'); )
 			q--;
