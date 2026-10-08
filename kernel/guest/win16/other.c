@@ -157,8 +157,11 @@ o_LZSeek(a)
 	return dos_seek(a[0], (s32)a[1], a[2]);
 }
 
+static u32 o_GetKBCodePage(a) u32 *a; { return 437; }	/* the US OEM code page */
+
 struct impl o_impl[] = {
 	{ "KEYBOARD", "AnsiToOem", o_AnsiToOem },
+	{ "KEYBOARD", "GetKBCodePage", o_GetKBCodePage },
 	{ "KEYBOARD", "OemToAnsi", o_AnsiToOem },
 	{ "KEYBOARD", "AnsiToOemBuff", o_AnsiToOemBuff },
 	{ "KEYBOARD", "OemToAnsiBuff", o_AnsiToOemBuff },

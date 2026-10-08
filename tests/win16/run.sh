@@ -51,7 +51,9 @@ export WATCOM INCLUDE="$WATCOM/h:$WATCOM/h/win" PATH="$BIN:$PATH"
 cd "$T/win16/src"
 for c in *.c; do
 	n=${c%.c}
-	wcl -q -bt=windows -l=windows -ms -zW -fe="$B/progs/$n.exe" -fo="$B/progs/$n.obj" $c
+	fp=
+	[ $n != fpu ] || fp=-fpi87	# the x87's own instructions, not the emulator's calls
+	wcl -q -bt=windows -l=windows -ms -zW $fp -fe="$B/progs/$n.exe" -fo="$B/progs/$n.obj" $c
 	if [ -f $n.rc ]; then
 		wrc -q -bt=windows -r -fo="$B/progs/$n.res" $n.rc
 		wrc -q -bt=windows "$B/progs/$n.res" "$B/progs/$n.exe"
@@ -60,7 +62,7 @@ done
 echo "[ok] test programs: $(ls *.c | wc -l | tr -d ' ')"
 # program, expected exit code
 fails=0
-for t in "hello 7" "menus 0" "ctrls 1"; do
+for t in "hello 7" "menus 0" "ctrls 1" "fpu 0"; do
 	set -- $t
 	n=$1
 	want=$2
