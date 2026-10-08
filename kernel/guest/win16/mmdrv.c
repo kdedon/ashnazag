@@ -137,6 +137,7 @@ static struct {
 } wo;
 
 static int busy;		/* inside mm_tick */
+static void voicepump();
 
 /* MMSYSTEM's DriverCallback: the program told, as its open asked */
 static void
@@ -382,6 +383,7 @@ mm_tick()
 		return;
 	busy = 1;
 	wavepump();
+	voicepump();
 	now = w16_ticks();
 	for (i = 0; i < NTEV; i++)
 		if (tevs[i].used && (int)(now - tevs[i].due) >= 0) {
@@ -440,7 +442,188 @@ mm_beep()
 	snd_put(tone, (long)sizeof tone);
 }
 
+/*
+ * SOUND.DRV, Windows 3.0's sound interface (ours: it drove the PC's
+ * speaker): one voice, its notes queued and played as square waves on
+ * the session's sound when the wave device is not in use.  Notes 1-84
+ * from the C three octaves below middle C (37 is middle C), lengths 1
+ * whole to 64th with dots, the tempo in quarter notes a minute;
+ * SetVoiceSound gives Hz (16.16) and clock ticks.
+ */
+
+#define	NNOTE	256
+
+static struct {
+	int	open, playing;
+	int	tempo;
+	u32	hz[NNOTE];		/* 16.16; 0 a rest */
+	u32	ms[NNOTE];
+	int	n, cur;
+	long	left;			/* frames of the current note */
+	u32	phase;
+} sv;
+
+static u32
+s_OpenSound(a)
+	u32 *a;
+{
+	if (sv.open)
+		return (u32)-1;		/* S_SERDVNA: in use */
+	memset((char *)&sv, 0, sizeof sv);
+	sv.open = 1;
+	sv.tempo = 120;
+	return 1;			/* voices */
+}
+
+static u32
+s_CloseSound(a)
+	u32 *a;
+{
+	sv.open = sv.playing = 0;
+	sv.n = sv.cur = 0;
+	return 0;
+}
+
+static void
+queue(hz, ms)
+	u32 hz, ms;
+{
+	if (sv.n < NNOTE) {
+		sv.hz[sv.n] = hz;
+		sv.ms[sv.n] = ms;
+		sv.n++;
+	}
+}
+
+/* SetVoiceNote(voice, note, length, dots) */
+static u32
+s_SetVoiceNote(a)
+	u32 *a;
+{
+	static u32 semi[12] = {		/* 2^(k/12), 16.16 */
+		65536, 69433, 73562, 77936, 82570, 87480, 92682, 98193, 104032, 110218, 116772, 123715
+	};
+	int note = a[1] & 0xffff, len = a[2] & 0xffff, dots = a[3] & 0xffff;
+	u32 ms, d, hz = 0;
+
+	if (!sv.open || len < 1 || note > 84)
+		return (u32)-4;		/* S_SERDLN */
+	if (sv.n >= NNOTE)
+		return (u32)-1;		/* S_SERQFUL */
+	ms = (u32)(240000L / sv.tempo / len);
+	for (d = ms / 2; dots-- > 0; d /= 2)
+		ms += d;
+	if (note > 0) {
+		/* note 1 is C three octaves below middle C, 32.703 Hz: 32.703 * 65536 = 2143223 */
+		hz = 2143223UL;
+		hz <<= (note - 1) / 12;
+		hz = (hz >> 10) * (semi[(note - 1) % 12] >> 6);
+	}
+	queue(hz, ms);
+	return 0;
+}
+
+static u32
+s_SetVoiceAccent(a)
+	u32 *a;
+{
+	int t = a[1] & 0xffff;
+
+	if (t >= 32 && t <= 255)
+		sv.tempo = t;
+	return 0;
+}
+
+/* SetVoiceSound(voice, Hz 16.16, clock ticks) */
+static u32
+s_SetVoiceSound(a)
+	u32 *a;
+{
+	if (!sv.open)
+		return (u32)-1;
+	queue(a[1], (u32)((a[2] & 0xffff) * 10000L / 182));
+	return 0;
+}
+
+static u32
+s_StartSound(a)
+	u32 *a;
+{
+	if (sv.open && !sv.playing && sv.cur < sv.n) {
+		sv.playing = 1;
+		if (!wo.open)
+			snd_start(11025L, 8, 1);
+	}
+	return 0;
+}
+static u32 s_StopSound(a) u32 *a; { sv.playing = 0; sv.n = sv.cur = 0; sv.left = 0; return 0; }
+static u32 s_CountVoiceNotes(a) u32 *a; { return sv.n - sv.cur; }
+static u32 s_nop(a) u32 *a; { return 0; }
+
+/* WaitSoundState(state): S_QUEUEEMPTY and the thresholds alike, until the queue has played */
+static u32
+s_WaitSoundState(a)
+	u32 *a;
+{
+	extern void user_idle();
+
+	while (sv.playing && sv.cur < sv.n)
+		user_idle();
+	return 0;
+}
+
+/* the voice's samples: 8-bit, 11025 Hz */
+static void
+voicepump()
+{
+	char buf[512];
+	long n, k, i, half;
+
+	if (!sv.playing || wo.open)
+		return;
+	if (sv.cur >= sv.n) {
+		sv.playing = 0;
+		sv.n = sv.cur = 0;
+		return;
+	}
+	n = snd_due((long)LEAD);
+	while (n > 0 && sv.cur < sv.n) {
+		if (sv.left <= 0) {
+			sv.left = (long)sv.ms[sv.cur] * 11025 / 1000;
+			sv.phase = 0;
+		}
+		k = n < sv.left ? n : sv.left;
+		if (k > (long)sizeof buf)
+			k = sizeof buf;
+		/* frames a half period, in 256ths: 11025 * 128 / Hz, the Hz 16.16 */
+		half = sv.hz[sv.cur] >> 8 ? (long)((11025UL << 15) / (sv.hz[sv.cur] >> 8)) : 0;
+		for (i = 0; i < k; i++) {
+			buf[i] = !half ? (char)0x80 : (char)(((sv.phase / half) & 1) ? 0xa0 : 0x60);
+			sv.phase += 256;
+		}
+		snd_put(buf, k);
+		n -= k;
+		sv.left -= k;
+		if (sv.left <= 0)
+			sv.cur++;
+	}
+}
+
 struct impl mm_impl[] = {
+	{ "SOUND", "OpenSound", s_OpenSound },
+	{ "SOUND", "CloseSound", s_CloseSound },
+	{ "SOUND", "SetVoiceQueueSize", s_nop },
+	{ "SOUND", "SetVoiceNote", s_SetVoiceNote },
+	{ "SOUND", "SetVoiceAccent", s_SetVoiceAccent },
+	{ "SOUND", "SetVoiceEnvelope", s_nop },
+	{ "SOUND", "SetSoundNoise", s_nop },
+	{ "SOUND", "SetVoiceSound", s_SetVoiceSound },
+	{ "SOUND", "StartSound", s_StartSound },
+	{ "SOUND", "StopSound", s_StopSound },
+	{ "SOUND", "WaitSoundState", s_WaitSoundState },
+	{ "SOUND", "SyncAllVoices", s_nop },
+	{ "SOUND", "CountVoiceNotes", s_CountVoiceNotes },
+	{ "SOUND", "SetVoiceThreshold", s_nop },
 	{ "TIMER", "DriverProc", timerproc },
 	{ "ASHAUDIO", "DriverProc", audioproc },
 	{ "ASHAUDIO", "wodMessage", wodmessage },

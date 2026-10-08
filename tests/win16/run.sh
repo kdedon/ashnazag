@@ -62,7 +62,7 @@ done
 echo "[ok] test programs: $(ls *.c | wc -l | tr -d ' ')"
 # program, expected exit code
 fails=0
-for t in "hello 7" "menus 0" "ctrls 1" "fpu 0"; do
+for t in "hello 7" "menus 0" "ctrls 1" "fpu 0" "voice 0"; do
 	set -- $t
 	n=$1
 	want=$2
@@ -71,11 +71,22 @@ for t in "hello 7" "menus 0" "ctrls 1" "fpu 0"; do
 	mkdir -p "$B/c"
 	cp "$B/progs/$n.exe" "$B/c/"
 	cd "$B/shots"
+	rm -f "$B/$n.snd"
 	set +e
-	timeout 60 "$B/startwin" -C "$B/c" -S "$T/win16/scripts/$n.scr" "$B/c/$n.exe" > "$B/$n.log" 2>&1
+	W16_SND=$B/$n.snd timeout 60 "$B/startwin" -C "$B/c" -S "$T/win16/scripts/$n.scr" "$B/c/$n.exe" > "$B/$n.log" 2>&1
 	code=$?
 	set -e
 	ok=1
+	# the voice's samples (8-bit 11025 Hz): 1125 ms of them, the first note A at 440 Hz
+	if [ $n = voice ]; then
+		python3 - "$B/$n.snd" <<'PY' || ok=0
+import sys
+d = open(sys.argv[1], 'rb').read()
+x = sum(1 for i in range(1, 5512) if (d[i] >= 128) != (d[i - 1] >= 128))
+rest = all(b == 0x80 for b in d[5600:8000])
+sys.exit(0 if abs(len(d) - 12403) < 400 and 425 <= x <= 455 and rest else 1)
+PY
+	fi
 	[ "$code" = "$want" ] || ok=0
 	if [ -f "$T/win16/expect/$n.txt" ]; then
 		tr -d '\r' < "$B/c/result.txt" > "$B/$n.result" 2> /dev/null || : > "$B/$n.result"
