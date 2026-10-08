@@ -44,6 +44,7 @@ Nothing proprietary is in this repository. To build you supply:
 - [gcc-cross-amix](https://github.com/isoriano1968/gcc-cross-amix): AMIX cross toolchain
 - [x11r6.3-amix](https://github.com/isoriano1968/x11r6.3-amix): X11R6.3 for AMIX, base of our Mac server
 - [amigaux.org](https://amigaux.org/): AMIX packages
+- [FreeType](https://freetype.org/): TrueType hinting and scan conversion for the Windows 3.x environment (fetched at build time)
 
 ## Build
 

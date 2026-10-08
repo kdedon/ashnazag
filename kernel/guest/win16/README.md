@@ -41,6 +41,7 @@ sh tests/win16/build.sh out      # the AMIX binary (display service, sound servi
 | `ddesetup.c` | Program Manager's groups on its first run, by DDE |
 | `gdi.c`, `draw.c`, `rgn.c` | GDI: objects, DCs, mapping, drawing, regions |
 | `fontfile.c`, `font.h`, `ttf.c` | the user's bitmap fonts and TrueType |
+| `ft/` | FreeType's configuration for TrueType (`w16ftopt.h`, `w16ftmod.h`) and `freetype.sh`, which fetches its pinned release |
 | `fonts.c`, `mkfonts.py` | built-in bitmap fonts for when the user's are missing (generated) |
 | `obm.c` | the system bitmaps |
 | `metafile.c` | metafiles |

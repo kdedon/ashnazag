@@ -198,9 +198,12 @@ quit.
   as Windows 3.1's drivers do), DCs, mapping modes, regions, ROP2 and ROP3,
   DIBs and DDBs, Windows' own `.FON` bitmap fonts (the screen's resolution's sizes preferred)
   and TrueType: the user's `.TTF` files, named in WIN.INI by their `.FOT`
-  headers, scan converted at any size when first drawn (nonzero rule,
-  dropout control, no hinting; 26.6 integer arithmetic for a 68k without an
-  FPU). The system bitmaps (OBM_*, the display driver's in Windows) are
+  headers, at any size, each glyph made when first drawn by FreeType
+  (`ft/`: fetched at build time by `ft/freetype.sh`, only its TrueType
+  driver and black-and-white rasterizer built), hinted by the font's own
+  programs with the classic v35 interpreter as Windows 3.1's rasterizer ran
+  them; advances from the font's hdmx where it has the size, as GDI took
+  them, else hinted. The system bitmaps (OBM_*, the display driver's in Windows) are
   drawn with the frame's routines. The spooler's GetSpoolJob lists WIN.INI's
   printers to Print Manager.
 - **Screen (`scr.h`)**: `scr_fb.c` on the display service (a session on
@@ -310,9 +313,6 @@ LaserJet III and the Epson FX-80 drivers, their output decoded and checked.
   did the same at that size: it is the applet's, with Windows' own font
   metrics. On larger screens (large fonts, as Wabi had them there) the
   dialog is wider and the tabs fit in one row.
-- TrueType text at small sizes is not hinted: the outlines are scan
-  converted as they are, so stems and heights come out uneven at screen
-  sizes (Windows runs the fonts' hinting programs).
 
 ## Not done yet
 
