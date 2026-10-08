@@ -873,6 +873,11 @@ user_defproc(w, msg, wp, lp)
 			wnd_send(w, WM_SYSCOMMAND, SC_CLOSE, lp);
 		return 0;
 	case WM_SYSCOMMAND:
+		/* WH_CBT may refuse it */
+		if (hook_any(WH_CBT) && hook_call(WH_CBT, HCBT_SYSCOMMAND, wp & 0xffff, lp))
+			return 0;
+		if (!wnd_get(w->h))
+			return 0;
 		return syscommand(w, wp, lp);
 	case WM_CLOSE:
 		wnd_destroy(w);

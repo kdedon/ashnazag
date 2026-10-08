@@ -41,7 +41,7 @@ static int ninst;
 static u16 varsel;		/* the system modules' variables */
 static int nvar;
 
-static struct impl *impls[] = { k_impl, u_impl, g_impl, mn_impl, dl_impl, ct_impl, sb_impl, md_impl, cu_impl, dv_impl, mm_impl, ws_impl, o_impl, 0 };
+static struct impl *impls[] = { k_impl, u_impl, g_impl, mn_impl, dl_impl, ct_impl, sb_impl, md_impl, cu_impl, dv_impl, mm_impl, ws_impl, wc_impl, hk_impl, o_impl, 0 };
 
 static apifn
 findimpl(mod, name)

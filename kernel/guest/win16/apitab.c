@@ -2334,8 +2334,7 @@ static struct apient a_OLE2[] = {
 	{ 0 }
 };
 
-/* ours, not Windows': our wave driver (mmdrv.c) */
-
+/* ours, not Windows': our wave driver (mmdrv.c); WABICFG, Wabi's engine's (wabicfg.c) */
 static struct apient a_ASHAUDIO[] = {
 	{ 1, "DriverProc", 'p', "lwwll", 'l' },
 	{ 2, "wodMessage", 'p', "wwlll", 'l' },
@@ -2343,6 +2342,20 @@ static struct apient a_ASHAUDIO[] = {
 	{ 4, "modMessage", 'p', "wwlll", 'l' },
 	{ 5, "midMessage", 'p', "wwlll", 'l' },
 	{ 6, "auxMessage", 'p', "wwlll", 'l' },
+	{ 0 }
+};
+
+static struct apient a_WABICFG[] = {
+	{ 1, "CFGGETENTRY", 'p', "ppw", 'w' },
+	{ 2, "CFGGETDEFAULTENTRY", 'p', "ppw", 'w' },
+	{ 3, "CFGSETENTRY", 'p', "ppww", 'w' },
+	{ 4, "CFGNOTIFYWABI", 'p', "pw", 'w' },
+	{ 5, "GETWABIENV", 'p', "p", 'w' },
+	{ 6, "RELEASEWABIENV", 'p', "p", 'w' },
+	{ 7, "GETFILES", 'p', "pppw", 'w' },
+	{ 8, "CFGGETLOCALEPATH", 'p', "pw", 'w' },
+	{ 9, "CFGGETDEFLOCALEPATH", 'p', "pw", 'w' },
+	{ 10, "WABI_GETENV", 'p', "p", 'l' },
 	{ 0 }
 };
 
@@ -2367,5 +2380,6 @@ struct apimod apimods[] = {
 	{ "COMPOBJ", a_COMPOBJ },
 	{ "OLE2", a_OLE2 },
 	{ "ASHAUDIO", a_ASHAUDIO },
+	{ "WABICFG", a_WABICFG },
 	{ 0 }
 };

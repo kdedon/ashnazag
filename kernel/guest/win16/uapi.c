@@ -1226,6 +1226,9 @@ u_DrawText(a)
 		r_set(&r, l, t, rr, b);
 		r_put(p, &r);
 	}
+	if (w16_debug > 2)
+		w16_log("DrawText \"%.*s\" %x: %d,%d-%d,%d\n", (short)a[2] < 0 ? (int)strlen(s) : (short)a[2], s,
+		    (int)a[4], r.l, r.t, r.r, r.b);
 	return h;
 }
 
@@ -1464,12 +1467,6 @@ u_GetInputState(a)
 
 static u32 u_GetQueueStatus(a) u32 *a; { return 0; }
 
-/* hooks: kept, never called */
-static u32 u_SetWindowsHook(a) u32 *a; { return 0; }
-static u32 u_SetWindowsHookEx(a) u32 *a; { return FP(0x7fff, ((short)a[0] + 2) & 0xff); }
-static u32 u_UnhookWindowsHook(a) u32 *a; { return 1; }
-static u32 u_DefHookProc(a) u32 *a; { return 0; }
-static u32 u_CallMsgFilter(a) u32 *a; { return 0; }
 
 /* timers */
 static u32 u_SetTimer(a) u32 *a; { return user_settimer(a[0], a[1], a[2], a[3]); }
@@ -2643,13 +2640,6 @@ struct impl u_impl[] = {
 	{ "USER", "RegisterWindowMessage", u_RegisterWindowMessage },
 	{ "USER", "GetInputState", u_GetInputState },
 	{ "USER", "GetQueueStatus", u_GetQueueStatus },
-	{ "USER", "SetWindowsHook", u_SetWindowsHook },
-	{ "USER", "SetWindowsHookEx", u_SetWindowsHookEx },
-	{ "USER", "UnhookWindowsHook", u_UnhookWindowsHook },
-	{ "USER", "UnhookWindowsHookEx", u_UnhookWindowsHook },
-	{ "USER", "DefHookProc", u_DefHookProc },
-	{ "USER", "CallNextHookEx", u_DefHookProc },
-	{ "USER", "CallMsgFilter", u_CallMsgFilter },
 	{ "USER", "SetTimer", u_SetTimer },
 	{ "USER", "KillTimer", u_KillTimer },
 	{ "USER", "SetSystemTimer", u_SetSystemTimer },

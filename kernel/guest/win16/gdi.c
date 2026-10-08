@@ -272,6 +272,9 @@ mkfont(lf)
 	o->u.font.lf = *lf;
 	o->u.font.bf = font_pick(lf);
 	o->u.font.bold = lf->weight >= 600 && o->u.font.bf->f_weight < 600;
+	if (w16_debug > 1)
+		w16_log("startwin: font \"%s\" %d,%d weight %d pitch %x: %s %d\n", lf->face, lf->height, lf->width,
+		    lf->weight, lf->pitchfam, o->u.font.bf->f_face, o->u.font.bf->f_height);
 	return h;
 }
 
@@ -1445,6 +1448,20 @@ g_MoveTo(a)
 	dc->st.curx = (short)a[1];
 	dc->st.cury = (short)a[2];
 	return o;
+}
+
+/* MoveToEx(hdc, x, y, POINT far *): the old position there */
+static u32
+g_MoveToEx(a)
+	u32 *a;
+{
+	u32 o = g_MoveTo(a), p = lin(FPSEL(a[3]), FPOFF(a[3]));
+
+	if (p) {
+		PW(p, o);
+		PW(p + 2, o >> 16);
+	}
+	return 1;
 }
 
 static u32
@@ -3552,6 +3569,7 @@ struct impl g_impl[] = {
 	{ "GDI", "DPtoLP", g_DPtoLP },
 	{ "GDI", "MulDiv", g_MulDiv },
 	{ "GDI", "MoveTo", g_MoveTo },
+	{ "GDI", "MoveToEx", g_MoveToEx },
 	{ "GDI", "LineTo", g_LineTo },
 	{ "GDI", "Rectangle", g_Rectangle },
 	{ "GDI", "RoundRect", g_RoundRect },

@@ -258,6 +258,12 @@ nextline()
 			writeppm(arg);
 			continue;
 		}
+		if (strcmp(cmd, "tree") == 0) {
+			extern void user_dumptree();
+
+			user_dumptree();
+			continue;
+		}
 		if (strcmp(cmd, "quit") == 0) {
 			add(EV_QUIT, 0, 0, 0, 0, 0);
 			return 1;

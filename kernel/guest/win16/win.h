@@ -816,4 +816,41 @@ extern int draw_textw();		/* (bfont, text, n) */
 #define	MSG_PT		14
 #define	MSG_SIZE	18
 
+/* hooks (hook.c) */
+#define	WH_MSGFILTER	(-1)
+#define	WH_JOURNALRECORD 0
+#define	WH_JOURNALPLAYBACK 1
+#define	WH_KEYBOARD	2
+#define	WH_GETMESSAGE	3
+#define	WH_CALLWNDPROC	4
+#define	WH_CBT		5
+#define	WH_SYSMSGFILTER	6
+#define	WH_MOUSE	7
+#define	WH_HARDWARE	8
+#define	WH_DEBUG	9
+#define	WH_SHELL	10
+#define	WH_MIN		WH_MSGFILTER
+#define	WH_MAX		WH_SHELL
+#define	HC_ACTION	0
+#define	HC_NOREMOVE	3
+#define	HCBT_MOVESIZE	0
+#define	HCBT_MINMAX	1
+#define	HCBT_QS		2
+#define	HCBT_CREATEWND	3
+#define	HCBT_DESTROYWND	4
+#define	HCBT_ACTIVATE	5
+#define	HCBT_CLICKSKIPPED 6
+#define	HCBT_KEYSKIPPED	7
+#define	HCBT_SYSCOMMAND	8
+#define	HCBT_SETFOCUS	9
+#define	HSHELL_WINDOWCREATED 1
+#define	HSHELL_WINDOWDESTROYED 2
+#define	HSHELL_ACTIVATESHELLWINDOW 3
+#define	MSGF_DIALOGBOX	0
+#define	MSGF_MENU	2
+extern int hook_any();			/* (WH_): a hook of it to call */
+extern u32 hook_call();			/* (WH_, code, wParam, lParam): what the chain returns */
+extern u32 hook_msgfilter();		/* (MSG far *, MSGF_): nonzero if a filter took it */
+extern void hook_taskended();		/* (task) */
+
 #endif

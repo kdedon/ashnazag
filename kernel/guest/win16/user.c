@@ -427,6 +427,8 @@ wnd_calcclient(w, wr, cr)
 		cr->b = cr->t;
 }
 
+static void offsetall();
+
 /* WM_NCCALCSIZE to the window procedure, which may move the client area */
 static void
 nccalc(w)
@@ -439,6 +441,15 @@ nccalc(w)
 	wnd_send(w, WM_NCCALCSIZE, 0, p);
 	r_get(&r, l);
 	ufree(p);
+	/* the children are where they were in the client area, which may have moved in the window */
+	if ((r.l != w->cr.l || r.t != w->cr.t) && wnd_get(w->h)) {
+		struct wnd *c;
+
+		for (c = w->child; c; c = c->next)
+			offsetall(c, r.l - w->cr.l, r.t - w->cr.t);
+		vis_epoch++;
+		expose_in(w, &w->wr, 1);
+	}
 	w->cr = r;
 }
 
@@ -549,6 +560,23 @@ wnd_send(w, msg, wp, lp)
 		return 0;
 	if (w16_debug > 2)
 		w16_log("send %04x %04x %04x %08x (%08x)\n", w->h, msg, wp, lp, w->proc);
+	/* WH_CALLWNDPROC first, with what is sent, which it may change: lParam, wParam, message, hwnd */
+	if (hook_any(WH_CALLWNDPROC)) {
+		u32 cwp = ualloc(10), l = ulin(cwp), h = w->h;
+
+		PL(l, lp);
+		PW(l + 4, wp);
+		PW(l + 6, msg);
+		PW(l + 8, h);
+		hook_call(WH_CALLWNDPROC, HC_ACTION, (u32)(w->task != curtask), cwp);
+		lp = GL(l);
+		wp = GW(l + 4);
+		msg = GW(l + 6);
+		h = GW(l + 8);
+		ufree(cwp);
+		if ((w = wnd_get(h)) == 0)
+			return 0;
+	}
 	return wnd_call(w->proc, w->h, msg, wp, lp);
 }
 
@@ -982,6 +1010,21 @@ wnd_create(ex, cname, title, style, x, y, cx, cy, hparent, hmenu, hinst, param)
 	PL(l + 22, title);
 	PL(l + 26, cname);
 	PL(l + 30, ex);
+	/* WH_CBT, told of it (CBT_CREATEWND: the CREATESTRUCT, the window it goes after); nonzero: no */
+	if (hook_any(WH_CBT)) {
+		u32 cc = ualloc(6), r;
+
+		PL(ulin(cc), cs);
+		PW(ulin(cc) + 4, 0);
+		r = hook_call(WH_CBT, HCBT_CREATEWND, (u32)w->h, cc);
+		ufree(cc);
+		if (r || !wnd_get(w->h)) {
+			ufree(cs);
+			if (wnd_get(w->h))
+				wnd_destroy(w);
+			return 0;
+		}
+	}
 	if (!wnd_send(w, WM_NCCREATE, 0, cs)) {
 		ufree(cs);
 		wnd_destroy(w);
@@ -1017,6 +1060,11 @@ wnd_create(ex, cname, title, style, x, y, cx, cy, hparent, hmenu, hinst, param)
 		wnd_show(w, SW_SHOWMAXIMIZED);
 	else if (style & WS_VISIBLE)
 		wnd_show(w, SW_SHOW);
+	/* a top-level window no other owns: WH_SHELL is told */
+	if (wnd_get(w->h) && !(style & WS_CHILD) && !owner && hook_any(WH_SHELL))
+		hook_call(WH_SHELL, HSHELL_WINDOWCREATED, (u32)w->h, (u32)0);
+	if (!wnd_get(w->h))
+		return 0;
 	(void)r;
 	return w;
 }
@@ -1072,6 +1120,15 @@ wnd_destroy(w)
 	struct wnd *parent, *owner;
 
 	if (!w || w == desktop || (w->flags & WF_DESTROYING))
+		return;
+	/* WH_CBT may keep it; WH_SHELL is told of a top-level window going */
+	if (hook_any(WH_CBT) && hook_call(WH_CBT, HCBT_DESTROYWND, (u32)w->h, (u32)0))
+		return;
+	if (!wnd_get(w->h))
+		return;
+	if (!(w->style & WS_CHILD) && !w->owner && hook_any(WH_SHELL))
+		hook_call(WH_SHELL, HSHELL_WINDOWDESTROYED, (u32)w->h, (u32)0);
+	if (!wnd_get(w->h) || (w->flags & WF_DESTROYING))
 		return;
 	wasvis = wnd_visible(w);
 	r = w->wr;
@@ -1158,7 +1215,8 @@ wnd_setpos(w, after, x, y, cx, cy, flags)
 	if (moved)
 		offsetall(w, dx, dy);
 	w->wr = nr;
-	if (sized || moved || (flags & SWP_FRAMECHANGED))
+	/* as Windows 3.1, unless the caller says the size stays: a window may change its client area so */
+	if (sized || moved || (flags & SWP_FRAMECHANGED) || !(flags & SWP_NOSIZE))
 		nccalc(w);
 	if (!(flags & SWP_NOZORDER)) {
 		unlink_w(w);
@@ -1182,7 +1240,8 @@ wnd_setpos(w, after, x, y, cx, cy, flags)
 	PW(l + 6, w->wr.t - (w->style & WS_CHILD ? w->parent->cr.t : 0));
 	PW(l + 8, w->wr.r - w->wr.l);
 	PW(l + 10, w->wr.b - w->wr.t);
-	PW(l + 12, flags | (moved ? 0 : SWP_NOMOVE) | (sized ? 0 : SWP_NOSIZE));
+	/* the caller's flags: as Windows 3.1, a move to where it is, or a size it has, is a move and a size all the same */
+	PW(l + 12, flags);
 	wnd_send(w, WM_WINDOWPOSCHANGED, 0, wp);
 	ufree(wp);
 }
@@ -1194,6 +1253,15 @@ wnd_show(w, cmd)
 {
 	int was = (w->style & WS_VISIBLE) != 0, show = cmd != SW_HIDE;
 	struct rect r;
+
+	/* minimising, maximising, restoring: WH_CBT may refuse */
+	if (hook_any(WH_CBT) &&
+	    (((cmd == SW_SHOWMINIMIZED || cmd == SW_MINIMIZE || cmd == SW_SHOWMINNOACTIVE) && !(w->style & WS_MINIMIZE)) ||
+	    ((cmd == SW_SHOWMAXIMIZED || cmd == SW_MAXIMIZE) && !(w->style & WS_MAXIMIZE)) ||
+	    ((cmd == SW_RESTORE || cmd == SW_SHOWNORMAL) && (w->style & (WS_MINIMIZE | WS_MAXIMIZE))))) {
+		if (hook_call(WH_CBT, HCBT_MINMAX, (u32)w->h, (u32)cmd) || !wnd_get(w->h))
+			return;
+	}
 
 	if (cmd == SW_SHOWMAXIMIZED || cmd == SW_MAXIMIZE) {
 		if (!(w->style & WS_MAXIMIZE)) {
@@ -1313,6 +1381,10 @@ wnd_setfocus(w)
 		return;
 	if (w && (w->style & WS_MINIMIZE))
 		w = 0;
+	if (hook_any(WH_CBT) && hook_call(WH_CBT, HCBT_SETFOCUS, (u32)(w ? w->h : 0), (u32)(old ? old->h : 0)))
+		return;
+	if (w && !wnd_get(w->h))
+		return;
 	wnd_focus = w;
 	if (old && wnd_get(old->h))
 		wnd_send(old, WM_KILLFOCUS, w ? w->h : 0, 0);
@@ -1330,6 +1402,17 @@ wnd_activate(w, how)
 	w = wnd_toplevel(w);
 	if (w == old || !w)
 		return;
+	/* WH_CBT may refuse it: CBTACTIVATESTRUCT, by the mouse or not, the active window */
+	if (hook_any(WH_CBT)) {
+		u32 ca = ualloc(4), r;
+
+		PW(ulin(ca), how == WA_CLICKACTIVE);
+		PW(ulin(ca) + 2, old ? old->h : 0);
+		r = hook_call(WH_CBT, HCBT_ACTIVATE, (u32)w->h, ca);
+		ufree(ca);
+		if (r || !wnd_get(w->h))
+			return;
+	}
 	if (old && wnd_get(old->h)) {
 		wnd_send(old, WM_NCACTIVATE, 0, 0);
 		wnd_send(old, WM_ACTIVATE, WA_INACTIVE, FP(0, w->h));
@@ -1588,6 +1671,27 @@ input(e)
 	}
 }
 
+/* the windows, for a script's `tree' (the log) */
+static void
+dumpw(w, depth)
+	struct wnd *w;
+	int depth;
+{
+	struct wnd *c;
+
+	w16_log("%*s%04x %s \"%.30s\" style %08lx %d,%d-%d,%d%s\n", depth * 2, "", w->h,
+	    w->cls ? w->cls->name : "?", w->text ? w->text : "", (long)w->style, w->wr.l, w->wr.t, w->wr.r, w->wr.b,
+	    (w->style & WS_VISIBLE) ? "" : " hidden");
+	for (c = w->child; c; c = c->next)
+		dumpw(c, depth + 1);
+}
+
+void
+user_dumptree()
+{
+	dumpw(desktop, 0);
+}
+
 /* ---- the system queue: raw input, made into messages as it is taken ---- */
 
 #define	RAWQ	512
@@ -1721,6 +1825,51 @@ user_ncpaint(w)
 		wnd_send(w, WM_NCPAINT, 0, 0);
 }
 
+/* a message from the queue is to go to the program: WH_KEYBOARD or WH_MOUSE may discard it (nonzero) */
+static int
+inhook(m, remove)
+	struct qmsg *m;
+	int remove;
+{
+	int code = remove ? HC_ACTION : HC_NOREMOVE;
+	u32 r = 0;
+
+	if ((m->msg == WM_KEYDOWN || m->msg == WM_KEYUP || m->msg == WM_SYSKEYDOWN || m->msg == WM_SYSKEYUP) &&
+	    hook_any(WH_KEYBOARD))
+		r = hook_call(WH_KEYBOARD, code, (u32)m->wp, m->lp);
+	else if (((m->msg >= WM_MOUSEMOVE && m->msg <= 0x209) || (m->msg >= 0xa0 && m->msg <= 0xa9)) &&
+	    hook_any(WH_MOUSE)) {
+		/* MOUSEHOOKSTRUCT: the point on the screen, the window, its hit test, extra */
+		u32 mh = ualloc(12), l = ulin(mh);
+
+		PW(l, m->x);
+		PW(l + 2, m->y);
+		PW(l + 4, m->hwnd);
+		PW(l + 6, m->msg < WM_MOUSEMOVE ? m->wp : HTCLIENT);
+		PL(l + 8, 0);
+		r = hook_call(WH_MOUSE, code, (u32)m->msg, mh);
+		ufree(mh);
+	}
+	return r != 0;
+}
+
+/* the message the program gets (at a), as WH_GETMESSAGE sees it and may change it */
+static void
+gothook(a)
+	u32 a;
+{
+	u32 p;
+
+	if (!hook_any(WH_GETMESSAGE))
+		return;
+	p = ualloc(MSG_SIZE);
+	memcpy(M + ulin(p), M + a, MSG_SIZE);
+	hook_call(WH_GETMESSAGE, HC_ACTION, (u32)0, p);
+	memcpy(M + a, M + ulin(p), MSG_SIZE);
+	ufree(p);
+}
+
+
 /*
  * A message into the guest MSG at a: 1 one, 0 none (wait 0), -1 WM_QUIT.
  * Waiting, the screen is flushed and the device polled.
@@ -1759,6 +1908,15 @@ user_getmessage(a, h, min, max, remove, wait)
 					qhead = (qhead + 1) % QSIZE;
 					goto again;
 				}
+				if (inhook(&m, remove)) {
+					int j;
+
+					/* discarded, from the queue */
+					for (j = i; j != qhead; j = (j + QSIZE - 1) % QSIZE)
+						q[j] = q[(j + QSIZE - 1) % QSIZE];
+					qhead = (qhead + 1) % QSIZE;
+					goto again;
+				}
 				if (remove) {
 					/* close the gap */
 					int j;
@@ -1770,6 +1928,7 @@ user_getmessage(a, h, min, max, remove, wait)
 				putmsg(a, &m);
 				if (remove)
 					syncstate(&m);
+				gothook(a);
 				return m.msg == WM_QUIT ? -1 : 1;
 			}
 		/* nothing queued that fits: the next input becomes a message */
@@ -1786,6 +1945,7 @@ user_getmessage(a, h, min, max, remove, wait)
 			putmsg(a, &m);
 			if (remove)
 				curtask->t_quit = 0;
+			gothook(a);
 			return -1;
 		}
 		/* paint */
@@ -1807,6 +1967,7 @@ user_getmessage(a, h, min, max, remove, wait)
 			m.msg = WM_PAINT;
 			m.time = w16_ticks();
 			putmsg(a, &m);
+			gothook(a);
 			return 1;
 		}
 		/* timers */
@@ -1825,6 +1986,7 @@ user_getmessage(a, h, min, max, remove, wait)
 				if (remove)
 					timers[i].due = w16_ticks() + timers[i].ms;
 				putmsg(a, &m);
+				gothook(a);
 				return 1;
 			}
 		scr_flush();
@@ -2008,6 +2170,12 @@ user_modal(dlg, done, mask)
 			r = -1;
 			break;
 		}
+		/* the message filters first (CallMsgFilter, MSGF_DIALOGBOX) */
+		if (dlg && hook_msgfilter(p, MSGF_DIALOGBOX)) {
+			a = ulin(p);
+			continue;
+		}
+		a = ulin(p);
 		if (dlg && dlg_ismsg(dlg, a))
 			continue;
 		user_translate(a);
@@ -2102,6 +2270,7 @@ user_taskended(t)
 	for (i = 0; i < NTIMER; i++)
 		if (timers[i].task == t)
 			timers[i].used = 0;
+	hook_taskended(t);
 	for (i = qhead; i != qtail; )
 		if (q[i].task == t) {
 			for (j = i; j != qhead; j = (j + QSIZE - 1) % QSIZE)

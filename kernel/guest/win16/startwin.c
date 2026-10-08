@@ -8,9 +8,11 @@
  *
  * Drive C: is dir (default ~/WIN16, made with WINDOWS, WINDOWS\SYSTEM
  * and TEMP in it), H: the home directory, R: the root and W: Wabi's
- * home as `-install' put it (dir/wabihome), as Wabi had them; -D adds
- * others.  A program named without a drive is looked for
- * in the current directory, then C:\WINDOWS.  Without a program,
+ * home as `-install' put it (dir/wabihome), as Wabi had them; with
+ * Wabi's configuration, WABI.INI, its Drives.X name the drives (E: the
+ * current directory); -D adds others.  The current directory is the
+ * deepest drive's it is under, but the root's.  A program named without
+ * a drive is looked for in the current directory, then C:\WINDOWS.  Without a program,
  * C:\WINDOWS\PROGMAN.EXE if it is there.  -m sets guest memory (8 MB),
  * -g the screen where the device lets us choose, -v more messages
  * (-vv every call), -S and -o drive the in-memory screen of host builds.
@@ -378,10 +380,11 @@ main(argc, argv)
 	char **argv;
 {
 	char *home = getenv("HOME"), *cdir = 0, cmd[128], dos[300], prog[300], *p;
-	int i, w = 640, h = 480, mb = 8, err, code, len;
+	int i, k, w = 640, h = 480, mb = 8, err, code, len;
 	struct module *m;
-	char cwd[1024], *inst = 0;
+	char cwd[1024], *inst = 0, given[26];
 
+	memset(given, 0, sizeof given);
 	for (i = 1; i < argc && argv[i][0] == '-'; i++) {
 		if (strcmp(argv[i], "-C") == 0 && i + 1 < argc)
 			cdir = argv[++i];
@@ -390,6 +393,7 @@ main(argc, argv)
 			if (!((p[0] | 0x20) >= 'a' && (p[0] | 0x20) <= 'z') || p[1] != '=')
 				usage();
 			drive_root[(p[0] | 0x20) - 'a'] = p + 2;
+			given[(p[0] | 0x20) - 'a'] = 1;
 		} else if (strcmp(argv[i], "-m") == 0 && i + 1 < argc)
 			mb = atoi(argv[++i]);
 		else if (strcmp(argv[i], "-g") == 0 && i + 1 < argc) {
@@ -442,20 +446,40 @@ main(argc, argv)
 		if (stat(wh, &st) == 0 && S_ISDIR(st.st_mode))
 			drive_root[22] = wh;
 	}
-	/* the current directory, as a drive if it is under one */
 	dos_init();
+	/* the drives of Wabi's configuration (WABI.INI's Drives.X), but C: and W:, and those -D gave */
+	for (k = 0; k < 26; k++)
+		if (k != 2 && k != 22 && !given[k] && (p = wabi_drive('A' + k)) != 0)
+			drive_root[k] = p;
+	/* the current directory, on the drive it is deepest under (Wabi's E: is it) */
 	dos_drive = 2;
-	if (getcwd(cwd, sizeof cwd) && home && strncmp(cwd, home, strlen(home)) == 0 && drive_root[7] == home) {
+	if (getcwd(cwd, sizeof cwd)) {
 		extern int dos_chdir();
-		char d[300];
+		char d[1100];
+		int best = -1, bl = 0, l;
 
-		sprintf(d, "H:%s", cwd + strlen(home));
-		for (p = d; *p; p++)
-			if (*p == '/')
-				*p = '\\';
-		if (!d[2])
-			strcpy(d + 2, "\\");
-		dos_chdir(d);
+		for (k = 0; k < 26; k++) {
+			if (!drive_root[k])
+				continue;
+			l = strlen(drive_root[k]);
+			while (l > 1 && drive_root[k][l - 1] == '/')
+				l--;
+			if (l == 1 && drive_root[k][0] == '/')
+				continue;	/* R:, the root: not for this */
+			if (strncmp(cwd, drive_root[k], l) == 0 && (cwd[l] == '/' || !cwd[l]) && (best < 0 || l > bl)) {
+				best = k;
+				bl = l;
+			}
+		}
+		if (best >= 0) {
+			sprintf(d, "%c:%s", 'A' + best, cwd + bl);
+			for (p = d; *p; p++)
+				if (*p == '/')
+					*p = '\\';
+			if (!d[2])
+				strcpy(d + 2, "\\");
+			dos_chdir(d);
+		}
 	}
 	mem_init((u32)mb << 20);
 	x86_init(&thecpu, M, MSIZE, LDT);

@@ -21,7 +21,7 @@ struct module *modules;
 
 /* the system modules: ours whatever the disk holds */
 static char *ours[] = { "KERNEL", "USER", "GDI", "KEYBOARD", "SYSTEM", "SOUND",
-	"DISPLAY", "MOUSE", "TOOLHELP", "ASHAUDIO", "WINSOCK", 0 };
+	"DISPLAY", "MOUSE", "TOOLHELP", "ASHAUDIO", "WINSOCK", "WABICFG", 0 };
 
 #define	NEW(p)	((p)[0] | (p)[1] << 8)
 #define	NEL(p)	(NEW(p) | (u32)NEW((p) + 2) << 16)

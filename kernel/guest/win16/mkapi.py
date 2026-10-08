@@ -19,11 +19,16 @@ MODS = [
     ('DDEML', 'ddeml.dll16'), ('WINSOCK', 'winsock.dll16'), ('COMPOBJ', 'compobj.dll16'),
     ('OLE2', 'ole2.dll16'),
 ]
-# ours, not Windows': our wave driver (mmdrv.c)
+# ours, not Windows': our wave driver (mmdrv.c); WABICFG, Wabi's engine's (wabicfg.c)
 OWN = [
     ('ASHAUDIO', [(1, 'DriverProc', 'p', 'lwwll', 'l'), (2, 'wodMessage', 'p', 'wwlll', 'l'),
                   (3, 'widMessage', 'p', 'wwlll', 'l'), (4, 'modMessage', 'p', 'wwlll', 'l'),
                   (5, 'midMessage', 'p', 'wwlll', 'l'), (6, 'auxMessage', 'p', 'wwlll', 'l')]),
+    ('WABICFG', [(1, 'CFGGETENTRY', 'p', 'ppw', 'w'), (2, 'CFGGETDEFAULTENTRY', 'p', 'ppw', 'w'),
+                 (3, 'CFGSETENTRY', 'p', 'ppww', 'w'), (4, 'CFGNOTIFYWABI', 'p', 'pw', 'w'),
+                 (5, 'GETWABIENV', 'p', 'p', 'w'), (6, 'RELEASEWABIENV', 'p', 'p', 'w'),
+                 (7, 'GETFILES', 'p', 'pppw', 'w'), (8, 'CFGGETLOCALEPATH', 'p', 'pw', 'w'),
+                 (9, 'CFGGETDEFLOCALEPATH', 'p', 'pw', 'w'), (10, 'WABI_GETENV', 'p', 'p', 'l')]),
 ]
 ARG = {'word': 'w', 's_word': 's', 'long': 'l', 'ptr': 'p', 'str': 'p', 'segptr': 'p', 'segstr': 'p', 'int64': 'q', 'double': 'q'}
 LINE = re.compile(r'^(\d+)\s+(pascal|cdecl|varargs|stub|equate|variable)\s*(.*)$')
@@ -75,7 +80,7 @@ def main():
         for o, n, k, a, r in ents:
             print('\t{ %d, "%s", \'%s\', "%s", \'%s\' },' % (o, n, k, a, r))
         print('\t{ 0 }\n};\n')
-    print('/* ours, not Windows\': our wave driver (mmdrv.c) */')
+    print('/* ours, not Windows\': our wave driver (mmdrv.c); WABICFG, Wabi\'s engine\'s (wabicfg.c) */')
     for mod, ents in OWN:
         print('static struct apient a_%s[] = {' % mod)
         for o, n, k, a, r in ents:

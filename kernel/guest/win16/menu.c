@@ -811,6 +811,37 @@ mnemonic(m, c)
 	return -1;
 }
 
+/* an input event as the message it is in the menu, to the message filters: nonzero, taken */
+static int
+filtered(e)
+	struct ev *e;
+{
+	extern u32 ualloc(), ulin();
+	extern void ufree();
+	struct wnd *w = nlv > 0 && lv[nlv - 1].w ? lv[nlv - 1].w : owner;
+	u32 p, l, r;
+	int msg;
+
+	if (!hook_any(WH_MSGFILTER) && !hook_any(WH_SYSMSGFILTER))
+		return 0;
+	if (e->type == EV_KEY)
+		msg = e->vk == VK_MENU || e->vk == VK_F1 + 9 ? WM_SYSKEYDOWN : WM_KEYDOWN;
+	else
+		msg = e->btn == 1 ? (e->down ? WM_RBUTTONDOWN : WM_RBUTTONUP) : (e->down ? WM_LBUTTONDOWN : WM_LBUTTONUP);
+	p = ualloc(MSG_SIZE);
+	l = ulin(p);
+	PW(l + MSG_HWND, w ? w->h : 0);
+	PW(l + MSG_MESSAGE, msg);
+	PW(l + MSG_WPARAM, e->type == EV_KEY ? e->vk : 0);
+	PL(l + MSG_LPARAM, e->type == EV_KEY ? 1 : FP(e->y, e->x));
+	PL(l + MSG_TIME, w16_ticks());
+	PW(l + MSG_PT, e->x);
+	PW(l + MSG_PT + 2, e->y);
+	r = hook_msgfilter(p, MSGF_MENU);
+	ufree(p);
+	return r != 0;
+}
+
 /*
  * The loop: until an item is chosen (its id back) or the menu is left
  * (-1).  bar: the window whose bar starts it; pop: a popup alone.
@@ -831,6 +862,9 @@ loop(startitem, key, mouse)
 	for (;;) {
 		scr_flush();
 		if (user_poll(&e, -1) != 1)
+			continue;
+		/* the message filters see it first (CallMsgFilter, MSGF_MENU), for the menu's window */
+		if (((e.type == EV_KEY && e.down) || e.type == EV_BTN) && filtered(&e))
 			continue;
 		if (e.type == EV_MOVE || e.type == EV_BTN) {
 			scr_mx = e.x;

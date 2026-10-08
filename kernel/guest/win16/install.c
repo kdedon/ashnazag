@@ -1017,8 +1017,17 @@ wabi_install(cdir, wdir, sdir)
 	/* its configuration, WABI.INI, beside WIN.INI */
 	sprintf(src, "%s/wbin/wabi.ini", home);
 	sprintf(dst, "%s/wabi.ini", wdir);
-	if (access(dst, 0) != 0)
+	if (access(dst, 0) != 0) {
+		char abs[600], cwd[512];
+
 		bad += copytree(src, dst) != 0;
+		/* its C: is where this is ($HOME/wabi was Wabi's) */
+		if (cdir[0] == '/' || !getcwd(cwd, sizeof cwd))
+			strncpy(abs, cdir, sizeof abs - 1), abs[sizeof abs - 1] = 0;
+		else
+			sprintf(abs, "%.300s/%.290s", cwd, cdir);
+		profile_put("C:\\WINDOWS\\WABI.INI", "Unknown", "Drives.C", abs);
+	}
 
 	/* wiscript: Wabi's WIN.INI and CONTROL.INI over Windows', its printers in CONTROL.INF */
 	sprintf(src, "%s/wbin/win.ini", home);
