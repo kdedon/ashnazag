@@ -1029,6 +1029,31 @@ wabi_install(cdir, wdir, sdir)
 		profile_put("C:\\WINDOWS\\WABI.INI", "Unknown", "Drives.C", abs);
 	}
 
+	/*
+	 * which Windows, as Wabi's Windows Install writes it after installing
+	 * and reads before: SETUP.INF's title says Workgroups for WfW, its
+	 * NetWare 4 driver tells 3.11 from 3.1
+	 */
+	{
+		FILE *fp;
+		char line[512], ver[16];
+		int wfw = 0, n4 = 0;
+
+		sprintf(src, "%s/setup.inf", sdir);
+		if ((fp = fopen(src, "r")) != 0) {
+			while (fgets(line, sizeof line, fp)) {
+				lower(line);
+				if (strstr(line, "title") && strstr(line, "workgroups"))
+					wfw = 1;
+				if (strstr(line, "novell400"))
+					n4 = 1;
+			}
+			fclose(fp);
+			strcpy(ver, wfw ? "MS WFW 3.11" : n4 ? "MS Win 3.11" : "MS Win 3.1");
+			profile_put("C:\\WINDOWS\\WABI.INI", "Version", "MS_Win", ver);
+		}
+	}
+
 	/* wiscript: Wabi's WIN.INI and CONTROL.INI over Windows', its printers in CONTROL.INF */
 	sprintf(src, "%s/wbin/win.ini", home);
 	mergeini(src, "C:\\WINDOWS\\WIN.INI");
