@@ -11,7 +11,6 @@
 #include "scr.h"
 
 #define	NICO	512
-#define	IBASE	0xc000
 
 struct ico {
 	int	w, h, hx, hy;
@@ -21,9 +20,11 @@ struct ico {
 	struct cursor c;	/* for the device */
 	u16	hinst;
 	u32	id;
+	u16	hnd;		/* the handle: a global block, laid out as Windows' (CURSORICONINFO, AND, XOR) */
 };
 
 static struct ico *icos[NICO];
+static struct ico **bysel;	/* by the handle's selector index */
 static u16 cur_now;
 
 /* the shapes: . transparent, # black, o white, x inverted; colours for icons by letter */
@@ -263,31 +264,68 @@ letter(c)
 	return 0;
 }
 
+/*
+ * A handle for the image: a global block as Windows 3.1 keeps an icon or
+ * cursor (programs lock it: DumpIcon, Program Manager's groups).  The
+ * header is CURSORICONINFO (hot spot, width, height, bytes a row,
+ * planes, bits a pixel), then the AND mask, then the XOR bits: one bit a
+ * pixel for cursors, a byte (a palette index) for icons.
+ */
 static u16
 newico(i)
 	struct ico *i;
 {
-	int k;
+	int k, x, y, ab = ((i->w + 15) / 16) * 2, xb = i->cursor ? ab : (i->w + 1) & ~1;
+	u16 h;
+	u32 p, a, xo;
 
 	for (k = 1; k < NICO; k++)
-		if (!icos[k]) {
-			icos[k] = i;
-			return IBASE + 4 * k;
+		if (!icos[k])
+			break;
+	if (k == NICO)
+		return 0;
+	if (!bysel)
+		bysel = (struct ico **)calloc(LDTSIZE, sizeof *bysel);
+	h = g_alloc(GMEM_MOVEABLE | GMEM_DDESHARE | GMEM_ZEROINIT, 12 + ab * i->h + xb * i->h, 0);
+	if (!h)
+		return 0;
+	p = sel_base(h);
+	PW(p, i->hx);
+	PW(p + 2, i->hy);
+	PW(p + 4, i->w);
+	PW(p + 6, i->h);
+	PW(p + 8, xb);
+	PB(p + 10, 1);
+	PB(p + 11, i->cursor ? 1 : 8);
+	a = p + 12;
+	xo = a + ab * i->h;
+	for (y = 0; y < i->h; y++)
+		for (x = 0; x < i->w; x++) {
+			int px = i->pix[y * i->w + x];
+
+			if (i->mask[y * i->w + x])
+				M[a + y * ab + x / 8] |= 0x80 >> (x & 7);
+			if (i->cursor) {
+				if (px)
+					M[xo + y * xb + x / 8] |= 0x80 >> (x & 7);
+			} else
+				M[xo + y * xb + x] = px;
 		}
-	return 0;
+	icos[k] = i;
+	i->hnd = h;
+	bysel[SELIX(h)] = i;
+	return h;
 }
 
 static struct ico *
 ico_get(h)
 	u32 h;
 {
-	int k;
+	int ix = SELIX(h & 0xffff);
 
-	h &= 0xffff;
-	if (h < IBASE || (h - IBASE) & 3)
+	if (!bysel || !(h & 0xffff) || ix <= 0 || ix >= LDTSIZE || !gblk[ix].gb_used)
 		return 0;
-	k = (h - IBASE) >> 2;
-	return k < NICO ? icos[k] : 0;
+	return bysel[ix];
 }
 
 /* the device's cursor from the image: AND 1 where transparent, XOR 1 white or inverted */
@@ -463,7 +501,7 @@ fromres(hinst, name, cursor)
 		return 0;
 	for (k = 1; k < NICO; k++)
 		if ((i = icos[k]) && i->hinst == (hinst & 0xffff) && i->id == name && i->cursor == cursor)
-			return IBASE + 4 * k;
+			return i->hnd;
 	dir = res_data(m, FP(0, cursor ? RT_GROUP_CURSOR : RT_GROUP_ICON), name, &size);
 	if (!dir)
 		return 0;
@@ -592,7 +630,11 @@ ico_destroy(h)
 		free(i->c.and);
 		free(i->c.xor);
 	}
-	icos[((h & 0xffff) - IBASE) >> 2] = 0;
+	for (k = 1; k < NICO; k++)
+		if (icos[k] == i)
+			icos[k] = 0;
+	bysel[SELIX(h & 0xffff)] = 0;
+	g_free(h & 0xffff);
 	free(i);
 }
 
@@ -603,7 +645,8 @@ ico_create(w, h, hx, hy, and, xor, bpp, cursor)
 	u32 and, xor;
 {
 	struct ico *i = (struct ico *)calloc(1, sizeof *i);
-	int x, y, astride = ((w + 15) / 16) * 2, xstride = bpp == 1 ? astride : (w + 1) & ~1;
+	int x, y, astride = ((w + 15) / 16) * 2;
+	int xstride = bpp == 1 ? astride : bpp == 4 ? ((w * 4 + 15) / 16) * 2 : (w + 1) & ~1;
 
 	i->w = w;
 	i->h = h;
@@ -616,7 +659,14 @@ ico_create(w, h, hx, hy, and, xor, bpp, cursor)
 		for (x = 0; x < w; x++) {
 			int a = (M[and + y * astride + x / 8] >> (7 - x % 8)) & 1, v;
 
-			v = bpp == 1 ? (M[xor + y * xstride + x / 8] >> (7 - x % 8)) & 1 : M[xor + y * xstride + x];
+			if (bpp == 1)
+				v = (M[xor + y * xstride + x / 8] >> (7 - x % 8)) & 1;
+			else if (bpp == 4) {
+				/* the 16 VGA colours: the static ones at each end of the palette */
+				v = (M[xor + y * xstride + x / 2] >> (x & 1 ? 0 : 4)) & 15;
+				v = v < 8 ? v : 240 + v;
+			} else
+				v = M[xor + y * xstride + x];
 			i->mask[y * w + x] = a;
 			if (cursor)
 				i->pix[y * w + x] = v ? (a ? 2 : 1) : 0;
@@ -627,3 +677,102 @@ ico_create(w, h, hx, hy, and, xor, bpp, cursor)
 		mkdev(i);
 	return newico(i);
 }
+
+/* ---- what SHELL and Program Manager use ---- */
+
+/* GetIconID(hRes, resType): of a loaded icon or cursor directory, the image for this display */
+static u32
+c_GetIconID(a)
+	u32 *a;
+{
+	struct gblock *b = g_block(a[0]);
+	int cursor = (a[1] & 0xffff) == RT_CURSOR, n, k, score, bs = -1, id = 0;
+	u32 dir;
+
+	if (!b || b->gb_discarded || b->gb_size < 6)
+		return 0;
+	dir = b->gb_base;
+	n = GW(dir + 4);
+	for (k = 0; k < n && 6 + 14 * (k + 1) <= (int)b->gb_size; k++) {
+		u32 e = dir + 6 + 14 * k;
+		int w = cursor ? GW(e) : M[e], bpp = GW(e + 6);
+
+		if (!cursor && bpp == 0)
+			bpp = M[e + 2] == 16 ? 4 : M[e + 2] == 2 ? 1 : 8;
+		score = (w == 32 ? 100 : w == 0 ? 50 : 10) + (bpp <= 8 ? bpp : 0);
+		if (score > bs) {
+			bs = score;
+			id = GW(e + 12);
+		}
+	}
+	return id;
+}
+
+/* LoadIconHandler(hRes, fNew): an icon from a loaded RT_ICON resource (a DIB when fNew) */
+static u32
+c_LoadIconHandler(a)
+	u32 *a;
+{
+	struct gblock *b = g_block(a[0]);
+
+	if (!b || b->gb_discarded)
+		return 0;
+	return fromdib(b->gb_base, b->gb_size, 0, 0, 0);
+}
+
+/* DumpIcon(lpInfo, lpLen, lpXorBits, lpAndBits): where the parts of a locked icon are */
+static u32
+c_DumpIcon(a)
+	u32 *a;
+{
+	u32 info = lin(FPSEL(a[0]), FPOFF(a[0])), p;
+	int w, h, xb, ab, sx, sa;
+
+	if (!info)
+		return 0;
+	w = GW(info + 4);
+	h = GW(info + 6);
+	xb = GW(info + 8);
+	ab = ((w + 15) / 16) * 2;
+	sx = xb * h;
+	sa = ab * h;
+	if ((p = lin(FPSEL(a[3]), FPOFF(a[3]))) != 0)
+		PL(p, a[0] + 12);
+	if ((p = lin(FPSEL(a[2]), FPOFF(a[2]))) != 0)
+		PL(p, a[0] + 12 + sa);
+	if ((p = lin(FPSEL(a[1]), FPOFF(a[1]))) != 0)
+		PW(p, 12 + sa + sx);
+	return FP(sx, sx);
+}
+
+/* CopyIcon(hInst, hIcon) */
+static u32
+c_CopyIcon(a)
+	u32 *a;
+{
+	struct ico *i = ico_get(a[1]), *n;
+
+	if (!i)
+		return 0;
+	n = (struct ico *)calloc(1, sizeof *n);
+	*n = *i;
+	n->hinst = 0;
+	n->id = 0;
+	n->pix = (u8 *)malloc(i->w * i->h);
+	n->mask = (u8 *)malloc(i->w * i->h);
+	memcpy(n->pix, i->pix, i->w * i->h);
+	memcpy(n->mask, i->mask, i->w * i->h);
+	memset((char *)&n->c, 0, sizeof n->c);
+	if (n->cursor)
+		mkdev(n);
+	return newico(n);
+}
+
+struct impl cu_impl[] = {
+	{ "USER", "GetIconID", c_GetIconID },
+	{ "USER", "LoadIconHandler", c_LoadIconHandler },
+	{ "USER", "DumpIcon", c_DumpIcon },
+	{ "USER", "CopyIcon", c_CopyIcon },
+	{ "USER", "CopyCursor", c_CopyIcon },
+	{ 0, 0, 0 }
+};

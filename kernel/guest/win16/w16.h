@@ -55,7 +55,9 @@ struct gblock {
 	u16	gb_owner;	/* hInstance or module handle; 0 system */
 	u8	gb_code;	/* a code segment */
 	u8	gb_used;
+	u8	gb_discarded;	/* GlobalReAlloc(h, 0, GMEM_MOVEABLE): no memory, the handle kept */
 };
+#define	GMEM_DISCARDED	0x4000
 extern struct gblock *gblk;	/* LDTSIZE of them */
 
 extern void mem_init();		/* (bytes) */
@@ -179,7 +181,7 @@ struct impl {
 	char	*im_name;
 	apifn	im_fn;
 };
-extern struct impl k_impl[], u_impl[], g_impl[], o_impl[], mn_impl[], dl_impl[], ct_impl[], sb_impl[];
+extern struct impl k_impl[], u_impl[], g_impl[], o_impl[], mn_impl[], dl_impl[], ct_impl[], sb_impl[], md_impl[], cu_impl[];
 
 /* the caller's arguments for a varargs entry start here (a far pointer) */
 extern u32 api_varargs;

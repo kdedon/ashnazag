@@ -306,7 +306,7 @@ draw_text(dc, s, n, r, flags)
 /* ---- non-client painting ---- */
 
 /* the system menu box: a grey square with the short white bar */
-static void
+void
 draw_sysbox(dc, x, y, s)
 	struct dc *dc;
 	int x, y, s;
@@ -323,7 +323,7 @@ draw_sysbox(dc, x, y, s)
 	filli(dc, x + 2, mid - 2, x + 3, mid + 2, 0);
 }
 
-static void
+void
 draw_capbutton(dc, x, y, s, kind, pressed)
 	struct dc *dc;
 	int x, y, s, kind, pressed;		/* 0 minimize, 1 maximize, 2 restore */
@@ -830,7 +830,16 @@ user_defproc(w, msg, wp, lp)
 				wnd_send(w, WM_SYSCOMMAND, (w->style & WS_MAXIMIZE) ? SC_RESTORE : SC_MAXIMIZE, lp);
 			return 0;
 		case HTMENU:
-			menu_trackbar(w, menu_barhit(w, (short)LO16(lp), (short)HI16(lp)), 0);
+			{
+				extern int menu_mdibutton();
+				extern void mdi_barbutton();
+				int k = menu_mdibutton(w, (short)LO16(lp), (short)HI16(lp));
+
+				if (k)		/* a maximized MDI child's system menu or restore button */
+					mdi_barbutton(w, k, lp);
+				else
+					menu_trackbar(w, menu_barhit(w, (short)LO16(lp), (short)HI16(lp)), 0);
+			}
 			return 0;
 		case HTVSCROLL:
 		case HTHSCROLL:

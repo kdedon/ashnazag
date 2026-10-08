@@ -441,6 +441,15 @@ main(argc, argv)
 			w16_upper(dos);
 		}
 	}
+	/* Program Manager with no groups yet: Setup's, by DDE, once it is up */
+	if ((p = strrchr(dos, '\\')) != 0 && w16_stricmp(p + 1, "PROGMAN.EXE") == 0) {
+		extern void ddesetup_arm();
+		char ini[300], host[1024];
+
+		sprintf(ini, "%s\\PROGMAN.INI", windir);
+		if (dos_hostpath(ini, host, sizeof host, 0) != 0 || access(host, 0) != 0)
+			ddesetup_arm();
+	}
 	m = mod_load(dos, &err);
 	if (!m) {
 		fprintf(stderr, "startwin: %s: %s\n", prog, err == 2 ? "not found" : err == 11 ? "not a Windows program" :

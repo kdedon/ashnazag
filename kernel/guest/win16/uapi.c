@@ -2221,21 +2221,67 @@ static u32
 u_SystemParametersInfo(a)
 	u32 *a;
 {
+	static int hspace = 75, vspace = 72, wrap = 1, grid = 0;
 	u32 p = LIN(a[2]);
+	int v = (short)a[1];
 
+	/* Windows 3.1's settings, by number */
 	switch (a[0]) {
-	case 0x0010:	/* SPI_GETSCREENSAVEACTIVE */
-	case 0x000e:	/* SPI_GETSCREENSAVETIMEOUT */
-	case 0x001b:	/* SPI_GETICONTITLEWRAP */
+	case 1:		/* SPI_GETBEEP */
+	case 25:	/* SPI_GETICONTITLEWRAP */
+		if (p) PW(p, a[0] == 1 ? 1 : wrap);
+		return 1;
+	case 3:		/* SPI_GETMOUSE: thresholds and acceleration */
+		if (p) { PW(p, 6); PW(p + 2, 10); PW(p + 4, 1); }
+		return 1;
+	case 5:		/* SPI_GETBORDER */
+		if (p) PW(p, 3);
+		return 1;
+	case 10:	/* SPI_GETKEYBOARDSPEED */
+		if (p) PW(p, 31);
+		return 1;
+	case 13:	/* SPI_ICONHORIZONTALSPACING: get with a pointer, else set */
+	case 24:	/* SPI_ICONVERTICALSPACING */
+		if (p)
+			PW(p, a[0] == 13 ? hspace : vspace);
+		else if (v >= 32) {
+			if (a[0] == 13)
+				hspace = v;
+			else
+				vspace = v;
+		}
+		return 1;
+	case 14:	/* SPI_GETSCREENSAVETIMEOUT */
+	case 16:	/* SPI_GETSCREENSAVEACTIVE */
+	case 27:	/* SPI_GETMENUDROPALIGNMENT */
 		if (p) PW(p, 0);
 		return 1;
-	case 0x0026:	/* SPI_GETGRIDGRANULARITY */
-	case 0x0005:	/* SPI_GETBORDER */
-		if (p) PW(p, a[0] == 5 ? 3 : 0);
+	case 18:	/* SPI_GETGRIDGRANULARITY */
+		if (p) PW(p, grid);
 		return 1;
-	case 0x000d:	/* SPI_ICONHORIZONTALSPACING */
-		if (p) PW(p, 75);
+	case 19:	/* SPI_SETGRIDGRANULARITY */
+		grid = v;
 		return 1;
+	case 22:	/* SPI_GETKEYBOARDDELAY */
+		if (p) PW(p, 2);
+		return 1;
+	case 26:	/* SPI_SETICONTITLEWRAP */
+		wrap = v != 0;
+		return 1;
+	case 31:	/* SPI_GETICONTITLELOGFONT: MS Sans Serif 8 point */
+		if (p) {
+			memset(M + p, 0, 50);
+			PW(p, -11);
+			PW(p + 8, 400);
+			strcpy((char *)M + p + 18, "MS Sans Serif");
+		}
+		return 1;
+	case 35:	/* SPI_GETFASTTASKSWITCH */
+		if (p) PW(p, 1);
+		return 1;
+	case 2: case 4: case 6: case 11: case 15: case 17: case 20: case 21: case 23:
+	case 28: case 29: case 30: case 32: case 33: case 34: case 36:
+		return 1;	/* the settings: taken, not kept */
 	}
 	return 0;
 }
@@ -2253,6 +2299,63 @@ u_WinHelp(a)
 
 static u32 u_ArrangeIconicWindows(a) u32 *a; { return 0; }
 static u32 u_WNetGetCaps(a) u32 *a; { return 0; }	/* no network */
+
+/* WINDOWPLACEMENT: length, flags, showCmd, ptMinPosition, ptMaxPosition, rcNormalPosition */
+static u32
+u_GetWindowPlacement(a)
+	u32 *a;
+{
+	u32 p = lin(FPSEL(a[1]), FPOFF(a[1]));
+	struct rect r;
+	int px = 0, py = 0;
+	W(a[0]);
+
+	if (!p)
+		return 0;
+	r = (w->style & (WS_MINIMIZE | WS_MAXIMIZE)) ? w->normal : w->wr;
+	if ((w->style & WS_CHILD) && w->parent) {
+		px = w->parent->cr.l;
+		py = w->parent->cr.t;
+	}
+	PW(p, 22);
+	PW(p + 2, 0);
+	PW(p + 4, (w->style & WS_MINIMIZE) ? 2 : (w->style & WS_MAXIMIZE) ? 3 : 1);
+	PW(p + 6, (w->style & WS_MINIMIZE) ? w->wr.l - px : -1);
+	PW(p + 8, (w->style & WS_MINIMIZE) ? w->wr.t - py : -1);
+	PW(p + 10, -1);
+	PW(p + 12, -1);
+	PW(p + 14, r.l - px);
+	PW(p + 16, r.t - py);
+	PW(p + 18, r.r - px);
+	PW(p + 20, r.b - py);
+	return 1;
+}
+
+static u32
+u_SetWindowPlacement(a)
+	u32 *a;
+{
+	u32 p = lin(FPSEL(a[1]), FPOFF(a[1]));
+	int px = 0, py = 0, cmd;
+	struct rect r;
+	W(a[0]);
+
+	if (!p)
+		return 0;
+	if ((w->style & WS_CHILD) && w->parent) {
+		px = w->parent->cr.l;
+		py = w->parent->cr.t;
+	}
+	r_set(&r, (short)GW(p + 14), (short)GW(p + 16), (short)GW(p + 18), (short)GW(p + 20));
+	cmd = GW(p + 4);
+	if (w->style & (WS_MINIMIZE | WS_MAXIMIZE)) {
+		r_set(&w->normal, r.l + px, r.t + py, r.r + px, r.b + py);
+	} else
+		wnd_setpos(w, (struct wnd *)0, r.l, r.t, r.r - r.l, r.b - r.t, SWP_NOZORDER | SWP_NOACTIVATE);
+	if (cmd != SW_SHOWNORMAL || (w->style & (WS_MINIMIZE | WS_MAXIMIZE)))
+		wnd_show(w, cmd);
+	return 1;
+}
 static u32 u_ShowOwnedPopups(a) u32 *a; { return 0; }
 static u32 u_GetDialogBaseUnits(a) u32 *a; { extern u32 dlg_baseunits(); return dlg_baseunits(); }
 
@@ -2464,6 +2567,8 @@ struct impl u_impl[] = {
 	{ "USER", "SystemParametersInfo", u_SystemParametersInfo },
 	{ "USER", "WinHelp", u_WinHelp },
 	{ "USER", "WNetGetCaps", u_WNetGetCaps },
+	{ "USER", "GetWindowPlacement", u_GetWindowPlacement },
+	{ "USER", "SetWindowPlacement", u_SetWindowPlacement },
 	{ "USER", "ArrangeIconicWindows", u_ArrangeIconicWindows },
 	{ "USER", "ShowOwnedPopups", u_ShowOwnedPopups },
 	{ "USER", "GetDialogBaseUnits", u_GetDialogBaseUnits },

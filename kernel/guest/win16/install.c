@@ -29,7 +29,7 @@ static char *skip[] = {
 	"winoldap.mod", "dswap.exe", "wswap.exe", "win386.exe", "win.com", "win.cnf", "vga.drv",
 	"ega.drv", "vga.3gr", "vgalogo.lgo", "vgalogo.rle", "egalogo.lgo", "egalogo.rle",
 	"keyboard.drv", "mouse.drv", "system.drv", "sound.drv", "comm.drv", "lmouse.drv",
-	"system.ini", "system.src", "setup.exe", "setup.inf", "setup.hlp", "setup.txt",
+	"system.ini", "system.src", "setup.exe", "setup.hlp", "setup.txt",
 	"expand.exe", "dosx.exe", "smartdrv.exe", "himem.sys", "emm386.exe", "ramdrive.sys",
 	"mscdex.exe", "msd.exe", "msd.ini", "drwatson.exe", "winsetup.exe", "decompr.exe", 0
 };
@@ -722,6 +722,9 @@ win_install(nsrc, src, cdir)
 			continue;
 		if (f->insys < 0)
 			f->insys = inlist(x, sysext);
+		/* SETUP.INF stays in SYSTEM, as Setup leaves it: Program Manager's groups come from it */
+		if (strcmp(name, "setup.inf") == 0)
+			f->insys = 1;
 		sprintf(dst, "%s/%s", f->insys ? sdir : wdir, name);
 		/* an ini the user has changed stays */
 		if (strcmp(x, ".ini") == 0 && access(dst, 0) == 0)

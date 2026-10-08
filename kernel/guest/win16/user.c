@@ -1091,6 +1091,9 @@ wnd_show(w, cmd)
 			else
 				r = desktop->wr;
 			r.l -= b; r.t -= b; r.r += b; r.b += b;
+			/* an MDI document's caption goes out of sight; the frame shows it */
+			if ((w->exstyle & 0x40) && (w->style & WS_CAPTION) == WS_CAPTION)
+				r.t -= sys_metric(SM_CYCAPTION) - 1;
 			if (w->style & WS_CHILD) {
 				r.l -= w->parent->cr.l; r.r -= w->parent->cr.l;
 				r.t -= w->parent->cr.t; r.b -= w->parent->cr.t;
@@ -1102,13 +1105,18 @@ wnd_show(w, cmd)
 	} else if (cmd == SW_SHOWMINIMIZED || cmd == SW_MINIMIZE || cmd == SW_SHOWMINNOACTIVE) {
 		if (!(w->style & WS_MINIMIZE)) {
 			static int slot;
-			int ix = 8 + 76 * (slot++ % 8);
+			int ix = 8 + 76 * (slot++ % 8), iy = desktop->wr.b - 64;
 
 			if (!(w->style & WS_MAXIMIZE))
 				w->normal = w->wr;
 			w->style |= WS_MINIMIZE;
 			w->style &= ~WS_MAXIMIZE;
-			wnd_setpos(w, (struct wnd *)0, ix, desktop->wr.b - 64, 36, 36,
+			/* a child's icon at the foot of its parent */
+			if (w->style & WS_CHILD) {
+				ix = 20 + 76 * (slot % 6);
+				iy = w->parent->cr.b - w->parent->cr.t - 54;
+			}
+			wnd_setpos(w, (struct wnd *)0, ix, iy, 36, 36,
 			    SWP_SHOWWINDOW | SWP_FRAMECHANGED);
 			wnd_send(w, WM_SIZE, 1, 0);
 			if (wnd_active == w && wnd_focus && wnd_toplevel(wnd_focus) == w)
@@ -1372,6 +1380,12 @@ input(e)
 					wnd_activate(t, WA_CLICKACTIVE);
 				if (ma == 2 || ma == 4)		/* MA_ACTIVATEANDEAT */
 					return;
+			}
+			/* and a click in an MDI document activates that */
+			{
+				extern void mdi_click();
+
+				mdi_click(w);
 			}
 			setcursor_for(w, ht, msg);
 			/* double clicks, for classes that want them and on the frame */
@@ -1681,6 +1695,14 @@ user_getmessage(a, h, min, max, remove, wait)
 		}
 		if (rhead != rtail)
 			continue;
+		/* Program Manager's first groups, while it waits */
+		{
+			extern void ddesetup_idle();
+
+			ddesetup_idle();
+			if (qhead != qtail)
+				continue;
+		}
 		t = timer_next();
 		if (caret.hwnd && caret.shown > 0 && (t < 0 || t > 100))
 			t = 100;

@@ -43,12 +43,15 @@ trim(s)
 
 /* [section] line? its name in out */
 static int
-issection(l, out)
-	char *l, *out;
+issection(line, out)
+	char *line, *out;
 {
-	char *e;
+	char buf[MAXLINE], *l, *e;
 
-	l = trim(l);
+	/* a copy: the line is written back as it is */
+	strncpy(buf, line, sizeof buf - 1);
+	buf[sizeof buf - 1] = 0;
+	l = trim(buf);
 	if (*l != '[' || (e = strchr(l, ']')) == 0)
 		return 0;
 	memcpy(out, l + 1, e - l - 1);
@@ -158,7 +161,7 @@ profile_put(file, sect, key, value)
 		while (fgets(line, sizeof line, fp)) {
 			if (issection(line, name)) {
 				if (in && !done && key && value) {
-					fprintf(out, "%s=%s\n", key, value);
+					fprintf(out, "%s=%s\r\n", key, value);
 					done = 1;
 				}
 				in = w16_stricmp(name, sect) == 0;
@@ -177,7 +180,7 @@ profile_put(file, sect, key, value)
 					*eq = 0;
 					if (w16_stricmp(trim(v), key) == 0) {
 						if (value)
-							fprintf(out, "%s=%s\n", key, value);
+							fprintf(out, "%s=%s\r\n", key, value);
 						done = 1;
 						continue;
 					}
@@ -189,8 +192,8 @@ profile_put(file, sect, key, value)
 	}
 	if (!done && key && value) {
 		if (!in)
-			fprintf(out, "\n[%s]\n", sect);
-		fprintf(out, "%s=%s\n", key, value);
+			fprintf(out, "\r\n[%s]\r\n", sect);
+		fprintf(out, "%s=%s\r\n", key, value);
 	}
 	(void)seen;
 	fclose(out);

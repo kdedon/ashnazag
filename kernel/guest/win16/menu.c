@@ -299,6 +299,62 @@ itemw(it)
 	return draw_textw(mfont(), t, tab ? tab - t : strlen(t)) - (strchr(t, '&') ? draw_textw(mfont(), "&", 1) : 0);
 }
 
+/* frames whose bar shows a maximized MDI child's system menu and restore button */
+#define	NMDIMAX	16
+static u16 mdiframe[NMDIMAX], mdichild[NMDIMAX];
+static int barlayout();
+
+static u16
+mdimaxof(w)
+	struct wnd *w;
+{
+	int i;
+
+	for (i = 0; i < NMDIMAX; i++)
+		if (mdiframe[i] && mdiframe[i] == w->h && wnd_get(mdichild[i]))
+			return mdichild[i];
+	return 0;
+}
+
+void
+menu_mdimax(frame, child)
+	struct wnd *frame;
+	u16 child;
+{
+	int i, f = -1;
+
+	for (i = 0; i < NMDIMAX; i++)
+		if (mdiframe[i] == frame->h || (f < 0 && !mdiframe[i]))
+			f = i;
+	if (f < 0)
+		return;
+	mdiframe[f] = child ? frame->h : 0;
+	mdichild[f] = child;
+	wnd_setpos(frame, (struct wnd *)0, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+}
+
+/* 1 the child's system menu box, 2 its restore button, 0 neither */
+int
+menu_mdibutton(w, x, y)
+	struct wnd *w;
+	int x, y;
+{
+	int b = frame_width(w), s = sys_metric(SM_CYMENU), top;
+	struct menu *m = mget(w->id);
+
+	if (!m || !mdimaxof(w))
+		return 0;
+	barlayout(w, m);
+	top = m->n ? m->it[0].r.t : w->cr.t - s;
+	if (y < top || y >= top + s)
+		return 0;
+	if (x >= w->wr.l + b && x < w->wr.l + b + s)
+		return 1;
+	if (x >= w->wr.r - b - s && x < w->wr.r - b)
+		return 2;
+	return 0;
+}
+
 /* lay the bar out in w; its height */
 static int
 barlayout(w, m)
@@ -309,6 +365,10 @@ barlayout(w, m)
 
 	left = w->wr.l + b;
 	right = w->wr.r - b;
+	if (mdimaxof(w)) {
+		left += h;
+		right -= h;
+	}
 	y = w->wr.t + b + ((w->style & WS_CAPTION) == WS_CAPTION ? sys_metric(SM_CYCAPTION) - 1 : 0);
 	if ((w->style & WS_CAPTION) == WS_CAPTION && !(w->style & WS_THICKFRAME) &&
 	    !(w->exstyle & WS_EX_DLGMODALFRAME))
@@ -417,6 +477,13 @@ menu_drawbar(w, dc)
 	d_fillcolor(dc, &r, pal_index(sys_color(COLOR_MENU)));
 	for (i = 0; i < m->n; i++)
 		drawitem(dc, &m->it[i], &m->it[i].r, barwnd == w && i == barsel, 1);
+	if (mdimaxof(w)) {
+		extern void draw_sysbox(), draw_capbutton();
+		int s = sys_metric(SM_CYMENU);
+
+		draw_sysbox(dc, w->wr.l + frame_width(w), top, s - 1);
+		draw_capbutton(dc, w->wr.r - frame_width(w) - s, top, s - 1, 2, 0);
+	}
 	r_set(&r, w->wr.l + frame_width(w), bottom, w->wr.r - frame_width(w), bottom + 1);
 	d_fillcolor(dc, &r, 0);
 }
@@ -1094,6 +1161,40 @@ removeitem(a, del)
 	memmove(&t->it[i], &t->it[i + 1], (t->n - i - 1) * sizeof *t->it);
 	t->n--;
 	return 1;
+}
+
+/*
+ * MDI's list of windows at the end of a popup: items idfirst.. with
+ * titles, the one at checked marked, after a separator; the old list
+ * (and its separator, id 0xfffe) goes first.
+ */
+void
+menu_mdilist(h, idfirst, n, titles, checked)
+	u32 h;
+	int idfirst, n, checked;
+	char **titles;
+{
+	struct menu *m = mget(h);
+	int i;
+	char buf[80];
+
+	if (!m)
+		return;
+	for (i = 0; i < m->n; )
+		if ((m->it[i].id >= idfirst && m->it[i].id < idfirst + 100 && !(m->it[i].flags & MF_POPUP)) ||
+		    ((m->it[i].flags & MF_SEPARATOR) && m->it[i].id == 0xfffe)) {
+			if (m->it[i].text)
+				free(m->it[i].text);
+			memmove(&m->it[i], &m->it[i + 1], (m->n - i - 1) * sizeof *m->it);
+			m->n--;
+		} else
+			i++;
+	if (n > 0)
+		mins(m, -1, MF_SEPARATOR, 0xfffe, (char *)0, 0);
+	for (i = 0; i < n && i < 9; i++) {
+		sprintf(buf, "&%d %.60s", i + 1, titles[i] ? titles[i] : "");
+		mins(m, -1, i == checked ? MF_CHECKED : 0, idfirst + i, buf, 0);
+	}
 }
 
 static u32 m_RemoveMenu(a) u32 *a; { return removeitem(a, 0); }

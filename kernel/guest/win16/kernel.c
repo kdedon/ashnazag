@@ -497,7 +497,7 @@ k_GlobalLock(a)
 {
 	struct gblock *b = g_block(a[0]);
 
-	if (!b)
+	if (!b || b->gb_discarded)
 		return 0;
 	b->gb_lock++;
 	return FP(SEL(b - gblk), 0);
@@ -535,7 +535,7 @@ k_GlobalFlags(a)
 
 	if (!b)
 		return 0;
-	return (b->gb_lock & 0xff) | (b->gb_flags & GMEM_DISCARDABLE);
+	return (b->gb_lock & 0xff) | (b->gb_flags & GMEM_DISCARDABLE) | (b->gb_discarded ? GMEM_DISCARDED : 0);
 }
 
 static u32 k_GlobalCompact(a) u32 *a; { return g_free_bytes(); }

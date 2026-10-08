@@ -1773,7 +1773,7 @@ combo_proc(a)
 void
 controls_init()
 {
-	extern void menu_init(), dialog_init();
+	extern void menu_init(), dialog_init(), mdi_init();
 	u32 p;
 
 	p = thunk_internal(button_proc, "wwwl", 'l', "ButtonWndProc");
@@ -1790,6 +1790,7 @@ controls_init()
 	cls_register("ScrollBar", CS_GLOBALCLASS | CS_DBLCLKS | CS_PARENTDC, p, 0, 0, 0, 0, cur_arrow, 0, (u32)0, 1);
 	menu_init();
 	dialog_init();
+	mdi_init();
 }
 
 /* ---- the dialog-directory calls ---- */

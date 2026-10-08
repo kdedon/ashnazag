@@ -339,7 +339,8 @@ g_free(h)
 	if (!b)
 		return h;
 	ix = b - gblk;
-	lfree(b->gb_base, b->gb_room);
+	if (b->gb_room)
+		lfree(b->gb_base, b->gb_room);
 	sel_free(SEL(ix), b->gb_nsel);
 	memset((char *)b, 0, sizeof *b);
 	return 0;
@@ -378,8 +379,44 @@ g_realloc(h, size, flags)
 		    (flags & (GMEM_MOVEABLE | GMEM_DISCARDABLE));
 		return SEL(ix);
 	}
+	/* discarding: the memory goes, the handle stays; GlobalLock gives 0 */
+	if (size == 0 && (flags & GMEM_MOVEABLE)) {
+		if (b->gb_lock && !b->gb_discarded)
+			return 0;
+		if (b->gb_room)
+			lfree(b->gb_base, b->gb_room);
+		if (b->gb_nsel > 1)
+			sel_free(SEL(ix + 1), b->gb_nsel - 1);
+		b->gb_nsel = 1;
+		b->gb_base = b->gb_size = b->gb_room = 0;
+		b->gb_discarded = 1;
+		setsels(ix, 0, 0, b->gb_code);
+		LDT[ix].d_acc &= ~D_P;
+		segmoved(ix, 1);
+		return SEL(ix);
+	}
 	if (size == 0)
 		size = 1;
+	if (b->gb_discarded) {
+		/* back from discarded: new memory */
+		room = (size + 15) & ~15;
+		nsel = size > 0x10000 ? (size + 0xffff) >> 16 : 1;
+		for (i = 1; i < nsel; i++)
+			if (ix + i >= LDTSIZE || LDT[ix + i].d_acc || gblk[ix + i].gb_used)
+				return 0;
+		if ((base = lalloc(room)) == 0)
+			return 0;
+		if (flags & GMEM_ZEROINIT)
+			memset(M + base, 0, room);
+		b->gb_base = base;
+		b->gb_room = room;
+		b->gb_size = size;
+		b->gb_nsel = nsel;
+		b->gb_discarded = 0;
+		setsels(ix, base, size, b->gb_code);
+		segmoved(ix, nsel);
+		return SEL(ix);
+	}
 	nsel = size > 0x10000 ? (size + 0xffff) >> 16 : 1;
 	if (nsel > b->gb_nsel) {
 		/* more selectors: the ones after must be free */

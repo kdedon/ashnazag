@@ -3368,6 +3368,7 @@ struct impl g_impl[] = {
 	{ "GDI", "OffsetClipRgn", g_OffsetClipRgn },
 	{ "GDI", "GetClipBox", g_GetClipBox },
 	{ "GDI", "RectVisible", g_RectVisible },
+	{ "GDI", "RectVisibleOld", g_RectVisible },
 	{ "GDI", "PtVisible", g_PtVisible },
 	{ "GDI", "CreateCompatibleBitmap", g_CreateCompatibleBitmap },
 	{ "GDI", "CreateDiscardableBitmap", g_CreateDiscardableBitmap },
