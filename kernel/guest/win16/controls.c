@@ -888,6 +888,24 @@ lb_show(w, i)
 	lb_scrollbar(w);
 }
 
+/* owner-drawn without strings: the item whose data is this, after start */
+static int
+lb_finddata(w, start, data)
+	struct wnd *w;
+	int start;
+	u32 data;
+{
+	struct lb *l = lbof(w);
+	int i, k;
+
+	for (k = 0; k < l->n; k++) {
+		i = (start + 1 + k) % l->n;
+		if (i >= 0 && l->it[i].data == data)
+			return i;
+	}
+	return -1;
+}
+
 static int
 lb_find(w, start, s, exact)
 	struct wnd *w;
@@ -1273,7 +1291,7 @@ listbox_proc(a)
 	case WM_USER + 12:	/* LB_GETCOUNT */
 		return l->n;
 	case WM_USER + 13:	/* LB_SELECTSTRING */
-		i = lb_find(w, (short)a[2], STR(a[3]), 0);
+		i = hasstrings(w) ? lb_find(w, (short)a[2], STR(a[3]), 0) : lb_finddata(w, (short)a[2], a[3]);
 		if (i < 0)
 			return LB_ERR;
 		l->cur = i;
@@ -1287,12 +1305,8 @@ listbox_proc(a)
 		return l->top;
 	case WM_USER + 16:	/* LB_FINDSTRING */
 	case WM_USER + 35:	/* LB_FINDSTRINGEXACT */
-		if (!hasstrings(w)) {
-			for (i = 0; i < l->n; i++)
-				if (l->it[i].data == a[3])
-					return i;
-			return LB_ERR;
-		}
+		if (!hasstrings(w))
+			return (i = lb_finddata(w, (short)a[2], a[3])) < 0 ? LB_ERR : i;
 		i = lb_find(w, (short)a[2], STR(a[3]), a[1] == WM_USER + 35);
 		return i < 0 ? LB_ERR : i;
 	case WM_USER + 17:	/* LB_GETSELCOUNT */
