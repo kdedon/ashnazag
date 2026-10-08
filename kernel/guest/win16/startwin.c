@@ -271,7 +271,7 @@ static void
 usage()
 {
 	fprintf(stderr, "usage: startwin [-C dir] [-D X=dir]... [-m MB] [-g WxH] [-v] [-S script] [-o shot.ppm] [program [args]]\n"
-	    "       startwin [-C dir] -install windows-disks-or-directory\n");
+	    "       startwin [-C dir] -install disk.img... | disks-directory | windows-directory\n");
 	exit(2);
 }
 
@@ -306,8 +306,8 @@ main(argc, argv)
 			scr_script = argv[++i];
 		else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc)
 			scr_shot = argv[++i];
-		else if (strcmp(argv[i], "-install") == 0 && i + 1 < argc)
-			inst = argv[++i];
+		else if (strcmp(argv[i], "-install") == 0)
+			inst = argv[i];
 		else if (strcmp(argv[i], "-strict") == 0)
 			w16_strict = 1;
 		else
@@ -325,7 +325,9 @@ main(argc, argv)
 	if (inst) {
 		extern int win_install();
 
-		return win_install(inst, cdir);
+		if (i >= argc)
+			usage();
+		return win_install(argc - i, argv + i, cdir);
 	}
 	if (!drive_root[2])
 		drive_root[2] = cdir;
