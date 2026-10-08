@@ -111,6 +111,16 @@ there (seg 0: all of the module); `W16_WATCH=sel:off` reports the API call
 that changed a guest word; with the memory screen, `W16_SND=file` keeps
 the sound played (Windows' sample formats, as given).
 
+Built with the memory screen (`scr_null.c`, as `tests/win16/run.sh` builds
+it), `-S script` feeds input from a script and `-o shot.ppm` writes the
+screen at the end. A script is one command a line (`#` comments): `wait
+MS`; `move X Y`; `click`, `rclick`, `dclick`, `down` and `up X Y`; `key VK
+...`, `keydown VK`, `keyup VK` (virtual keys, hex or decimal); `type TEXT`
+(with Shift as the characters need); `clickid ID [DX DY]` on a control of
+the active window, `clickitem ID N` on a list's item; `shot FILE` (PPM);
+`tree`, the window tree to standard error; `quit`. The script's end is a
+quit.
+
 ## Architecture
 
 - **x86 (`x86.c`)**: an 80386 integer core, 16-bit segments, protected mode
@@ -255,10 +265,14 @@ the test programs, `WATCOM`): builds `startwin` with the memory screen,
 checks `-install` on synthetic compressed disks, builds and runs the test
 programs in `tests/win16/src` with their input scripts, and compares what
 they report (`RESULT.TXT`) and their exit codes with `tests/win16/expect`.
-The x87 test compares inline x87 results with independently computed ones;
-the voice test checks SOUND.DRV's samples (length and pitch); the sock test
-runs Winsock over the loopback: a connection by blocking calls, select,
-WSAAsyncSelect's events and an asynchronous lookup.
+The programs: hello (a window with a line of text, closed by a timer),
+menus (a menu bar, accelerators, a modal dialog, MessageBox, string
+resources), ctrls (the standard controls in a dialog), fpu (inline x87 results against independently
+computed ones), voice (SOUND.DRV's samples, length and pitch), sock
+(Winsock over the loopback: a connection by blocking calls, select,
+WSAAsyncSelect's events and an asynchronous lookup) and meta (a picture
+recorded and played back pixel for pixel as drawn directly, EnumMetaFile,
+the metafile's bits, a disk metafile, one metafile played into another).
 `sh tests/win16/x86suite.sh` runs the 80386 instruction suite.
 `sh tests/win16/build.sh out` cross-builds the AMIX binary.
 
@@ -268,7 +282,22 @@ Windows; Notepad, Write, Cardfile, Calendar, Calculator, Clock, Solitaire,
 Minesweeper, PIF Editor, Clipboard Viewer, Task List, Control Panel, File
 Manager, Paintbrush, Character Map, Windows Help, Print Manager, Recorder,
 Object Packager, Sound Recorder and Media Player (playing through our wave
-driver), Terminal (up to its port settings).
+driver), Terminal (up to its port settings). With the user's Wabi 2.2 as
+well: the Wabi Tools group, the Configuration Manager, Wabi Registration,
+its Windows Install recognising the installation, the release notes and
+troubleshooting help, PowerPoint Viewer with the Sun advertisement and its
+sound (OLE to Sound Recorder); printing from Notepad and Write to the
+LaserJet III and the Epson FX-80 drivers, their output decoded and checked.
+
+## Known bugs
+
+- Wabi's Configuration Manager opens with its page over its tabs: the tab
+  control lays out its five tabs in two rows, but the first page is placed
+  for one row and covers it, so only the first tab ("DOS Emulator") shows
+  until another is chosen. Being investigated.
+- TrueType text at small sizes is not hinted: the outlines are scan
+  converted as they are, so stems and heights come out uneven at screen
+  sizes (Windows runs the fonts' hinting programs).
 
 ## Not done yet
 
@@ -277,11 +306,6 @@ driver), Terminal (up to its port settings).
   are written to the repository's conventions but unrun.
 - Serial ports (COMM.DRV's OpenComm and the rest over the host's ttys:
   Terminal), MIDI output, recording, printing to FILE: ports.
-- Wabi's Configuration Manager first shows its Diskette page over its
-  second row of tabs: at our 96 dpi it asks for 10 point MS Sans Serif,
-  as Windows maps it five tabs need two rows, and it places the page before
-  adding them. Choosing a tab places it right. Wabi, at its display's real
-  resolution, got a smaller face.
-- TrueType hinting, scaled raster fonts (a bitmap face stretched to a size
-  it lacks), the clipboard's formats beyond text, DDEML's advanced paths,
-  the MDI client's scroll bars, scaled cursors.
+- Scaled raster fonts (a bitmap face stretched to a size it lacks), the
+  clipboard's formats beyond text, DDEML's advanced paths, the MDI client's
+  scroll bars, scaled cursors.

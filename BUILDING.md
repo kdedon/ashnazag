@@ -87,6 +87,7 @@ Optional open-source downloads: `--tos-src` (EmuTOS 1.4, fVDI), `--x11` (X11R6.3
 | tos | `tests/run-qemu.sh` (t_tos) | suite + `--tos-src` |
 | amiga | `tests/run-qemu.sh` (t_amiga), `images/amigaenv/mkamiga.sh` | suite + AmigaOS 3.2 CD |
 | falcon | `PLATFORM=atari sh kernel/build.sh`, `kernel/atari/mkdisk.sh` | kernel + tape 02, 03, 10, `--tos-src`; Hatari for tests (`kernel/atari/build-hatari.sh`) |
+| win16 | `sh tests/win16/run.sh` (on the host), `sh tests/win16/build.sh out`, `images/winenv/mkwin.sh` | the host's C compiler; Open Watcom 2 (`WATCOM`, default `toolchain/watcom`; not built by setup.sh) for the test programs; the AMIX toolchain for the AMIX binary. No Windows or Wabi files: each user installs theirs at run time (`startwin -install`, `docs/win16-design.md`) |
 
 ## The A/UX disk
 

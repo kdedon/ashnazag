@@ -18,7 +18,7 @@ QEMU's `q800` machine with a real Quadra 800 ROM; hardware testing is in progres
 | `kernel/mac/` | Quadra 800 platform layer: boot, MMU map, SCC, 53C96 SCSI, DAFB console, ADB, SONIC, RTC, device tables, root selection, boot blocks |
 | `kernel/dlm/` | SVR4.2-style loadable kernel modules |
 | `kernel/amiga/` | Amiga host: amilib (AmigaOS libraries run in the kernel) and the opci module, the PCI bus through openpci.library |
-| `kernel/guest/` | A/UX personality: trap gates, A/UX system calls, COFF and shared-library exec, Mac environment interface (screens, events, cursor, PRAM) |
+| `kernel/guest/` | A/UX personality: trap gates, A/UX system calls, COFF and shared-library exec, Mac environment interface (screens, events, cursor, PRAM); the TOS (`tos/`), CP/M-68K (`cpm/`) and Windows 3.x (`win16/`, see `docs/win16-design.md`) environments |
 | `kernel/otbridge/` | Open Transport bridge: STREAMS module, virtual Ethernet stations on the SONIC, ASLM library builder, Mac `.ENET` driver |
 | `x11/` | X11R6.3 server for the Mac screen (build, patches, session scripts, image builder) |
 | `kernel/tools/`, `kernel/build.sh` | build: AMIX link kit relink, port build, Mac overlay, checks |
@@ -34,6 +34,7 @@ Nothing proprietary is in this repository. To build you supply:
 
 - the AMIX 2.1 tape archive (both parts) and its 2.1 patch disk
 - for disk images and the Mac environment: A/UX 3.1, Mac OS CDs and Quadra ROM images
+- for the Windows 3.x environment, at run time (each user installs it with `startwin -install`): Windows 3.1 or 3.11 and, for Wabi's tools and printer drivers, Wabi 2.2
 
 `tools/setup.sh` builds the toolchains and fetches the rest; see `BUILDING.md`.
 
