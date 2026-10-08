@@ -2215,6 +2215,50 @@ enumfonts(a, fam)
 
 static u32 g_EnumFonts(a) u32 *a; { return enumfonts(a, 0); }
 static u32 g_EnumFontFamilies(a) u32 *a; { return enumfonts(a, 1); }
+/*
+ * EnumObjects: the device's own pens or brushes, as a VGA driver lists
+ * them: a solid one of each of the 16 colours (and the hatched brushes
+ * in black).
+ */
+static u32
+g_EnumObjects(a)
+	u32 *a;
+{
+	static COLORREF vga[16] = {
+		RGB(0, 0, 0), RGB(255, 255, 255), RGB(128, 0, 0), RGB(0, 128, 0), RGB(0, 0, 128), RGB(128, 128, 0),
+		RGB(128, 0, 128), RGB(0, 128, 128), RGB(128, 128, 128), RGB(192, 192, 192), RGB(255, 0, 0),
+		RGB(0, 255, 0), RGB(0, 0, 255), RGB(255, 255, 0), RGB(255, 0, 255), RGB(0, 255, 255)
+	};
+	u16 g = g_alloc(GMEM_ZEROINIT, 16, 0);
+	u32 p = sel_base(g), r = 1;
+	int i, pen = (a[1] & 0xffff) == 1;
+
+	if ((a[1] & 0xffff) != 1 && (a[1] & 0xffff) != 2) {
+		g_free(g);
+		return 0;
+	}
+	for (i = 0; r && i < (pen ? 16 : 22); i++) {
+		memset(M + p, 0, 16);
+		if (pen) {
+			PW(p, PS_SOLID);	/* LOGPEN: style, width (a point), colour */
+			PW(p + 2, 1);
+			PL(p + 6, vga[i]);
+		} else if (i < 16) {
+			PW(p, BS_SOLID);	/* LOGBRUSH: style, colour, hatch */
+			PL(p + 2, vga[i]);
+		} else {
+			PW(p, BS_HATCHED);
+			PW(p + 6, i - 16);
+		}
+		cb_begin();
+		cb_push32(FP(g, 0));
+		cb_push32(a[3]);
+		r = cb_call(a[2], 0) & 0xffff;
+	}
+	g_free(g);
+	return r;
+}
+
 /* AddFontResource(file): its fonts join the list (a module handle in the low word is not handled) */
 static u32
 g_AddFontResource(a)
@@ -3430,6 +3474,7 @@ struct impl g_impl[] = {
 	{ "GDI", "EnumFonts", g_EnumFonts },
 	{ "GDI", "EnumFontFamilies", g_EnumFontFamilies },
 	{ "GDI", "AddFontResource", g_AddFontResource },
+	{ "GDI", "EnumObjects", g_EnumObjects },
 	{ "GDI", "SetObjectOwner", g_SetObjectOwner },
 	{ "GDI", "RemoveFontResource", g_RemoveFontResource },
 	{ "GDI", "CreateRectRgn", g_CreateRectRgn },

@@ -297,6 +297,12 @@ g_alloc(flags, size, owner)
 	u32 room = (size + 15) & ~15, base;
 	struct gblock *b;
 
+	/* moveable and no size: a handle born discarded, as in Windows (SHELL's registry starts so) */
+	if (size == 0 && (flags & GMEM_MOVEABLE)) {
+		u16 h = g_alloc(flags, (u32)1, owner);
+
+		return h ? g_realloc(h, (u32)0, GMEM_MOVEABLE) : 0;
+	}
 	if (size > 16 * 1024 * 1024)
 		return 0;
 	if (room == 0)
@@ -548,6 +554,17 @@ l_init(sel, start, end)
 		return 0;
 	sel = SEL(b - gblk);
 	limit = LDT[SELIX(sel)].d_limit;
+	/* no start: the heap at the segment's end, end bytes of it (a DLL's LibEntry asks so) */
+	if (start == 0) {
+		u32 size = b->gb_size > 0xffff ? 0xffff : b->gb_size;
+
+		if (end > 0xfffe)
+			end = 0xfffe;
+		if (end + 1 >= size)
+			return 0;
+		start = size - 1 - end;
+		end = size - 1;
+	}
 	if (end > limit)
 		end = limit;
 	start = (start + 3) & ~3;

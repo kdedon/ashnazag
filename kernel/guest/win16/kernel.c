@@ -305,7 +305,7 @@ libinit(m)
 {
 	u32 r;
 
-	if (!m->m_dll || m->m_native || !m->m_cs || m->m_ref > 1)
+	if (!m->m_dll || m->m_native || !m->m_cs)
 		return 1;
 	if (m->m_dgroup && m->m_heap)
 		l_init(m->m_hinst, m->m_seg[m->m_dgroup].ns_alloc - m->m_heap,
@@ -327,10 +327,12 @@ initdeps(m, depth)
 {
 	int i;
 
-	if (depth > 16 || m->m_native)
+	/* once a module: a DLL two others import is initialised all the same (SHELL) */
+	if (depth > 16 || m->m_native || m->m_init)
 		return;
+	m->m_init = 1;
 	for (i = 0; i < m->m_nimp; i++)
-		if (m->m_imp[i] && !m->m_imp[i]->m_native && m->m_imp[i]->m_ref == 1)
+		if (m->m_imp[i] && !m->m_imp[i]->m_native)
 			initdeps(m->m_imp[i], depth + 1);
 	if (m->m_dll && !(m->m_flags & 0x4000))
 		libinit(m);
@@ -346,8 +348,7 @@ k_LoadLibrary(a)
 	m = mod_load(STR(a[0]), &err);
 	if (!m)
 		return err ? err : 2;
-	if (m->m_ref == 1)
-		initdeps(m, 0);
+	initdeps(m, 0);
 	return m->m_hinst;
 }
 

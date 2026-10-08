@@ -330,6 +330,39 @@ mkdirs(root)
 	mkdir(p, 0755);
 }
 
+/*
+ * The registration database as Setup leaves it: the user's REGEDIT /S
+ * SETUP.REG, run once before the first program (there is no REG.DAT
+ * yet).  OLE servers such as Paintbrush register in it.
+ */
+static void
+setupreg()
+{
+	extern char windir[], sysdir[];
+	extern int dos_chdir();
+	char dos[300], host[1024], cmd[300];
+	struct module *m;
+	struct task *t;
+	int err;
+
+	sprintf(dos, "%s\\REG.DAT", windir);
+	if (dos_hostpath(dos, host, sizeof host, 0) == 0 && access(host, 0) == 0)
+		return;
+	sprintf(dos, "%s\\SETUP.REG", sysdir);
+	if (dos_hostpath(dos, host, sizeof host, 0) != 0 || access(host, 0) != 0)
+		return;
+	sprintf(dos, "%s\\REGEDIT.EXE", windir);
+	if ((m = mod_load(dos, &err)) == 0 || m->m_dll)
+		return;
+	dos_chdir(windir);
+	initdeps(m, 0);
+	sprintf(cmd, "/S %s\\SETUP.REG", sysdir);
+	if (w16_debug)
+		w16_log("startwin: REGEDIT %s\n", cmd);
+	if ((t = task_new(m, cmd, SW_HIDE)) != 0)
+		task_run(t);
+}
+
 static void
 usage()
 {
@@ -435,6 +468,17 @@ main(argc, argv)
 	kernel_init();
 	thunk_init();
 	user_init();
+	/*
+	 * A stack of the session's own, for what runs outside any task: DLL
+	 * initialisation before a program starts (Windows uses the loading
+	 * task's), the callbacks it makes.
+	 */
+	{
+		u16 ss = g_alloc(GMEM_FIXED | GMEM_ZEROINIT, (u32)0x4000, 0);
+
+		x86_loadseg(cpu, S_SS, ss);
+		cpu->r[R_SP] = 0x3ffe;
+	}
 	/* the program */
 	if (i < argc)
 		strncpy(prog, argv[i++], sizeof prog - 1);
@@ -489,6 +533,7 @@ main(argc, argv)
 		if (dos_hostpath(ini, host, sizeof host, 0) != 0 || access(host, 0) != 0)
 			ddesetup_arm();
 	}
+	setupreg();
 	m = mod_load(dos, &err);
 	if (!m) {
 		fprintf(stderr, "startwin: %s: %s\n", prog, err == 2 ? "not found" : err == 11 ? "not a Windows program" :

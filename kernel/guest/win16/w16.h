@@ -125,6 +125,7 @@ struct module {
 	u16	m_hmod;		/* selector of its module database (the NE header) */
 	u16	m_hinst;	/* its DGROUP selector, or hmod without one */
 	u16	m_ref;
+	u8	m_init;		/* its imports initialised and its LibMain run */
 	u16	m_flags;	/* NE flags */
 	u16	m_dgroup;	/* segment number, 0 none */
 	u16	m_heap, m_stack;

@@ -33,6 +33,7 @@ struct tctx {
 
 struct task *curtask, *tasks[NTASK];
 int ntasks;
+static struct tctx mainx;	/* the scheduler's own state, while a task runs */
 int task_endsession;		/* ExitWindows: every task ends with the session */
 static ucontext_t mainuc;
 static int rr;			/* where the round goes on */
@@ -247,10 +248,28 @@ task_run(first)
 		if (!t)
 			break;
 		rr = (i + 1) % NTASK;
+		/*
+		 * The scheduler's CPU and dispatcher state kept aside and put
+		 * back: a task that ends frees its callback stack, which the
+		 * globals still name (DLL initialisation after it wrote there).
+		 */
+		if (!mainx.xc) {
+			mainx.xc = (char *)calloc(1, x86_ctxsize());
+			mainx.th = (char *)calloc(1, thunk_ctxsize());
+			thunk_ctxnew(mainx.th);
+		}
+		mainx.regs = *cpu;
+		x86_ctxsave(mainx.xc);
+		thunk_ctxsave(mainx.th);
+		user_ctxsave(mainx.us);
 		load(t);
 		t->t_new = 0;
 		swapcontext(&mainuc, &TC(t)->uc);
 		save(t);
+		*cpu = mainx.regs;
+		x86_ctxload(mainx.xc);
+		thunk_ctxload(mainx.th);
+		user_ctxload(mainx.us);
 		curtask = 0;
 		if (t->t_done) {
 			if (w16_debug)
