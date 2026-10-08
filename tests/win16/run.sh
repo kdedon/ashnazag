@@ -17,6 +17,7 @@ B=$T/build/win16
 WATCOM=${WATCOM:-$AUX/toolchain/watcom}
 mkdir -p "$B/obj" "$B/progs" "$B/shots"
 for f in "$G"/*.c; do
+	[ "$(basename "$f")" != scr_fb.c ] || continue
 	o=$B/obj/$(basename "$f" .c).o
 	cc -std=gnu89 -O1 -w -I"$G" -c -o "$o" "$f"
 done
