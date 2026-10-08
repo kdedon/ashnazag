@@ -125,7 +125,7 @@ main(argc, argv)
 		if (strcmp(argv[1], envs[i][0]) == 0)
 			cmd = envs[i][1];
 	if (cmd == 0) {
-		fprintf(stderr, "usage: xdmenv mac|tos|amiga\n");
+		fprintf(stderr, "usage: xdmenv mac|tos|amiga|win\n");
 		return 2;
 	}
 	if ((pw = getpwuid(getuid())) == 0) {

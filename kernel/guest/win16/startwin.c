@@ -270,7 +270,8 @@ mkdirs(root)
 static void
 usage()
 {
-	fprintf(stderr, "usage: startwin [-C dir] [-D X=dir]... [-m MB] [-g WxH] [-v] [-S script] [-o shot.ppm] [program [args]]\n");
+	fprintf(stderr, "usage: startwin [-C dir] [-D X=dir]... [-m MB] [-g WxH] [-v] [-S script] [-o shot.ppm] [program [args]]\n"
+	    "       startwin [-C dir] -install windows-disks-or-directory\n");
 	exit(2);
 }
 
@@ -282,7 +283,7 @@ main(argc, argv)
 	char *home = getenv("HOME"), *cdir = 0, cmd[128], dos[300], prog[300], *p;
 	int i, w = 640, h = 480, mb = 8, err, code, len;
 	struct module *m;
-	char cwd[1024];
+	char cwd[1024], *inst = 0;
 
 	for (i = 1; i < argc && argv[i][0] == '-'; i++) {
 		if (strcmp(argv[i], "-C") == 0 && i + 1 < argc)
@@ -305,6 +306,8 @@ main(argc, argv)
 			scr_script = argv[++i];
 		else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc)
 			scr_shot = argv[++i];
+		else if (strcmp(argv[i], "-install") == 0 && i + 1 < argc)
+			inst = argv[++i];
 		else if (strcmp(argv[i], "-strict") == 0)
 			w16_strict = 1;
 		else
@@ -319,6 +322,11 @@ main(argc, argv)
 		cdir = buf;
 	}
 	mkdirs(cdir);
+	if (inst) {
+		extern int win_install();
+
+		return win_install(inst, cdir);
+	}
 	if (!drive_root[2])
 		drive_root[2] = cdir;
 	if (home && !drive_root[7])

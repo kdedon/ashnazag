@@ -23,6 +23,24 @@ for f in "$G"/*.c; do
 done
 cc -o "$B/startwin" "$B"/obj/*.o -lm
 echo "[ok] startwin for this host"
+# -install from setup disks: SETUP.INF placing the files, SZDD expanded,
+# our own modules (USER.EXE) left out
+I=$B/install
+rm -rf "$I"
+mkdir -p "$I/d/DISK1" "$I/d/DISK2"
+head -c 3000 "$G/user.c" > "$I/CALC.EXE"
+head -c 999 "$G/gdi.c" > "$I/COMMDLG.DLL"
+printf 'x' > "$I/USER.EXE"
+printf '[windows]\r\n2:calc.exe, "Calculator"\r\n[windows.system]\r\n1:commdlg.dll\r\n1:user.exe\r\n' \
+	> "$I/d/DISK1/SETUP.INF"
+python3 "$T/win16/szdd.py" "$I/CALC.EXE" "$I/d/DISK2/CALC.EX_"
+python3 "$T/win16/szdd.py" "$I/COMMDLG.DLL" "$I/d/DISK1/COMMDLG.DL_"
+python3 "$T/win16/szdd.py" "$I/USER.EXE" "$I/d/DISK1/USER.EX_"
+"$B/startwin" -C "$I/c" -install "$I/d" > "$I/log"
+cmp -s "$I/CALC.EXE" "$I/c/windows/calc.exe" && cmp -s "$I/COMMDLG.DLL" "$I/c/windows/system/commdlg.dll" &&
+	[ ! -f "$I/c/windows/system/user.exe" ] && [ -f "$I/c/windows/system.ini" ] ||
+	{ cat "$I/log"; echo "[FAIL] startwin -install"; exit 1; }
+echo "[ok] startwin -install"
 if [ ! -x "$WATCOM/binl64/wcl" ] && [ ! -x "$WATCOM/binl/wcl" ]; then
 	echo "[skip] no Open Watcom in $WATCOM: the test programs are not built"
 	exit 0
