@@ -233,6 +233,8 @@ fi
 	cpio -it < "$E/cpm/cpm.cpio" 2> /dev/null | grep -q CPM.SYS &&
 		printf '%s\n' ' CP/M   startcpm        CP/M-68K in this terminal; EXIT ends it' \
 		'                        drives A: to P: are ~/CPM/A to ~/CPM/P'
+	cpio -it < "$E/win/win.cpio" 2> /dev/null | grep -q startwin &&
+		printf '%s\n' ' Win16  startwin        Windows 3.x programs; startwin -install your disks first'
 	:; }
   [ -z "$X11" ] || echo ' X      startx          twm; or  xsession  for a menu of sessions'
   echo ' Sound  sndtest         a tone through the DMA sound'
