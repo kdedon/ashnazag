@@ -1,7 +1,7 @@
 #!/bin/sh
 # xsession -- the X session chooser and its sessions.
 #
-#   xsession [twm|xview|mac|tos|amiga|console|cpm]
+#   xsession [twm|xview|mac|tos|amiga|win|console|cpm]
 #
 # Under xdm (no argument) it offers the installed sessions with the last
 # one, kept in $HOME/.xsession-choice, as the default: Return or 10 s
@@ -36,6 +36,7 @@ envs=
 [ -x /usr/bin/startmac ] && envs="$envs mac"
 [ -x /usr/bin/starttos ] && envs="$envs tos"
 [ -x /usr/bin/startmig ] && envs="$envs amiga"
+[ -x /usr/bin/startwin ] && envs="$envs win"
 # CP/M-68K runs in a terminal, listed last so the others keep their numbers
 cpm=
 [ -x /usr/bin/startcpm ] && cpm=cpm
@@ -46,6 +47,7 @@ label() {
 	mac) echo "Mac environment" ;;
 	tos) echo "TOS environment" ;;
 	amiga) echo "Amiga environment" ;;
+	win) echo "Windows 3.x programs (Win16)" ;;
 	console) echo "Console (full-screen terminal)" ;;
 	cpm) echo "CP/M-68K environment" ;;
 	esac
@@ -119,7 +121,7 @@ xview)
 	xterm -geometry 80x24+16+40 &
 	exec olvwm
 	;;
-mac|tos|amiga)
+mac|tos|amiga|win)
 	exec xdmenv $name
 	;;
 console|cpm)

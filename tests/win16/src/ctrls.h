@@ -1,0 +1,10 @@
+#define	IDD_CTRLS	100
+#define	IDC_EDIT	101
+#define	IDC_MEMO	102
+#define	IDC_LIST	103
+#define	IDC_COMBO	104
+#define	IDC_CHECK	105
+#define	IDC_RADIO1	106
+#define	IDC_RADIO2	107
+#define	IDC_SCROLL	108
+#define	IDC_POS		109

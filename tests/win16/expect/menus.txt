@@ -1,0 +1,8 @@
+started
+new menu
+new accel
+check off
+about ok name=Bob
+dialog returned 1
+open yes
+exit

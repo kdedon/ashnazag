@@ -1,0 +1,12 @@
+open 1
+open again -1
+accent 0
+a4 quarter 0
+rest eighth 0
+c4 dotted eighth 0
+bad note -4
+queued 3
+start 0
+wait 0
+left 0
+open after close 1

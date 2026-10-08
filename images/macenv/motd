@@ -7,8 +7,10 @@
  Amiga  startmig        Workbench; -m MB fast RAM (or fastmb=MB in .env)
  CP/M   startcpm        CP/M-68K in this terminal; EXIT ends it
                         drives A: to P: are ~/CPM/A to ~/CPM/P
+ Win16  startwin        Windows 3.x programs (Program Manager); first
+                        startwin -install DISK1.IMG ... (your Windows disks)
  X      startx          twm; or  xsession  for a menu of sessions, or
-        xsession twm|xview|mac|tos|amiga|console|cpm
+        xsession twm|xview|mac|tos|amiga|win|console|cpm
 
  Ctrl-Option-Command-0 shows the console, -1 to -9 the sessions.
  Ctrl-C on the console ends TOS or the Amiga.
