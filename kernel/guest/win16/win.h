@@ -612,6 +612,7 @@ extern int draw_textw();		/* (bfont, text, n) */
 #define	WS_EX_TOPMOST	0x00000008
 #define	WS_EX_ACCEPTFILES 0x00000010
 #define	WS_EX_TRANSPARENT 0x00000020
+#define	WS_EX_MDICHILD	0x00000040
 
 #define	CS_VREDRAW	0x0001
 #define	CS_HREDRAW	0x0002

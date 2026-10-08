@@ -7,8 +7,9 @@
  *		 [-o shot.ppm] [program [arguments]]
  *
  * Drive C: is dir (default ~/WIN16, made with WINDOWS, WINDOWS\SYSTEM
- * and TEMP in it), H: the home directory and R: the root, as Wabi had
- * them; -D adds others.  A program named without a drive is looked for
+ * and TEMP in it), H: the home directory, R: the root and W: Wabi's
+ * home as `-install' put it (dir/wabihome), as Wabi had them; -D adds
+ * others.  A program named without a drive is looked for
  * in the current directory, then C:\WINDOWS.  Without a program,
  * C:\WINDOWS\PROGMAN.EXE if it is there.  -m sets guest memory (8 MB),
  * -g the screen where the device lets us choose, -v more messages
@@ -433,6 +434,14 @@ main(argc, argv)
 		drive_root[7] = home;
 	if (!drive_root[17])
 		drive_root[17] = "/";
+	if (!drive_root[22]) {
+		static char wh[600];
+		struct stat st;
+
+		sprintf(wh, "%.500s/wabihome", cdir);
+		if (stat(wh, &st) == 0 && S_ISDIR(st.st_mode))
+			drive_root[22] = wh;
+	}
 	/* the current directory, as a drive if it is under one */
 	dos_init();
 	dos_drive = 2;
@@ -524,14 +533,13 @@ main(argc, argv)
 			w16_upper(dos);
 		}
 	}
-	/* Program Manager with no groups yet: Setup's, by DDE, once it is up */
+	/* Program Manager with no groups yet: Setup's, by DDE, once it is up; Wabi's group */
 	if ((p = strrchr(dos, '\\')) != 0 && w16_stricmp(p + 1, "PROGMAN.EXE") == 0) {
 		extern void ddesetup_arm();
 		char ini[300], host[1024];
 
 		sprintf(ini, "%s\\PROGMAN.INI", windir);
-		if (dos_hostpath(ini, host, sizeof host, 0) != 0 || access(host, 0) != 0)
-			ddesetup_arm();
+		ddesetup_arm(dos_hostpath(ini, host, sizeof host, 0) != 0 || access(host, 0) != 0);
 	}
 	setupreg();
 	/* the installable drivers USER opens at the start: MMSYSTEM, which opens the wave and timer drivers */

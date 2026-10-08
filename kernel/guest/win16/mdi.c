@@ -16,7 +16,6 @@
 #include "w16.h"
 #include "win.h"
 
-#define	WS_EX_MDICHILD	0x0040
 #define	MDIS_ALLCHILDSTYLES 0x0001
 #define	SC_PREVWINDOW	0xf050
 #define	NCHILD		64

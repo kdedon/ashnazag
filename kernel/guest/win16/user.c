@@ -1282,6 +1282,13 @@ wnd_show(w, cmd)
 		}
 	} else if (!show && wnd_focus && (wnd_focus == w || IsChildOf(w, wnd_focus)))
 		wnd_setfocus(w->parent);
+	else if (show && (w->exstyle & WS_EX_MDICHILD) && (cmd == SW_SHOWNORMAL || cmd == SW_SHOW || cmd == SW_RESTORE ||
+	    cmd == SW_SHOWMAXIMIZED || cmd == SW_SHOWMINIMIZED)) {
+		/* an MDI document, as SetWindowPos without SWP_NOACTIVATE: to the top, and told, so activated */
+		wnd_setpos(w, (struct wnd *)0, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+		if (wnd_get(w->h))
+			wnd_send(w, WM_CHILDACTIVATE, 0, 0);
+	}
 }
 
 int

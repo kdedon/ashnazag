@@ -4,7 +4,9 @@
  * [progman.groups] section and the sections it names), sent to Program
  * Manager as DDE commands (CreateGroup, AddItem, ShowGroup) once it is
  * up and idle.  Items whose program is not installed are left out, as
- * are the DOS prompt and Setup, which have no place here.
+ * are the DOS prompt and Setup, which have no place here.  After them,
+ * as Wabi's engine did, the commands of C:\WABI_GRP.TMP (one a line, its
+ * group's: `-install' writes it from Wabi's wg_new.lst), which then goes.
  */
 
 #include <stdio.h>
@@ -19,13 +21,15 @@
 #define	WM_DDE_ACK	0x03e4
 #define	WM_DDE_EXECUTE	0x03e8
 
-#define	NCMD	16
+#define	NCMD	32
 
 static char *cmds[NCMD];	/* one execute a group */
 static int ncmds, next, state;	/* 0 off, 1 looking for Program Manager, 2 executing, 3 waiting for the ack */
 static struct wnd *me;
 static u16 server, pending;
 static int tries;
+static int showmain;
+static char grptmp[1024];	/* WABI_GRP.TMP, to go when done */
 
 /* a host path for a DOS one, if the file is there */
 static int
@@ -142,9 +146,7 @@ readgroups(inf)
 		}
 		cmds[ncmds++] = strdup(buf);
 	}
-	/* Main in front, as Setup leaves it */
-	if (ncmds < NCMD && section(inf, "group3"))
-		cmds[ncmds++] = strdup("[ShowGroup(Main,1)]");
+	showmain = section(inf, "group3") != 0;
 }
 
 static u32
@@ -157,6 +159,8 @@ proc(a)
 		if (state == 1 && !server)
 			server = LO16(a[2]);	/* sent back from the initiate */
 		else if (state == 3) {
+			if (w16_debug)
+				w16_log("startwin: progman %s: %s\n", (a[3] & 0x8000) ? "done" : "failed", cmds[next - 1]);
 			if (HI16(a[3]))
 				g_free(HI16(a[3]));
 			pending = 0;
@@ -167,9 +171,30 @@ proc(a)
 	return w ? user_defproc(w, a[1], a[2], a[3]) : 0;
 }
 
-/* from startwin: Program Manager is starting with no groups */
+/* Wabi's group: WABI_GRP.TMP's lines */
+static void
+readwabi()
+{
+	FILE *fp;
+	char l[512], *p;
+
+	if (dos_hostpath("C:\\WABI_GRP.TMP", grptmp, sizeof grptmp, 0) != 0 || (fp = fopen(grptmp, "r")) == 0) {
+		grptmp[0] = 0;
+		return;
+	}
+	while (fgets(l, sizeof l, fp) && ncmds < NCMD) {
+		for (p = l + strlen(l); p > l && (p[-1] == '\n' || p[-1] == '\r' || p[-1] == ' '); )
+			*--p = 0;
+		if (l[0] == '[')
+			cmds[ncmds++] = strdup(l);
+	}
+	fclose(fp);
+}
+
+/* from startwin: Program Manager is starting, with no groups yet if fresh */
 void
-ddesetup_arm()
+ddesetup_arm(fresh)
+	int fresh;
 {
 	extern char sysdir[];
 	char dos[300], host[1024], *inf;
@@ -177,17 +202,21 @@ ddesetup_arm()
 	long n;
 
 	sprintf(dos, "%s\\SETUP.INF", sysdir);
-	if (dos_hostpath(dos, host, sizeof host, 0) != 0 || (fp = fopen(host, "rb")) == 0)
-		return;
-	fseek(fp, 0L, 2);
-	n = ftell(fp);
-	fseek(fp, 0L, 0);
-	inf = (char *)malloc(n + 1);
-	n = fread(inf, 1, n, fp);
-	inf[n < 0 ? 0 : n] = 0;
-	fclose(fp);
-	readgroups(inf);
-	free(inf);
+	if (fresh && dos_hostpath(dos, host, sizeof host, 0) == 0 && (fp = fopen(host, "rb")) != 0) {
+		fseek(fp, 0L, 2);
+		n = ftell(fp);
+		fseek(fp, 0L, 0);
+		inf = (char *)malloc(n + 1);
+		n = fread(inf, 1, n, fp);
+		inf[n < 0 ? 0 : n] = 0;
+		fclose(fp);
+		readgroups(inf);
+		free(inf);
+	}
+	readwabi();
+	/* Main in front, as Setup leaves it */
+	if (showmain && ncmds < NCMD)
+		cmds[ncmds++] = strdup("[ShowGroup(Main,1)]");
 	if (ncmds)
 		state = 1;
 }
@@ -237,6 +266,8 @@ ddesetup_idle()
 			wnd_destroy(me);
 			me = 0;
 			state = 0;
+			if (grptmp[0] && next >= ncmds)
+				unlink(grptmp);
 			return;
 		}
 		s = cmds[next++];

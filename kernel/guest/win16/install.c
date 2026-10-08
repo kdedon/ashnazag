@@ -12,6 +12,17 @@
  * are expanded.  Where SETUP.INF puts a file decides windows or system;
  * a file it does not list goes by its extension.  WIN.SRC becomes
  * WIN.INI; SYSTEM.INI is ours, naming our drivers.
+ *
+ * One of the SRCs may be the user's Wabi 2.2: its package (as on the CD,
+ * any of its platforms: their Win16 files are the same) or an installed
+ * $WABIHOME, whichever holds wbin/wabi_f.lst.  Then Windows goes in by
+ * Wabi's rules (wabi_f.lst: what each SETUP.INF section is and what is
+ * left out), and Wabi's own Win16 files as its wabidirupdate and wiscript
+ * put them: its home (wbin, printers, the locale's files) to C:\WABIHOME,
+ * which is drive W: as $WABIHOME was Wabi's, its timer, printer drivers,
+ * Configuration Manager and the rest into WINDOWS and SYSTEM, its WIN.INI
+ * and CONTROL.INI merged over Windows', its printers into CONTROL.INF,
+ * WABI.INI, and its Program Manager group to be made (C:\WABI_GRP.TMP).
  */
 
 #include <sys/types.h>
@@ -45,6 +56,12 @@ static char *syssect[] = { "windows.system", "win.other", "fonts", "ttfonts", "s
 	"network", "drivers", "system", 0 };
 
 #define	MAXF	1500
+
+/* Wabi's rules, from wabi_f.lst */
+#define	NRULE	64
+static char wabihome[512];		/* the user's Wabi: a directory holding wbin/wabi_f.lst */
+static char *wsect[NRULE], *wexcl[NRULE + 1], *wexclext[NRULE + 1];
+static int wsys[NRULE], nwsect, nwexcl, nwexclext;
 
 struct file {
 	char	name[16];	/* lower case, expanded */
@@ -458,6 +475,13 @@ readinf(path)
 			sect[sizeof sect - 1] = 0;
 			lower(sect);
 			sys = inlist(sect, syssect);
+			if (nwsect) {
+				int i;
+
+				for (i = 0, sys = -1; i < nwsect; i++)
+					if (strcmp(sect, wsect[i]) == 0)
+						sys = wsys[i];
+			}
 			continue;
 		}
 		if (*p == ';' || !sect[0])
@@ -471,7 +495,7 @@ readinf(path)
 			*q++ = *p;
 		*q = 0;
 		lower(name);
-		if ((f = lookup(name)) != 0 && f->insys < 0)
+		if ((f = lookup(name)) != 0 && f->insys < 0 && sys >= 0)
 			f->insys = sys;
 	}
 	fclose(fp);
@@ -724,6 +748,303 @@ writesysini(path)
 	fclose(fp);
 }
 
+/* ---- Wabi ---- */
+
+/* the Wabi home under dir, depth levels down (its package: Wabi/sparc/pkgs/SUNWwabi/reloc/SUNWwabi) */
+static int
+findwabi(dir, depth)
+	char *dir;
+	int depth;
+{
+	DIR *d;
+	struct dirent *e;
+	struct stat st;
+	char p[512];
+	int r = 0;
+
+	if (strlen(dir) + 20 > sizeof p)
+		return 0;
+	sprintf(p, "%s/wbin/wabi_f.lst", dir);
+	if (access(p, 0) == 0) {
+		strcpy(wabihome, dir);
+		return 1;
+	}
+	if (depth <= 0 || (d = opendir(dir)) == 0)
+		return 0;
+	while (!r && (e = readdir(d)) != 0) {
+		if (e->d_name[0] == '.' || strlen(dir) + strlen(e->d_name) + 2 > sizeof p)
+			continue;
+		sprintf(p, "%s/%s", dir, e->d_name);
+		if (stat(p, &st) == 0 && S_ISDIR(st.st_mode))
+			r = findwabi(p, depth - 1);
+	}
+	closedir(d);
+	return r;
+}
+
+/* wabi_f.lst: `[section] windows|system ...' and `exclude file|extension name' */
+static void
+readrules(path)
+	char *path;
+{
+	FILE *fp;
+	char line[256], a[64], b[64], c[64], *q;
+
+	if ((fp = fopen(path, "r")) == 0)
+		return;
+	while (fgets(line, sizeof line, fp)) {
+		lower(line);
+		a[0] = b[0] = c[0] = 0;
+		if (line[0] == '[' && (q = strchr(line, ']')) != 0 && nwsect < NRULE) {
+			*q = 0;
+			if (sscanf(q + 1, "%63s", b) != 1)
+				continue;
+			wsect[nwsect] = strdup(line + 1);
+			wsys[nwsect++] = strcmp(b, "system") == 0;
+		} else if (sscanf(line, "%63s %63s %63s", a, b, c) == 3 && strcmp(a, "exclude") == 0) {
+			if (strcmp(b, "file") == 0 && nwexcl < NRULE)
+				wexcl[nwexcl++] = strdup(c);
+			else if (strcmp(b, "extension") == 0 && nwexclext < NRULE) {
+				sprintf(a, ".%s", c[0] == '.' ? c + 1 : c);
+				wexclext[nwexclext++] = strdup(a);
+			}
+		}
+	}
+	fclose(fp);
+	wexcl[nwexcl] = wexclext[nwexclext] = 0;
+}
+
+/* a file, or a directory with what is under it, copied; names in lower case; 0 done */
+static int
+copytree(src, dst)
+	char *src, *dst;
+{
+	DIR *d;
+	struct dirent *e;
+	struct stat st;
+	char p[700], q[700], name[300];
+	int bad = 0;
+
+	if (stat(src, &st) < 0)
+		return -1;
+	if (!S_ISDIR(st.st_mode)) {
+		if (copy(src, dst) != 0)
+			return -1;
+		chmod(dst, 0644);
+		return 0;
+	}
+	mkdir(dst, 0755);
+	if ((d = opendir(src)) == 0)
+		return -1;
+	while ((e = readdir(d)) != 0) {
+		if (e->d_name[0] == '.' || strlen(src) + strlen(e->d_name) + 2 > sizeof p ||
+		    strlen(dst) + strlen(e->d_name) + 2 > sizeof q)
+			continue;
+		strcpy(name, e->d_name);
+		lower(name);
+		sprintf(p, "%s/%s", src, e->d_name);
+		sprintf(q, "%s/%s", dst, name);
+		if (copytree(p, q) != 0)
+			bad++;
+	}
+	closedir(d);
+	return bad ? -1 : 0;
+}
+
+/* `wabimergefile -P': each key of src's sections set in the DOS file dst, src's value winning */
+static void
+mergeini(src, dst)
+	char *src, *dst;
+{
+	FILE *fp;
+	char line[512], sect[128], *p, *q, *v;
+
+	if ((fp = fopen(src, "r")) == 0)
+		return;
+	sect[0] = 0;
+	while (fgets(line, sizeof line, fp)) {
+		for (p = line; *p == ' ' || *p == '\t'; p++)
+			;
+		for (q = p + strlen(p); q > p && (q[-1] == '\n' || q[-1] == '\r' || q[-1] == ' '); )
+			*--q = 0;
+		if (!*p || *p == ';')
+			continue;
+		if (*p == '[') {
+			if ((q = strchr(p, ']')) != 0)
+				*q = 0;
+			strncpy(sect, p + 1, sizeof sect - 1);
+			sect[sizeof sect - 1] = 0;
+			continue;
+		}
+		if (!sect[0] || (v = strchr(p, '=')) == 0)
+			continue;
+		for (q = v; q > p && (q[-1] == ' ' || q[-1] == '\t'); )
+			q--;
+		*q = 0;
+		for (v++; *v == ' ' || *v == '\t'; v++)
+			;
+		profile_put(dst, sect, p, v);
+	}
+	fclose(fp);
+}
+
+/*
+ * `wabimergefile -N': each section's lines of src put at the head of the
+ * same section of the host file dst (Wabi's printers into CONTROL.INF's
+ * [io.device]), where they are not already.
+ */
+static void
+mergelines(src, dst)
+	char *src, *dst;
+{
+	FILE *fp, *in, *out;
+	char line[512], l2[512], sect[128], s2[128], tmp[700], *p;
+	int found;
+
+	if ((in = fopen(dst, "r")) == 0)
+		return;
+	for (found = 0; fgets(line, sizeof line, in); )
+		if (strstr(line, "Wabi"))	/* merged before */
+			found = 1;
+	fclose(in);
+	if (found || strlen(dst) + 5 > sizeof tmp || (in = fopen(dst, "r")) == 0)
+		return;
+	sprintf(tmp, "%s.new", dst);
+	if ((out = fopen(tmp, "w")) == 0) {
+		fclose(in);
+		return;
+	}
+	while (fgets(line, sizeof line, in)) {
+		fputs(line, out);
+		for (p = line; *p == ' ' || *p == '\t'; p++)
+			;
+		if (*p != '[' || sscanf(p, "[%127[^]]", sect) != 1 || (fp = fopen(src, "r")) == 0)
+			continue;
+		for (found = 0; fgets(l2, sizeof l2, fp); ) {
+			for (p = l2; *p == ' ' || *p == '\t'; p++)
+				;
+			if (*p == '[') {
+				found = sscanf(p, "[%127[^]]", s2) == 1 && w16_stricmp(s2, sect) == 0;
+				continue;
+			}
+			if (found && *p && *p != '\r' && *p != '\n' && *p != ';') {
+				fputs(p, out);
+				if (!strchr(p, '\n'))
+					fputs("\n", out);
+			}
+		}
+		fclose(fp);
+	}
+	fclose(in);
+	fclose(out);
+	rename(tmp, dst);
+}
+
+/* the language of Wabi's locale files: $LANG's if Wabi has it, else en_us, as Wabi took it */
+static char *
+wabilang()
+{
+	static char lang[64];
+	char p[700], *e = getenv("LANG");
+
+	strcpy(lang, "en_us");
+	if (e && *e && strlen(e) < sizeof lang && strchr(e, '/') == 0) {
+		sprintf(p, "%s/lib/locale/%s/wabi", wabihome, e);
+		if (access(p, 0) == 0)
+			strcpy(lang, e);
+	}
+	return lang;
+}
+
+/* Wabi's own Win16 files, as wabidirupdate and wiscript put them; the count of errors */
+static int
+wabi_install(cdir, wdir, sdir)
+	char *cdir, *wdir, *sdir;
+{
+	/* wbin's, to C:\ (0), WINDOWS (1) or SYSTEM (2), if not there */
+	static struct { char *name; int where; } wf[] = {
+		{ "autoexec.bat", 0 }, { "config.sys", 0 },
+		{ "pwi.dll", 1 }, { "share.exe", 1 }, { "win_inst.exe", 1 },
+		{ "wabisync.dll", 2 }, { "cplcfg.cpl", 2 }, { "widgets.dll", 2 }, { "instdlg.dll", 2 },
+		{ "timer.drv", 2 }, { "toolhelp.dll", 2 }, { "chlmss.fon", 2 }, { "user.exe", 2 },
+		{ "copybits.94", 2 }, { 0 }
+	};
+	static char *hlp[] = { "wbiepson.hlp", "whppcl5a.hlp", "whppcl5o.hlp", 0 };
+	char home[512], src[700], dst[700], *lang = wabilang();
+	int i, bad = 0;
+
+	sprintf(home, "%s/wabihome", cdir);
+	mkdir(home, 0755);
+	/* its home: the Win16 parts (not the Unix programs) */
+	sprintf(src, "%s/wbin", wabihome);
+	sprintf(dst, "%s/wbin", home);
+	bad += copytree(src, dst) != 0;
+	sprintf(src, "%s/printers", wabihome);
+	sprintf(dst, "%s/printers", home);
+	bad += copytree(src, dst) != 0;
+	sprintf(dst, "%s/lib", home);
+	mkdir(dst, 0755);
+	sprintf(dst, "%s/lib/locale", home);
+	mkdir(dst, 0755);
+	sprintf(dst, "%s/lib/locale/%s", home, lang);
+	mkdir(dst, 0755);
+	sprintf(src, "%s/lib/locale/%s/wabi", wabihome, lang);
+	sprintf(dst, "%s/lib/locale/%s/wabi", home, lang);
+	bad += copytree(src, dst) != 0;
+
+	for (i = 0; wf[i].name; i++) {
+		sprintf(src, "%s/wbin/%s", home, wf[i].name);
+		sprintf(dst, "%s/%s", wf[i].where == 0 ? cdir : wf[i].where == 1 ? wdir : sdir, wf[i].name);
+		if (access(dst, 0) != 0)
+			bad += copytree(src, dst) != 0;
+	}
+	for (i = 0; i < 2; i++) {
+		sprintf(src, "%s/printers/%s", home, i ? "whppcl5a.drv" : "wbiepson.drv");
+		sprintf(dst, "%s/%s", sdir, i ? "whppcl5a.drv" : "wbiepson.drv");
+		if (access(dst, 0) != 0)
+			bad += copytree(src, dst) != 0;
+	}
+	for (i = 0; hlp[i]; i++) {
+		sprintf(src, "%s/lib/locale/%s/wabi/%s", home, lang, hlp[i]);
+		sprintf(dst, "%s/%s", sdir, hlp[i]);
+		if (access(dst, 0) != 0)
+			bad += copytree(src, dst) != 0;
+	}
+	/* its configuration, WABI.INI, beside WIN.INI */
+	sprintf(src, "%s/wbin/wabi.ini", home);
+	sprintf(dst, "%s/wabi.ini", wdir);
+	if (access(dst, 0) != 0)
+		bad += copytree(src, dst) != 0;
+
+	/* wiscript: Wabi's WIN.INI and CONTROL.INI over Windows', its printers in CONTROL.INF */
+	sprintf(src, "%s/wbin/win.ini", home);
+	mergeini(src, "C:\\WINDOWS\\WIN.INI");
+	sprintf(src, "%s/wbin/control.ini", home);
+	mergeini(src, "C:\\WINDOWS\\CONTROL.INI");
+	sprintf(src, "%s/printers/oemsetup.ini", home);
+	sprintf(dst, "%s/control.inf", sdir);
+	mergelines(src, dst);
+
+	/* the Wabi Tools group, made by DDE at the first start (wg_new.lst; no "File a Bug", as in Wabi's release) */
+	sprintf(dst, "%s/wabi.grp", wdir);
+	if (access(dst, 0) != 0) {
+		FILE *in, *out;
+		char line[512];
+
+		sprintf(src, "%s/lib/locale/%s/wabi/wg_new.lst", home, lang);
+		sprintf(dst, "%s/wabi_grp.tmp", cdir);
+		if ((in = fopen(src, "r")) != 0 && (out = fopen(dst, "w")) != 0) {
+			while (fgets(line, sizeof line, in))
+				if (!strstr(line, "filebug"))
+					fputs(line, out);
+			fclose(out);
+		}
+		if (in)
+			fclose(in);
+	}
+	return bad;
+}
+
 int
 win_install(nsrc, src, cdir)
 	int nsrc;
@@ -743,6 +1064,9 @@ win_install(nsrc, src, cdir)
 			return 1;
 		}
 		if (S_ISDIR(st.st_mode)) {
+			/* Wabi's, not Windows' */
+			if (!wabihome[0] && findwabi(src[i], 6))
+				continue;
 			scan(src[i], 2, -1);
 			continue;
 		}
@@ -762,6 +1086,10 @@ win_install(nsrc, src, cdir)
 		rmtree(tmp);
 		return 1;
 	}
+	if (wabihome[0]) {
+		sprintf(tmp, "%s/wbin/wabi_f.lst", wabihome);
+		readrules(tmp);
+	}
 	if (disks)
 		readinf(lookup("setup.inf")->path);
 	sprintf(wdir, "%s/windows", cdir);
@@ -774,7 +1102,7 @@ win_install(nsrc, src, cdir)
 		strcpy(name, f->name);
 		x = ext(name);
 		/* skipped too: the disks' labels (DISK1 ...) */
-		if (inlist(name, skip) || inlist(x, skipext) ||
+		if (inlist(name, skip) || inlist(x, skipext) || inlist(name, wexcl) || inlist(x, wexclext) ||
 		    (strncmp(name, "disk", 4) == 0 && name[4] >= '0' && name[4] <= '9' && !*x))
 			continue;
 		if (strcmp(name, "win.src") == 0 || strcmp(name, "control.src") == 0)
@@ -813,6 +1141,15 @@ win_install(nsrc, src, cdir)
 	sprintf(dst, "%s/system.ini", wdir);
 	if (access(dst, 0) != 0)
 		writesysini(dst);
+	if (wabihome[0]) {
+		if (!drive_root[2])
+			drive_root[2] = cdir;
+		if (wabi_install(cdir, wdir, sdir)) {
+			fprintf(stderr, "startwin: %s: some of Wabi's files cannot be copied\n", wabihome);
+			bad++;
+		}
+		printf("startwin: Wabi's files from %s in %s/wabihome (W:)\n", wabihome, cdir);
+	}
 	sprintf(dst, "%s/progman.exe", wdir);
 	printf("startwin: %d files of Windows in %s%s\n", n, wdir,
 	    access(dst, 0) == 0 ? "" : " (no Program Manager among them)");
