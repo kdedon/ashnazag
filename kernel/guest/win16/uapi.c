@@ -1646,6 +1646,49 @@ u_LoadAccelerators(a)
 	return h ? res_load(m, h) : 0;
 }
 
+/*
+ * An accelerator's command, as Windows sends it: when it is an item of
+ * the system menu or the window's menu, the program hears WM_INITMENU
+ * (and WM_INITMENUPOPUP for its popup) to set the items up, and a
+ * disabled or greyed item sends nothing (Program Manager counts on it:
+ * Enter in an empty group is its Open, greyed); nor does a menu item
+ * while the window is iconic.  Else WM_COMMAND.
+ */
+static void
+accel(w, cmd)
+	struct wnd *w;
+	int cmd;
+{
+	extern int menu_cmdstate();
+	u16 pop;
+	int pos = 0, st, ok = !(w->style & WS_DISABLED) && !wnd_capture;
+	u32 bar = (w->style & WS_CHILD) ? 0 : w->id;
+
+	if (w->sysmenu && (st = menu_cmdstate(w->sysmenu, cmd, &pop, &pos)) >= 0) {
+		if (!ok)
+			return;
+		wnd_send(w, WM_INITMENU, w->sysmenu, 0);
+		if (pop != w->sysmenu)
+			wnd_send(w, WM_INITMENUPOPUP, pop, FP(1, pos));
+		if ((st = menu_cmdstate(w->sysmenu, cmd, &pop, &pos)) >= 0 && !(st & 3))
+			wnd_send(w, WM_SYSCOMMAND, cmd, FP(1, 0));
+		return;
+	}
+	if (bar && (st = menu_cmdstate(bar, cmd, &pop, &pos)) >= 0) {
+		if (ok) {
+			wnd_send(w, WM_INITMENU, bar, 0);
+			if (pop != (u16)bar && wnd_get(w->h))
+				wnd_send(w, WM_INITMENUPOPUP, pop, FP(0, pos));
+			if (!wnd_get(w->h))
+				return;
+			st = menu_cmdstate(w->id, cmd, &pop, &pos);
+		}
+		if (st < 0 || (st & 3) || (w->style & WS_MINIMIZE))
+			return;
+	}
+	wnd_send(w, WM_COMMAND, cmd, FP(1, 0));
+}
+
 static u32
 u_TranslateAccelerator(a)
 	u32 *a;
@@ -1671,7 +1714,7 @@ u_TranslateAccelerator(a)
 
 			if (virt ? k == key && ((fl & 4) != 0) == shift && ((fl & 8) != 0) == ctrl &&
 			    ((fl & 0x10) != 0) == alt : (k == key && ((fl & 0x10) != 0) == alt)) {
-				wnd_send(w, (fl & 0x10) && 0 ? WM_SYSCOMMAND : WM_COMMAND, GW(e + 3), FP(1, 0));
+				accel(w, GW(e + 3));
 				return 1;
 			}
 		}
@@ -2207,10 +2250,30 @@ u_MessageBox(a)
 	return user_messagebox(a[0], STR(a[1]), gptr(a[2]) ? STR(a[2]) : "Error", a[3]);
 }
 
+/*
+ * ExitWindows: every top-level window is asked (WM_QUERYENDSESSION);
+ * if none refuses, each hears WM_ENDSESSION and the session ends, all
+ * its tasks with it.  A refusal: FALSE.
+ */
 static u32
 u_ExitWindows(a)
 	u32 *a;
 {
+	extern int task_endsession;
+	struct wnd *w;
+	u16 hs[256];
+	int i, k = 0;
+
+	for (w = desktop->child; w && k < 256; w = w->next)
+		if (w->task)
+			hs[k++] = w->h;
+	for (i = 0; i < k; i++)
+		if ((w = wnd_get(hs[i])) != 0 && !(wnd_send(w, WM_QUERYENDSESSION, 0, 0) & 0xffff))
+			return 0;
+	for (i = 0; i < k; i++)
+		if ((w = wnd_get(hs[i])) != 0)
+			wnd_send(w, WM_ENDSESSION, 1, 0);
+	task_endsession = 1;
 	w16_exit(0);
 	return 0;
 }

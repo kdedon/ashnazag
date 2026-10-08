@@ -87,11 +87,17 @@ callproc(w, msg, wp, lp)
 	struct wnd *w;
 	u32 msg, wp, lp;
 {
-	u32 p = RD32(w->extra, DWL_DLGPROC);
+	static u32 inh, inmsg;		/* the call under way: a procedure calling DefDlgProc back gets the default */
+	u32 p = RD32(w->extra, DWL_DLGPROC), r, sh = inh, sm = inmsg;
 
-	if (!p)
+	if (!p || (inh == w->h && inmsg == msg))
 		return 0;
-	return wnd_call(p, w->h, msg, wp, lp) & 0xffff;
+	inh = w->h;
+	inmsg = msg;
+	r = wnd_call(p, w->h, msg, wp, lp) & 0xffff;
+	inh = sh;
+	inmsg = sm;
+	return r;
 }
 
 static struct wnd *
@@ -197,7 +203,11 @@ defdlg(w, msg, wp, lp)
 	return user_defproc(w, msg, wp, lp);
 }
 
-/* DefDlgProc: the program's procedure first */
+/*
+ * DefDlgProc: the dialog procedure first, then the default.  The dialog
+ * class's procedure, and the export, which a program's own dialog class
+ * may have as its window procedure (Character Map's does).
+ */
 u32
 dlg_defproc(a)
 	u32 *a;
@@ -227,15 +237,6 @@ dlg_defproc(a)
 	return defdlg(w, a[1], a[2], a[3]);
 }
 
-/* the DefDlgProc export: the default part only, as a program's dialog class calls it */
-static u32
-d_DefDlgProc(a)
-	u32 *a;
-{
-	struct wnd *w = wnd_get(a[0]);
-
-	return w ? defdlg(w, a[1], a[2], a[3]) : 0;
-}
 
 /* ---- creating from a template ---- */
 
@@ -1057,7 +1058,7 @@ struct impl dl_impl[] = {
 	{ "USER", "DialogBoxIndirectParam", d_DialogBoxIndirectParam },
 	{ "USER", "EndDialog", d_EndDialog },
 	{ "USER", "IsDialogMessage", d_IsDialogMessage },
-	{ "USER", "DefDlgProc", d_DefDlgProc },
+	{ "USER", "DefDlgProc", dlg_defproc },
 	{ "USER", "GetDlgItem", d_GetDlgItem },
 	{ "USER", "GetDlgCtrlID", d_GetDlgCtrlID },
 	{ "USER", "SetDlgItemText", d_SetDlgItemText },

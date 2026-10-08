@@ -651,7 +651,7 @@ text_width(f, s, n)
 		c = (u8)*s++;
 		if (c < f->f_first || c > f->f_last)
 			c = f->f_first == 0x20 ? '?' : f->f_first;
-		w += f->f_w[c - f->f_first];
+		w += f->f_adv ? f->f_adv[c - f->f_first] : f->f_w[c - f->f_first];
 	}
 	return w;
 }
@@ -670,7 +670,7 @@ glyphs(dc, f, x, y, s, n, dx, bold, underline, strike)
 {
 	struct rgn *g = dc_clip(dc);
 	struct surf *sf = dc->s;
-	int c, i, gx, gy, w, bpr, fg = colorfor(dc, dc->st.text), k, x0 = x;
+	int c, i, gx, gy, w, bw, ox, bpr, fg = colorfor(dc, dc->st.text), k, x0 = x;
 	u8 *bits, *p;
 	struct rect cell, m, d;
 
@@ -680,11 +680,21 @@ glyphs(dc, f, x, y, s, n, dx, bold, underline, strike)
 		if (c < f->f_first || c > f->f_last)
 			c = '?';
 		c -= f->f_first;
-		w = f->f_w[c];
-		bpr = (w + 7) / 8;
-		bits = f->f_bits + f->f_off[c];
-		r_set(&cell, x, y, x + w + bold, y + f->f_height);
-		if (rgn_rectin(g, &cell))
+		if (f->f_tt) {
+			struct ttglyph *t = ttf_glyph(f, c);
+
+			w = f->f_adv[c];
+			bits = t->bits;
+			bw = t->bw;
+			ox = t->ox;
+		} else {
+			w = bw = f->f_w[c];
+			bits = f->f_bits + f->f_off[c];
+			ox = 0;
+		}
+		bpr = (bw + 7) / 8;
+		r_set(&cell, x + ox, y, x + ox + bw + bold, y + f->f_height);
+		if (bits && rgn_rectin(g, &cell))
 			for (i = 0; i < g->n; i++) {
 				if (!r_and(&m, &g->r[i], &cell))
 					continue;
@@ -693,10 +703,10 @@ glyphs(dc, f, x, y, s, n, dx, bold, underline, strike)
 
 					p = sf->pix + gy * sf->rowb;
 					for (gx = m.l; gx < m.r; gx++) {
-						int bx = gx - x;
+						int bx = gx - x - ox;
 
-						if ((bx < w && (row[bx >> 3] & (0x80 >> (bx & 7)))) ||
-						    (bold && bx > 0 && bx - 1 < w && (row[(bx - 1) >> 3] & (0x80 >> ((bx - 1) & 7)))))
+						if ((bx < bw && (row[bx >> 3] & (0x80 >> (bx & 7)))) ||
+						    (bold && bx > 0 && bx - 1 < bw && (row[(bx - 1) >> 3] & (0x80 >> ((bx - 1) & 7)))))
 							p[gx] = fg;
 					}
 				}
@@ -711,7 +721,8 @@ glyphs(dc, f, x, y, s, n, dx, bold, underline, strike)
 		d_fillcolor(dc, &m, fg);
 	}
 	if (sf == &screen) {
-		r_set(&d, x0, y, x + 1, y + f->f_height);
+		/* TrueType glyphs may reach a little past their cells */
+		r_set(&d, x0 - (f->f_tt ? f->f_height / 2 : 0), y, x + 1 + (f->f_tt ? f->f_height / 2 : 0), y + f->f_height);
 		r_and(&d, &d, &g->box);
 		scr_dirty(&d);
 	}

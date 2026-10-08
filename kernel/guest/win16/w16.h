@@ -29,8 +29,10 @@ extern struct desc *LDT;
 #define	GW(a)		RD16(M, a)
 #define	GL(a)		RD32(M, a)
 #define	PB(a, v)	(M[a] = (v))
-#define	PW(a, v)	WR16(M, a, v)
-#define	PL(a, v)	WR32(M, a, v)
+/* functions, so the value is taken once: PW(p, GW(p) - d) reads p before writing it */
+extern void w16_pw(), w16_pl();
+#define	PW(a, v)	w16_pw((u32)(a), (u32)(v))
+#define	PL(a, v)	w16_pl((u32)(a), (u32)(v))
 
 /* ---- mem16.c ---- */
 

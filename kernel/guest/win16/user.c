@@ -543,7 +543,7 @@ wnd_send(w, msg, wp, lp)
 	if (!w)
 		return 0;
 	if (w16_debug > 2)
-		w16_log("send %04x %04x %04x %08x\n", w->h, msg, wp, lp);
+		w16_log("send %04x %04x %04x %08x (%08x)\n", w->h, msg, wp, lp, w->proc);
 	return wnd_call(w->proc, w->h, msg, wp, lp);
 }
 
@@ -568,6 +568,7 @@ struct qmsg {
 static struct qmsg q[QSIZE];
 static int qhead, qtail;
 static int quitting;		/* the session was asked to end (EV_QUIT) */
+int user_alttap;		/* Alt went down and nothing else since: its release opens the menu bar */
 
 /* a window's task; marked as having something to do */
 static struct task *
@@ -1418,6 +1419,7 @@ input(e)
 			qpost(w->h, WM_NCMOUSEMOVE, ht, FP(e->y, e->x));
 		return;
 	case EV_BTN:
+		user_alttap = 0;
 		scr_mx = e->x;
 		scr_my = e->y;
 		k = e->btn > 2 ? 0 : e->btn;
@@ -1481,6 +1483,8 @@ input(e)
 			u32 lp = 1 | (u32)(e->sc & 0xff) << 16;
 
 			if (e->down) {
+				if (!(asyncstate[vk] & 0x80))
+					user_alttap = vk == VK_MENU;
 				if (asyncstate[vk] & 0x80)
 					lp |= 0x40000000;	/* repeat */
 				else

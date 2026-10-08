@@ -143,6 +143,10 @@ font_loadfile(host)
 		return 0;
 	}
 	fclose(fp);
+	if ((d[0] == 0 && d[1] == 1 && d[2] == 0 && d[3] == 0) || memcmp(d, "true", 4) == 0) {
+		free(d);
+		return ttf_add(host);
+	}
 	if (d[0] != 'M' || d[1] != 'Z') {
 		if (fnt(d, (u32)n, &f) == 0)
 			add(&f), added++;
@@ -163,6 +167,24 @@ font_loadfile(host)
 	shift = W(rt);
 	for (t = rt + 2; t + 8 <= d + n && (type = W(t)) != 0; t += 8 + 12 * count) {
 		count = W(t + 2);
+		if (type == (0x8000 | 0xcc) && count > 0) {
+			/* a .FOT: the TrueType file it stands for */
+			u32 off = (u32)W(t + 8) << shift;
+			char name[128], dos[300], tth[1024];
+			extern char sysdir[];
+			int k;
+
+			for (k = 0; k < 127 && off + k < (u32)n && d[off + k]; k++)
+				name[k] = d[off + k];
+			name[k] = 0;
+			if (strchr(name, '\\') || strchr(name, ':'))
+				strcpy(dos, name);
+			else
+				sprintf(dos, "%s\\%s", sysdir, name);
+			if (k && dos_hostpath(dos, tth, sizeof tth, 0) == 0)
+				added += ttf_add(tth);
+			continue;
+		}
 		if (type != (0x8000 | 8))
 			continue;
 		for (i = 0; i < count; i++) {

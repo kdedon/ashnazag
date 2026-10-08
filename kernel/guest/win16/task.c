@@ -33,6 +33,7 @@ struct tctx {
 
 struct task *curtask, *tasks[NTASK];
 int ntasks;
+int task_endsession;		/* ExitWindows: every task ends with the session */
 static ucontext_t mainuc;
 static int rr;			/* where the round goes on */
 
@@ -254,8 +255,8 @@ task_run(first)
 		if (t->t_done) {
 			if (w16_debug)
 				w16_log("startwin: %s ended (%d)\n", t->t_mod->m_name, t->t_exit);
-			if (t == first) {
-				code = t->t_exit;
+			if (t == first || task_endsession) {
+				code = t == first ? t->t_exit : 0;
 				ended(t);
 				break;
 			}

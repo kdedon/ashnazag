@@ -27,6 +27,8 @@ extern u16 cur_load();
 
 #define	STR(p)		(gptr(p) ? gptr(p) : "")
 
+extern int user_alttap;
+
 /* ---- frame geometry ---- */
 
 int
@@ -882,8 +884,11 @@ user_defproc(w, msg, wp, lp)
 		}
 		return 0;
 	case WM_SYSKEYUP:
-		if ((wp == VK_MENU || wp == VK_F1 + 9) && !(w->style & WS_CHILD))
-			wnd_send(w, WM_SYSCOMMAND, SC_KEYMENU, 0);
+		/* Alt or F10 alone: the top-level window's menu bar, whoever has the focus */
+		if ((wp == VK_MENU && user_alttap) || wp == VK_F1 + 9) {
+			user_alttap = 0;
+			wnd_send(wnd_toplevel(w), WM_SYSCOMMAND, SC_KEYMENU, 0);
+		}
 		return 0;
 	case WM_SYSCHAR:
 		if (wp == ' ' && (wnd_toplevel(w)->style & WS_SYSMENU)) {

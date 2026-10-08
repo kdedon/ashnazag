@@ -19,6 +19,24 @@
 #include "w16.h"
 
 u8 *M;
+
+void
+w16_pw(a, v)
+	u32 a, v;
+{
+	M[a] = v;
+	M[a + 1] = v >> 8;
+}
+
+void
+w16_pl(a, v)
+	u32 a, v;
+{
+	M[a] = v;
+	M[a + 1] = v >> 8;
+	M[a + 2] = v >> 16;
+	M[a + 3] = v >> 24;
+}
 u32 MSIZE;
 struct desc *LDT;
 struct gblock *gblk;

@@ -314,6 +314,15 @@ font_pick(lf)
 	int want, score, bs = 1 << 30, fixed, i, j, n = 0, fam = lf->pitchfam & 0xf0;
 
 	fixed = (lf->pitchfam & 3) == 1 || fam == 0x30;
+	/* TrueType draws any size: a TrueType face, or one WIN.INI's [FontSubstitutes] puts for it */
+	{
+		char sub[64], *tt = ttf_face(lf->face);
+
+		if (!tt && lf->face[0] && profile_get((char *)0, "FontSubstitutes", lf->face, "", sub, sizeof sub) > 0)
+			tt = ttf_face(sub);
+		if (tt && (f = ttf_font(tt, lf->weight >= 600, lf->italic != 0, lf->height, lf->width)) != 0)
+			return f;
+	}
 	try[n++] = lf->face;
 	for (i = 0; alias[i][0] && n < 3; i++)
 		if (!w16_stricmp(lf->face, alias[i][0]))
@@ -353,6 +362,13 @@ font_pick(lf)
 			bs = score;
 			best = f;
 		}
+	}
+	/* no face asked and no bitmap size near: a TrueType face of the family */
+	if (!lf->face[0] && best && bs >= 60) {
+		char *tt = ttf_family(fam ? fam : 0x20, fixed);
+
+		if (tt && (f = ttf_font(tt, lf->weight >= 600, lf->italic != 0, lf->height, lf->width)) != 0)
+			return f;
 	}
 	return best ? best : fontlist;
 }
@@ -2054,7 +2070,7 @@ g_GetTextMetrics(a)
 	PB(p + 21, f->f_res ? f->f_default : '?');
 	PB(p + 22, f->f_res ? f->f_break : ' ');
 	/* pitch and family: bit 0 set is variable pitch, as Windows has it */
-	PB(p + 23, (f->f_pitch ? 0 : 1) | f->f_family);
+	PB(p + 23, (f->f_pitch ? 0 : 1) | f->f_family | (f->f_tt ? 6 : 0));	/* TrueType: TMPF_VECTOR | TMPF_TRUETYPE */
 	PB(p + 24, f->f_charset);	/* ANSI_CHARSET mostly */
 	PW(p + 25, fo->bold);		/* overhang */
 	PW(p + 27, 96);
@@ -2098,7 +2114,70 @@ g_GetCharWidth(a)
 	return 1;
 }
 
-/* EnumFonts/EnumFontFamilies: each built-in face and size */
+/* one font to an EnumFonts/EnumFontFamilies callback: its result */
+static u32
+enum1(a, f, lf, tm, type, style)
+	u32 *a;
+	struct bfont *f;
+	u16 lf, tm;
+	int type;
+	char *style;
+{
+	u32 lfa = sel_base(lf), tma = sel_base(tm);
+	int bold = f->f_weight >= 600;
+
+	memset(M + lfa, 0, 160);
+	PW(lfa, f->f_height);
+	PW(lfa + 2, f->f_avgw);
+	PW(lfa + 8, f->f_weight);
+	PB(lfa + 10, f->f_italic);
+	PB(lfa + 13, f->f_charset);
+	PB(lfa + 14, type == 4 ? 3 : 2);	/* OUT_STROKE_PRECIS / OUT_CHARACTER_PRECIS */
+	PB(lfa + 15, type == 4 ? 4 : 2);	/* CLIP_STROKE_PRECIS / CLIP_CHARACTER_PRECIS */
+	PB(lfa + 16, type == 4 ? 1 : 2);	/* DRAFT_QUALITY / PROOF_QUALITY */
+	PB(lfa + 17, (f->f_pitch ? 1 : 2) | f->f_family);
+	strcpy((char *)M + lfa + 18, f->f_face);
+	/* NEWLOGFONT's full name and style */
+	sprintf((char *)M + lfa + 50, "%.31s%s%s", f->f_face, strcmp(style, "Regular") ? " " : "",
+	    strcmp(style, "Regular") ? style : "");
+	strcpy((char *)M + lfa + 114, style);
+	memset(M + tma, 0, 64);
+	PW(tma, f->f_height);
+	PW(tma + 2, f->f_ascent);
+	PW(tma + 4, f->f_descent);
+	PW(tma + 6, f->f_res ? f->f_leading : 0);
+	PW(tma + 8, f->f_extlead);
+	PW(tma + 10, f->f_avgw);
+	PW(tma + 12, f->f_maxw);
+	PW(tma + 14, f->f_weight);
+	PB(tma + 16, f->f_italic);
+	PB(tma + 19, f->f_first);
+	PB(tma + 20, f->f_last);
+	PB(tma + 21, f->f_res ? f->f_default : '?');
+	PB(tma + 22, f->f_res ? f->f_break : ' ');
+	PB(tma + 23, (f->f_pitch ? 0 : 1) | f->f_family | (type == 4 ? 6 : 0));
+	PB(tma + 24, f->f_charset);
+	PW(tma + 27, 96);
+	PW(tma + 29, 96);
+	if (type == 4) {
+		/* NEWTEXTMETRIC: ntmFlags, ntmSizeEM, ntmCellHeight, ntmAvgWidth */
+		PL(tma + 31, (f->f_italic ? 1 : 0) | (bold ? 0x20 : 0) | (!bold && !f->f_italic ? 0x40 : 0));
+		PW(tma + 35, f->f_height - f->f_leading);
+		PW(tma + 37, f->f_height);
+		PW(tma + 39, f->f_avgw);
+	}
+	cb_begin();
+	cb_push32(FP(lf, 0));
+	cb_push32(FP(tm, 0));
+	cb_push16(type);
+	cb_push32(a[3]);
+	return cb_call(a[2], 0) & 0xffff;
+}
+
+/*
+ * EnumFonts/EnumFontFamilies: without a face, each face once; with one,
+ * each size of a bitmap face, each style of a TrueType one.
+ */
 static u32
 enumfonts(a, fam)
 	u32 *a;
@@ -2107,17 +2186,12 @@ enumfonts(a, fam)
 	char *want = gptr(a[1]);
 	struct bfont *f;
 	u16 lf, tm;
-	u32 r = 1, lfa, tma, dsave;
+	u32 r = 1;
 	int i, seen;
 
-	lf = g_alloc(GMEM_ZEROINIT, 128, 0);
+	lf = g_alloc(GMEM_ZEROINIT, 160, 0);
 	tm = g_alloc(GMEM_ZEROINIT, 64, 0);
-	lfa = sel_base(lf);
-	tma = sel_base(tm);
 	for (f = fontlist; f->f_face && r; f++) {
-		/* the built-in fonts only stand in when Windows' are not there */
-		if (!f->f_res && fontlist[0].f_res)
-			break;
 		if (want && *want && w16_stricmp(want, f->f_face) != 0)
 			continue;
 		if (!want || !*want) {
@@ -2128,33 +2202,11 @@ enumfonts(a, fam)
 			if (seen)
 				continue;
 		}
-		memset(M + lfa, 0, 128);
-		PW(lfa, f->f_height);
-		PW(lfa + 2, f->f_avgw);
-		PW(lfa + 8, f->f_weight);
-		PB(lfa + 17, (f->f_pitch ? 1 : 2) | f->f_family);
-		strcpy((char *)M + lfa + 18, f->f_face);
-		memset(M + tma, 0, 64);
-		PW(tma, f->f_height);
-		PW(tma + 2, f->f_ascent);
-		PW(tma + 4, f->f_descent);
-		PW(tma + 10, f->f_avgw);
-		PW(tma + 12, f->f_maxw);
-		PW(tma + 14, f->f_weight);
-		PB(tma + 19, f->f_first);
-		PB(tma + 20, f->f_last);
-		PB(tma + 23, (f->f_pitch ? 0 : 1) | f->f_family);
-		PW(tma + 27, 96);
-		PW(tma + 29, 96);
-		dsave = 0;
-		(void)dsave;
-		cb_begin();
-		cb_push32(FP(lf, 0));
-		cb_push32(FP(tm, 0));
-		cb_push16(1);		/* RASTER_FONTTYPE */
-		cb_push32(a[3]);
-		r = cb_call(a[2], 0) & 0xffff;
+		r = enum1(a, f, lf, tm, 1, f->f_weight >= 600 ? "Bold" : "Regular");
 	}
+	for (i = 0; r && (f = ttf_enum(i, want && *want ? want : (char *)0)) != 0; i++)
+		r = enum1(a, f, lf, tm, 4, f->f_weight >= 600 ? (f->f_italic ? "Bold Italic" : "Bold") :
+		    f->f_italic ? "Italic" : "Regular");
 	g_free(lf);
 	g_free(tm);
 	(void)fam;

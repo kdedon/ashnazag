@@ -648,8 +648,8 @@ addintl(path)
 /*
  * What Setup writes in WIN.INI's [fonts] for a VGA display: the entries of
  * SETUP.INF's [fonts] for the 96 dpi resolution ("100,96,96") and the
- * plotter fonts, each "description=FILE".  The TrueType ones are left out:
- * GDI here draws bitmap fonts only, and maps TrueType faces to them.
+ * plotter fonts, each "description=FILE", then the TrueType fonts of its
+ * [ttfonts] ("Arial (TrueType)=ARIAL.FOT").
  */
 static void
 addfonts(path, inf)
@@ -677,13 +677,13 @@ addfonts(path, inf)
 		for (p = line; *p == ' ' || *p == '\t'; p++)
 			;
 		if (*p == '[') {
-			sect = strncmp(p, "[fonts]", 7) == 0;
+			sect = strncmp(p, "[fonts]", 7) == 0 ? 1 : strncmp(p, "[ttfonts]", 9) == 0 ? 2 : 0;
 			continue;
 		}
-		if (!sect || !(strstr(p, "\"100,96,96\"") || strstr(p, "CONTINUOUSSCALING")))
+		if (!sect || (sect == 1 && !(strstr(p, "\"100,96,96\"") || strstr(p, "CONTINUOUSSCALING"))))
 			continue;
-		/* n:FILE.FON, "description", "resolution" */
-		if (!(q = strchr(p, ':')))
+		/* n:FILE.FON, "description", "resolution"; n:FILE.FOT, "description", n:file.ttf, "" */
+		if (*p == ';' || !(q = strchr(p, ':')))
 			continue;
 		p = q + 1;
 		for (q = file; *p && *p != ',' && *p != ' ' && q < file + sizeof file - 1; p++)

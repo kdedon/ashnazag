@@ -56,7 +56,8 @@ issection(line, out)
 		return 0;
 	memcpy(out, l + 1, e - l - 1);
 	out[e - l - 1] = 0;
-	strcpy(out, trim(out));
+	l = trim(out);
+	memmove(out, l, strlen(l) + 1);
 	return 1;
 }
 

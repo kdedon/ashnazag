@@ -170,6 +170,52 @@ mfind(m, what, flags, ip)
 	return 0;
 }
 
+/* the item with command id under m: its menu, the place of that menu in its parent */
+static struct menu *
+cfind(m, id, pos)
+	struct menu *m;
+	u32 id;
+	int *pos;
+{
+	struct menu *s;
+	int i, k;
+
+	if (!m)
+		return 0;
+	for (i = 0; i < m->n; i++)
+		if (!(m->it[i].flags & MF_POPUP) && m->it[i].id == id)
+			return m;
+	for (i = 0; i < m->n; i++)
+		if ((m->it[i].flags & MF_POPUP) && (s = cfind(mget(m->it[i].id), id, &k)) != 0) {
+			*pos = s->h == m->it[i].id ? i : k;
+			return s;
+		}
+	return 0;
+}
+
+/*
+ * For TranslateAccelerator: the flags of the item with command id in
+ * menu h, or -1; *popup the menu holding it, *pos that popup's place
+ * in its parent (when not h itself).
+ */
+int
+menu_cmdstate(h, id, popup, pos)
+	u32 h, id;
+	u16 *popup;
+	int *pos;
+{
+	struct menu *m = cfind(mget(h), id & 0xffff, pos);
+	int i;
+
+	if (!m)
+		return -1;
+	*popup = m->h;
+	for (i = 0; i < m->n; i++)
+		if (!(m->it[i].flags & MF_POPUP) && m->it[i].id == (id & 0xffff))
+			return m->it[i].flags;
+	return -1;
+}
+
 /* ---- templates ---- */
 
 static u32
