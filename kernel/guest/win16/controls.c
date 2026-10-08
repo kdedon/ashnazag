@@ -604,6 +604,7 @@ struct lb {
 	int	top, cur, anchor, ih;
 	int	combo;		/* the list of a combo box: notifies it */
 	struct wnd *owner;	/* the combo box */
+	int	askh;		/* the height it was made with: whole rows are fitted in it */
 };
 
 static struct lb *
@@ -889,6 +890,26 @@ lb_show(w, i)
 }
 
 /* owner-drawn without strings: the item whose data is this, after start */
+/* whole rows: the box shrinks from the height it was made with to fit them, as Windows has it */
+static void
+lb_fit(w)
+	struct wnd *w;
+{
+	struct lb *l = lbof(w);
+	int frame, ch, ih;
+
+	if (l->combo || !l->askh || (w->style & (LBS_NOINTEGRALHEIGHT | LBS_OWNERDRAWVARIABLE)))
+		return;
+	frame = (w->wr.b - w->wr.t) - (w->cr.b - w->cr.t);
+	ch = l->askh - frame;
+	ih = itemh(w);
+	if (ih <= 0 || ch <= ih)
+		return;
+	ch -= ch % ih;
+	if (ch + frame != w->wr.b - w->wr.t)
+		wnd_setpos(w, (struct wnd *)0, 0, 0, w->wr.r - w->wr.l, ch + frame, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
 static int
 lb_finddata(w, start, data)
 	struct wnd *w;
@@ -1060,6 +1081,8 @@ listbox_proc(a)
 				if (!l->owner && w->owner)
 					l->owner = w->owner;
 			}
+			l->askh = w->wr.b - w->wr.t;
+			lb_fit(w);
 		}
 		return 0;
 	case WM_NCDESTROY:
@@ -1087,6 +1110,7 @@ listbox_proc(a)
 	case WM_SETFONT:
 		w->dlgfont = a[2];
 		l->ih = 0;
+		lb_fit(w);
 		if (LO16(a[3]))
 			lb_redraw(w);
 		return 0;
@@ -1508,7 +1532,7 @@ cb_dropdown(w)
 	n = l->n < 8 ? (l->n ? l->n : 1) : 8;
 	lh = n * itemh(c->list) + 2;
 	if (c->listh > 0 && c->listh < lh)
-		lh = c->listh;
+		lh = c->listh - (c->listh - 2) % itemh(c->list);	/* whole rows, as Windows */
 	wnd_setpos(c->list, (struct wnd *)0, w->wr.l, w->wr.t + h, w->wr.r - w->wr.l, lh, SWP_SHOWWINDOW | SWP_NOACTIVATE);
 	lb_show(c->list, l->cur);
 	c->dropped = 1;

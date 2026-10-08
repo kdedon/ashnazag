@@ -366,6 +366,23 @@ thunk_dispatch(c, n)
 			w16_fatal("%s.%s is not done", t->t_mod ? t->t_mod->m_name : "?", e->ae_name);
 	}
 	api_depth--;
+	{
+		static u32 wsel, woff, wval, armed;
+		char *e2;
+
+		if (!armed && (e2 = getenv("W16_WATCH")) != 0) {
+			sscanf(e2, "%x:%x", &wsel, &woff);
+			armed = 1;
+		}
+		if (armed == 1 && g_block(wsel)) {
+			wval = GL(sel_base(wsel) + woff);
+			armed = 2;
+		} else if (armed == 2 && GL(sel_base(wsel) + woff) != wval) {
+			w16_log("WATCH %x:%x changed %08lx -> %08lx in %s.%s base %lx\n", wsel, woff, (long)wval,
+			    (long)GL(sel_base(wsel) + woff), t->t_mod ? t->t_mod->m_name : "", e->ae_name, (long)sel_base(wsel));
+			wval = GL(sel_base(wsel) + woff);
+		}
+	}
 	if (w16_debug > 2) {
 		char args[200];
 		int k, n = 0, m = e->ae_args ? strlen(e->ae_args) : 4;

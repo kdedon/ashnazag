@@ -2163,7 +2163,15 @@ enumfonts(a, fam)
 
 static u32 g_EnumFonts(a) u32 *a; { return enumfonts(a, 0); }
 static u32 g_EnumFontFamilies(a) u32 *a; { return enumfonts(a, 1); }
-static u32 g_AddFontResource(a) u32 *a; { return 0; }
+/* AddFontResource(file): its fonts join the list (a module handle in the low word is not handled) */
+static u32
+g_AddFontResource(a)
+	u32 *a;
+{
+	extern int font_add();
+
+	return FPSEL(a[0]) ? font_add(STR(a[0])) : 0;
+}
 static u32 g_SetObjectOwner(a) u32 *a; { return 1; }
 static u32 g_RemoveFontResource(a) u32 *a; { return 0; }
 

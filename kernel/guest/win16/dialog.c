@@ -54,9 +54,15 @@ static int
 basex(w)
 	struct wnd *w;
 {
+	static char abc[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 	struct gobj *o = gobj(w && w->dlgfont ? w->dlgfont : stockobj[SYSTEM_FONT], OBJ_FONT);
+	int ext;
 
-	return o ? o->u.font.bf->f_avgw + o->u.font.bold : 8;
+	if (!o)
+		return 8;
+	/* as Windows measures it: the 52 letters, (extent / 26 + 1) / 2 */
+	ext = text_width(o->u.font.bf, abc, 52) + 52 * o->u.font.bold;
+	return (ext / 26 + 1) / 2;
 }
 
 static int

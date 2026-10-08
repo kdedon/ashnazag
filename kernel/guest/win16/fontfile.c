@@ -193,26 +193,12 @@ hasres(face, res)
 	return 0;
 }
 
-/* every .FON in the directory (a host path), then the list GDI chooses from */
-void
-font_init(sysdir)
-	char *sysdir;
+/* the list GDI chooses from: the loaded fonts, then the built-in ones */
+static void
+rebuild()
 {
-	DIR *dp;
-	struct dirent *e;
-	char p[1200];
-	int i, j, n, nb;
+	int i, j, nb;
 
-	if (sysdir && (dp = opendir(sysdir)) != 0) {
-		while ((e = readdir(dp)) != 0) {
-			n = strlen(e->d_name);
-			if (n < 5 || n > 200 || (strcmp(e->d_name + n - 4, ".fon") != 0 && strcmp(e->d_name + n - 4, ".FON") != 0))
-				continue;
-			sprintf(p, "%s/%s", sysdir, e->d_name);
-			font_loadfile(p);
-		}
-		closedir(dp);
-	}
 	/* the sizes for other displays go where VGA's exist */
 	for (i = j = 0; i < nloaded; i++)
 		if (loaded[i].f_res == 96 || !hasres(loaded[i].f_face, 96))
@@ -221,13 +207,73 @@ font_init(sysdir)
 	for (nb = 0; bfonts[nb].f_face; nb++)
 		;
 	nfontlist = nloaded + nb;
+	free((char *)fontlist);
 	fontlist = (struct bfont *)calloc(nfontlist + 1, sizeof *fontlist);
 	for (i = 0; i < nloaded; i++)
 		fontlist[i] = loaded[i];
 	for (i = 0; i < nb; i++)
 		fontlist[nloaded + i] = bfonts[i];
+}
+
+/* a font file named as Windows names them (in SYSTEM, or a path): its fonts */
+int
+font_add(name)
+	char *name;
+{
+	extern char sysdir[];
+	char dos[300], host[1024];
+	int n;
+
+	if (!name || !*name)
+		return 0;
+	if (strchr(name, '\\') || strchr(name, ':'))
+		strncpy(dos, name, sizeof dos - 1), dos[sizeof dos - 1] = 0;
+	else
+		sprintf(dos, "%s\\%.200s", sysdir, name);
+	if (dos_hostpath(dos, host, sizeof host, 0) != 0)
+		return 0;
+	n = font_loadfile(host);
+	if (n)
+		rebuild();
+	return n;
+}
+
+/*
+ * The fonts Windows loads: SYSTEM.INI's System, Fixedsys and Terminal
+ * (fonts.fon, fixedfon.fon, oemfonts.fon) and those WIN.INI's [fonts]
+ * lists, as Setup wrote them.  Without a [fonts] section, every .FON in
+ * SYSTEM (sysdir, a host path).
+ */
+void
+font_init(sysdir)
+	char *sysdir;
+{
+	static char *boot[] = { "fonts.fon", "fixedfon.fon", "oemfonts.fon", 0 };
+	DIR *dp;
+	struct dirent *e;
+	char keys[2048], val[256], p[1200], *k;
+	int i, n;
+
+	for (i = 0; boot[i]; i++)
+		if (profile_get("SYSTEM.INI", "boot", boot[i], "", val, sizeof val) > 0)
+			font_add(val);
+	n = profile_get((char *)0, "fonts", (char *)0, "", keys, sizeof keys);
+	for (k = keys; n > 0 && *k; k += strlen(k) + 1)
+		if (profile_get((char *)0, "fonts", k, "", val, sizeof val) > 0)
+			font_add(val);
+	if (n <= 0 && sysdir && (dp = opendir(sysdir)) != 0) {
+		while ((e = readdir(dp)) != 0) {
+			i = strlen(e->d_name);
+			if (i < 5 || i > 200 || (strcmp(e->d_name + i - 4, ".fon") != 0 && strcmp(e->d_name + i - 4, ".FON") != 0))
+				continue;
+			sprintf(p, "%s/%s", sysdir, e->d_name);
+			font_loadfile(p);
+		}
+		closedir(dp);
+	}
+	rebuild();
 	if (w16_debug)
-		w16_log("startwin: %d fonts of Windows, %d built in\n", nloaded, nb);
+		w16_log("startwin: %d fonts of Windows, %d built in\n", nloaded, nfontlist - nloaded);
 }
 
 /* any of Windows' own */

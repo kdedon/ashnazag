@@ -774,6 +774,7 @@ l_realloc(sel, hd, size, flags)
 	want = l->lb_want;
 	if ((j = lget(h, size)) < 0)
 		return 0;
+	base = sel_base(h->lh_sel);	/* the segment may have grown elsewhere */
 	i = lbyhandle(h, hd);		/* indices moved */
 	l = &h->lh_b[i];
 	memmove(M + base + h->lh_b[j].lb_off, M + base + off, want);

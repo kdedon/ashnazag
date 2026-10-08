@@ -645,6 +645,63 @@ addintl(path)
 	fclose(fp);
 }
 
+/*
+ * What Setup writes in WIN.INI's [fonts] for a VGA display: the entries of
+ * SETUP.INF's [fonts] for the 96 dpi resolution ("100,96,96") and the
+ * plotter fonts, each "description=FILE".  The TrueType ones are left out:
+ * GDI here draws bitmap fonts only, and maps TrueType faces to them.
+ */
+static void
+addfonts(path, inf)
+	char *path, *inf;
+{
+	FILE *fp, *in;
+	char line[512], desc[128], file[32], *p, *q;
+	int sect = 0, n = 0;
+
+	if ((fp = fopen(path, "r")) != 0) {
+		while (fgets(line, sizeof line, fp))
+			if (strncmp(line, "[fonts]", 7) == 0) {
+				fclose(fp);
+				return;
+			}
+		fclose(fp);
+	}
+	if (!inf || (in = fopen(inf, "r")) == 0 || (fp = fopen(path, "a")) == 0) {
+		if (in)
+			fclose(in);
+		return;
+	}
+	fprintf(fp, "\r\n[fonts]\r\n");
+	while (fgets(line, sizeof line, in)) {
+		for (p = line; *p == ' ' || *p == '\t'; p++)
+			;
+		if (*p == '[') {
+			sect = strncmp(p, "[fonts]", 7) == 0;
+			continue;
+		}
+		if (!sect || !(strstr(p, "\"100,96,96\"") || strstr(p, "CONTINUOUSSCALING")))
+			continue;
+		/* n:FILE.FON, "description", "resolution" */
+		if (!(q = strchr(p, ':')))
+			continue;
+		p = q + 1;
+		for (q = file; *p && *p != ',' && *p != ' ' && q < file + sizeof file - 1; p++)
+			*q++ = *p;
+		*q = 0;
+		if (!(p = strchr(p, '"')))
+			continue;
+		for (p++, q = desc; *p && *p != '"' && q < desc + sizeof desc - 1; p++)
+			*q++ = *p;
+		*q = 0;
+		fprintf(fp, "%s=%s\r\n", desc, file);
+		n++;
+	}
+	fclose(in);
+	fclose(fp);
+	(void)n;
+}
+
 static void
 writesysini(path)
 	char *path;
@@ -743,6 +800,12 @@ win_install(nsrc, src, cdir)
 	rmtree(tmp);
 	sprintf(dst, "%s/win.ini", wdir);
 	addintl(dst);
+	{
+		char inf[700];
+
+		sprintf(inf, "%s/setup.inf", sdir);
+		addfonts(dst, access(inf, 0) == 0 ? inf : (char *)0);
+	}
 	sprintf(dst, "%s/system.ini", wdir);
 	if (access(dst, 0) != 0)
 		writesysini(dst);

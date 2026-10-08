@@ -643,7 +643,7 @@ loadfile(name, from, errp)
 		m->m_seg[i].ns_alloc = alloc;
 		m->m_seg[i].ns_sel = g_alloc(GMEM_ZEROINIT, alloc, 0);
 		if (w16_debug > 2)
-			w16_log("%s: segment %d: %lu bytes, %lu free\n", m->m_name, i, (unsigned long)alloc, (unsigned long)g_free_bytes());
+			w16_log("%s: segment %d: %lu bytes, %lu free, selector %04x\n", m->m_name, i, (unsigned long)alloc, (unsigned long)g_free_bytes(), m->m_seg[i].ns_sel);
 		if (!m->m_seg[i].ns_sel)
 			w16_fatal("%s: no memory for segment %d (%lu bytes; %lu free)", m->m_name, i, (unsigned long)alloc, (unsigned long)g_free_bytes());
 		if (off && rdat(fp, off, M + sel_base(m->m_seg[i].ns_sel), m->m_seg[i].ns_size))
