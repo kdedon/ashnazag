@@ -901,7 +901,7 @@ user_defproc(w, msg, wp, lp)
 		if (wnd_toplevel(w)->id && !(wnd_toplevel(w)->style & WS_CHILD))
 			wnd_send(wnd_toplevel(w), WM_SYSCOMMAND, SC_KEYMENU, wp);
 		else
-			scr_beep();
+			user_beep(0);
 		return 0;
 	case WM_KEYDOWN:
 		if (wp == VK_F1 + 9) {

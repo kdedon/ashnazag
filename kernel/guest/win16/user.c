@@ -18,6 +18,11 @@
 #include "win.h"
 #include "scr.h"
 
+static void rawfill(), rawput();
+static int timer_next();
+extern void mm_tick();
+extern int mm_next();
+
 #define	NWND	2048
 #define	WBASE	0x2000
 
@@ -584,8 +589,11 @@ static void
 wake(t)
 	struct task *t;
 {
-	if (t)
+	/* a message for a task is an event for it too, as Windows posts one (a WaitEvent ends) */
+	if (t) {
 		t->t_idle = 0;
+		t->t_events++;
+	}
 }
 
 static int
@@ -615,6 +623,48 @@ wnd_post(h, msg, wp, lp)
 	u32 h, msg, wp, lp;
 {
 	return qpost(h, msg, wp, lp);
+}
+
+/* PostAppMessage: a message with no window for task t */
+int
+user_posttask(t, msg, wp, lp)
+	struct task *t;
+	u32 msg, wp, lp;
+{
+	if (!t || !qpost((u32)0, msg, wp, lp))
+		return 0;
+	q[(qtail + QSIZE - 1) % QSIZE].task = t;
+	wake(t);
+	return 1;
+}
+
+/*
+ * A task with nothing to do but wait (WaitEvent): the others run, or the
+ * session waits for input, the drivers' work going on meanwhile.
+ */
+void
+user_idle()
+{
+	struct ev e;
+	int t;
+
+	rawfill();
+	mm_tick();
+	if (task_othersready()) {
+		if (curtask)
+			curtask->t_idle = 1;
+		task_yield();
+		if (curtask)
+			curtask->t_idle = 0;
+		return;
+	}
+	t = timer_next();
+	if ((t < 0 || t > 20) && mm_next() >= 0 && mm_next() < 20)
+		t = mm_next();
+	if (t < 0 || t > 50)
+		t = 50;
+	if (scr_poll(&e, t) == 1)
+		rawput(&e);
 }
 
 /* ---- timers ---- */
@@ -1434,7 +1484,7 @@ input(e)
 		} else
 			w = wnd_frompoint(e->x, e->y, &ht);
 		if (e->down && blocked(w) && !wnd_capture) {
-			scr_beep();
+			user_beep(0);
 			return;
 		}
 		msg = (k == 0 ? WM_LBUTTONDOWN : k == 1 ? WM_RBUTTONDOWN : WM_MBUTTONDOWN) + (e->down ? 0 : 1);
@@ -1679,9 +1729,13 @@ user_getmessage(a, h, min, max, remove, wait)
 
 	h &= 0xffff;
 	for (;;) {
+		extern void mm_tick();
+		extern int mm_next();
+
 		/* input from the device; into messages one at a time, when the queue is empty */
 		rawfill();
 		caret_blink();
+		mm_tick();
 		/* the queue */
 	again:
 		for (i = qhead; i != qtail; i = (i + 1) % QSIZE)
@@ -1797,6 +1851,8 @@ user_getmessage(a, h, min, max, remove, wait)
 		t = timer_next();
 		if (caret.hwnd && caret.shown > 0 && (t < 0 || t > 100))
 			t = 100;
+		if ((i = mm_next()) >= 0 && (t < 0 || i < t))
+			t = i;
 		if (scr_poll(&e, t) == 1)
 			rawput(&e);
 	}
@@ -1914,7 +1970,11 @@ user_translate(a)
 void
 user_yield()
 {
+	/* Yield: any other task with something to do runs (MCIWAVE yields while its playing task finishes) */
 	rawfill();
+	mm_tick();
+	if (task_othersready())
+		task_yield();
 }
 
 /* a modal loop of our own until (*done & mask) or the window goes; 0 normally, -1 WM_QUIT came */

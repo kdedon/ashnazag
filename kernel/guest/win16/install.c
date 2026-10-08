@@ -717,7 +717,10 @@ writesysini(path)
 	fprintf(fp, "fonts.fon=vgasys.fon\r\nfixedfon.fon=vgafix.fon\r\noemfonts.fon=vgaoem.fon\r\n");
 	fprintf(fp, "language.dll=\r\ndrivers=mmsystem.dll\r\n\r\n");
 	fprintf(fp, "[boot.description]\r\ndisplay.drv=Ash Nazag display\r\n\r\n");
-	fprintf(fp, "[keyboard]\r\ntype=4\r\n\r\n[drivers]\r\n\r\n[mci]\r\n");
+	fprintf(fp, "[keyboard]\r\ntype=4\r\n\r\n");
+	/* the multimedia drivers as Setup lists them; the timer and the wave output are ours (mmdrv.c) */
+	fprintf(fp, "[drivers]\r\ntimer=timer.drv\r\nwave=ashaudio.drv\r\nmidimapper=midimap.drv\r\n\r\n");
+	fprintf(fp, "[mci]\r\nWaveAudio=mciwave.drv\r\nSequencer=mciseq.drv\r\n");
 	fclose(fp);
 }
 

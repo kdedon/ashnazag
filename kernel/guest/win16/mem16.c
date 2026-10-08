@@ -560,11 +560,14 @@ l_init(sel, start, end)
 
 		if (end > 0xfffe)
 			end = 0xfffe;
-		if (end + 1 >= size)
+		if (end >= size)
 			return 0;
 		start = size - 1 - end;
 		end = size - 1;
 	}
+	/* Windows' heap header comes first: no block at offset 0, which would read as failure */
+	if (start < 16)
+		start = 16;
 	if (end > limit)
 		end = limit;
 	start = (start + 3) & ~3;

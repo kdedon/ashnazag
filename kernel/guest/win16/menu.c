@@ -1012,7 +1012,7 @@ menu_trackbar(w, item, key)
 		if (i < 0) {
 			nlv = 0;
 			barwnd = 0;
-			scr_beep();
+			user_beep(0);
 			return;
 		}
 		item = i;

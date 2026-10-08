@@ -364,8 +364,17 @@ dlg_create(hinst, t, ownerh, proc, param, modal)
 	ufree(lptitle);
 	if (!w)
 		return 0;
-	if (menu != 0xffffffff || M[menuspec])
-		w->id = menu_load(hinst, menu != 0xffffffff ? menu : FP(0, 0));
+	/* the template's menu, by number or name (Sound Recorder's), and room for it: the client keeps its size */
+	if (menu != 0xffffffff || M[menuspec]) {
+		u32 mn = menu != 0xffffffff ? menu : ustr((char *)M + menuspec);
+
+		w->id = menu_load(hinst, mn);
+		if (menu == 0xffffffff)
+			ufree(mn);
+		if (w->id && !(style & WS_CHILD) && menu_barheight(w) > 0)
+			wnd_setpos(w, (struct wnd *)0, 0, 0, w->wr.r - w->wr.l, w->wr.b - w->wr.t + menu_barheight(w),
+			    SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+	}
 	w->flags |= WF_DIALOG;
 	w->dlgfont = font;
 	if (w->cls->wndextra >= 8)
@@ -608,7 +617,7 @@ dlg_ismsg(dlg, a)
 					if (c->id == id)
 						break;
 				if (c && (c->style & WS_DISABLED)) {
-					scr_beep();
+					user_beep(0);
 					return 1;
 				}
 				wnd_send(dlg, WM_COMMAND, id, FP(0, c ? c->h : 0));
@@ -1029,6 +1038,8 @@ user_messagebox(hwnd, text, caption, style)
 			icon_draw(dc_get(hdc), hicon, w->cr.l + 12, w->cr.t + 14);
 			user_releasedc(hdc);
 		}
+		/* the sound for its kind, as Windows' MessageBox plays (MessageBeep(style & MB_ICONMASK)) */
+		user_beep(style & 0xf0);
 		res = dlg_run(w->h);
 		if (en && wnd_get(owner->h))
 			owner->style &= ~WS_DISABLED;

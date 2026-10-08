@@ -113,6 +113,7 @@ task_new(m, cmdline, show)
 	t->t_hmod = m->m_hmod;
 	t->t_hinst = m->m_hinst;
 	t->t_show = show;
+	t->t_events = 1;		/* as Windows starts a task: its startup's WaitEvent(0) returns */
 	strncpy(t->t_cmdline, cmdline, sizeof t->t_cmdline - 1);
 	t->t_psp = psp_make(cmdline, m->m_hinst);
 	t->t_dta = FP(t->t_psp, 0x80);

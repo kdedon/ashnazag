@@ -534,6 +534,12 @@ main(argc, argv)
 			ddesetup_arm();
 	}
 	setupreg();
+	/* the installable drivers USER opens at the start: MMSYSTEM, which opens the wave and timer drivers */
+	{
+		extern void drv_boot();
+
+		drv_boot();
+	}
 	m = mod_load(dos, &err);
 	if (!m) {
 		fprintf(stderr, "startwin: %s: %s\n", prog, err == 2 ? "not found" : err == 11 ? "not a Windows program" :

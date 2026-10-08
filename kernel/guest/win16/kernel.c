@@ -125,6 +125,10 @@ kernel_tick()
 
 /* ---- tasks (task.c runs them) ---- */
 
+/* a raw command tail for the next PSP (LoadModule), -1 none */
+static char rawtail[128];
+static int rawlen = -1;
+
 u16
 psp_make(cmdline, hinst)
 	char *cmdline;
@@ -134,6 +138,18 @@ psp_make(cmdline, hinst)
 	u32 b = sel_base(psp);
 	int n = strlen(cmdline);
 
+	/* LoadModule's tail as given, bytes and all: MMTASK.TSK takes a binary one (mmTaskCreate's) */
+	if (rawlen >= 0) {
+		PB(b, 0xcd);
+		PB(b + 1, 0x20);
+		PW(b + 2, 0x9fff);
+		PW(b + 0x2c, envsel);
+		PB(b + 0x80, rawlen);
+		memcpy(M + b + 0x81, rawtail, rawlen);
+		PB(b + 0x81 + rawlen, 0x0d);
+		rawlen = -1;
+		return psp;
+	}
 	if (n > 126)
 		n = 126;
 	PB(b, 0xcd);
@@ -176,13 +192,59 @@ k_InitTask(a)
 	return 1;
 }
 
-static u32 k_WaitEvent(a) u32 *a; { return 0; }
+/*
+ * WaitEvent: an event already posted is taken at once (FALSE); else the
+ * task waits for one (others run meanwhile) and takes it (TRUE).
+ * PostEvent: one for a task, which wakes if it waits.  MMSYSTEM's
+ * mmTaskBlock and mmTaskSignal are these (MCIWAVE's playing task).
+ */
+static u32
+k_WaitEvent(a)
+	u32 *a;
+{
+	extern void user_idle();
+	struct task *t = curtask;
+	int i;
+
+	for (i = 0; LO16(a[0]) && i < NTASK_MAX; i++)
+		if (tasks[i] && tasks[i]->t_htask == LO16(a[0]))
+			t = tasks[i];
+	if (!t)
+		return 0;
+	if (t->t_events > 0) {
+		t->t_events--;
+		return 0;
+	}
+	while (t->t_events <= 0 && !t->t_done)
+		user_idle();
+	if (t->t_events > 0)
+		t->t_events--;
+	return 1;
+}
+
+static u32
+k_PostEvent(a)
+	u32 *a;
+{
+	int i;
+
+	for (i = 0; i < NTASK_MAX; i++)
+		if (tasks[i] && tasks[i]->t_htask == LO16(a[0])) {
+			tasks[i]->t_events++;
+			tasks[i]->t_idle = 0;
+			return 0;
+		}
+	return 0;
+}
 static u32 k_Yield(a) u32 *a; { extern void user_yield(); user_yield(); return 0; }
 static u32 k_GetVersion(a) u32 *a; { return 0x05000a03; }
 static u32 k_GetWinFlags(a) u32 *a; { return kernel_winflags(); }
 static u32 k_GetCurrentTask(a) u32 *a; { return curtask ? curtask->t_htask : 0; }
 static u32 k_GetCurrentPDB(a) u32 *a; { return curtask ? curtask->t_psp : 0; }
 static u32 k_GetNumTasks(a) u32 *a; { return ntasks; }
+
+/* IsTaskLocked: no task holds the CPU to itself (LockCurrentTask) */
+static u32 k_IsTaskLocked(a) u32 *a; { return 0; }
 
 static u32
 k_IsTask(a)
@@ -1366,6 +1428,27 @@ startprog(path, args, show)
 	w16_upper(name);
 	if (dos_fullpath(name, dos) != 0)
 		strcpy(dos, name);
+	/* a bare name: the current directory, then Windows', then SYSTEM, as LoadModule and WinExec look (MMTASK.TSK) */
+	if (!strchr(name, '\\') && !strchr(name, ':')) {
+		extern char windir[], sysdir[];
+		char try[300], host[1024];
+		char *dirs[2];
+		int i;
+
+		dirs[0] = windir;
+		dirs[1] = sysdir;
+		for (i = -1; i < 2; i++) {
+			if (i < 0)
+				strcpy(try, dos);
+			else
+				sprintf(try, "%s\\%s", dirs[i], name);
+			if (dos_hostpath(try, host, sizeof host, 0) == 0 && access(host, 0) == 0) {
+				if (dos_fullpath(try, dos) != 0)
+					strcpy(dos, try);
+				break;
+			}
+		}
+	}
 	old = mod_find_path(dos);
 	m = old && !old->m_dll ? mod_loadcopy(dos, &err) : mod_load(dos, &err);
 	if (!m)
@@ -1434,16 +1517,23 @@ k_LoadModule(a)
 	args[0] = 0;
 	if (pb) {
 		if ((tail = lin(FPSEL(GL(pb + 2)), FPOFF(GL(pb + 2)))) != 0) {
-			n = M[tail] > 127 ? 127 : M[tail];
+			n = M[tail] > 126 ? 126 : M[tail];
 			memcpy(args, M + tail + 1, n);
 			args[n] = 0;
+			/* not text (a NUL in it): passed to the PSP as it is */
+			if ((int)strlen(args) < n) {
+				memcpy(rawtail, args, n);
+				rawlen = n;
+			}
 			if ((p = strchr(args, '\r')) != 0)
 				*p = 0;
 		}
 		if ((sh = lin(FPSEL(GL(pb + 6)), FPOFF(GL(pb + 6)))) != 0)
 			show = GW(sh + 2);
 	}
-	return startprog(STR(a[0]), args[0] == ' ' ? args + 1 : args, show);
+	n = startprog(STR(a[0]), args[0] == ' ' ? args + 1 : args, show);
+	rawlen = -1;
+	return n;
 }
 
 static u32 k_GetCodeHandle(a) u32 *a; { return FPSEL(a[0]); }
@@ -1470,6 +1560,7 @@ struct impl k_impl[] = {
 	{ "KERNEL", "GetCurrentTask", k_GetCurrentTask },
 	{ "KERNEL", "GetCurrentPDB", k_GetCurrentPDB },
 	{ "KERNEL", "GetNumTasks", k_GetNumTasks },
+	{ "KERNEL", "IsTaskLocked", k_IsTaskLocked },
 	{ "KERNEL", "IsTask", k_IsTask },
 	{ "KERNEL", "GetTaskQueue", k_GetTaskQueue },
 	{ "KERNEL", "SetTaskQueue", k_SetTaskQueue },
@@ -1615,7 +1706,7 @@ struct impl k_impl[] = {
 	{ "KERNEL", "IsDBCSLeadByte", k_nop },
 	{ "KERNEL", "LimitEMSPages", k_nop },
 	{ "KERNEL", "GetAppCompatFlags", k_nop },
-	{ "KERNEL", "PostEvent", k_nop },
+	{ "KERNEL", "PostEvent", k_PostEvent },
 	{ "KERNEL", "UndefDynLink", k_nop },
 	{ 0 }
 };

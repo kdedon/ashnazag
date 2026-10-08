@@ -1416,7 +1416,13 @@ static u32
 u_PostAppMessage(a)
 	u32 *a;
 {
-	return wnd_post(0, a[1], a[2], a[3]);
+	extern int user_posttask();
+	int i;
+
+	for (i = 0; i < NTASK_MAX; i++)
+		if (tasks[i] && tasks[i]->t_htask == (a[0] & 0xffff))
+			return user_posttask(tasks[i], a[1], a[2], a[3]);
+	return a[0] & 0xffff ? 0 : wnd_post(0, a[1], a[2], a[3]);
 }
 
 static u32 u_PostQuitMessage(a) u32 *a; { user_postquit((short)a[0]); return 0; }
@@ -1565,7 +1571,40 @@ u_SetKeyboardState(a)
 	return 0;
 }
 
-static u32 u_MessageBeep(a) u32 *a; { scr_beep(); return 0; }
+/*
+ * MessageBeep, and USER's own beeps: the sound WIN.INI's [sounds] sets
+ * for the kind, played by the user's MMSYSTEM, as Windows 3.1 does when
+ * it is there; else a plain beep.  [windows] Beep=no silences them.
+ */
+void
+user_beep(type)
+	int type;
+{
+	extern void mm_beep();
+	static char *names[] = { "SystemDefault", "SystemHand", "SystemQuestion", "SystemExclamation",
+		"SystemAsterisk" };
+	struct module *m = mod_find("MMSYSTEM");
+	char yes[8];
+	u32 fn, s;
+
+	if (profile_get((char *)0, "windows", "Beep", "yes", yes, sizeof yes) > 0 && !w16_stricmp(yes, "no"))
+		return;
+	type &= 0xffff;
+	if (type != 0xffff && m && !m->m_native && (fn = mod_proc(m, 0, "sndPlaySound")) != 0) {
+		s = ustr(names[type >= 0x10 && type <= 0x40 ? type >> 4 : 0]);
+		cb_begin();
+		cb_push32(s);
+		cb_push16(3);		/* SND_ASYNC | SND_NODEFAULT */
+		if (cb_call(fn, 0) & 0xffff) {
+			ufree(s);
+			return;
+		}
+		ufree(s);
+	}
+	mm_beep();
+}
+
+static u32 u_MessageBeep(a) u32 *a; { user_beep(a[0]); return 0; }
 static u32 u_GetDoubleClickTime(a) u32 *a; { return 500; }
 static u32 u_GetSystemMetrics(a) u32 *a; { return sys_metric((short)a[0]); }
 static u32 u_GetSysColor(a) u32 *a; { return sys_color(a[0]); }

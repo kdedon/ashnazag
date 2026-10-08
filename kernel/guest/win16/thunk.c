@@ -41,7 +41,7 @@ static int ninst;
 static u16 varsel;		/* the system modules' variables */
 static int nvar;
 
-static struct impl *impls[] = { k_impl, u_impl, g_impl, mn_impl, dl_impl, ct_impl, sb_impl, md_impl, cu_impl, o_impl, 0 };
+static struct impl *impls[] = { k_impl, u_impl, g_impl, mn_impl, dl_impl, ct_impl, sb_impl, md_impl, cu_impl, dv_impl, mm_impl, o_impl, 0 };
 
 static apifn
 findimpl(mod, name)
@@ -302,6 +302,22 @@ thunk_dispatch(c, n)
 
 	if (!e)
 		w16_fatal("call to an empty thunk %d", n);
+	/* the drivers' interrupt-time work, between calls too: a program busy outside the message loop still plays */
+	{
+		static int calls;
+		static u32 last;
+		extern void mm_tick();
+
+		if (++calls >= 64) {
+			calls = 0;
+			if (w16_ticks() - last >= 20) {
+				last = w16_ticks();
+				mm_tick();
+				ss = c->s[S_SS].base;
+				sp = c->r[R_SP] & 0xffff;
+			}
+		}
+	}
 	rip = GW(ss + sp);
 	rcs = GW(ss + sp + 2);
 	for (p = e->ae_args; *p; p++)

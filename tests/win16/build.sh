@@ -18,11 +18,12 @@ sh "$T/win16/run.sh"
 LIBGCC=$(ls "$TC"/lib/gcc-lib/m68k-cbm-sysv4/*/libgcc.a | tail -1)
 LIBM=; for l in "$SYS/usr/lib/libm.a" "$SYS/usr/ccs/lib/libm.a"; do [ -f "$l" ] && LIBM=$l; done
 objs=
-for f in "$G"/*.c; do
-	[ "$(basename "$f")" != scr_null.c ] || continue
+for f in "$G"/*.c "$AUX/kernel/guest/sndout.c"; do
+	case $(basename "$f") in scr_null.c|snd_null.c) continue ;; esac
 	o=$OUT/obj/$(basename "$f" .c).o
 	nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O2 -w -D__STDC__=0 \
-		-I"$G" -I"$AUX/kernel/mac/display" -c "$f" -o "$o"
+		-I"$G" -I"$AUX/kernel/guest/include" -I"$AUX/kernel/mac/display" -I"$AUX/kernel/mac/sound" \
+		-c "$f" -o "$o"
 	objs="$objs $o"
 done
 nice -n 19 "$TC/bin/m68k-cbm-sysv4-ld" -o "$OUT/startwin" "$SYS/usr/ccs/lib/crt1.o" \

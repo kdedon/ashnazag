@@ -151,7 +151,7 @@ profile_put(file, sect, key, value)
 {
 	char host[1024], tmp[1100], line[MAXLINE], name[MAXLINE], *eq, *v;
 	FILE *fp, *out;
-	int in = 0, done = 0, seen = 0;
+	int in = 0, done = 0, seen = 0, blanks = 0, i;
 
 	if (!sect || inipath(file, host) != 0)
 		return 0;
@@ -160,11 +160,20 @@ profile_put(file, sect, key, value)
 		return 0;
 	if ((fp = fopen(host, "r")) != 0) {
 		while (fgets(line, sizeof line, fp)) {
+			/* blank lines held back: a new key goes after the section's last line, before them */
+			strcpy(name, line);
+			if (!*trim(name)) {
+				blanks++;
+				continue;
+			}
 			if (issection(line, name)) {
 				if (in && !done && key && value) {
 					fprintf(out, "%s=%s\r\n", key, value);
 					done = 1;
 				}
+				for (i = 0; i < blanks; i++)
+					fputs("\r\n", out);
+				blanks = 0;
 				in = w16_stricmp(name, sect) == 0;
 				seen |= in;
 				if (in && !key)
@@ -172,8 +181,13 @@ profile_put(file, sect, key, value)
 				fputs(line, out);
 				continue;
 			}
-			if (in && !key)
+			if (in && !key) {
+				blanks = 0;
 				continue;
+			}
+			for (i = 0; i < blanks; i++)
+				fputs("\r\n", out);
+			blanks = 0;
 			if (in && !done) {
 				strcpy(name, line);
 				v = trim(name);
@@ -193,9 +207,11 @@ profile_put(file, sect, key, value)
 	}
 	if (!done && key && value) {
 		if (!in)
-			fprintf(out, "\r\n[%s]\r\n", sect);
+			fprintf(out, ftell(out) ? "\r\n[%s]\r\n" : "[%s]\r\n", sect);
 		fprintf(out, "%s=%s\r\n", key, value);
 	}
+	for (i = 0; i < blanks; i++)
+		fputs("\r\n", out);
 	(void)seen;
 	fclose(out);
 	return rename(tmp, host) == 0;
