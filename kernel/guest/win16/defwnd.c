@@ -11,6 +11,8 @@
 #include "win.h"
 #include "scr.h"
 
+extern int user_poll();
+
 extern u32 ualloc(), ulin(), ustr();
 extern void ufree(), user_ncpaint(), expose(), wnd_setfocus(), wnd_activate();
 extern u16 user_beginpaint();
@@ -347,7 +349,7 @@ user_drawnc(w)
 	u16 hdc;
 	struct dc *dc;
 	struct rect r, c;
-	int b, active = w == wnd_active || (w->flags & WF_ACTIVE), black = 0, x, bw, s, fr;
+	int b, active = (w->flags & WF_ACTIVE) != 0, black = 0, x, bw, s, fr;
 	struct bfont *f;
 
 	if (!wnd_visible(w))
@@ -565,7 +567,7 @@ movesize(w, ht, x0, y0)
 	scr_flush();
 	n = r;
 	while (!done) {
-		if (scr_poll(&e, -1) != 1)
+		if (user_poll(&e, -1) != 1)
 			continue;
 		if (e.type == EV_MOVE || e.type == EV_BTN) {
 			dx = e.x - x0;
@@ -635,7 +637,7 @@ trackbutton(w, which)
 	user_drawnc(w);
 	scr_flush();
 	for (;;) {
-		if (scr_poll(&e, -1) != 1)
+		if (user_poll(&e, -1) != 1)
 			continue;
 		if (e.type != EV_MOVE && e.type != EV_BTN)
 			continue;
@@ -850,6 +852,8 @@ user_defproc(w, msg, wp, lp)
 		}
 		return 0;
 	case WM_NCLBUTTONDBLCLK:
+		if (wp != HTCAPTION && wp != HTSYSMENU)
+			return user_defproc(w, WM_NCLBUTTONDOWN, wp, lp);
 		if (wp == HTCAPTION && (w->style & WS_MAXIMIZEBOX))
 			wnd_send(w, WM_SYSCOMMAND, (w->style & (WS_MAXIMIZE | WS_MINIMIZE)) ? SC_RESTORE : SC_MAXIMIZE, lp);
 		else if (wp == HTCAPTION && (w->style & WS_MINIMIZE))
@@ -896,7 +900,7 @@ user_defproc(w, msg, wp, lp)
 			struct dc *dc = dc_get(wp);
 			int type = HI16(lp);
 
-			if (type == 3) {			/* CTLCOLOR_SCROLLBAR */
+			if (type == 5) {			/* CTLCOLOR_SCROLLBAR */
 				if (dc) {
 					dc->st.bk = RGB(255, 255, 255);
 					dc->st.text = 0;

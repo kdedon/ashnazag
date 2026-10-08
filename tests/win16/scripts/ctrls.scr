@@ -1,0 +1,21 @@
+wait 400
+type hello
+key 0x09
+type one
+key 0x0d
+type two
+click 260 86
+wait 100
+click 368 146
+wait 200
+shot ctrls1.ppm
+click 280 186
+wait 100
+click 44 162
+click 44 198
+click 368 174
+click 368 174
+wait 100
+shot ctrls2.ppm
+click 143 255
+wait 200

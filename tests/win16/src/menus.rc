@@ -1,0 +1,43 @@
+#include <windows.h>
+#include "menus.h"
+
+MainMenu MENU
+BEGIN
+    POPUP "&File"
+    BEGIN
+        MENUITEM "&New\tCtrl+N", IDM_NEW
+        MENUITEM "&Open...", IDM_OPEN
+        MENUITEM SEPARATOR
+        MENUITEM "&Checked", IDM_CHECK, CHECKED
+        MENUITEM SEPARATOR
+        MENUITEM "E&xit", IDM_EXIT
+    END
+    POPUP "&Help"
+    BEGIN
+        MENUITEM "&About...", IDM_ABOUT
+    END
+END
+
+MainAccel ACCELERATORS
+BEGIN
+    "^N", IDM_NEW
+    VK_F1, IDM_ABOUT, VIRTKEY
+END
+
+IDD_ABOUT DIALOG 20, 20, 160, 80
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "About Menus"
+FONT 8, "Helv"
+BEGIN
+    LTEXT "Menu test for the Win16 environment", -1, 10, 8, 140, 10
+    LTEXT "&Name:", -1, 10, 26, 30, 10
+    EDITTEXT IDC_NAME, 42, 24, 100, 12, ES_AUTOHSCROLL
+    DEFPUSHBUTTON "OK", IDOK, 30, 56, 40, 14
+    PUSHBUTTON "Cancel", IDCANCEL, 90, 56, 40, 14
+END
+
+STRINGTABLE
+BEGIN
+    1, "Menus"
+    2, "Opened"
+END

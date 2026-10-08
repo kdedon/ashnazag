@@ -10,6 +10,8 @@
 #include "win.h"
 #include "scr.h"
 
+extern int user_poll();
+
 extern u32 ualloc(), ulin(), ustr(), thunk_internal();
 extern void ufree(), user_flushpaint();
 
@@ -715,7 +717,7 @@ loop(startitem, key, mouse)
 	}
 	for (;;) {
 		scr_flush();
-		if (scr_poll(&e, -1) != 1)
+		if (user_poll(&e, -1) != 1)
 			continue;
 		if (e.type == EV_MOVE || e.type == EV_BTN) {
 			scr_mx = e.x;
@@ -849,6 +851,9 @@ finish(id, cmdwnd)
 	int id;
 	struct wnd *cmdwnd;
 {
+	extern void user_resetclicks();
+
+	user_resetclicks();
 	closeto(0);
 	if (barwnd) {
 		barsel = -1;
@@ -971,6 +976,11 @@ menu_track(h, flags, x, y, w, item)
 		drawpopup(pw, m, -1);
 	}
 	id = loop(-1, 0, (flags & 0x8000) != 0);
+	{
+		extern void user_resetclicks();
+
+		user_resetclicks();
+	}
 	closeto(0);
 	user_flushpaint();
 	if (id >= 0 && w && wnd_get(w->h)) {

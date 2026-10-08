@@ -12,6 +12,8 @@
 #include "win.h"
 #include "scr.h"
 
+extern int user_poll();
+
 extern u32 ualloc(), ulin(), ustr(), thunk_internal();
 extern void ufree(), wnd_setfocus(), user_flushpaint(), user_endpaint();
 extern u16 user_beginpaint();
@@ -348,6 +350,10 @@ button_proc(a)
 		return 0;
 	case WM_ERASEBKGND:
 		return 1;
+	case WM_NCHITTEST:
+		if (type == BS_GROUPBOX)
+			return (u32)HTTRANSPARENT & 0xffff;
+		break;
 	case WM_GETDLGCODE:
 		switch (type) {
 		case BS_PUSHBUTTON: return 0x2000 | 0x20;
@@ -1469,7 +1475,7 @@ cb_dropdown(w)
 	/* the list's own loop: track the pointer, pick with a click or Return */
 	while (!done) {
 		scr_flush();
-		if (scr_poll(&e, -1) != 1)
+		if (user_poll(&e, -1) != 1)
 			continue;
 		if (e.type == EV_MOVE || e.type == EV_BTN) {
 			scr_mx = e.x;
@@ -1537,6 +1543,12 @@ combo_proc(a)
 		return 0;
 	c = cbof(w);
 	switch (a[1]) {
+	case WM_NCCREATE:
+		/* the scroll bar the style asks for is the list's */
+		if (w->style & WS_VSCROLL)
+			w->user |= 0x40000;
+		w->style &= ~(WS_VSCROLL | WS_HSCROLL);
+		return user_defproc(w, a[1], a[2], a[3]);
 	case WM_CREATE:
 		h = cbh(w);
 		c->listh = w->cr.b - w->cr.t - h;

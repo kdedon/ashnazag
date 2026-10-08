@@ -116,8 +116,8 @@ textrect(w, r)
 	struct rect *r;
 {
 	*r = w->cr;
-	r->l += multi(w) ? 2 : 2;
-	r->r -= 2;
+	r->l += (w->user & 0x20000) ? 3 : 1;
+	r->r -= (w->user & 0x20000) ? 3 : 1;
 	r->t += multi(w) ? 1 : ((w->cr.b - w->cr.t) - efont(w)->f_height) / 2;
 }
 
@@ -388,6 +388,10 @@ paint(w, hdc)
 			r_and(&l, &l, &clip);
 			d_fillcolor(dc, &l, hbg);
 		}
+	}
+	if (w->user & 0x20000) {
+		r = w->cr;
+		d_frame(dc, &r, 0);
 	}
 	(void)bgidx;
 	(void)fgidx;
@@ -858,11 +862,6 @@ edit_proc(a)
 			u16 h = user_beginpaint(w, 0);
 
 			paint(w, h);
-			if (w->user & 0x20000) {
-				struct rect rr = w->cr;
-
-				d_frame(dc_get(h), &rr, 0);
-			}
 			user_releasedc(h);
 			user_endpaint(w, 0);
 			setcaret(w);

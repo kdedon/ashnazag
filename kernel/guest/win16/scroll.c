@@ -11,6 +11,8 @@
 #include "win.h"
 #include "scr.h"
 
+extern int user_poll();
+
 extern void user_flushpaint();
 
 #define	SB_LINEUP	0
@@ -185,7 +187,7 @@ sb_track(w, ctl, r, vert, sb, x, y)
 		scr_flush();
 		if (!wnd_get(h))
 			return;
-		if (scr_poll(&e, part == 3 ? -1 : 30) == 1) {
+		if (user_poll(&e, part == 3 ? -1 : 30) == 1) {
 			if (e.type == EV_MOVE || e.type == EV_BTN) {
 				scr_mx = e.x;
 				scr_my = e.y;

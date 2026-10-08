@@ -28,7 +28,8 @@ u16 cur_arrow;
 
 static struct wnd *wtab[NWND];
 static struct cls *classes;
-u8 keystate[256];
+u8 keystate[256];		/* as of the message in hand (GetKeyState) */
+u8 asyncstate[256];		/* as of now (GetAsyncKeyState) */
 
 #define	STR(p)		(gptr(p) ? gptr(p) : "")
 #define	ISINT(p)	(FPSEL(p) == 0)
@@ -289,12 +290,17 @@ wnd_visrgn(w, g, client)
 		r_and(&r, &r, &p->cr);
 	r_and(&r, &r, &desktop->wr);
 	rgn_set(g, &r);
-	/* siblings above w and above each of its ancestors */
+	/*
+	 * Siblings above w and above each of its ancestors, where they clip:
+	 * always among top-level windows, else with WS_CLIPSIBLINGS.
+	 */
 	for (c = w; c && c->parent; c = c->parent)
-		for (s = c->parent->child; s && s != c; s = s->next)
-			if ((s->style & WS_VISIBLE))
-				rgn_subrect(g, &s->wr);
-	if (client)
+		if (c->parent == desktop || (c->style & WS_CLIPSIBLINGS))
+			for (s = c->parent->child; s && s != c; s = s->next)
+				if ((s->style & WS_VISIBLE))
+					rgn_subrect(g, &s->wr);
+	/* children with WS_CLIPCHILDREN (the desktop always) */
+	if (client == 1 ? (w->style & WS_CLIPCHILDREN) || w == desktop : client == 2)
 		for (s = w->child; s; s = s->next)
 			if ((s->style & WS_VISIBLE))
 				rgn_subrect(g, &s->wr);
@@ -847,7 +853,8 @@ wnd_create(ex, cname, title, style, x, y, cx, cy, hparent, hmenu, hinst, param)
 	if (c->style & CS_SAVEBITS)
 		;
 	w->style &= ~WS_VISIBLE;
-	link_w(w, (struct wnd *)0);
+	/* children at the bottom, so siblings stay in the order they were made (dialog tab order) */
+	link_w(w, (style & WS_CHILD) ? (struct wnd *)1 : (struct wnd *)0);
 	vis_epoch++;
 	/* CREATESTRUCT */
 	cs = ualloc(34);
@@ -1219,31 +1226,43 @@ wnd_activate(w, how)
 
 /* ---- hit testing ---- */
 
+/* the deepest window at (x, y) under w, skipping hit-transparent ones */
+static struct wnd *
+frompoint(w, x, y, htp)
+	struct wnd *w;
+	int x, y, *htp;
+{
+	struct wnd *c, *r;
+	struct rect *rr;
+	int ht;
+
+	for (c = w->child; c; c = c->next) {
+		rr = &c->wr;
+		if (!(c->style & WS_VISIBLE) || x < rr->l || x >= rr->r || y < rr->t || y >= rr->b)
+			continue;
+		if (!(c->style & WS_DISABLED) && x >= c->cr.l && x < c->cr.r && y >= c->cr.t && y < c->cr.b &&
+		    (r = frompoint(c, x, y, htp)) != 0)
+			return r;
+		ht = (short)wnd_send(c, WM_NCHITTEST, 0, FP(y, x));
+		if (ht == HTTRANSPARENT)
+			continue;
+		*htp = ht;
+		return c;
+	}
+	return 0;
+}
+
 struct wnd *
 wnd_frompoint(x, y, htp)
 	int x, y, *htp;
 {
-	struct wnd *w = desktop, *c;
-	struct rect *r;
-	int ht;
+	struct wnd *w;
+	int ht = HTCLIENT;
 
-	for (;;) {
-		for (c = w->child; c; c = c->next) {
-			r = &c->wr;
-			if ((c->style & WS_VISIBLE) && x >= r->l && x < r->r && y >= r->t && y < r->b)
-				break;
-		}
-		if (!c)
-			break;
-		w = c;
-		if ((w->style & WS_DISABLED) || !(x >= w->cr.l && x < w->cr.r && y >= w->cr.t && y < w->cr.b))
-			break;
-	}
-	ht = w == desktop ? HTCLIENT : (short)wnd_send(w, WM_NCHITTEST, 0, FP(y, x));
-	/* transparent: the window under it (a static control in a dialog) */
-	if (ht == HTTRANSPARENT && w->parent) {
-		w = w->parent;
-		ht = w == desktop ? HTCLIENT : (short)wnd_send(w, WM_NCHITTEST, 0, FP(y, x));
+	w = frompoint(desktop, x, y, &ht);
+	if (!w) {
+		w = desktop;
+		ht = HTCLIENT;
 	}
 	if (htp)
 		*htp = ht;
@@ -1256,11 +1275,18 @@ static u32 lastclick[3], lastclickpos[3];
 static u16 lastclickwnd[3];
 static int btnstate;
 
+/* a modal loop of ours took clicks: the next one is not a double click */
+void
+user_resetclicks()
+{
+	memset(lastclick, 0, sizeof lastclick);
+}
+
 static int
 mkeys()
 {
 	return (btnstate & 1 ? 1 : 0) | (btnstate & 2 ? 2 : 0) | (btnstate & 4 ? 0x10 : 0) |
-	    (keystate[VK_SHIFT] & 0x80 ? 4 : 0) | (keystate[VK_CONTROL] & 0x80 ? 8 : 0);
+	    (asyncstate[VK_SHIFT] & 0x80 ? 4 : 0) | (asyncstate[VK_CONTROL] & 0x80 ? 8 : 0);
 }
 
 static void
@@ -1324,7 +1350,7 @@ input(e)
 			btnstate |= 1 << k;
 		else
 			btnstate &= ~(1 << k);
-		keystate[k == 0 ? VK_LBUTTON : k == 1 ? VK_RBUTTON : VK_MBUTTON] = e->down ? 0x80 : 0;
+		asyncstate[k == 0 ? VK_LBUTTON : k == 1 ? VK_RBUTTON : VK_MBUTTON] = e->down ? 0x80 : 0;
 		if (wnd_capture) {
 			w = wnd_capture;
 			ht = HTCLIENT;
@@ -1374,19 +1400,19 @@ input(e)
 			u32 lp = 1 | (u32)(e->sc & 0xff) << 16;
 
 			if (e->down) {
-				if (keystate[vk] & 0x80)
+				if (asyncstate[vk] & 0x80)
 					lp |= 0x40000000;	/* repeat */
 				else
-					keystate[vk] ^= 1;	/* toggle */
-				keystate[vk] |= 0x80;
+					asyncstate[vk] ^= 1;	/* toggle */
+				asyncstate[vk] |= 0x80;
 			} else {
-				keystate[vk] &= ~0x80;
+				asyncstate[vk] &= ~0x80;
 				lp |= 0xc0000000;
 			}
 			if (vk == VK_SHIFT || vk == VK_CONTROL || vk == VK_MENU) {
 				/* left and right are one to Windows 3.1 */
 			}
-			sys = (keystate[VK_MENU] & 0x80) && !(keystate[VK_CONTROL] & 0x80);
+			sys = (asyncstate[VK_MENU] & 0x80) && !(asyncstate[VK_CONTROL] & 0x80);
 			if (vk == VK_MENU || vk == VK_F1 + 9)
 				sys = 1;
 			if (sys)
@@ -1416,6 +1442,46 @@ input(e)
 	}
 }
 
+/* ---- the system queue: raw input, made into messages as it is taken ---- */
+
+#define	RAWQ	512
+static struct ev rawq[RAWQ];
+static int rhead, rtail;
+
+static void
+rawput(e)
+	struct ev *e;
+{
+	if ((rtail + 1) % RAWQ == rhead)
+		return;
+	rawq[rtail] = *e;
+	rtail = (rtail + 1) % RAWQ;
+}
+
+/* the device's events into the system queue */
+static void
+rawfill()
+{
+	struct ev e;
+
+	while (scr_poll(&e, 0) == 1)
+		rawput(&e);
+}
+
+/* our own modal loops take input here: what is queued first */
+int
+user_poll(e, timeout)
+	struct ev *e;
+	int timeout;
+{
+	if (rhead != rtail) {
+		*e = rawq[rhead];
+		rhead = (rhead + 1) % RAWQ;
+		return 1;
+	}
+	return scr_poll(e, timeout);
+}
+
 /* ---- getting messages ---- */
 
 /* the first window needing paint, frames first */
@@ -1433,6 +1499,39 @@ needpaint(w)
 		if ((r = needpaint(c)) != 0)
 			return r;
 	return 0;
+}
+
+/* the key state follows the input messages as they are taken */
+static void
+syncstate(m)
+	struct qmsg *m;
+{
+	int vk = m->wp & 0xff;
+
+	switch (m->msg) {
+	case WM_KEYDOWN:
+	case WM_SYSKEYDOWN:
+		if (!(keystate[vk] & 0x80))
+			keystate[vk] ^= 1;
+		keystate[vk] |= 0x80;
+		break;
+	case WM_KEYUP:
+	case WM_SYSKEYUP:
+		keystate[vk] &= ~0x80;
+		break;
+	case WM_LBUTTONDOWN: case WM_LBUTTONDBLCLK: case WM_NCLBUTTONDOWN: case WM_NCLBUTTONDBLCLK:
+		keystate[VK_LBUTTON] |= 0x80;
+		break;
+	case WM_LBUTTONUP: case WM_NCLBUTTONUP:
+		keystate[VK_LBUTTON] &= ~0x80;
+		break;
+	case WM_RBUTTONDOWN: case WM_RBUTTONDBLCLK: case WM_NCRBUTTONDOWN:
+		keystate[VK_RBUTTON] |= 0x80;
+		break;
+	case WM_RBUTTONUP: case WM_NCRBUTTONUP:
+		keystate[VK_RBUTTON] &= ~0x80;
+		break;
+	}
 }
 
 static int
@@ -1487,9 +1586,8 @@ user_getmessage(a, h, min, max, remove, wait)
 
 	h &= 0xffff;
 	for (;;) {
-		/* input from the device */
-		while (scr_poll(&e, 0) == 1)
-			input(&e);
+		/* input from the device; into messages one at a time, when the queue is empty */
+		rawfill();
 		caret_blink();
 		/* the queue */
 		for (i = qhead; i != qtail; i = (i + 1) % QSIZE)
@@ -1504,10 +1602,17 @@ user_getmessage(a, h, min, max, remove, wait)
 					qhead = (qhead + 1) % QSIZE;
 				}
 				putmsg(a, &m);
-				if (m.msg >= WM_KEYDOWN && m.msg <= WM_SYSCHAR)
-					;
+				if (remove)
+					syncstate(&m);
 				return m.msg == WM_QUIT ? -1 : 1;
 			}
+		/* nothing queued that fits: the next input becomes a message */
+		if (rhead != rtail) {
+			e = rawq[rhead];
+			rhead = (rhead + 1) % RAWQ;
+			input(&e);
+			continue;
+		}
 		if (quitting == 2 && !h) {
 			memset(&m, 0, sizeof m);
 			m.msg = WM_QUIT;
@@ -1561,11 +1666,13 @@ user_getmessage(a, h, min, max, remove, wait)
 			}
 			return 0;
 		}
+		if (rhead != rtail)
+			continue;
 		t = timer_next();
 		if (caret.hwnd && caret.shown > 0 && (t < 0 || t > 100))
 			t = 100;
 		if (scr_poll(&e, t) == 1)
-			input(&e);
+			rawput(&e);
 	}
 }
 
@@ -1681,10 +1788,7 @@ user_translate(a)
 void
 user_yield()
 {
-	struct ev e;
-
-	while (scr_poll(&e, 0) == 1)
-		input(&e);
+	rawfill();
 }
 
 /* a modal loop of our own until (*done & mask) or the window goes; 0 normally, -1 WM_QUIT came */
@@ -1968,6 +2072,13 @@ user_keystate(vk)
 	int vk;
 {
 	return keystate[vk & 0xff];
+}
+
+int
+user_asyncstate(vk)
+	int vk;
+{
+	return asyncstate[vk & 0xff];
 }
 
 /* SetParent: the window keeps its place on the screen relative to the new parent's client area */

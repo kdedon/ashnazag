@@ -1519,7 +1519,7 @@ u_SetCursorPos(a)
 
 static u32 u_ClipCursor(a) u32 *a; { return 1; }
 static u32 u_GetKeyState(a) u32 *a; { int v = user_keystate(a[0]); return (v & 0x80 ? 0xff80 : 0) | (v & 1); }
-static u32 u_GetAsyncKeyState(a) u32 *a; { return user_keystate(a[0]) & 0x80 ? 0x8000 : 0; }
+static u32 u_GetAsyncKeyState(a) u32 *a; { extern int user_asyncstate(); return user_asyncstate(a[0]) & 0x80 ? 0x8000 : 0; }
 
 static u32
 u_GetKeyboardState(a)
