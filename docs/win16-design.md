@@ -101,7 +101,17 @@ a platform it did not know) name the drives as they did for Wabi (`$HOME`,
 changed in the Configuration Manager is mapped again at once. The current
 directory is on the deepest drive it is under. `-D X=dir` adds one and
 wins. `-m MB` sets the 16-bit memory
-(default 8). `-g WxH` sizes the screen for the memory backend. Under xdm it
+(default 8). `-g WxH` sizes the screen for the memory backend.
+
+System fonts are chosen as Wabi chose them: on a screen more than 640
+pixels wide large fonts (Windows' 8514 set: a 20 pixel system font, 120
+dpi logical inch), on the rest small fonts (VGA's: 16 pixels, 96 dpi);
+`-LF` and `-SF` choose, as `wabi -LF` and `-SF` did. With large fonts the
+8514 files are loaded in place of the VGA ones WIN.INI and SYSTEM.INI name
+(8514SYS.FON for VGASYS.FON, SSERIFF.FON for SSERIFE.FON and so on: Setup
+installs both, and so did Wabi), LOGPIXELS is 120, and the caption, menu
+bar, caption buttons and scroll bars follow the larger system font, as
+they followed the display driver's. Under xdm it
 is the session "Windows 3.x programs (Win16)" (`xdmenv win`).
 
 Debugging: `-v` logs loads, `-vv` every API call and DOS call, `-vvv`
@@ -185,7 +195,7 @@ quit.
   8-bit palette device (the 20 static colours at the ends, a 6x6x6 cube,
   greys; brush colours the palette lacks dithered from the 16 VGA colours,
   as Windows 3.1's drivers do), DCs, mapping modes, regions, ROP2 and ROP3,
-  DIBs and DDBs, Windows' own `.FON` bitmap fonts (96 dpi sizes preferred)
+  DIBs and DDBs, Windows' own `.FON` bitmap fonts (the screen's resolution's sizes preferred)
   and TrueType: the user's `.TTF` files, named in WIN.INI by their `.FOT`
   headers, scan converted at any size when first drawn (nonzero rule,
   dropout control, no hinting; 26.6 integer arithmetic for a 68k without an
@@ -291,10 +301,15 @@ LaserJet III and the Epson FX-80 drivers, their output decoded and checked.
 
 ## Known bugs
 
-- Wabi's Configuration Manager opens with its page over its tabs: the tab
-  control lays out its five tabs in two rows, but the first page is placed
-  for one row and covers it, so only the first tab ("DOS Emulator") shows
-  until another is chosen. Being investigated.
+- Wabi's Configuration Manager on a screen 640 pixels wide (small fonts)
+  opens with its page over its tabs. It places the page while the tabs
+  still hold their placeholder names; with their real names in small
+  fonts five tabs (each as wide as the widest, "DOS Emulator") need two
+  rows, and the page covers the second until a tab is chosen. Wabi itself
+  did the same at that size: it is the applet's, with Windows' own font
+  metrics. On larger screens (large fonts, as Wabi had them there) the
+  dialog is wider and the tabs fit in one row.
+- Control Panel's Date & Time shows one digit of a two-digit month.
 - TrueType text at small sizes is not hinted: the outlines are scan
   converted as they are, so stems and heights come out uneven at screen
   sizes (Windows runs the fonts' hinting programs).

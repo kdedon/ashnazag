@@ -158,34 +158,51 @@ sys_brush(i)
 	return sysbrush[i];
 }
 
+/* the system font's height: 16 with small fonts (VGASYS), 20 with large (8514SYS) */
+static int
+sysfonth()
+{
+	struct gobj *o = stockobj[SYSTEM_FONT] ? gobj(stockobj[SYSTEM_FONT], OBJ_FONT) : 0;
+
+	return o && o->u.font.bf && o->u.font.bf->f_height > 0 ? o->u.font.bf->f_height : 16;
+}
+
+/*
+ * The system metrics: the caption, menu bar, caption buttons and scroll
+ * bars follow the system font as the display drivers' did (VGA's 20,
+ * 18, 18 and 17 with its 16 pixel font, larger with large fonts); icon
+ * spacing the logical inch.
+ */
 int
 sys_metric(i)
 	int i;
 {
+	int h = sysfonth();
+
 	switch (i) {
 	case SM_CXSCREEN: return screen.w;
 	case SM_CYSCREEN: return screen.h;
-	case SM_CXVSCROLL: case SM_CXHSCROLL: return 17;
-	case SM_CYHSCROLL: case SM_CYVSCROLL: return 17;
-	case SM_CYCAPTION: return 20;
+	case SM_CXVSCROLL: case SM_CXHSCROLL: return h + 1;
+	case SM_CYHSCROLL: case SM_CYVSCROLL: return h + 1;
+	case SM_CYCAPTION: return h + 4;
 	case SM_CXBORDER: case SM_CYBORDER: return 1;
 	case SM_CXDLGFRAME: case SM_CYDLGFRAME: return 4;
-	case SM_CYVTHUMB: case SM_CXHTHUMB: return 17;
+	case SM_CYVTHUMB: case SM_CXHTHUMB: return h + 1;
 	case SM_CXICON: case SM_CYICON: return 32;
 	case SM_CXCURSOR: case SM_CYCURSOR: return 32;
-	case SM_CYMENU: return 18;
+	case SM_CYMENU: return h + 2;
 	case SM_CXFULLSCREEN: return screen.w;
-	case SM_CYFULLSCREEN: return screen.h - 20;
+	case SM_CYFULLSCREEN: return screen.h - (h + 4);
 	case SM_MOUSEPRESENT: return 1;
-	case SM_CXMIN: return 100;
-	case SM_CYMIN: return 27;
-	case SM_CXSIZE: case SM_CYSIZE: return 18;
+	case SM_CXMIN: return 100 * w16_dpi / 96;
+	case SM_CYMIN: return h + 11;
+	case SM_CXSIZE: case SM_CYSIZE: return h + 2;
 	case SM_CXFRAME: case SM_CYFRAME: return 4;
-	case SM_CXMINTRACK: return 100;
-	case SM_CYMINTRACK: return 27;
+	case SM_CXMINTRACK: return 100 * w16_dpi / 96;
+	case SM_CYMINTRACK: return h + 11;
 	case SM_CXDOUBLECLK: case SM_CYDOUBLECLK: return 4;
-	case SM_CXICONSPACING: return 75;
-	case SM_CYICONSPACING: return 72;
+	case SM_CXICONSPACING: return 75 * w16_dpi / 96;
+	case SM_CYICONSPACING: return 72 * w16_dpi / 96;
 	}
 	return 0;
 }

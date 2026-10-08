@@ -804,7 +804,7 @@ ttf_fontx(face, bold, italic, height, width, xdpi, ydpi)
 	ts->shear = shear;
 	f = &ts->bf;
 	f->f_face = tf->face;
-	f->f_points = (ppem * 72 + 48) / 96;
+	f->f_points = (ppem * 72 + w16_dpi / 2) / w16_dpi;	/* on the screen */
 	f->f_ascent = (int)(((long)tf->asc * ppem + tf->upem / 2) / tf->upem);
 	f->f_descent = (int)(((long)tf->desc * ppem + tf->upem / 2) / tf->upem);
 	f->f_height = f->f_ascent + f->f_descent;
@@ -814,7 +814,7 @@ ttf_fontx(face, bold, italic, height, width, xdpi, ydpi)
 	f->f_italic = tf->italic || shear;
 	f->f_pitch = tf->fixed;
 	f->f_family = tf->family;
-	f->f_res = 96;
+	f->f_res = w16_dpi;
 	f->f_charset = tf->symbol ? 2 : 0;
 	f->f_first = FIRST;
 	f->f_last = 255;
