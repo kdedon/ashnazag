@@ -75,6 +75,7 @@ struct mf {
 	u32	slot[NSLOT];	/* the objects in its table, by slot; 0 free */
 	int	nslot;		/* slots used at most */
 	long	rec;		/* where the record being written starts */
+	int	prnres;		/* a printer's page: its fonts as the printer has them */
 	char	path[300];	/* a disk metafile's DOS name, or "" */
 };
 
@@ -228,14 +229,23 @@ mfof(h)
 {
 	struct gobj *o = gobj(h, 0);
 
-	return o && o->type == OBJ_METADC ? (struct mf *)o->u.dc->meta : 0;
+	if (!o || (o->type != OBJ_METADC && o->type != OBJ_DC) || !o->u.dc)
+		return 0;
+	return (struct mf *)o->u.dc->meta;
 }
 
+/* a DC that records: 1 a metafile's (it draws nothing), 2 a printer's page (recorded and kept up to date) */
 int
 meta_dc(h)
 	u32 h;
 {
-	return mfof(h) != 0;
+	struct gobj *o = gobj(h, 0);
+
+	if (!o || (o->type != OBJ_METADC && o->type != OBJ_DC) || !o->u.dc || !o->u.dc->meta)
+		return 0;
+	if (o->type == OBJ_METADC)
+		return 1;
+	return o->type == OBJ_DC && o->u.dc->kind == DCK_PRINTER ? 2 : 0;
 }
 
 static void
@@ -466,6 +476,14 @@ create(m, h)
 		break;
 	case OBJ_FONT:
 		lf = &o->u.font.lf;
+		/* a printer's page: the font as the printer DC has it (the System font its default face) */
+		if (m->prnres) {
+			extern void prn_logfont();
+			static struct logfont plf;
+
+			prn_logfont(&o->u.font, o->stock, m->prnres, &plf);
+			lf = &plf;
+		}
 		begin(m, META_CREATEFONTINDIRECT);
 		word(m, lf->height);
 		word(m, lf->width);
@@ -577,7 +595,8 @@ meta_objgone(h)
 
 	h &= 0xffff;
 	for (k = 0; k < gobj_max(); k++) {
-		if ((o = gobj_at(k)) == 0 || o->type != OBJ_METADC || !(m = (struct mf *)o->u.dc->meta))
+		if ((o = gobj_at(k)) == 0 || (o->type != OBJ_METADC && o->type != OBJ_DC) || !o->u.dc ||
+		    !(m = (struct mf *)o->u.dc->meta))
 			continue;
 		for (i = 0; i < m->nslot; i++)
 			if (m->slot[i] == h)
@@ -610,6 +629,9 @@ meta_record(fp, a)
 
 	if (!m || !f->args)
 		return 0;
+	/* a printer's escapes are its driver's, not the page's */
+	if (f->kind == K_ESCAPE && meta_dc(a[0]) == 2)
+		return 0;
 	switch (f->kind) {
 	case K_PLAIN:
 		begin(m, f->code);
@@ -621,6 +643,8 @@ meta_record(fp, a)
 		n = (short)a[4];
 		if (n <= 0 || (p = gbytes(a[3], (long)n)) == 0)
 			return 1;
+		if (w16_debug > 1)
+			w16_log("startwin: recorded TextOut %d,%d \"%.*s\"\n", (int)(short)a[1], (int)(short)a[2], n, p);
 		begin(m, f->code);
 		word(m, n);
 		bytes(m, p, (long)n);
@@ -1500,6 +1524,30 @@ meta_invertrect(hdc, l, t, r, b)
 	call("PatBlt", a);
 }
 
+/* a run of text (TabbedTextOut's) as TextOut */
+void
+meta_textout(hdc, x, y, s, n)
+	u32 hdc;
+	int x, y, n;
+	char *s;
+{
+	u32 a[5], p;
+
+	if (n <= 0)
+		return;
+	if (w16_debug > 1)
+		w16_log("startwin: meta_textout %d \"%.*s\"\n", n, n, s);
+	p = ualloc((u32)n + 1);
+	memcpy(M + ulin(p), s, n);
+	a[0] = hdc;
+	a[1] = x;
+	a[2] = y;
+	a[3] = p;
+	a[4] = n;
+	call("TextOut", a);
+	ufree(p);
+}
+
 /* DrawText: a TextOut a line (a metafile DC knows no font: lines of the system font's height) */
 int
 meta_drawtext(hdc, s, n, l, t, r, flags)
@@ -1531,6 +1579,79 @@ meta_drawtext(hdc, s, n, l, t, r, flags)
 			i++;
 	}
 	return y - t;
+}
+
+/* ---- a printer's pages (prn.c) ---- */
+
+/* a page begins: its recording, the DC's state as it is written first */
+void
+meta_beginpage(dc)
+	struct dc *dc;
+{
+	struct mf *m;
+	struct dcstate *st = &dc->st;
+	u32 a[6];
+	int i;
+
+	if (dc->meta)
+		return;
+	m = (struct mf *)calloc(1, sizeof *m);
+	for (i = 0; i < 9; i++)
+		word(m, 0);
+	m->prnres = dc->prnres;
+	dc->meta = (void *)m;
+	a[0] = dc->h;
+#define	REC(name, v1, v2)	(a[1] = (v1), a[2] = (v2), meta_record(meta_find(name), a))
+	REC("SetMapMode", (u32)st->mapmode, 0);
+	if (st->mapmode != MM_TEXT) {
+		REC("SetWindowExt", (u32)st->wex, (u32)st->wey);
+		REC("SetViewportExt", (u32)st->vex, (u32)st->vey);
+	}
+	REC("SetWindowOrg", (u32)st->wox, (u32)st->woy);
+	REC("SetViewportOrg", (u32)st->vox, (u32)st->voy);
+	REC("SetTextColor", st->text, 0);
+	REC("SetBkColor", st->bk, 0);
+	REC("SetBkMode", (u32)st->bkmode, 0);
+	REC("SetTextAlign", (u32)st->align, 0);
+	REC("SetROP2", (u32)st->rop2, 0);
+	REC("SetPolyFillMode", (u32)st->polyfill, 0);
+	REC("SetStretchBltMode", (u32)st->stretch, 0);
+	if (st->extra)
+		REC("SetTextCharacterExtra", (u32)st->extra, 0);
+	REC("MoveTo", (u32)st->curx, (u32)st->cury);
+	REC("SelectObject", (u32)st->pen, 0);
+	REC("SelectObject", (u32)st->brush, 0);
+	REC("SelectObject", (u32)st->font, 0);
+#undef	REC
+}
+
+/* the page ends: its metafile (a global block), the DC recording no more */
+u32
+meta_endpage(dc)
+	struct dc *dc;
+{
+	struct mf *m = (struct mf *)dc->meta;
+	u16 h;
+	int i;
+
+	if (!m)
+		return 0;
+	begin(m, META_EOF);
+	end(m);
+	m->b[0] = 1;
+	m->b[2] = 9;
+	m->b[4] = 0; m->b[5] = 3;
+	for (i = 0; i < 4; i++)
+		m->b[6 + i] = (m->n / 2) >> (8 * i);
+	m->b[10] = m->nslot;
+	m->b[11] = m->nslot >> 8;
+	for (i = 0; i < 4; i++)
+		m->b[12 + i] = m->maxrec >> (8 * i);
+	h = toblock(m->b, m->n);
+	free(m->b);
+	free(m);
+	dc->meta = 0;
+	return h;
 }
 
 struct impl mf_impl[] = {

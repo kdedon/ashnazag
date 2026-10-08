@@ -591,6 +591,69 @@ memdc_target(dc)
 	dc->effok = 0;
 }
 
+/*
+ * A font at a printer's resolution: TrueType, which has every size; a
+ * bitmap face as the TrueType face like it, the System font (a printer
+ * DC's own) as Courier New of 12 points, the printer's default face.
+ * prn_logfont: the LOGFONT of it, as a printer's page records it.
+ */
+void
+prn_logfont(fo, stock, dpi, out)
+	struct font *fo;
+	int stock, dpi;
+	struct logfont *out;
+{
+	static char *like[][2] = {
+		{ "MS Sans Serif", "Arial" }, { "Helv", "Arial" }, { "Helvetica", "Arial" }, { "Small Fonts", "Arial" },
+		{ "System", "Arial" }, { "Swiss", "Arial" }, { "MS Serif", "Times New Roman" }, { "Tms Rmn", "Times New Roman" },
+		{ "Times", "Times New Roman" }, { "Roman", "Times New Roman" }, { "Courier", "Courier New" },
+		{ "Modern", "Courier New" }, { "Fixedsys", "Courier New" }, { "Terminal", "Courier New" }, { 0, 0 }
+	};
+	struct logfont *lf = &fo->lf;
+	char *face = 0;
+	int i, fam = lf->pitchfam & 0xf0;
+
+	*out = *lf;
+	if (stock || (!lf->face[0] && !lf->height)) {
+		face = "Courier New";
+		out->height = -(12 * dpi + 36) / 72;
+		out->width = 0;
+		out->weight = 400;
+		out->pitchfam = 0x31;
+	} else {
+		if (ttf_face(lf->face))
+			face = lf->face;
+		for (i = 0; !face && like[i][0]; i++)
+			if (!w16_stricmp(lf->face, like[i][0]))
+				face = like[i][1];
+		if (!face)
+			face = (lf->pitchfam & 3) == 1 || fam == 0x30 ? "Courier New" : fam == 0x10 ? "Times New Roman" : "Arial";
+		if (!out->height)
+			out->height = -(12 * dpi + 36) / 72;
+	}
+	strncpy(out->face, face, sizeof out->face - 1);
+	out->face[sizeof out->face - 1] = 0;
+}
+
+static struct bfont *
+prnfont(fo, stock, dpi)
+	struct font *fo;
+	int stock, dpi;
+{
+	struct logfont lf;
+	struct bfont *f;
+	char *face;
+
+	if (fo->pbf && fo->pres == dpi)
+		return fo->pbf;
+	prn_logfont(fo, stock, dpi, &lf);
+	if ((face = ttf_face(lf.face)) == 0 || (f = ttf_font(face, lf.weight >= 600, lf.italic != 0, lf.height, lf.width)) == 0)
+		return fo->bf;
+	fo->pbf = f;
+	fo->pres = dpi;
+	return f;
+}
+
 struct bfont *
 font_of(dc)
 	struct dc *dc;
@@ -599,6 +662,8 @@ font_of(dc)
 
 	if (!o)
 		o = gobj(stockobj[SYSTEM_FONT], OBJ_FONT);
+	if (dc->prnres)
+		return prnfont(&o->u.font, o->stock, dc->prnres);
 	return o->u.font.bf;
 }
 
@@ -728,7 +793,12 @@ g_CreateDC(a)
 	struct rect r;
 
 	if (drv && w16_stricmp(drv, "DISPLAY") != 0) {
-		/* printers: an information context that draws nowhere */
+		extern u16 prn_create();
+
+		/* a printer, through its driver (CreateIC: an information context) */
+		if ((h = prn_create(drv, gptr(a[1]), gptr(a[2]), a[3], a[4] == 1)) != 0)
+			return h;
+		/* a driver that is not there: an information context that draws nowhere */
 		h = dc_new(DCK_INFO);
 		dc = dc_get(h);
 		dc->s = &screen;
@@ -743,6 +813,21 @@ g_CreateDC(a)
 	return h;
 }
 
+/* CreateIC: CreateDC, an information context */
+static u32
+g_CreateIC(a)
+	u32 *a;
+{
+	u32 b[5];
+
+	b[0] = a[0];
+	b[1] = a[1];
+	b[2] = a[2];
+	b[3] = a[3];
+	b[4] = 1;
+	return g_CreateDC(b);
+}
+
 static u32
 g_DeleteDC(a)
 	u32 *a;
@@ -754,6 +839,11 @@ g_DeleteDC(a)
 	if (dc->kind == DCK_WINDOW || dc->kind == DCK_WINDOWNC) {
 		user_releasedc(a[0]);
 		return 1;
+	}
+	if (dc->prn) {
+		extern void prn_delete();
+
+		prn_delete(dc);
 	}
 	dc_free(a[0]);
 	return 1;
@@ -818,6 +908,11 @@ g_GetDeviceCaps(a)
 {
 	DC(a[0]);
 
+	if (dc->prn) {
+		extern int prn_caps();
+
+		return prn_caps(dc, (int)(a[1] & 0xffff));
+	}
 	switch (a[1]) {
 	case 0: return 0x300;		/* DRIVERVERSION */
 	case 2: return 1;		/* TECHNOLOGY: raster display */
@@ -3481,7 +3576,18 @@ static u32 g_AnimatePalette(a) u32 *a; { return 1; }
 
 /* ---- the rest ---- */
 
-static u32 g_Escape(a) u32 *a; { return 0; }
+/* Escape: a printer's to its driver */
+static u32
+g_Escape(a)
+	u32 *a;
+{
+	extern u32 prn_escape();
+	struct dc *dc = dc_get(a[0]);
+
+	if (dc && dc->prn)
+		return prn_escape(dc, (int)(short)a[1], (int)(short)a[2], a[3], a[4]);
+	return 0;
+}
 static u32 g_zero(a) u32 *a; { return 0; }
 static u32 g_one(a) u32 *a; { return 1; }
 
@@ -3499,7 +3605,7 @@ g_IsGDIObject(a)
 struct impl g_impl[] = {
 	{ "GDI", "CreateCompatibleDC", g_CreateCompatibleDC },
 	{ "GDI", "CreateDC", g_CreateDC },
-	{ "GDI", "CreateIC", g_CreateDC },
+	{ "GDI", "CreateIC", g_CreateIC },
 	{ "GDI", "DeleteDC", g_DeleteDC },
 	{ "GDI", "SaveDC", g_SaveDC },
 	{ "GDI", "RestoreDC", g_RestoreDC },
@@ -3642,13 +3748,6 @@ struct impl g_impl[] = {
 	{ "GDI", "AnimatePalette", g_AnimatePalette },
 	{ "GDI", "Escape", g_Escape },
 	{ "GDI", "SetMapperFlags", g_zero },
-	{ "GDI", "SetEnvironment", g_zero },
-	{ "GDI", "GetEnvironment", g_zero },
-	{ "GDI", "SetAbortProc", g_one },
-	{ "GDI", "StartDoc", g_zero },
-	{ "GDI", "EndDoc", g_zero },
-	{ "GDI", "StartPage", g_zero },
-	{ "GDI", "EndPage", g_zero },
 	{ "GDI", "GetRasterizerCaps", g_zero },
 	{ "GDI", "GetAspectRatioFilter", g_zero },
 	{ 0 }

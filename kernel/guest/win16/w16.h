@@ -187,7 +187,7 @@ struct impl {
 	apifn	im_fn;
 };
 extern struct impl k_impl[], u_impl[], g_impl[], o_impl[], mn_impl[], dl_impl[], ct_impl[], sb_impl[], md_impl[], cu_impl[];
-extern struct impl dv_impl[], mm_impl[], ws_impl[], wc_impl[], hk_impl[], mf_impl[];
+extern struct impl dv_impl[], mm_impl[], ws_impl[], wc_impl[], hk_impl[], mf_impl[], pr_impl[];
 extern void wabi_expand();		/* (value, out, size): $NAME put in, as Wabi's configuration */
 extern char *wabi_drive();		/* (letter): WABI.INI's directory for it, 0 none */
 extern int wabi_remote();		/* (drive index): WABI.INI calls it remote */

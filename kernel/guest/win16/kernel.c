@@ -712,7 +712,16 @@ static u32 k_LocalInit(a) u32 *a; { return l_init(LO16(a[0]) ? a[0] : api_caller
 static u32 k_LocalAlloc(a) u32 *a; { return l_alloc(api_callerds, a[0], a[1]); }
 static u32 k_LocalReAlloc(a) u32 *a; { return l_realloc(api_callerds, a[0], a[1], a[2]); }
 static u32 k_LocalFree(a) u32 *a; { return l_free(api_callerds, a[0]); }
-static u32 k_LocalLock(a) u32 *a; { return l_lock(api_callerds, a[0]); }
+static u32
+k_LocalLock(a)
+	u32 *a;
+{
+	u32 r = l_lock(api_callerds, a[0]);
+
+	if (!r && w16_debug > 1)
+		w16_log("startwin: LocalLock(%lx) in DS %x: no such block\n", (long)a[0], api_callerds);
+	return r;
+}
 static u32 k_LocalUnlock(a) u32 *a; { return l_unlock(api_callerds, a[0]); }
 static u32 k_LocalSize(a) u32 *a; { return l_size(api_callerds, a[0]); }
 static u32 k_LocalHandle(a) u32 *a; { return l_handle(api_callerds, a[0]); }

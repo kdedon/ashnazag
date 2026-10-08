@@ -42,7 +42,7 @@ static int ninst;
 static u16 varsel;		/* the system modules' variables */
 static int nvar;
 
-static struct impl *impls[] = { k_impl, u_impl, g_impl, mn_impl, dl_impl, ct_impl, sb_impl, md_impl, cu_impl, dv_impl, mm_impl, ws_impl, wc_impl, hk_impl, mf_impl, o_impl, 0 };
+static struct impl *impls[] = { k_impl, u_impl, g_impl, mn_impl, dl_impl, ct_impl, sb_impl, md_impl, cu_impl, dv_impl, mm_impl, ws_impl, wc_impl, hk_impl, mf_impl, pr_impl, o_impl, 0 };
 
 static apifn findimpl();
 
@@ -313,7 +313,7 @@ thunk_dispatch(c, n)
 	struct regs save;
 	u32 ss = c->s[S_SS].base, sp = c->r[R_SP] & 0xffff, a[24], r = 0, pos;
 	u32 rip, rcs;
-	int total = 0, i, na, pascal;
+	int total = 0, i, na, pascal, rec;
 	char *p;
 
 	if (!e)
@@ -386,10 +386,13 @@ thunk_dispatch(c, n)
 	api_callerds = c->s[S_DS].sel;
 	api_jumped = 0;
 	api_depth++;
-	if (t->t_meta && meta_dc(a[0])) {
+	if (t->t_meta && (rec = meta_dc(a[0])) != 0) {
 		extern u32 meta_record();
 
+		/* a metafile's: recorded only; a printer's page: recorded and done to the DC (its state) */
 		r = meta_record(t->t_meta, a);
+		if (rec == 2 && t->t_fn)
+			r = (*t->t_fn)(a);
 	} else if (t->t_fn)
 		r = (*t->t_fn)(a);
 	else if (e->ae_kind == 's') {

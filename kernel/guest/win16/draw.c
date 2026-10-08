@@ -102,7 +102,7 @@ colorfor(dc, c)
 
 /* ---- brushes ---- */
 
-static void dither();
+static void dither(), monodither();
 
 /* the brush's pattern for this DC as 64 pixel values */
 static void
@@ -123,6 +123,15 @@ brushpat(dc, hb, pat)
 	if (b->style == BS_SOLID) {
 		int k = colorfor(dc, b->color);
 
+		/* on a monochrome surface (a printer's band), a grey dithered by its brightness, as mono drivers do */
+		if (dc->s->mono && !(b->color >> 24)) {
+			int lum = (CR_R(b->color) * 30 + CR_G(b->color) * 59 + CR_B(b->color) * 11) / 100;
+
+			if (lum > 0 && lum < 255) {
+				monodither(lum, pat);
+				return;
+			}
+		}
 		if (dc->s->mono || (b->color >> 24) || (syspal[k][0] == CR_R(b->color) &&
 		    syspal[k][1] == CR_G(b->color) && syspal[k][2] == CR_B(b->color)))
 			memset(pat, k, 64);
@@ -140,6 +149,25 @@ brushpat(dc, hb, pat)
 	for (i = 0; i < 64; i++)
 		pat[i] = dc->s->mono ? (syspal[b->pat[i]][0] + syspal[b->pat[i]][1] + syspal[b->pat[i]][2] >= 384) :
 		    b->pat[i];
+}
+
+static u8 bayer8[64] = {
+	0, 32, 8, 40, 2, 34, 10, 42, 48, 16, 56, 24, 50, 18, 58, 26,
+	12, 44, 4, 36, 14, 46, 6, 38, 60, 28, 52, 20, 62, 30, 54, 22,
+	3, 35, 11, 43, 1, 33, 9, 41, 51, 19, 59, 27, 49, 17, 57, 25,
+	15, 47, 7, 39, 13, 45, 5, 37, 63, 31, 55, 23, 61, 29, 53, 21
+};
+
+/* a brightness (0 black to 255 white) as an 8x8 pattern of black (0) and white (1) */
+static void
+monodither(lum, pat)
+	int lum;
+	u8 *pat;
+{
+	int i;
+
+	for (i = 0; i < 64; i++)
+		pat[i] = lum * 64 / 256 > bayer8[i];
 }
 
 /*

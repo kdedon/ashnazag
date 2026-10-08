@@ -30,6 +30,21 @@ OWN = [
                  (7, 'GETFILES', 'p', 'pppw', 'w'), (8, 'CFGGETLOCALEPATH', 'p', 'pw', 'w'),
                  (9, 'CFGGETDEFLOCALEPATH', 'p', 'pw', 'w'), (10, 'WABI_GETENV', 'p', 'p', 'l')]),
 ]
+# entries Wine leaves as stubs whose arguments we know (the DDK's): GDI's brute-force
+# functions for device drivers, which Wabi's printer drivers call
+FIX = {
+    ('GDI', 201): ('p', 'pwwpwwwwlpp', 'w'),    # dmBitBlt
+    ('GDI', 202): ('p', 'plp', 'l'),            # dmColorInfo
+    ('GDI', 206): ('p', 'pppp', 'w'),           # dmEnumDFonts
+    ('GDI', 207): ('p', 'pwpp', 'w'),           # dmEnumObj
+    ('GDI', 208): ('p', 'pwwppppp', 'w'),       # dmOutput
+    ('GDI', 209): ('p', 'pwwlp', 'l'),          # dmPixel
+    ('GDI', 210): ('p', 'pspp' + 'p', 'l'),     # dmRealizeObject
+    ('GDI', 211): ('p', 'pwwppwppp', 'l'),      # dmStrBlt
+    ('GDI', 212): ('p', 'pwwlw', 'w'),          # dmScanLR
+    ('GDI', 214): ('p', 'pwwppwpppppw', 'l'),   # dmExtTextOut
+    ('GDI', 220): ('p', 'ppw', 'w'),            # dmTranspose
+}
 ARG = {'word': 'w', 's_word': 's', 'long': 'l', 'ptr': 'p', 'str': 'p', 'segptr': 'p', 'segstr': 'p', 'int64': 'q', 'double': 'q'}
 LINE = re.compile(r'^(\d+)\s+(pascal|cdecl|varargs|stub|equate|variable)\s*(.*)$')
 
@@ -76,6 +91,7 @@ def main():
           '\n * ret: w AX, l DX:AX.\n */\n\n#include "apitab.h"\n')
     for mod, d in MODS:
         ents = parse(os.path.join(src, d, d + '.spec'))
+        ents = [(o, n) + FIX[(mod, o)] if (mod, o) in FIX else (o, n, k, a, r) for o, n, k, a, r in ents]
         print('static struct apient a_%s[] = {' % mod)
         for o, n, k, a, r in ents:
             print('\t{ %d, "%s", \'%s\', "%s", \'%s\' },' % (o, n, k, a, r))

@@ -109,6 +109,8 @@ struct font {
 	struct logfont lf;
 	struct bfont *bf;	/* the bitmap font it maps to */
 	int	bold;		/* drawn twice, one pixel apart */
+	struct bfont *pbf;	/* at a printer's resolution, pres dots an inch (gdi.c) */
+	int	pres;
 };
 
 struct bitmap {
@@ -154,7 +156,10 @@ struct dc {
 	void	*priv_bm;	/* a memory DC's own 1x1 bitmap */
 	int	epoch;		/* window DCs: vis_epoch when vis was made */
 	struct rgn *paint;	/* BeginPaint: the update region, surface coordinates */
-	void	*meta;		/* a metafile DC's recording (metafile.c) */
+	void	*meta;		/* a metafile DC's recording (metafile.c), a printer's page */
+	void	*prn;		/* a printer DC's driver and job (prn.c) */
+	int	prnband;	/* the program's NEXTBAND: its one band given */
+	int	prnres;		/* a printer's or its band's: fonts at that resolution */
 };
 extern int vis_epoch;		/* windows moved, shown or hidden since */
 extern void dc_refresh();	/* (dc) a window DC's visible region again */
@@ -163,6 +168,7 @@ extern void dc_refresh();	/* (dc) a window DC's visible region again */
 #define	DCK_MEMORY	3
 #define	DCK_SCREEN	4	/* the whole display (CreateDC "DISPLAY") */
 #define	DCK_INFO	5	/* CreateIC, a printer we don't have */
+#define	DCK_PRINTER	6	/* a printer's, through its driver (prn.c) */
 
 struct gobj {
 	int	type;

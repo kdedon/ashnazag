@@ -1287,7 +1287,12 @@ tabbed(a, draw)
 	for (start = 0, i = 0; i <= n; i++) {
 		if (i < n && s[i] != '\t')
 			continue;
-		if (draw && i > start) {
+		if (draw && i > start && dc->meta) {
+			/* recorded (a metafile, a printer's page): the run as TextOut, as Windows' USER draws it */
+			extern void meta_textout();
+
+			meta_textout(a[0], x + w, y, s + start, i - start);
+		} else if (draw && i > start) {
 			int sx = x + w, sy = y;
 
 			tosurf_pub(dc, &sx, &sy);

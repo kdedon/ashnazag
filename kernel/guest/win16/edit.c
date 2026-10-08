@@ -1035,7 +1035,9 @@ edit_proc(a)
 		return k < e->nline ? e->line[k] : 0xffff;
 	case WM_USER + 12:	/* EM_SETHANDLE */
 		if (e->ds && a[2]) {
-			l_free(e->ds, e->h);
+			/* the one it had back (Notepad grows it and gives it again): kept */
+			if ((a[2] & 0xffff) != e->h)
+				l_free(e->ds, e->h);
 			e->h = a[2];
 			e->cap = l_size(e->ds, e->h);
 			e->len = strlen(buf(e));
