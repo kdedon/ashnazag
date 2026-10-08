@@ -138,8 +138,10 @@ findmod(name, from, dos, host)
 		strcpy(dirs[nd++], windir);
 		strcpy(dirs[nd++], sysdir);
 	}
-	for (i = 0; i < nd; i++)
-		for (j = 0; exts[j]; j++) {
+	/* each extension through all the directories: an import PBRUSH is PBRUSH.DLL in
+	   SYSTEM before PBRUSH.EXE beside the program */
+	for (j = 0; exts[j]; j++)
+		for (i = 0; i < nd; i++) {
 			if (*exts[j] && strchr(name, '.'))
 				continue;
 			if (!*exts[j] && !strchr(name, '.') && nd > 1)
@@ -610,8 +612,10 @@ loadfile(name, from, errp)
 		}
 		m->m_seg[i].ns_alloc = alloc;
 		m->m_seg[i].ns_sel = g_alloc(GMEM_ZEROINIT, alloc, 0);
+		if (w16_debug > 2)
+			w16_log("%s: segment %d: %lu bytes, %lu free\n", m->m_name, i, (unsigned long)alloc, (unsigned long)g_free_bytes());
 		if (!m->m_seg[i].ns_sel)
-			w16_fatal("%s: no memory for segment %d", m->m_name, i);
+			w16_fatal("%s: no memory for segment %d (%lu bytes; %lu free)", m->m_name, i, (unsigned long)alloc, (unsigned long)g_free_bytes());
 		if (off && rdat(fp, off, M + sel_base(m->m_seg[i].ns_sel), m->m_seg[i].ns_size))
 			w16_log("%s: segment %d short\n", m->m_name, i);
 	}

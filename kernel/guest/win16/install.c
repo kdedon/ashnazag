@@ -174,7 +174,7 @@ hufflens(h, type, n)
 			h->start[l] = k;
 			h->count[l] = 0;
 			for (i = 0; i < n; i++)
-				if ((h->len[i] & 15) == l && h->len[i]) {
+				if (h->len[i] == l) {	/* a length that went below 0 (type 2): no code */
 					h->sym[k++] = i;
 					h->count[l]++;
 					code++;
