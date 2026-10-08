@@ -62,9 +62,10 @@ Wabi 2.2 is one more source: its package as on the CD (any platform's
 startwin -install /path/to/DISK*.IMG /path/to/Wabi
 ```
 
-Then Windows goes in by Wabi's rules: `wabi_f.lst` says each SETUP.INF
-section's directory and the files left out (Print Manager, the 8514 bold
-fonts, Dr. Watson and the rest). Wabi's own files go where its
+Then Windows goes in by Wabi's rules: `wabi_f.lst` (`wabi_fwg.lst` for
+Windows for Workgroups 3.11, whose SETUP.INF title says so: the same rules
+and its `[mapi]` DLLs) says each SETUP.INF section's directory and the
+files left out (Print Manager, the EGA fonts, Dr. Watson and the rest). Wabi's own files go where its
 `wabidirupdate` and `wiscript` put them: its home (`wbin`, `printers`, the
 locale's `lib/locale/xx/wabi`) to `~/WIN16/wabihome`, which is drive W: as
 `$WABIHOME` was Wabi's; TIMER.DRV, the printer drivers and their help, the
