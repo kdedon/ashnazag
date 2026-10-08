@@ -145,6 +145,7 @@ struct module {
 
 extern struct module *modules;
 extern struct module *mod_find();	/* (name) */
+extern struct module *mod_loadcopy(), *mod_find_path();
 extern struct module *mod_byhandle();	/* (hmod or hinst or a selector of it) */
 extern struct module *mod_load();	/* (dos path or name, &error): loaded with refs, or 0 */
 extern void mod_free();			/* (module) */
@@ -201,10 +202,18 @@ struct task {
 	int	t_show;
 	int	t_exit;		/* exit code once ended */
 	int	t_done;
+	int	t_new;		/* not run yet */
+	int	t_idle;		/* waiting in GetMessage with nothing to do */
+	int	t_quit, t_quitcode;	/* WM_QUIT posted */
+	void	*t_ctx;		/* task.c's */
 };
-extern struct task *curtask;
+extern struct task *curtask, *tasks[];
+extern int ntasks;
 extern void kernel_init();
-extern int task_start();	/* (module, cmdline, show): runs it to the end; exit code */
+extern struct task *task_new();	/* (module, cmdline, show): a task, run when its turn comes */
+extern int task_run();		/* (first task): the session until it ends; its exit code */
+extern void task_yield();	/* () another task's turn */
+extern int task_othersready();	/* () another has something to do */
 extern void w16_exit();		/* (code): the task ends (longjmp) */
 extern void w16_fatal(char *, ...);	/* the environment ends with a message */
 extern void w16_log(char *, ...);

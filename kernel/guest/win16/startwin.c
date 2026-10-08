@@ -507,7 +507,16 @@ main(argc, argv)
 	initdeps(m, 0);
 	if (w16_debug)
 		w16_log("startwin: %s (%s)\n", m->m_name, m->m_path);
-	code = task_start(m, cmd, SW_SHOWNORMAL);
+	{
+		struct task *t = task_new(m, cmd, SW_SHOWNORMAL);
+
+		if (!t) {
+			fprintf(stderr, "startwin: %s cannot start\n", prog);
+			scr_close();
+			return 1;
+		}
+		code = task_run(t);
+	}
 	scr_close();
 	if (w16_debug)
 		w16_log("startwin: %s ended (%d)\n", m->m_name, code);

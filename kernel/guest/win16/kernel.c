@@ -19,11 +19,9 @@
 #include "w16.h"
 #include "apitab.h"
 
-struct task *curtask;
 int w16_debug;
 char windir[128] = "C:\\WINDOWS", sysdir[128] = "C:\\WINDOWS\\SYSTEM";
 
-static jmp_buf exitjb;
 static u16 lowsel[2], dummysel;
 static u16 envsel;
 static struct timeval t0;
@@ -125,20 +123,9 @@ kernel_tick()
 	PL(0x46c, w16_ticks() * 182 / 10000);
 }
 
-/* ---- tasks ---- */
+/* ---- tasks (task.c runs them) ---- */
 
-void
-w16_exit(code)
-	int code;
-{
-	if (curtask) {
-		curtask->t_exit = code;
-		curtask->t_done = 1;
-	}
-	longjmp(exitjb, 1);
-}
-
-static u32
+u16
 psp_make(cmdline, hinst)
 	char *cmdline;
 	int hinst;
@@ -158,65 +145,6 @@ psp_make(cmdline, hinst)
 	/* DOS ends the tail with CR; WinMain gets it as a C string, as InitTask leaves it */
 	PB(b + 0x81 + n, 0);
 	return psp;
-}
-
-int
-task_start(m, cmdline, show)
-	struct module *m;
-	char *cmdline;
-	int show;
-{
-	struct task *t = (struct task *)calloc(1, sizeof *t);
-	u32 sp, dg;
-
-	t->t_mod = m;
-	t->t_hmod = m->m_hmod;
-	t->t_hinst = m->m_hinst;
-	t->t_show = show;
-	strncpy(t->t_cmdline, cmdline, sizeof t->t_cmdline - 1);
-	t->t_psp = psp_make(cmdline, m->m_hinst);
-	t->t_htask = g_alloc(GMEM_ZEROINIT, 0x100, m->m_hinst);
-	PB(sel_base(t->t_htask) + 0xfa, 'T');
-	PB(sel_base(t->t_htask) + 0xfb, 'D');
-	PW(sel_base(t->t_htask) + 0x1c, m->m_hinst);
-	PW(sel_base(t->t_htask) + 0x1e, m->m_hmod);
-	curtask = t;
-	if (!m->m_cs || m->m_cs > m->m_nseg)
-		w16_fatal("%s has no entry point", m->m_name);
-	/* registers as Windows starts a program */
-	dg = m->m_dgroup ? m->m_seg[m->m_dgroup].ns_sel : 0;
-	if (m->m_ss && m->m_ss <= m->m_nseg) {
-		x86_loadseg(cpu, S_SS, m->m_seg[m->m_ss].ns_sel);
-		sp = m->m_sp;
-		if (sp == 0) {
-			sp = (m->m_ss == m->m_dgroup ? m->m_seg[m->m_ss].ns_alloc - m->m_heap :
-			    m->m_seg[m->m_ss].ns_alloc) & ~1;
-			if (sp > 0xfffe)
-				sp = 0xfffe;
-		}
-	} else
-		w16_fatal("%s has no stack segment", m->m_name);
-	cpu->r[R_SP] = sp;
-	cpu->r[R_AX] = 0;
-	cpu->r[R_BX] = m->m_stack;
-	cpu->r[R_CX] = m->m_heap;
-	cpu->r[R_DX] = 0;
-	cpu->r[R_SI] = 0;
-	cpu->r[R_DI] = m->m_hinst;
-	cpu->r[R_BP] = 0;
-	x86_loadseg(cpu, S_DS, dg ? dg : 0);
-	x86_loadseg(cpu, S_ES, t->t_psp);
-	x86_loadseg(cpu, S_FS, 0);
-	x86_loadseg(cpu, S_GS, 0);
-	x86_loadseg(cpu, S_CS, m->m_seg[m->m_cs].ns_sel);
-	cpu->eip = m->m_ip;
-	if (setjmp(exitjb) == 0) {
-		x86_run(cpu);
-		w16_log("startwin: the program stopped at %04x:%04x\n", cpu->s[S_CS].sel, cpu->eip & 0xffff);
-		t->t_exit = 255;
-	}
-	curtask = 0;
-	return t->t_exit;
 }
 
 /* InitTask: register entry; the local heap, then what the startup code wants */
@@ -254,8 +182,19 @@ static u32 k_GetVersion(a) u32 *a; { return 0x05000a03; }
 static u32 k_GetWinFlags(a) u32 *a; { return kernel_winflags(); }
 static u32 k_GetCurrentTask(a) u32 *a; { return curtask ? curtask->t_htask : 0; }
 static u32 k_GetCurrentPDB(a) u32 *a; { return curtask ? curtask->t_psp : 0; }
-static u32 k_GetNumTasks(a) u32 *a; { return 1; }
-static u32 k_IsTask(a) u32 *a; { return curtask && LO16(a[0]) == curtask->t_htask; }
+static u32 k_GetNumTasks(a) u32 *a; { return ntasks; }
+
+static u32
+k_IsTask(a)
+	u32 *a;
+{
+	int i;
+
+	for (i = 0; i < 32; i++)
+		if (tasks[i] && !tasks[i]->t_done && tasks[i]->t_htask == LO16(a[0]))
+			return 1;
+	return 0;
+}
 static u32 k_GetTaskQueue(a) u32 *a; { return curtask ? curtask->t_queue : 0; }
 
 static u32
@@ -1398,20 +1337,91 @@ k_WritePrivateProfileString(a)
 
 /* ---- programs ---- */
 
+/*
+ * A program started: its module (a copy of its own when the program is
+ * already running: each instance its own segments), its libraries'
+ * initialization, then a task; the new one runs at once, as Windows has
+ * WinExec yield to it.  The instance handle, or an error below 32.
+ */
+static u32
+startprog(path, args, show)
+	char *path, *args;
+	int show;
+{
+	extern void initdeps();
+	struct module *m, *old;
+	struct task *t;
+	char dos[300], name[300], *p;
+	int err;
+
+	strncpy(name, path, sizeof name - 5);
+	name[sizeof name - 5] = 0;
+	p = strrchr(name, '\\');
+	if (!strchr(p ? p : name, '.'))
+		strcat(name, ".EXE");
+	w16_upper(name);
+	if (dos_fullpath(name, dos) != 0)
+		strcpy(dos, name);
+	old = mod_find_path(dos);
+	m = old && !old->m_dll ? mod_loadcopy(dos, &err) : mod_load(dos, &err);
+	if (!m)
+		return err ? err : 2;
+	if (m->m_dll) {
+		mod_free(m);
+		return 11;
+	}
+	initdeps(m, 0);
+	if ((t = task_new(m, args, show)) == 0) {
+		mod_free(m);
+		return 8;
+	}
+	if (w16_debug)
+		w16_log("startwin: %s (%s) started\n", m->m_name, m->m_path);
+	task_yield();
+	return m->m_hinst;
+}
+
 static u32
 k_WinExec(a)
 	u32 *a;
 {
-	w16_log("startwin: WinExec(\"%s\"): one program at a time for now\n", STR(a[0]));
-	return 2;
+	char line[300], *p, *args;
+
+	strncpy(line, STR(a[0]), sizeof line - 1);
+	line[sizeof line - 1] = 0;
+	for (p = line; *p == ' '; p++)
+		;
+	for (args = p; *args && *args != ' '; args++)
+		;
+	if (*args)
+		*args++ = 0;
+	while (*args == ' ')
+		args++;
+	return startprog(p, args, (short)a[1]);
 }
 
+/* LoadModule(name, params): params is the environment, the command tail (a length byte first), the show */
 static u32
 k_LoadModule(a)
 	u32 *a;
 {
-	w16_log("startwin: LoadModule(\"%s\"): one program at a time for now\n", STR(a[0]));
-	return 2;
+	u32 pb = lin(FPSEL(a[1]), FPOFF(a[1])), tail, sh;
+	char args[130], *p;
+	int show = 1, n;	/* SW_SHOWNORMAL */
+
+	args[0] = 0;
+	if (pb) {
+		if ((tail = lin(FPSEL(GL(pb + 2)), FPOFF(GL(pb + 2)))) != 0) {
+			n = M[tail] > 127 ? 127 : M[tail];
+			memcpy(args, M + tail + 1, n);
+			args[n] = 0;
+			if ((p = strchr(args, '\r')) != 0)
+				*p = 0;
+		}
+		if ((sh = lin(FPSEL(GL(pb + 6)), FPOFF(GL(pb + 6)))) != 0)
+			show = GW(sh + 2);
+	}
+	return startprog(STR(a[0]), args[0] == ' ' ? args + 1 : args, show);
 }
 
 static u32 k_GetCodeHandle(a) u32 *a; { return FPSEL(a[0]); }

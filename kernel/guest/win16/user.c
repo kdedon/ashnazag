@@ -39,6 +39,28 @@ u8 asyncstate[256];		/* as of now (GetAsyncKeyState) */
 static u16 usel;
 static u32 utop;
 
+/* each task has its own scratch segment: allocations nest per task */
+void
+user_ctxsave(p)
+	u32 *p;
+{
+	p[0] = usel;
+	p[1] = utop;
+}
+
+void
+user_ctxload(p)
+	u32 *p;
+{
+	if (!p[0]) {
+		/* a new task's */
+		p[0] = g_alloc(GMEM_ZEROINIT, 0x10000, 0);
+		p[1] = 16;
+	}
+	usel = p[0];
+	utop = p[1];
+}
+
 u32
 ualloc(n)
 	u32 n;
@@ -540,11 +562,30 @@ struct qmsg {
 	u16	hwnd, msg, wp;
 	u32	lp, time;
 	short	x, y;
+	struct task *task;	/* whose: the window's, or the poster's for none */
 };
 
 static struct qmsg q[QSIZE];
 static int qhead, qtail;
-static int quitting, quitcode;
+static int quitting;		/* the session was asked to end (EV_QUIT) */
+
+/* a window's task; marked as having something to do */
+static struct task *
+owner(h)
+	u32 h;
+{
+	struct wnd *w = h ? wnd_get(h) : 0;
+
+	return w ? w->task : curtask;
+}
+
+static void
+wake(t)
+	struct task *t;
+{
+	if (t)
+		t->t_idle = 0;
+}
 
 static int
 qpost(h, msg, wp, lp)
@@ -562,6 +603,8 @@ qpost(h, msg, wp, lp)
 	m->time = w16_ticks();
 	m->x = scr_mx;
 	m->y = scr_my;
+	m->task = owner(h);
+	wake(m->task);
 	qtail = (qtail + 1) % QSIZE;
 	return 1;
 }
@@ -581,6 +624,7 @@ struct timer {
 	u16	hwnd, id;
 	u32	ms, due, proc;
 	int	used, sys;
+	struct task *task;
 };
 static struct timer timers[NTIMER];
 
@@ -616,6 +660,7 @@ timer_set(h, id, ms, proc, sys)
 	timers[f].due = w16_ticks() + timers[f].ms;
 	timers[f].proc = proc;
 	timers[f].sys = sys;
+	timers[f].task = owner(h);
 	return h ? id : id;
 }
 
@@ -784,6 +829,19 @@ user_releasedc(h)
 
 /* ---- creating and destroying ---- */
 
+static void
+sizemsgs(w)
+	struct wnd *w;
+{
+	w->flags &= ~WF_NEEDSIZE;
+	wnd_send(w, WM_SIZE, (w->style & WS_MAXIMIZE) ? 2 : (w->style & WS_MINIMIZE) ? 1 : 0,
+	    FP(w->cr.b - w->cr.t, w->cr.r - w->cr.l));
+	if (!wnd_get(w->h))
+		return;
+	wnd_send(w, WM_MOVE, 0, FP(w->cr.t - (w->parent == desktop ? 0 : w->parent->cr.t),
+	    w->cr.l - (w->parent == desktop ? 0 : w->parent->cr.l)));
+}
+
 static int cascade;
 
 struct wnd *
@@ -821,6 +879,7 @@ wnd_create(ex, cname, title, style, x, y, cx, cy, hparent, hmenu, hinst, param)
 	w->extra = (u8 *)calloc(1, c->wndextra + 8);
 	t = ISINT(title) ? "" : STR(title);
 	w->text = strdup(t);
+	w->task = curtask;
 	w->hicon = c->icon;
 	/* default places and sizes for top-level windows */
 	if (!(style & WS_CHILD)) {
@@ -889,9 +948,11 @@ wnd_create(ex, cname, title, style, x, y, cx, cy, hparent, hmenu, hinst, param)
 	if (!wnd_get(w->h))
 		return 0;
 	w->flags |= WF_CREATED;
-	wnd_send(w, WM_SIZE, 0, FP(w->cr.b - w->cr.t, w->cr.r - w->cr.l));
-	wnd_send(w, WM_MOVE, 0, FP(w->cr.t - (w->parent == desktop ? 0 : w->parent->cr.t),
-	    w->cr.l - (w->parent == desktop ? 0 : w->parent->cr.l)));
+	/* as Windows 3.1: a window made hidden hears its size when first shown (programs set up in between) */
+	if (style & WS_VISIBLE)
+		sizemsgs(w);
+	else
+		w->flags |= WF_NEEDSIZE;
 	if ((style & WS_CHILD) && !(ex & WS_EX_NOPARENTNOTIFY))
 		wnd_send(parent, WM_PARENTNOTIFY, WM_CREATE, FP(w->h, w->id));
 	if (!wnd_get(w->h))
@@ -1142,6 +1203,8 @@ wnd_show(w, cmd)
 		wnd_setpos(w, (struct wnd *)0, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
 		    (show ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
 	}
+	if (show && (w->flags & WF_NEEDSIZE) && wnd_get(w->h))
+		sizemsgs(w);
 	if (!wnd_get(w->h))
 		return;
 	if (!(w->style & WS_CHILD)) {
@@ -1510,8 +1573,11 @@ needpaint(w)
 
 	if (w != desktop && !(w->style & WS_VISIBLE))
 		return 0;
-	if (w->ncpaint || w->upd.n || (w->flags & WF_INTERNALPAINT))
-		return w;
+	if (w->ncpaint || w->upd.n || (w->flags & WF_INTERNALPAINT)) {
+		if (w == desktop || !w->task || w->task == curtask)
+			return w;
+		wake(w->task);		/* another task's to paint */
+	}
 	for (c = w->child; c; c = c->next)
 		if ((r = needpaint(c)) != 0)
 			return r;
@@ -1557,6 +1623,8 @@ filt(m, h, min, max)
 	u32 h;
 	int min, max;
 {
+	if (m->task && m->task != curtask)
+		return 0;
 	if (h && m->hwnd != h && !IsChildOf(wnd_get(h), wnd_get(m->hwnd)))
 		return 0;
 	if ((min || max) && (m->msg < min || m->msg > max))
@@ -1640,13 +1708,13 @@ user_getmessage(a, h, min, max, remove, wait)
 			input(&e);
 			continue;
 		}
-		if (quitting == 2 && !h) {
+		if (curtask && curtask->t_quit && !h) {
 			memset(&m, 0, sizeof m);
 			m.msg = WM_QUIT;
-			m.wp = quitcode;
+			m.wp = curtask->t_quitcode;
 			putmsg(a, &m);
 			if (remove)
-				quitting = 0;
+				curtask->t_quit = 0;
 			return -1;
 		}
 		/* paint */
@@ -1672,7 +1740,10 @@ user_getmessage(a, h, min, max, remove, wait)
 		}
 		/* timers */
 		for (i = 0; i < NTIMER; i++)
-			if (timers[i].used && (int)(w16_ticks() - timers[i].due) >= 0 &&
+			if (timers[i].used && (int)(w16_ticks() - timers[i].due) >= 0 && timers[i].task &&
+			    timers[i].task != curtask)
+				wake(timers[i].task);
+			else if (timers[i].used && (int)(w16_ticks() - timers[i].due) >= 0 &&
 			    (!h || timers[i].hwnd == h) && (!(min || max) || (WM_TIMER >= min && WM_TIMER <= max))) {
 				memset(&m, 0, sizeof m);
 				m.hwnd = timers[i].hwnd;
@@ -1691,6 +1762,9 @@ user_getmessage(a, h, min, max, remove, wait)
 				polled = 1;
 				continue;
 			}
+			/* PeekMessage with nothing: the others have a turn, as in Windows */
+			if (task_othersready())
+				task_yield();
 			return 0;
 		}
 		if (rhead != rtail)
@@ -1702,6 +1776,15 @@ user_getmessage(a, h, min, max, remove, wait)
 			ddesetup_idle();
 			if (qhead != qtail)
 				continue;
+		}
+		/* nothing here: another task's turn, while one has something to do */
+		if (task_othersready()) {
+			if (curtask)
+				curtask->t_idle = 1;
+			task_yield();
+			if (curtask)
+				curtask->t_idle = 0;
+			continue;
 		}
 		t = timer_next();
 		if (caret.hwnd && caret.shown > 0 && (t < 0 || t > 100))
@@ -1839,8 +1922,10 @@ user_modal(dlg, done, mask)
 	while ((!h || wnd_get(h)) && !(*done & mask)) {
 		if (user_getmessage(a, 0, 0, 0, 1, 1) < 0) {
 			/* WM_QUIT: back in the queue for the program's loop */
-			quitting = 2;
-			quitcode = GW(a + MSG_WPARAM);
+			if (curtask) {
+				curtask->t_quit = 1;
+				curtask->t_quitcode = GW(a + MSG_WPARAM);
+			}
 			r = -1;
 			break;
 		}
@@ -1920,14 +2005,44 @@ user_init()
 	expose(&desktop->wr);
 }
 
+/* a task's end: its windows, timers and messages go */
+void
+user_taskended(t)
+	struct task *t;
+{
+	struct wnd *w, *n;
+	int i, j;
+
+	for (w = desktop->child; w; w = n) {
+		n = w->next;
+		if (w->task == t && !(w->flags & WF_DESTROYING)) {
+			wnd_destroy(w);
+			n = desktop->child;	/* the list changed */
+		}
+	}
+	for (i = 0; i < NTIMER; i++)
+		if (timers[i].task == t)
+			timers[i].used = 0;
+	for (i = qhead; i != qtail; )
+		if (q[i].task == t) {
+			for (j = i; j != qhead; j = (j + QSIZE - 1) % QSIZE)
+				q[j] = q[(j + QSIZE - 1) % QSIZE];
+			qhead = (qhead + 1) % QSIZE;
+			i = qhead;
+		} else
+			i = (i + 1) % QSIZE;
+}
+
 /* ---- for the exports ---- */
 
 void
 user_postquit(code)
 	int code;
 {
-	quitting = 2;
-	quitcode = code;
+	if (curtask) {
+		curtask->t_quit = 1;
+		curtask->t_quitcode = code;
+	}
 }
 
 int

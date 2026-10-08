@@ -393,12 +393,76 @@ thunk_dispatch(c, n)
 /* ---- calling x86 code ---- */
 
 #define	MAXCB	64
-static struct regs cbsave[MAXCB];
+static struct regs *cbsave;	/* the task's own (thunk_ctx*) */
 static int ncb;
+
+/* each task's callback stack and the dispatcher's state, kept over task switches */
+struct thctx {
+	struct regs *cbsave;
+	int	ncb;
+	u32	varargs;
+	u16	callerds;
+	int	jumped, depth;
+};
+
+int
+thunk_ctxsize()
+{
+	return sizeof(struct thctx);
+}
+
+void
+thunk_ctxnew(p)
+	char *p;
+{
+	struct thctx *x = (struct thctx *)p;
+
+	memset(p, 0, sizeof *x);
+	x->cbsave = (struct regs *)calloc(MAXCB, sizeof(struct regs));
+}
+
+void
+thunk_ctxsave(p)
+	char *p;
+{
+	extern int api_jumped;
+	struct thctx *x = (struct thctx *)p;
+
+	x->cbsave = cbsave;
+	x->ncb = ncb;
+	x->varargs = api_varargs;
+	x->callerds = api_callerds;
+	x->jumped = api_jumped;
+	x->depth = api_depth;
+}
+
+void
+thunk_ctxload(p)
+	char *p;
+{
+	extern int api_jumped;
+	struct thctx *x = (struct thctx *)p;
+
+	cbsave = x->cbsave;
+	ncb = x->ncb;
+	api_varargs = x->varargs;
+	api_callerds = x->callerds;
+	api_jumped = x->jumped;
+	api_depth = x->depth;
+}
+
+void
+thunk_ctxfree(p)
+	char *p;
+{
+	free((char *)((struct thctx *)p)->cbsave);
+}
 
 void
 cb_begin()
 {
+	if (!cbsave)
+		cbsave = (struct regs *)calloc(MAXCB, sizeof(struct regs));
 	if (ncb >= MAXCB)
 		w16_fatal("callbacks nested too deep");
 	saveregs(&cbsave[ncb++]);

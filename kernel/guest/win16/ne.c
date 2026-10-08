@@ -474,6 +474,35 @@ mod_load(name, errp)
 	return loadfile(name, (struct module *)0, errp);
 }
 
+/* a second instance of a program: the module loaded again, its own segments */
+static int forcecopy;
+
+struct module *
+mod_loadcopy(name, errp)
+	char *name;
+	int *errp;
+{
+	struct module *m;
+
+	forcecopy = 1;
+	m = loadfile(name, (struct module *)0, errp);
+	forcecopy = 0;
+	return m;
+}
+
+/* the module loaded from this DOS path, if any */
+struct module *
+mod_find_path(dos)
+	char *dos;
+{
+	struct module *m;
+
+	for (m = modules; m; m = m->m_next)
+		if (!m->m_native && w16_stricmp(m->m_path, dos) == 0)
+			return m;
+	return 0;
+}
+
 static struct module *
 loadfile(name, from, errp)
 	char *name;
@@ -499,10 +528,11 @@ loadfile(name, from, errp)
 	for (i = 0; *p && *p != '.' && i < 8; p++, i++)
 		base[i] = *p >= 'a' && *p <= 'z' ? *p - 32 : *p;
 	base[i] = 0;
-	if ((m = mod_find(base)) != 0) {
+	if (!forcecopy && (m = mod_find(base)) != 0) {
 		m->m_ref++;
 		return m;
 	}
+	forcecopy = 0;		/* its imports are shared */
 	for (i = 0; ours[i]; i++)
 		if (strcmp(ours[i], base) == 0)
 			isours = 1;

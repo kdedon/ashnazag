@@ -2118,6 +2118,38 @@ deliver()
 
 static int indeliver;
 
+/* the core's state of a run in progress, saved and put back when the host switches tasks */
+struct x86ctx {
+	jmp_buf	*trapjb;
+	int	indeliver;
+};
+
+int
+x86_ctxsize()
+{
+	return sizeof(struct x86ctx);
+}
+
+void
+x86_ctxsave(p)
+	char *p;
+{
+	struct x86ctx *x = (struct x86ctx *)p;
+
+	x->trapjb = trapjb;
+	x->indeliver = indeliver;
+}
+
+void
+x86_ctxload(p)
+	char *p;
+{
+	struct x86ctx *x = (struct x86ctx *)p;
+
+	trapjb = x->trapjb;
+	indeliver = x->indeliver;
+}
+
 /* the run loop: exceptions come back here and are delivered */
 static void
 loop(c, one)

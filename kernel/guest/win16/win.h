@@ -325,6 +325,7 @@ struct sbinfo {
 };
 
 struct wnd {
+	struct task *task;	/* the task that made it: its messages are that task's */
 	u16	h;
 	struct cls *cls;
 	u32	style, exstyle;
@@ -363,6 +364,7 @@ struct wnd {
 #define	WF_INTERNALPAINT 0x0020
 #define	WF_ACTIVE	0x0040
 #define	WF_MENUOWNED	0x0080
+#define	WF_NEEDSIZE	0x0100	/* made hidden: WM_SIZE and WM_MOVE come when first shown */
 
 extern struct wnd *desktop;
 extern struct wnd *wnd_get();		/* (hwnd) */
