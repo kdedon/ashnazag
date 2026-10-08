@@ -1257,8 +1257,12 @@ wnd_setpos(w, after, x, y, cx, cy, flags)
 	PW(l + 6, w->wr.t - (w->style & WS_CHILD ? w->parent->cr.t : 0));
 	PW(l + 8, w->wr.r - w->wr.l);
 	PW(l + 10, w->wr.b - w->wr.t);
-	/* the caller's flags: as Windows 3.1, a move to where it is, or a size it has, is a move and a size all the same */
-	PW(l + 12, flags);
+	/*
+	 * A move to where it is or a size it has is none, as Windows makes
+	 * it (SWP_NOMOVE, SWP_NOSIZE): no WM_MOVE or WM_SIZE comes of it, so
+	 * a window that sizes itself on WM_SIZE (WfW's toolbars) settles.
+	 */
+	PW(l + 12, flags | (moved ? 0 : SWP_NOMOVE) | (sized ? 0 : SWP_NOSIZE));
 	wnd_send(w, WM_WINDOWPOSCHANGED, 0, wp);
 	ufree(wp);
 }
@@ -1674,12 +1678,22 @@ input(e)
 		}
 		return;
 	case EV_QUIT:
-		/* asked again (the script's end too) after WM_QUIT is posted: that stays */
-		if (quitting)
-			return;
-		quitting = 1;
-		if (wnd_active)
-			qpost(wnd_active->h, WM_SYSCOMMAND, SC_CLOSE, 0);
+		/*
+		 * A script's end: first the active window closed, as its user
+		 * would; asked again (the session still there: a program's
+		 * confirmation, say Program Manager's Exit Windows box) the
+		 * session ends as ExitWindows ends it.
+		 */
+		if (!quitting) {
+			quitting = 1;
+			if (wnd_active)
+				qpost(wnd_active->h, WM_SYSCOMMAND, SC_CLOSE, 0);
+		} else if (quitting == 1) {
+			extern int user_exitwindows();
+
+			quitting = 2;
+			user_exitwindows();
+		}
 		return;
 	case EV_SHOWN:
 		vis_epoch++;

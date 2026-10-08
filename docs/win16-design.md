@@ -305,6 +305,13 @@ LaserJet III and the Epson FX-80 drivers, their output decoded and checked.
 
 ## Known bugs
 
+- Windows for Workgroups 3.11 installs and runs (Program Manager, File
+  Manager with its toolbar, ClipBook Viewer, Mail's first run, Schedule+,
+  Hearts, Print Manager); its networking finds no DOS network (NETAPI's
+  real-mode calls fail, as under Wabi). ClipBook Viewer's frame, shown by
+  SetWindowPlacement, misses its first WM_SIZE, so its Clipboard icon is
+  misplaced. SetSysModalWindow does not yet confine input.
+
 - Wabi's Configuration Manager on a screen 640 pixels wide (small fonts)
   opens with its page over its tabs. It places the page while the tabs
   still hold their placeholder names; with their real names in small

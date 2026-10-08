@@ -10,8 +10,9 @@
  *	keydown VK, keyup VK
  *	type TEXT		the characters, with Shift as they need
  *	shot FILE		the screen to FILE now
- *	quit			ask the session to end
- * The end of the script is a quit.
+ *	quit			ask the session to end (its active window closed)
+ * The end of the script is a quit; a session still there 5 seconds on
+ * is asked again, and ends as ExitWindows ends it.
  */
 
 #include <sys/types.h>
@@ -32,6 +33,8 @@ static u32 waituntil;
 static struct ev pend[2048];	/* a type line's keys: 4 a character at most */
 static int npend, ppos;
 static int done;
+static u32 doneat;		/* when the script ended: asked to quit again 5 s on */
+static int quitsent;		/* the script said quit */
 
 int
 scr_open(w, h, flags)
@@ -265,6 +268,7 @@ nextline()
 			continue;
 		}
 		if (strcmp(cmd, "quit") == 0) {
+			quitsent = 1;
 			add(EV_QUIT, 0, 0, 0, 0, 0);
 			return 1;
 		}
@@ -289,11 +293,18 @@ scr_poll(e, timeout)
 		if ((int)(w16_ticks() - waituntil) >= 0 && !done) {
 			if (!nextline()) {
 				done = 1;
-				if (script) {
+				doneat = w16_ticks();
+				if (script && !quitsent) {
 					add(EV_QUIT, 0, 0, 0, 0, 0);
 					continue;
 				}
 			}
+			continue;
+		}
+		/* the session outlived the script by 5 s (a confirmation open): asked once more */
+		if (done == 1 && script && (int)(w16_ticks() - doneat) >= 5000) {
+			done = 2;
+			add(EV_QUIT, 0, 0, 0, 0, 0);
 			continue;
 		}
 		if (timeout >= 0 && (int)(w16_ticks() - start) >= timeout)
