@@ -102,6 +102,8 @@ colorfor(dc, c)
 
 /* ---- brushes ---- */
 
+static void dither();
+
 /* the brush's pattern for this DC as 64 pixel values */
 static void
 brushpat(dc, hb, pat)
@@ -119,7 +121,13 @@ brushpat(dc, hb, pat)
 	}
 	b = &o->u.brush;
 	if (b->style == BS_SOLID) {
-		memset(pat, colorfor(dc, b->color), 64);
+		int k = colorfor(dc, b->color);
+
+		if (dc->s->mono || (b->color >> 24) || (syspal[k][0] == CR_R(b->color) &&
+		    syspal[k][1] == CR_G(b->color) && syspal[k][2] == CR_B(b->color)))
+			memset(pat, k, 64);
+		else
+			dither(b->color, pat);
 		return;
 	}
 	if (b->monopat) {
@@ -132,6 +140,47 @@ brushpat(dc, hb, pat)
 	for (i = 0; i < 64; i++)
 		pat[i] = dc->s->mono ? (syspal[b->pat[i]][0] + syspal[b->pat[i]][1] + syspal[b->pat[i]][2] >= 384) :
 		    b->pat[i];
+}
+
+/*
+ * A brush colour the palette lacks, dithered from the 16 VGA colours as
+ * Windows 3.1's display drivers do: each channel between its two nearest
+ * levels (0, 0x80, 0xff) by an 8x8 ordered matrix.  WinHelp's logo is a
+ * gradient of such brushes.
+ */
+static void
+dither(c, pat)
+	COLORREF c;
+	u8 *pat;
+{
+	static u8 bayer[64] = {
+		0, 32, 8, 40, 2, 34, 10, 42, 48, 16, 56, 24, 50, 18, 58, 26,
+		12, 44, 4, 36, 14, 46, 6, 38, 60, 28, 52, 20, 62, 30, 54, 22,
+		3, 35, 11, 43, 1, 33, 9, 41, 51, 19, 59, 27, 49, 17, 57, 25,
+		15, 47, 7, 39, 13, 45, 5, 37, 63, 31, 55, 23, 61, 29, 53, 21
+	};
+	int i, k, v[3], q[3], t;
+
+	v[0] = CR_R(c);
+	v[1] = CR_G(c);
+	v[2] = CR_B(c);
+	for (i = 0; i < 64; i++) {
+		t = bayer[i] * 2 + 1;		/* threshold in 128ths */
+		for (k = 0; k < 3; k++)
+			if (v[k] <= 0x80)
+				q[k] = v[k] > t ? 0x80 : 0;
+			else
+				q[k] = (v[k] - 0x80) * 128 / 127 > t ? 0xff : 0x80;
+		/* a bright colour has no half channels, a dark one no full ones */
+		if ((q[0] == 0xff || q[1] == 0xff || q[2] == 0xff) && (q[0] == 0x80 || q[1] == 0x80 || q[2] == 0x80))
+			for (k = 0; k < 3; k++)
+				if (q[k] == 0x80)
+					q[k] = v[k] >= 0xc0 ? 0xff : 0;
+		if (q[0] == 0x80 && q[1] == 0x80 && q[2] == 0x80)
+			pat[i] = pal_index(RGB(0x80, 0x80, 0x80));
+		else
+			pat[i] = pal_index(RGB(q[0], q[1], q[2]));
+	}
 }
 
 int

@@ -674,9 +674,24 @@ lbyhandle(h, hd)
 {
 	int i;
 
+	/* a moveable block by its cell, a fixed one by its offset; never a cell block itself */
 	for (i = 0; i < h->lh_n; i++)
-		if (h->lh_b[i].lb_used && (h->lh_b[i].lb_cell ? h->lh_b[i].lb_cell == hd :
-		    h->lh_b[i].lb_off == hd))
+		if (h->lh_b[i].lb_used && h->lh_b[i].lb_flags != 0x8000 &&
+		    (h->lh_b[i].lb_cell ? h->lh_b[i].lb_cell == hd : h->lh_b[i].lb_off == hd))
+			return i;
+	return -1;
+}
+
+/* the cell block at offset cell: index or -1 */
+static int
+lcellblk(h, cell)
+	struct lheap *h;
+	u32 cell;
+{
+	int i;
+
+	for (i = 0; i < h->lh_n; i++)
+		if (h->lh_b[i].lb_used && h->lh_b[i].lb_flags == 0x8000 && h->lh_b[i].lb_off == cell)
 			return i;
 	return -1;
 }
@@ -700,8 +715,8 @@ l_alloc(sel, flags, size)
 		cell = h->lh_b[c].lb_off;
 	}
 	if ((i = lget(h, size)) < 0) {
-		if (cell)
-			lrelease(h, lbyhandle(h, cell));
+		if (cell && (c = lcellblk(h, cell)) >= 0)
+			lrelease(h, c);
 		return 0;
 	}
 	base = sel_base(h->lh_sel);
