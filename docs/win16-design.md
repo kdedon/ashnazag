@@ -309,7 +309,6 @@ LaserJet III and the Epson FX-80 drivers, their output decoded and checked.
   did the same at that size: it is the applet's, with Windows' own font
   metrics. On larger screens (large fonts, as Wabi had them there) the
   dialog is wider and the tabs fit in one row.
-- Control Panel's Date & Time shows one digit of a two-digit month.
 - TrueType text at small sizes is not hinted: the outlines are scan
   converted as they are, so stems and heights come out uneven at screen
   sizes (Windows runs the fonts' hinting programs).

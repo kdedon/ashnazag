@@ -242,6 +242,37 @@ xof(w, p)
 	return tw(w, buf(e) + e->line[k], p - e->line[k], 0);
 }
 
+/*
+ * Where line k starts across the text area: ES_CENTER and ES_RIGHT place
+ * each line of a multiple-line control (in Windows 3.1 they do nothing
+ * to a single-line one).
+ */
+static int
+lshift(w, k)
+	struct wnd *w;
+	int k;
+{
+	struct ed *e = edof(w);
+	struct rect r;
+	int d;
+
+	if (!multi(w) || !(w->style & (ES_CENTER | ES_RIGHT)) || k < 0 || k >= e->nline)
+		return 0;
+	textrect(w, &r);
+	d = (r.r - r.l) - tw(w, buf(e) + e->line[k], lineend(e, k) - e->line[k], 0);
+	if (d <= 0)
+		return 0;
+	return (w->style & ES_RIGHT) ? d : d / 2;
+}
+
+/* does the control scroll across: ES_AUTOHSCROLL, or a multiple-line one's scroll bar */
+static int
+hscrolls(w)
+	struct wnd *w;
+{
+	return (w->style & ES_AUTOHSCROLL) || (multi(w) && (w->style & WS_HSCROLL));
+}
+
 /* the position on line k nearest x */
 static int
 posat(w, k, x)
@@ -251,6 +282,8 @@ posat(w, k, x)
 	struct ed *e = edof(w);
 	char *t = buf(e);
 	int p = e->line[k], end = lineend(e, k), cx = 0, cw;
+
+	x -= lshift(w, k);
 
 	while (p < end) {
 		cw = tw(w, t + p, 1, cx);
@@ -274,7 +307,7 @@ setcaret(w)
 		return;
 	textrect(w, &r);
 	k = lineof(e, e->caret);
-	x = r.l + xof(w, e->caret) - e->xoff - w->cr.l;
+	x = r.l + lshift(w, k) + xof(w, e->caret) - e->xoff - w->cr.l;
 	y = r.t + (k - e->top) * efont(w)->f_height - w->cr.t;
 	user_setcaretpos(x, y);
 }
@@ -304,6 +337,11 @@ showcaret(w)
 		e->top = k - n + 1;
 	if (e->top < 0)
 		e->top = 0;
+	if (!hscrolls(w)) {
+		/* it wraps, or takes no more than fits: the caret may rest on the right edge */
+		e->xoff = 0;
+		return;
+	}
 	x = xof(w, e->caret);
 	if (x - e->xoff > r.r - r.l - 2)
 		e->xoff = x - (r.r - r.l) * 3 / 4;
@@ -351,17 +389,7 @@ paint(w, hdc)
 	dc->st.bkmode = TRANSPARENT;
 	for (k = e->top, y = r.t; k < e->nline && y < w->cr.b; k++, y += f->f_height) {
 		end = lineend(e, k);
-		x = r.l - e->xoff;
-		if (!multi(w)) {
-			if (w->style & (ES_CENTER | ES_RIGHT)) {
-				int lw = tw(w, t, e->len, 0);
-
-				if (w->style & ES_RIGHT)
-					x = r.r - lw;
-				else
-					x = (r.l + r.r - lw) / 2;
-			}
-		}
+		x = r.l - e->xoff + lshift(w, k);
 		for (i = e->line[k]; i < end; i++) {
 			int sel = showsel && i >= ss && i < se;
 			char ch = e->pw ? e->pw : t[i];
