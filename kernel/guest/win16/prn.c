@@ -224,6 +224,15 @@ prn_create(drv, device, port, devmode, ic)
 	if (w16_debug)
 		w16_log("startwin: printer %s (%s) on %s: %dx%d at %d dpi, %d bits, raster %04x\n", device ? device : "",
 		    name, port ? port : "", caps(p, 8), caps(p, 10), caps(p, 88), caps(p, 12) * caps(p, 14), caps(p, 38));
+	if (w16_debug > 1) {
+		int i;
+
+		w16_log("startwin: printer %dx%d mm, %dx%d dpi, mapping modes", caps(p, 4), caps(p, 6), caps(p, 88),
+		    caps(p, 90));
+		for (i = 48; i < 88; i += 8)
+			w16_log(" %d,%d:%d,%d", caps(p, i), caps(p, i + 2), caps(p, i + 4), caps(p, i + 6));
+		w16_log("\n");
+	}
 	return h;
 bad:
 	if (w16_debug)
@@ -243,7 +252,7 @@ prn_caps(dc, idx)
 	struct dc *dc;
 	int idx;
 {
-	return caps((struct prn *)dc->prn, idx);
+	return caps((struct prn *)(dc->prn ? dc->prn : dc->prnof), idx);
 }
 
 /* DeleteDC: Disable, the driver let go */
@@ -381,6 +390,7 @@ band(p, hmf, l, t, r, b)
 	md->oy = -t;
 	md->effok = 0;
 	md->prnres = caps(p, 90);
+	md->prnof = (void *)p;
 	a[0] = mdc;
 	a[1] = hmf;
 	api_fn("GDI", "PlayMetaFile")(a);
@@ -689,14 +699,41 @@ static struct job {
 	char	title[80];
 } jobs[NJOB];
 
-/* the command a port's jobs go to: WABI.INI's Printers.command_lptN as Wabi had it, or lp */
-static void
-portcommand(port, cmd, n)
-	char *port, *cmd;
+/* s in single quotes for the shell, onto d (n left): what it took */
+static int
+shquote(d, n, s)
+	char *d, *s;
 	int n;
 {
-	char key[64], v[300], lp[16];
-	int i;
+	int k = 0;
+
+	if (n > 1)
+		d[k++] = '\'';
+	for (; *s && k < n - 6; s++)
+		if (*s == '\'') {
+			strcpy(d + k, "'\\''");
+			k += 4;
+		} else
+			d[k++] = *s;
+	if (k < n - 1)
+		d[k++] = '\'';
+	d[k] = 0;
+	return k;
+}
+
+/*
+ * The command a port's jobs go to: WABI.INI's Printers.command_lptN as
+ * Wabi had it, or lp.  In it %p is Printers.name_lptN, the host's
+ * printer (a word with %p left out for "<Default Printer>": lp's own),
+ * %t the job's title.
+ */
+static void
+portcommand(port, title, cmd, n)
+	char *port, *title, *cmd;
+	int n;
+{
+	char key[64], v[300], x[400], name[100], lp[16], *w, *e;
+	int i, k, def;
 
 	strcpy(cmd, "lp");
 	for (i = 0; port[i] && port[i] != ':' && i < 15; i++)
@@ -704,11 +741,38 @@ portcommand(port, cmd, n)
 	lp[i] = 0;
 	sprintf(key, "Printers.command_%s", lp);
 	profile_get("C:\\WINDOWS\\WABI.INI", "Unknown", key, "", v, (u32)sizeof v);
-	if (v[0]) {
+	if (!v[0])
+		return;
+	{
 		extern void wabi_expand();
 
-		wabi_expand(v, cmd, n);
+		wabi_expand(v, x, (int)sizeof x);
 	}
+	sprintf(key, "Printers.name_%s", lp);
+	profile_get("C:\\WINDOWS\\WABI.INI", "Unknown", key, "", name, (u32)sizeof name);
+	def = !name[0] || name[0] == '<';
+	k = 0;
+	for (w = x; *w && k < n - 1; w = e) {
+		for (e = w; *e && *e != ' '; e++)
+			;
+		while (*e == ' ')
+			e++;
+		/* a word: left out if it names the default printer */
+		for (i = 0; w + i < e && !(w[i] == '%' && w[i + 1] == 'p'); i++)
+			;
+		if (def && w + i < e)
+			continue;
+		for (; w < e && k < n - 1; w++) {
+			if (w[0] == '%' && (w[1] == 'p' || w[1] == 't')) {
+				k += shquote(cmd + k, n - k, w[1] == 'p' ? name : title);
+				w++;
+			} else
+				cmd[k++] = *w;
+		}
+	}
+	while (k > 0 && cmd[k - 1] == ' ')
+		k--;
+	cmd[k] = 0;
 }
 
 /* OpenJob(port, title, hdc): the job's handle, or a negative SP_ error */
@@ -779,7 +843,7 @@ g_CloseJob(a)
 	if (!j)
 		return (u32)-1;
 	fclose(j->fp);
-	portcommand(j->port, cmd, sizeof cmd);
+	portcommand(j->port, j->title, cmd, sizeof cmd);
 	sprintf(line, "%s < '%s'", cmd, j->file);
 	r = system(line);
 	if (w16_debug)
@@ -1109,6 +1173,14 @@ g_dmOutput(a)
 				    !(a[4] && (y == t || y == b - 1 || x == l || x == r - 1)));
 		return 1;
 	}
+	/*
+	 * 0x7f-0x81: Wabi's own, from its drivers (WBIEPSON) about a
+	 * surface's bits (the pointer, the word at +0x40 the count) before
+	 * and after they touch them; Wabi kept bitmaps in the X server.
+	 * Ours are always in memory: nothing to do.
+	 */
+	if (style >= 0x7f && style <= 0x81)
+		return 1;
 	if (w16_debug)
 		w16_log("startwin: dmOutput style %d not drawn\n", style);
 	return 0;

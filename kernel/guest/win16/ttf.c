@@ -742,12 +742,22 @@ ttf_font(face, bold, italic, height, width)
 	char *face;
 	int bold, italic, height, width;
 {
+	return ttf_fontx(face, bold, italic, height, width, 1, 1);
+}
+
+/* ttf_font on a device whose pixels are not square: xdpi/ydpi as wide */
+struct bfont *
+ttf_fontx(face, bold, italic, height, width, xdpi, ydpi)
+	char *face;
+	int bold, italic, height, width, xdpi, ydpi;
+{
 	struct ttfile *tf = pick(face, bold, italic);
 	struct ttsize *ts;
 	struct bfont *f;
 	int ppem, shear, c, g, cell;
 	u8 *hd;
 	long xn, xd;
+	int stretched = 0;
 
 	if (!tf)
 		return 0;
@@ -766,6 +776,18 @@ ttf_font(face, bold, italic, height, width)
 		width = 400;
 	xn = width > 0 ? width * 64L : ppem * 64L;
 	xd = width > 0 ? tf->avgw : tf->upem;
+	if (xdpi > 0 && ydpi > 0 && xdpi != ydpi && width <= 0) {
+		int a = xdpi, b = ydpi, t;
+
+		while (b) {		/* the ratio at its smallest: 120:144 is 5:6 */
+			t = a % b;
+			a = b;
+			b = t;
+		}
+		xn *= xdpi / a;
+		xd *= ydpi / a;
+		stretched = 1;
+	}
 	shear = italic && !tf->italic ? 53 : 0;		/* tan 11.7 degrees, in 1/256 */
 	for (ts = sizes; ts; ts = ts->next)
 		if (ts->tf == tf && ts->ppem == ppem && ts->xn == xn && ts->xd == xd && ts->shear == shear)
@@ -800,7 +822,7 @@ ttf_font(face, bold, italic, height, width)
 	f->f_break = ' ';
 	f->f_avgw = (int)(rdiv(tf->avgw * xn, xd) + 32) / 64;
 	f->f_maxw = (int)(rdiv(tf->maxw * xn, xd) + 32) / 64;
-	hd = width > 0 ? 0 : hdmx(tf, ppem);
+	hd = width > 0 || stretched ? 0 : hdmx(tf, ppem);
 	for (c = 0; c < NCH; c++) {
 		g = gindex(tf, c + FIRST);
 		if (hd && g < tf->nglyph)

@@ -211,6 +211,29 @@ API (Windows 3.0) plays square-wave notes on the same stream. There are no
 recording, MIDI or auxiliary devices (MCI's sequencer opens but has no
 output to play to).
 
+## Printing
+
+Printing goes through Wabi's own printer drivers (WHPPCL5A.DRV, the
+LaserJet III, with HPFONT.DLL; WBIEPSON.DRV, the Epson FX family), which
+Control Panel installs from `W:\PRINTERS\OEMSETUP.INI`, as under Wabi
+(`prn.c`). A printer DC enables its driver twice, for the GDIINFO and for
+the PDEVICE, and answers GetDeviceCaps from the GDIINFO. A page is recorded
+as a metafile (`metafile.c`, which also serves CreateMetaFile and the
+rest: PowerPoint Viewer, OLE pictures); at the page's end the driver bands
+it (NEXTBAND), each band is played into a monochrome bitmap at the
+printer's resolution and handed to the driver's BitBlt in pieces under 64K.
+Text on a page is TrueType at the printer's resolution (the System font
+Courier New, 12 points), scaled across when the pixels are not square
+(the FX's 120x144 dpi); grey brushes are dithered. The drivers draw on
+their own bitmaps through GDI's dm* brute functions and sort with its
+priority queues; WBIEPSON also calls dmOutput with styles 0x7f-0x81 about
+a bitmap's bits, which Wabi needed for bitmaps kept in the X server and
+ours, always in memory, do not. The metric mapping modes (MM_TWIPS and the
+others) follow the device's LOGPIXELS: Write lays out its page by them.
+The driver's output is spooled (OpenJob, WriteSpool) to a file, then given
+to the port's command: WABI.INI's `Printers.command_lptN` as Wabi had it
+(`lp -d%p -t%t`, `%p` the printer and `%t` the title), or `lp`.
+
 ## Networking
 
 WINSOCK.DLL is ours (`ws.c`), as Wabi 2's was: Windows Sockets 1.1 over
@@ -253,11 +276,7 @@ driver), Terminal (up to its port settings).
   in the container used): `tests/win16/build.sh` and `images/winenv/mkwin.sh`
   are written to the repository's conventions but unrun.
 - Serial ports (COMM.DRV's OpenComm and the rest over the host's ttys:
-  Terminal), printing (Wabi's printer drivers through GDI's device driver
-  interface, and the spooler's jobs to the `Printers.command_lptN` of
-  WABI.INI), MIDI output, recording.
-- Metafiles (recorded and played: PowerPoint Viewer, OLE pictures, the
-  clipboard's).
+  Terminal), MIDI output, recording, printing to FILE: ports.
 - Wabi's Configuration Manager first shows its Diskette page over its
   second row of tabs: at our 96 dpi it asks for 10 point MS Sans Serif,
   as Windows maps it five tabs need two rows, and it places the page before

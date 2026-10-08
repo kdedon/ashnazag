@@ -29,7 +29,7 @@ char *scr_shot, *scr_script;
 
 static FILE *script;
 static u32 waituntil;
-static struct ev pend[64];
+static struct ev pend[2048];	/* a type line's keys: 4 a character at most */
 static int npend, ppos;
 static int done;
 
@@ -111,7 +111,7 @@ add(type, x, y, down, vk, btn)
 {
 	struct ev *e;
 
-	if (npend >= 64)
+	if (npend >= (int)(sizeof pend / sizeof pend[0]))
 		return;
 	e = &pend[npend++];
 	memset(e, 0, sizeof *e);
@@ -238,7 +238,7 @@ nextline()
 			return 1;
 		}
 		if (strcmp(cmd, "type") == 0) {
-			for (i = 0; arg[i] && npend < 60; i++) {
+			for (i = 0; arg[i]; i++) {
 				vk = charvk((u8)arg[i], &shift);
 				if (!vk)
 					continue;

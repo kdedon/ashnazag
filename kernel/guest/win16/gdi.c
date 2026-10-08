@@ -635,24 +635,29 @@ prn_logfont(fo, stock, dpi, out)
 	out->face[sizeof out->face - 1] = 0;
 }
 
+/* at dpi dots an inch up and dpx across: TrueType wider or narrower as they differ */
 static struct bfont *
-prnfont(fo, stock, dpi)
+prnfont(fo, stock, dpi, dpx)
 	struct font *fo;
-	int stock, dpi;
+	int stock, dpi, dpx;
 {
 	struct logfont lf;
 	struct bfont *f;
 	char *face;
 
-	if (fo->pbf && fo->pres == dpi)
+	if (fo->pbf && fo->pres == dpi && fo->presx == dpx)
 		return fo->pbf;
 	prn_logfont(fo, stock, dpi, &lf);
-	if ((face = ttf_face(lf.face)) == 0 || (f = ttf_font(face, lf.weight >= 600, lf.italic != 0, lf.height, lf.width)) == 0)
+	if ((face = ttf_face(lf.face)) == 0 ||
+	    (f = ttf_fontx(face, lf.weight >= 600, lf.italic != 0, lf.height, lf.width, dpx, dpi)) == 0)
 		return fo->bf;
 	fo->pbf = f;
 	fo->pres = dpi;
+	fo->presx = dpx;
 	return f;
 }
+
+static int dc_dpi();
 
 struct bfont *
 font_of(dc)
@@ -663,7 +668,7 @@ font_of(dc)
 	if (!o)
 		o = gobj(stockobj[SYSTEM_FONT], OBJ_FONT);
 	if (dc->prnres)
-		return prnfont(&o->u.font, o->stock, dc->prnres);
+		return prnfont(&o->u.font, o->stock, dc->prnres, dc_dpi(dc, 88));
 	return o->u.font.bf;
 }
 
@@ -1325,25 +1330,38 @@ g_GetNearestColor(a)
 
 /* ---- mapping ---- */
 
+/* LOGPIXELSX (88) or LOGPIXELSY (90) of a DC: a printer's own, else the screen's */
+static int
+dc_dpi(dc, idx)
+	struct dc *dc;
+	int idx;
+{
+	extern int prn_caps();
+
+	return dc->prn || dc->prnof ? prn_caps(dc, idx) : 96;
+}
+
+/*
+ * The metric modes: so many units an inch to the device's pixels an
+ * inch, y up.  A printer's are its LOGPIXELS, as its GDIINFO's mapping
+ * extents should say too (WBIEPSON's twips say 60x72 dpi against its
+ * 120x144: they are not used).
+ */
 static void
 setmode(dc, m)
 	struct dc *dc;
 	int m;
 {
+	static int perinch[] = { 254, 2540, 100, 1000, 1440 };	/* MM_LOMETRIC ... MM_TWIPS */
 	struct dcstate *s = &dc->st;
 
 	s->mapmode = m;
-	switch (m) {
-	case MM_TEXT:
+	if (m == MM_TEXT)
 		s->wex = s->wey = s->vex = s->vey = 1;
-		break;
-	case MM_LOMETRIC: s->wex = s->wey = 254; s->vex = 96; s->vey = -96; break;
-	case MM_HIMETRIC: s->wex = s->wey = 2540; s->vex = 96; s->vey = -96; break;
-	case MM_LOENGLISH: s->wex = s->wey = 100; s->vex = 96; s->vey = -96; break;
-	case MM_HIENGLISH: s->wex = s->wey = 1000; s->vex = 96; s->vey = -96; break;
-	case MM_TWIPS: s->wex = s->wey = 1440; s->vex = 96; s->vey = -96; break;
-	case MM_ISOTROPIC: case MM_ANISOTROPIC:
-		break;
+	else if (m >= MM_LOMETRIC && m <= MM_TWIPS) {
+		s->wex = s->wey = perinch[m - MM_LOMETRIC];
+		s->vex = dc_dpi(dc, 88);
+		s->vey = -dc_dpi(dc, 90);
 	}
 }
 
@@ -2251,8 +2269,8 @@ g_GetTextMetrics(a)
 	PB(p + 23, (f->f_pitch ? 0 : 1) | f->f_family | (f->f_tt ? 6 : 0));	/* TrueType: TMPF_VECTOR | TMPF_TRUETYPE */
 	PB(p + 24, f->f_charset);	/* ANSI_CHARSET mostly */
 	PW(p + 25, fo->bold);		/* overhang */
-	PW(p + 27, 96);
-	PW(p + 29, 96);
+	PW(p + 27, f->f_tt ? dc_dpi(dc, 88) : 96);	/* the digitized aspect: TrueType's the device's */
+	PW(p + 29, f->f_tt ? dc_dpi(dc, 90) : 96);
 	return 1;
 }
 
@@ -2303,6 +2321,7 @@ enum1(a, f, lf, tm, type, style)
 {
 	u32 lfa = sel_base(lf), tma = sel_base(tm);
 	int bold = f->f_weight >= 600;
+	struct dc *dc = dc_get(a[0]);
 
 	memset(M + lfa, 0, 160);
 	PW(lfa, f->f_height);
@@ -2335,8 +2354,8 @@ enum1(a, f, lf, tm, type, style)
 	PB(tma + 22, f->f_res ? f->f_break : ' ');
 	PB(tma + 23, (f->f_pitch ? 0 : 1) | f->f_family | (type == 4 ? 6 : 0));
 	PB(tma + 24, f->f_charset);
-	PW(tma + 27, 96);
-	PW(tma + 29, 96);
+	PW(tma + 27, type == 4 && dc ? dc_dpi(dc, 88) : 96);
+	PW(tma + 29, type == 4 && dc ? dc_dpi(dc, 90) : 96);
 	if (type == 4) {
 		/* NEWTEXTMETRIC: ntmFlags, ntmSizeEM, ntmCellHeight, ntmAvgWidth */
 		PL(tma + 31, (f->f_italic ? 1 : 0) | (bold ? 0x20 : 0) | (!bold && !f->f_italic ? 0x40 : 0));

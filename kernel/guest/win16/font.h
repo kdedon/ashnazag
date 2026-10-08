@@ -32,6 +32,7 @@ struct ttglyph {
 
 extern struct ttglyph *ttf_glyph();	/* (font, character - f_first) */
 extern struct bfont *ttf_font();	/* (face, bold, italic, height, width) */
+extern struct bfont *ttf_fontx();	/* (..., xdpi, ydpi): pixels not square */
 extern char *ttf_face();		/* (name): a TrueType face of that name, or 0 */
 extern char *ttf_family();		/* (FF_ family, fixed): a TrueType face for it, or 0 */
 extern int ttf_add();			/* (host path of a .TTF) */

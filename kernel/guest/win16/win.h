@@ -110,7 +110,7 @@ struct font {
 	struct bfont *bf;	/* the bitmap font it maps to */
 	int	bold;		/* drawn twice, one pixel apart */
 	struct bfont *pbf;	/* at a printer's resolution, pres dots an inch (gdi.c) */
-	int	pres;
+	int	pres, presx;	/* up, across */
 };
 
 struct bitmap {
@@ -160,6 +160,7 @@ struct dc {
 	void	*prn;		/* a printer DC's driver and job (prn.c) */
 	int	prnband;	/* the program's NEXTBAND: its one band given */
 	int	prnres;		/* a printer's or its band's: fonts at that resolution */
+	void	*prnof;		/* a band's printer: its GDIINFO for the mapping modes */
 };
 extern int vis_epoch;		/* windows moved, shown or hidden since */
 extern void dc_refresh();	/* (dc) a window DC's visible region again */
