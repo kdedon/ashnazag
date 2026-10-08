@@ -40,7 +40,7 @@ static int rr;			/* where the round goes on */
 
 extern int x86_ctxsize(), thunk_ctxsize();
 extern void x86_ctxsave(), x86_ctxload(), thunk_ctxnew(), thunk_ctxsave(), thunk_ctxload(), thunk_ctxfree();
-extern void user_ctxsave(), user_ctxload(), user_taskended();
+extern void user_ctxsave(), user_ctxload(), user_taskended(), ws_taskended();
 
 #define	TC(t)	((struct tctx *)(t)->t_ctx)
 
@@ -215,6 +215,7 @@ ended(t)
 	int i;
 
 	user_taskended(t);
+	ws_taskended(t);
 	for (i = 0; i < NTASK; i++)
 		if (tasks[i] == t)
 			tasks[i] = 0;

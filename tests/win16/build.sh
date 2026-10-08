@@ -26,8 +26,9 @@ for f in "$G"/*.c "$AUX/kernel/guest/sndout.c"; do
 		-c "$f" -o "$o"
 	objs="$objs $o"
 done
+# sockets (WINSOCK, ws.c): libsocket and libnsl, as native clients link them
 nice -n 19 "$TC/bin/m68k-cbm-sysv4-ld" -o "$OUT/startwin" "$SYS/usr/ccs/lib/crt1.o" \
-	"$SYS/usr/ccs/lib/crti.o" $objs "$SYS/usr/lib/libc.so.1" "$T/build/obj/libextra.a" \
-	$LIBM "$LIBGCC" "$SYS/usr/ccs/lib/crtn.o"
+	"$SYS/usr/ccs/lib/crti.o" $objs -L"$SYS/usr/lib" -lsocket -lnsl "$SYS/usr/lib/libc.so.1" \
+	"$T/build/obj/libextra.a" $LIBM "$LIBGCC" "$SYS/usr/ccs/lib/crtn.o"
 rm -rf "$OUT/obj"
 echo "[ok] startwin for AMIX"

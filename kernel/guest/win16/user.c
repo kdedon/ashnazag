@@ -20,8 +20,8 @@
 
 static void rawfill(), rawput();
 static int timer_next();
-extern void mm_tick();
-extern int mm_next();
+extern void mm_tick(), ws_poll();
+extern int mm_next(), ws_next();
 
 #define	NWND	2048
 #define	WBASE	0x2000
@@ -650,6 +650,7 @@ user_idle()
 
 	rawfill();
 	mm_tick();
+	ws_poll();
 	if (task_othersready()) {
 		if (curtask)
 			curtask->t_idle = 1;
@@ -1736,6 +1737,7 @@ user_getmessage(a, h, min, max, remove, wait)
 		rawfill();
 		caret_blink();
 		mm_tick();
+		ws_poll();
 		/* the queue */
 	again:
 		for (i = qhead; i != qtail; i = (i + 1) % QSIZE)
@@ -1852,6 +1854,8 @@ user_getmessage(a, h, min, max, remove, wait)
 		if (caret.hwnd && caret.shown > 0 && (t < 0 || t > 100))
 			t = 100;
 		if ((i = mm_next()) >= 0 && (t < 0 || i < t))
+			t = i;
+		if ((i = ws_next()) >= 0 && (t < 0 || i < t))
 			t = i;
 		if (scr_poll(&e, t) == 1)
 			rawput(&e);

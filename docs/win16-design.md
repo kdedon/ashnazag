@@ -21,7 +21,7 @@ points the drivers at its own. We draw the line in the same place:
 
 | Ours (native code) | From the user's Windows |
 |---|---|
-| KERNEL, USER, GDI (with its TrueType rasterizer), TOOLHELP | Program Manager, File Manager, Control Panel and the applets |
+| KERNEL, USER, GDI (with its TrueType rasterizer), TOOLHELP, WINSOCK | Program Manager, File Manager, Control Panel and the applets |
 | the drivers: DISPLAY, KEYBOARD, MOUSE, SYSTEM, SOUND (they program PC hardware), TIMER.DRV and the wave output ASHAUDIO.DRV under MMSYSTEM | COMMDLG, SHELL, DDEML, OLECLI/OLESVR, VER, LZEXPAND, MMSYSTEM, MCIWAVE, MMTASK, REGEDIT |
 | the x87 (`x87.c`) | WIN87EM.DLL (passes through to our x87) |
 | | the fonts (`*.FON`, `*.FOT`/`*.TTF`), WIN.INI, SETUP.INF, SETUP.REG, the help viewer |
@@ -168,6 +168,20 @@ API (Windows 3.0) plays square-wave notes on the same stream. There are no
 recording, MIDI or auxiliary devices (MCI's sequencer opens but has no
 output to play to).
 
+## Networking
+
+WINSOCK.DLL is ours (`ws.c`), as Wabi 2's was: Windows Sockets 1.1 over
+the host's BSD sockets (on AMIX libsocket and libnsl), so the host's
+network and the user's rights apply; a third-party WINSOCK.DLL in the
+user's Windows directory is not used. Sockets are nonblocking underneath.
+A blocking call waits as Windows' stacks did, the blocking hook running
+(the program's, or the default that dispatches its messages) until the
+socket is ready or WSACancelBlockingCall; WSAAsyncSelect's events are
+found from the message loop and posted, each once until the call that
+re-enables it; the asynchronous database calls are answered at once by
+message. Stream and datagram sockets of AF_INET, the usual socket options,
+select, the host and service databases.
+
 ## Testing
 
 `sh tests/win16/run.sh` (on any host with a C compiler; Open Watcom 2 for
@@ -175,7 +189,10 @@ the test programs, `WATCOM`): builds `startwin` with the memory screen,
 checks `-install` on synthetic compressed disks, builds and runs the test
 programs in `tests/win16/src` with their input scripts, and compares what
 they report (`RESULT.TXT`) and their exit codes with `tests/win16/expect`.
-The x87 test compares inline x87 results with independently computed ones.
+The x87 test compares inline x87 results with independently computed ones;
+the voice test checks SOUND.DRV's samples (length and pitch); the sock test
+runs Winsock over the loopback: a connection by blocking calls, select,
+WSAAsyncSelect's events and an asynchronous lookup.
 `sh tests/win16/x86suite.sh` runs the 80386 instruction suite.
 `sh tests/win16/build.sh out` cross-builds the AMIX binary.
 
@@ -193,8 +210,8 @@ driver), Terminal (up to its port settings).
   in the container used): `tests/win16/build.sh` and `images/winenv/mkwin.sh`
   are written to the repository's conventions but unrun.
 - Serial ports (COMM.DRV's OpenComm and the rest over the host's ttys:
-  Terminal), printing (printer drivers and the spooler's jobs), networking
-  (WINSOCK.DLL over the host's BSD sockets), MIDI output, recording.
+  Terminal), printing (printer drivers and the spooler's jobs), MIDI
+  output, recording.
 - TrueType hinting, scaled raster fonts (a bitmap face stretched to a size
   it lacks), the clipboard's formats beyond text, DDEML's advanced paths,
   the MDI client's scroll bars, scaled cursors.

@@ -186,7 +186,7 @@ struct impl {
 	apifn	im_fn;
 };
 extern struct impl k_impl[], u_impl[], g_impl[], o_impl[], mn_impl[], dl_impl[], ct_impl[], sb_impl[], md_impl[], cu_impl[];
-extern struct impl dv_impl[], mm_impl[];
+extern struct impl dv_impl[], mm_impl[], ws_impl[];
 extern void user_beep();		/* (MB_ kind) */
 
 /* the caller's arguments for a varargs entry start here (a far pointer) */
@@ -210,6 +210,7 @@ struct task {
 	int	t_new;		/* not run yet */
 	int	t_idle;		/* waiting in GetMessage with nothing to do */
 	int	t_events;	/* PostEvent's count, taken by WaitEvent */
+	int	t_wserr;	/* WSAGetLastError's */
 	int	t_quit, t_quitcode;	/* WM_QUIT posted */
 	void	*t_ctx;		/* task.c's */
 	u32	t_dta;		/* DOS's disk transfer address: PSP:80h to start */
