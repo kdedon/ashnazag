@@ -187,9 +187,10 @@ struct impl {
 	apifn	im_fn;
 };
 extern struct impl k_impl[], u_impl[], g_impl[], o_impl[], mn_impl[], dl_impl[], ct_impl[], sb_impl[], md_impl[], cu_impl[];
-extern struct impl dv_impl[], mm_impl[], ws_impl[], wc_impl[], hk_impl[];
+extern struct impl dv_impl[], mm_impl[], ws_impl[], wc_impl[], hk_impl[], mf_impl[];
 extern void wabi_expand();		/* (value, out, size): $NAME put in, as Wabi's configuration */
 extern char *wabi_drive();		/* (letter): WABI.INI's directory for it, 0 none */
+extern int wabi_remote();		/* (drive index): WABI.INI calls it remote */
 extern void user_beep();		/* (MB_ kind) */
 
 /* the caller's arguments for a varargs entry start here (a far pointer) */
@@ -212,6 +213,7 @@ struct task {
 	int	t_done;
 	int	t_new;		/* not run yet */
 	int	t_idle;		/* waiting in GetMessage with nothing to do */
+	int	t_ready;	/* has asked for a message or yielded: LoadModule's caller goes on */
 	int	t_events;	/* PostEvent's count, taken by WaitEvent */
 	int	t_wserr;	/* WSAGetLastError's */
 	int	t_quit, t_quitcode;	/* WM_QUIT posted */
@@ -226,6 +228,7 @@ extern struct task *task_new();	/* (module, cmdline, show): a task, run when its
 extern int task_run();		/* (first task): the session until it ends; its exit code */
 extern void task_yield();	/* () another task's turn */
 extern int task_othersready();	/* () another has something to do */
+extern int task_alive();		/* (task) not ended */
 extern void w16_exit();		/* (code): the task ends (longjmp) */
 extern void w16_fatal(char *, ...);	/* the environment ends with a message */
 extern void w16_log(char *, ...);

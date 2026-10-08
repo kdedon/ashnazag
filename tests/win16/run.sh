@@ -64,7 +64,7 @@ done
 echo "[ok] test programs: $(ls *.c | wc -l | tr -d ' ')"
 # program, expected exit code
 fails=0
-for t in "hello 7" "menus 0" "ctrls 1" "fpu 0" "voice 0" "sock 0"; do
+for t in "hello 7" "menus 0" "ctrls 1" "fpu 0" "voice 0" "sock 0" "meta 0"; do
 	set -- $t
 	n=$1
 	want=$2

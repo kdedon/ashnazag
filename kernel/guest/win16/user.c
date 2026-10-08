@@ -1885,6 +1885,8 @@ user_getmessage(a, h, min, max, remove, wait)
 	int i, t, polled = 0;
 
 	h &= 0xffff;
+	if (curtask)
+		curtask->t_ready = 1;
 	for (;;) {
 		extern void mm_tick();
 		extern int mm_next();
@@ -2005,9 +2007,11 @@ user_getmessage(a, h, min, max, remove, wait)
 		/* Program Manager's first groups, while it waits */
 		{
 			extern void ddesetup_idle();
+			int tail = qtail;
 
+			/* what it posts is looked at; another task's messages are that task's */
 			ddesetup_idle();
-			if (qhead != qtail)
+			if (qtail != tail)
 				continue;
 		}
 		/* nothing here: another task's turn, while one has something to do */
@@ -2026,6 +2030,14 @@ user_getmessage(a, h, min, max, remove, wait)
 			t = i;
 		if ((i = ws_next()) >= 0 && (t < 0 || i < t))
 			t = i;
+		if (w16_debug > 2) {
+			int k;
+
+			for (k = 0; k < NTASK_MAX; k++)
+				if (tasks[k])
+					w16_log("startwin: wait: %s%s new %d idle %d done %d\n", tasks[k]->t_mod->m_name,
+					    tasks[k] == curtask ? " (this)" : "", tasks[k]->t_new, tasks[k]->t_idle, tasks[k]->t_done);
+		}
 		if (scr_poll(&e, t) == 1)
 			rawput(&e);
 	}
@@ -2144,6 +2156,8 @@ void
 user_yield()
 {
 	/* Yield: any other task with something to do runs (MCIWAVE yields while its playing task finishes) */
+	if (curtask)
+		curtask->t_ready = 1;
 	rawfill();
 	mm_tick();
 	if (task_othersready())

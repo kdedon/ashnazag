@@ -1118,6 +1118,14 @@ u_FillRect(a)
 	if (!dc || !p)
 		return 0;
 	r_get(&r, p);
+	if (dc->meta) {
+		extern void meta_fillrect();
+
+		if (br >= 1 && br <= NSYSCOLOR + 1 && !gobj(br, OBJ_BRUSH))
+			br = sys_brush(br - 1);
+		meta_fillrect(a[0], r.l, r.t, r.r, r.b, (u32)br);
+		return 1;
+	}
 	l = r.l; t = r.t; rr = r.r; b = r.b;
 	lp2dp(dc, &l, &t);
 	lp2dp(dc, &rr, &b);
@@ -1140,6 +1148,12 @@ u_FrameRect(a)
 	if (!dc || !p)
 		return 0;
 	r_get(&r, p);
+	if (dc->meta) {
+		extern void meta_framerect();
+
+		meta_framerect(a[0], r.l, r.t, r.r, r.b, a[2]);
+		return 1;
+	}
 	l = r.l; t = r.t; rr = r.r; b = r.b;
 	lp2dp(dc, &l, &t);
 	lp2dp(dc, &rr, &b);
@@ -1163,6 +1177,12 @@ u_InvertRect(a)
 	if (!dc || !p)
 		return 0;
 	r_get(&r, p);
+	if (dc->meta) {
+		extern void meta_invertrect();
+
+		meta_invertrect(a[0], r.l, r.t, r.r, r.b);
+		return 1;
+	}
 	l = r.l; t = r.t; rr = r.r; b = r.b;
 	lp2dp(dc, &l, &t);
 	lp2dp(dc, &rr, &b);
@@ -1214,6 +1234,11 @@ u_DrawText(a)
 	if (!dc || !s || !p)
 		return 0;
 	r_get(&r, p);
+	if (dc->meta) {
+		extern int meta_drawtext();
+
+		return meta_drawtext(a[0], s, (short)a[2] < 0 ? (int)strlen(s) : (short)a[2], r.l, r.t, r.r, (int)a[4]);
+	}
 	l = r.l; t = r.t; rr = r.r; b = r.b;
 	lp2dp(dc, &l, &t);
 	lp2dp(dc, &rr, &b);
@@ -2731,7 +2756,6 @@ struct impl u_impl[] = {
 	{ "USER", "SystemParametersInfo", u_SystemParametersInfo },
 	{ "USER", "WinHelp", u_WinHelp },
 	{ "USER", "WNetGetCaps", u_WNetGetCaps },
-	{ "USER", "WNetGetConnection", u_WNetNotSupported },
 	{ "USER", "WNetAddConnection", u_WNetNotSupported },
 	{ "USER", "WNetCancelConnection", u_WNetNotSupported },
 	{ "USER", "WNetGetUser", u_WNetNotSupported },

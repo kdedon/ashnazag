@@ -26,6 +26,7 @@ struct thunk {
 	struct module *t_mod;
 	struct apient *t_ae;
 	apifn	t_fn;
+	void	*t_meta;	/* GDI's: how a call on a metafile DC is recorded (metafile.c) */
 	int	t_warned;
 };
 
@@ -41,7 +42,17 @@ static int ninst;
 static u16 varsel;		/* the system modules' variables */
 static int nvar;
 
-static struct impl *impls[] = { k_impl, u_impl, g_impl, mn_impl, dl_impl, ct_impl, sb_impl, md_impl, cu_impl, dv_impl, mm_impl, ws_impl, wc_impl, hk_impl, o_impl, 0 };
+static struct impl *impls[] = { k_impl, u_impl, g_impl, mn_impl, dl_impl, ct_impl, sb_impl, md_impl, cu_impl, dv_impl, mm_impl, ws_impl, wc_impl, hk_impl, mf_impl, o_impl, 0 };
+
+static apifn findimpl();
+
+/* one of our implementations, by module and name */
+apifn
+api_fn(mod, name)
+	char *mod, *name;
+{
+	return findimpl(mod, name);
+}
 
 static apifn
 findimpl(mod, name)
@@ -137,6 +148,11 @@ thunk_native(m, ord)
 		thunks[i].t_mod = m;
 		thunks[i].t_ae = e;
 		thunks[i].t_fn = findimpl(m->m_name, e->ae_name);
+		if (strcmp(m->m_name, "GDI") == 0) {
+			extern void *meta_find();
+
+			thunks[i].t_meta = meta_find(e->ae_name);
+		}
 	}
 	return FP(thunksel, 4 * i);
 }
@@ -370,7 +386,11 @@ thunk_dispatch(c, n)
 	api_callerds = c->s[S_DS].sel;
 	api_jumped = 0;
 	api_depth++;
-	if (t->t_fn)
+	if (t->t_meta && meta_dc(a[0])) {
+		extern u32 meta_record();
+
+		r = meta_record(t->t_meta, a);
+	} else if (t->t_fn)
 		r = (*t->t_fn)(a);
 	else if (e->ae_kind == 's') {
 		w16_fatal("%s.%s (ordinal %d) is not there; its arguments are unknown",

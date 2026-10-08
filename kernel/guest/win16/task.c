@@ -181,6 +181,18 @@ task_yield()
 	swapcontext(&TC(t)->uc, &mainuc);
 }
 
+int
+task_alive(t)
+	struct task *t;
+{
+	int i;
+
+	for (i = 0; i < NTASK; i++)
+		if (tasks[i] == t)
+			return !t->t_done;
+	return 0;
+}
+
 /* another task with something to do (a new one, or one not waiting idle) */
 int
 task_othersready()
@@ -266,6 +278,8 @@ task_run(first)
 		user_ctxsave(mainx.us);
 		load(t);
 		t->t_new = 0;
+		if (w16_debug > 2)
+			w16_log("startwin: to %s\n", t->t_mod->m_name);
 		swapcontext(&mainuc, &TC(t)->uc);
 		save(t);
 		*cpu = mainx.regs;

@@ -142,6 +142,20 @@ gobj(h, type)
 	return objs[i];
 }
 
+/* the object table, for going through it */
+int
+gobj_max()
+{
+	return NGOBJ;
+}
+
+struct gobj *
+gobj_at(i)
+	int i;
+{
+	return i >= 0 && i < NGOBJ ? objs[i] : 0;
+}
+
 u16
 gobj_new(type)
 	int type;
@@ -932,6 +946,8 @@ g_DeleteObject(a)
 		return 0;
 	if (o->type == OBJ_BITMAP && o->u.bm->seldc && dc_get(o->u.bm->seldc))
 		return 0;
+	/* gone from the tables of the metafiles being made too */
+	meta_objgone(a[0]);
 	gobj_delete(a[0]);
 	return 1;
 }
@@ -3478,33 +3494,7 @@ g_IsGDIObject(a)
 	return o ? o->type : 0;
 }
 
-/* metafiles: a DC that records nothing; playing one draws nothing */
-static u32
-g_CreateMetaFile(a)
-	u32 *a;
-{
-	u16 h = dc_new(DCK_INFO);
 
-	dc_get(h)->s = &screen;
-	return h;
-}
-
-static u32
-g_CloseMetaFile(a)
-	u32 *a;
-{
-	u16 h;
-
-	dc_free(a[0]);
-	h = g_alloc(GMEM_ZEROINIT, 18, 0);
-	PW(sel_base(h), 1);
-	PW(sel_base(h) + 2, 9);
-	PW(sel_base(h) + 4, 0x300);
-	PL(sel_base(h) + 6, 9);
-	return h;
-}
-
-static u32 g_DeleteMetaFile(a) u32 *a; { g_free(a[0]); return 1; }
 
 struct impl g_impl[] = {
 	{ "GDI", "CreateCompatibleDC", g_CreateCompatibleDC },
@@ -3651,10 +3641,6 @@ struct impl g_impl[] = {
 	{ "GDI", "GetNearestPaletteIndex", g_GetNearestPaletteIndex },
 	{ "GDI", "AnimatePalette", g_AnimatePalette },
 	{ "GDI", "Escape", g_Escape },
-	{ "GDI", "CreateMetaFile", g_CreateMetaFile },
-	{ "GDI", "CloseMetaFile", g_CloseMetaFile },
-	{ "GDI", "DeleteMetaFile", g_DeleteMetaFile },
-	{ "GDI", "PlayMetaFile", g_one },
 	{ "GDI", "SetMapperFlags", g_zero },
 	{ "GDI", "SetEnvironment", g_zero },
 	{ "GDI", "GetEnvironment", g_zero },

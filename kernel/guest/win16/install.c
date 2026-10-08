@@ -1030,6 +1030,29 @@ wabi_install(cdir, wdir, sdir)
 	}
 
 	/*
+	 * where Wabi's home was: drive W:'s network name, which documents made
+	 * under Wabi name (OLE links): its package's BASEDIR/SUNWwabi, or the
+	 * installed $WABIHOME given
+	 */
+	{
+		char pk[700], line[256], where[600];
+		FILE *fp;
+		char *e;
+
+		strcpy(where, wabihome);
+		sprintf(pk, "%s/../../pkginfo", wabihome);
+		if ((e = strstr(wabihome, "/reloc/")) != 0 && (fp = fopen(pk, "r")) != 0) {
+			while (fgets(line, sizeof line, fp))
+				if (strncmp(line, "BASEDIR=", 8) == 0) {
+					line[strcspn(line, "\r\n")] = 0;
+					sprintf(where, "%.280s/%.200s", line + 8, e + 7);
+				}
+			fclose(fp);
+		}
+		profile_put("C:\\WINDOWS\\WABI.INI", "Ash Nazag", "WabiHome", where);
+	}
+
+	/*
 	 * which Windows, as Wabi's Windows Install writes it after installing
 	 * and reads before: SETUP.INF's title says Workgroups for WfW, its
 	 * NetWare 4 driver tells 3.11 from 3.1

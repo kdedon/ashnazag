@@ -1034,7 +1034,8 @@ k_GetDriveType(a)
 
 	if (d < 0 || d >= 26 || !drive_root[d])
 		return 0;
-	return d < 2 ? 2 : 3;	/* removable (A:, B:) or fixed: no network drives here */
+	/* removable (A:, B:), fixed, or remote as Wabi's configuration calls it */
+	return d < 2 ? 2 : wabi_remote(d) ? 4 : 3;
 }
 
 static u32
@@ -1476,9 +1477,16 @@ startprog(path, args, show)
 		return 8;
 	}
 	if (w16_debug)
-		w16_log("startwin: %s (%s) started\n", m->m_name, m->m_path);
-	task_yield();
-	return m->m_hinst;
+		w16_log("startwin: %s (%s) started: \"%s\"\n", m->m_name, m->m_path, t->t_cmdline);
+	/* as Windows 3.1: back once the new program asks for its first message (OLE's servers answer by then) */
+	{
+		int i;
+		u16 hinst = m->m_hinst;
+
+		for (i = 0; i < 2000 && curtask && task_alive(t) && !t->t_ready; i++)
+			task_yield();
+		return hinst;
+	}
 }
 
 /* WinExec for the host's own use (WinHelp's viewer) */
@@ -1531,6 +1539,19 @@ k_LoadModule(a)
 	if (pb) {
 		if ((tail = lin(FPSEL(GL(pb + 2)), FPOFF(GL(pb + 2)))) != 0) {
 			n = M[tail] > 126 ? 126 : M[tail];
+			/*
+			 * text going on past the count to its NUL or CR is the tail
+			 * (OLECLI starts a server with " -Embedding file" as a C
+			 * string: its "count" is the space)
+			 */
+			{
+				int k = n;
+
+				while (k < 126 && M[tail + 1 + k] >= 0x20)
+					k++;
+				if (k > n && (M[tail + 1 + k] == 0 || M[tail + 1 + k] == 0x0d))
+					n = k;
+			}
 			memcpy(args, M + tail + 1, n);
 			args[n] = 0;
 			/* not text (a NUL in it): passed to the PSP as it is */

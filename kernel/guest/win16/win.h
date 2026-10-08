@@ -154,6 +154,7 @@ struct dc {
 	void	*priv_bm;	/* a memory DC's own 1x1 bitmap */
 	int	epoch;		/* window DCs: vis_epoch when vis was made */
 	struct rgn *paint;	/* BeginPaint: the update region, surface coordinates */
+	void	*meta;		/* a metafile DC's recording (metafile.c) */
 };
 extern int vis_epoch;		/* windows moved, shown or hidden since */
 extern void dc_refresh();	/* (dc) a window DC's visible region again */
@@ -178,6 +179,8 @@ struct gobj {
 };
 
 extern struct gobj *gobj();	/* (handle, type or 0) */
+extern int meta_dc();			/* (hdc): a metafile DC */
+extern void meta_objgone();		/* (object) deleted */
 extern u16 gobj_new();		/* (type): handle */
 extern void gobj_delete();	/* (handle) */
 extern u16 stockobj[];		/* by GetStockObject index */

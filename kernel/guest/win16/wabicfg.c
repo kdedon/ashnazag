@@ -29,6 +29,7 @@
 #define	ENOTFOUND 1		/* any not 0: the caller only tests it */
 
 extern char **environ;
+static char remote[26], remoteok;	/* drives WABI.INI calls Remote: read once, again when one changes */
 
 /* a key's value in an ini, its [Unknown] then [CommonSettings]; 0 if neither has it */
 static int
@@ -170,6 +171,8 @@ c_NotifyWabi(a)
 	char *k = gptr(a[0]), *p;
 	int i;
 
+	if (k && w16_strnicmp(k, "DriveFlags.", 11) == 0)
+		remoteok = 0;
 	if (!k || w16_strnicmp(k, "Drives.", 7) != 0 || !k[7] || k[8])
 		return 0;
 	i = (k[7] | 0x20) - 'a';
@@ -413,6 +416,65 @@ c_GetEnv(a)
 	return got[i].p;
 }
 
+/* a drive WABI.INI's DriveFlags.X calls Remote: a network drive, as Wabi's were */
+int
+wabi_remote(i)
+	int i;
+{
+	char key[16], v[64], *p;
+	int k;
+
+	if (i < 0 || i >= 26 || !drive_root[i])
+		return 0;
+	if (!remoteok) {
+		for (k = 0; k < 26; k++) {
+			sprintf(key, "DriveFlags.%c", 'A' + k);
+			remote[k] = 0;
+			if (getkey(INI, key, v, sizeof v))
+				for (p = v; *p; p++)
+					if (w16_strnicmp(p, "remote", 6) == 0)
+						remote[k] = 1;
+		}
+		remoteok = 1;
+	}
+	return remote[i];
+}
+
+/*
+ * WNetGetConnection(local, remote, &size): a network drive's name, as
+ * Wabi gave it, its Unix directory; W:'s, where Wabi's home was (WABI.INI
+ * [Ash Nazag] WabiHome), which documents made under Wabi name.
+ */
+static u32
+c_WNetGetConnection(a)
+	u32 *a;
+{
+	char *l = gptr(a[0]), *r = gptr(a[1]), name[600];
+	u32 np = lin(FPSEL(a[2]), FPOFF(a[2]));
+	int i, n;
+
+	if (!l || !np || !l[0] || l[1] != ':' || l[2])
+		return 0x33;			/* WN_BAD_LOCALNAME */
+	i = (l[0] | 0x20) - 'a';
+	if (!wabi_remote(i))
+		return 0x30;			/* WN_NOT_CONNECTED */
+	strncpy(name, drive_root[i], sizeof name - 1);
+	name[sizeof name - 1] = 0;
+	if (i == 'w' - 'a') {
+		profile_get(INI, "Ash Nazag", "WabiHome", "", name, (u32)sizeof name);
+		if (!name[0])
+			strncpy(name, drive_root[i], sizeof name - 1);
+	}
+	n = strlen(name) + 1;
+	if (!r || n > (int)GW(np)) {
+		PW(np, n);
+		return 3;			/* WN_MORE_DATA */
+	}
+	strcpy(r, name);
+	PW(np, n);
+	return 0;
+}
+
 struct impl wc_impl[] = {
 	{ "WABICFG", "CFGGETENTRY", c_GetEntry },
 	{ "WABICFG", "CFGGETDEFAULTENTRY", c_GetDefaultEntry },
@@ -424,5 +486,6 @@ struct impl wc_impl[] = {
 	{ "WABICFG", "CFGGETLOCALEPATH", c_GetLocalePath },
 	{ "WABICFG", "CFGGETDEFLOCALEPATH", c_GetDefLocalePath },
 	{ "WABICFG", "WABI_GETENV", c_GetEnv },
+	{ "USER", "WNetGetConnection", c_WNetGetConnection },
 	{ 0 }
 };
