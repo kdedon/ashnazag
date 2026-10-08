@@ -394,6 +394,9 @@ c_SetScrollRange(a)
 	sb = info(w, a[1], &r, &vert);
 	sb->min = (short)a[2];
 	sb->max = (short)a[3];
+	/* an empty range hides the bar and leaves no position (Program Manager counts on 0) */
+	if (sb->min == sb->max)
+		sb->min = sb->max = 0;
 	if (sb->pos < sb->min) sb->pos = sb->min;
 	if (sb->pos > sb->max) sb->pos = sb->max;
 	if (a[1] != 2)

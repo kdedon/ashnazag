@@ -339,6 +339,11 @@ g_free(h)
 	if (!b)
 		return h;
 	ix = b - gblk;
+	{
+		extern void ico_forget();
+
+		ico_forget(SEL(ix));	/* an icon made of it */
+	}
 	if (b->gb_room)
 		lfree(b->gb_base, b->gb_room);
 	sel_free(SEL(ix), b->gb_nsel);

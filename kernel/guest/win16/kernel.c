@@ -706,7 +706,9 @@ static u32
 k_LockResource(a)
 	u32 *a;
 {
-	return g_block(a[0]) ? FP(a[0], 0) : 0;
+	struct gblock *b = g_block(a[0]);
+
+	return b && !b->gb_discarded ? FP(SEL(b - gblk), 0) : 0;
 }
 
 static u32

@@ -329,15 +329,105 @@ newico(i)
 	return newico_in(i, 0);
 }
 
+static struct ico *adopt();
+static void mkdev();
+
 static struct ico *
 ico_get(h)
 	u32 h;
 {
 	int ix = SELIX(h & 0xffff);
 
-	if (!bysel || !(h & 0xffff) || ix <= 0 || ix >= LDTSIZE || !gblk[ix].gb_used)
+	if (!(h & 0xffff) || ix <= 0 || ix >= LDTSIZE || !gblk[ix].gb_used || gblk[ix].gb_discarded)
 		return 0;
-	return bysel[ix];
+	if (!bysel)
+		bysel = (struct ico **)calloc(LDTSIZE, sizeof *bysel);
+	/* a block a program made in the icon layout (Program Manager's from its groups) is an icon too */
+	return bysel[ix] ? bysel[ix] : adopt(h & 0xffff);
+}
+
+/* a global block holding CURSORICONINFO, AND and XOR, taken as the icon it describes */
+/* the image from the block as it is now into i (0), or -1 if it is not an icon's layout */
+static int
+decode(h, i)
+	u16 h;
+	struct ico *i;
+{
+	struct gblock *b = g_block(h);
+	u32 p, a, xo;
+	int w, ht, xb, planes, bpp, ab, x, y, v;
+
+	if (!b || b->gb_discarded || b->gb_size < 12)
+		return -1;
+	p = b->gb_base;
+	w = GW(p + 4);
+	ht = GW(p + 6);
+	xb = GW(p + 8);
+	planes = M[p + 10];
+	bpp = M[p + 11];
+	ab = ((w + 15) / 16) * 2;
+	if (w < 1 || w > 128 || ht < 1 || ht > 128 || planes != 1 || (bpp != 1 && bpp != 4 && bpp != 8) ||
+	    xb < (w * bpp + 7) / 8 || 12 + (ab + xb) * ht > (int)b->gb_size)
+		return -1;
+	if (i->w != w || i->h != ht || !i->pix) {
+		free(i->pix);
+		free(i->mask);
+		i->pix = (u8 *)calloc(1, w * ht);
+		i->mask = (u8 *)calloc(1, w * ht);
+	}
+	i->w = w;
+	i->h = ht;
+	i->hx = GW(p);
+	i->hy = GW(p + 2);
+	if (!i->hnd)
+		i->cursor = bpp == 1;
+	a = p + 12;
+	xo = a + ab * ht;
+	for (y = 0; y < ht; y++)
+		for (x = 0; x < w; x++) {
+			i->mask[y * w + x] = (M[a + y * ab + x / 8] >> (7 - x % 8)) & 1;
+			switch (bpp) {
+			case 1:
+				v = (M[xo + y * xb + x / 8] >> (7 - x % 8)) & 1;
+				v = i->cursor ? (v ? (i->mask[y * w + x] ? 2 : 1) : 0) : (v ? 255 : 0);
+				break;
+			case 4:
+				v = (M[xo + y * xb + x / 2] >> (x & 1 ? 0 : 4)) & 15;
+				v = v < 8 ? v : 240 + v;
+				break;
+			default:
+				v = M[xo + y * xb + x];
+			}
+			i->pix[y * w + x] = v;
+		}
+	return 0;
+}
+
+static struct ico *
+adopt(h)
+	u16 h;
+{
+	struct ico *i;
+	int k;
+
+	for (k = 1; k < NICO; k++)
+		if (!icos[k])
+			break;
+	if (k == NICO)
+		return 0;
+	i = (struct ico *)calloc(1, sizeof *i);
+	if (decode(h, i) != 0) {
+		free(i->pix);
+		free(i->mask);
+		free((char *)i);
+		return 0;
+	}
+	if (i->cursor)
+		mkdev(i);
+	icos[k] = i;
+	i->hnd = h;
+	bysel[SELIX(h)] = i;
+	return i;
 }
 
 /* the device's cursor from the image: AND 1 where transparent, XOR 1 white or inverted */
@@ -606,6 +696,9 @@ icon_draw(dc, h, x, y)
 
 	if (!i || !dc)
 		return;
+	/* as Windows draws it: from the block as it is now (programs write icons into it) */
+	if (!i->cursor)
+		decode(i->hnd, i);
 	g = dc_clip(dc);
 	for (py = 0; py < i->h; py++)
 		for (px = 0; px < i->w; px++) {
@@ -815,3 +908,26 @@ struct impl cu_impl[] = {
 	{ "USER", "CopyCursor", c_CopyIcon },
 	{ 0, 0, 0 }
 };
+
+/* a block freed (GlobalFree): an icon taken from it goes */
+void
+ico_forget(h)
+	u32 h;
+{
+	int ix = SELIX(h & 0xffff), k;
+	struct ico *i;
+
+	if (!bysel || ix <= 0 || ix >= LDTSIZE || !(i = bysel[ix]))
+		return;
+	bysel[ix] = 0;
+	for (k = 1; k < NICO; k++)
+		if (icos[k] == i)
+			icos[k] = 0;
+	free(i->pix);
+	free(i->mask);
+	if (i->c.and) {
+		free(i->c.and);
+		free(i->c.xor);
+	}
+	free((char *)i);
+}
