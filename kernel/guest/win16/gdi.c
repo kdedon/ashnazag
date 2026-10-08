@@ -26,7 +26,7 @@ static u8 cacheok[32768 / 8];
 
 #define	STR(p)		(gptr(p) ? gptr(p) : "")
 
-int bfonts_count(), pal4();
+int bfonts_count(), pal4(), d_fillrop();
 u16 stockbitmap();
 
 /* ---- palette ---- */
@@ -63,9 +63,14 @@ static int
 nearest(r, g, b)
 	int r, g, b;
 {
-	int i, best = 0, bd = 1 << 30, d;
+	int k, i, best = 0, bd = 1 << 30, d;
 
-	for (i = 0; i < 256; i++) {
+	/*
+	 * The 20 static colours first: a colour they have is theirs (white is
+	 * 255, black 0, as raster operations on indexes need), not the cube's.
+	 */
+	for (k = 0; k < 256; k++) {
+		i = k < 10 ? k : k < 20 ? 236 + k : k - 10;
 		d = (syspal[i][0] - r) * (syspal[i][0] - r) * 3 + (syspal[i][1] - g) * (syspal[i][1] - g) * 4 +
 		    (syspal[i][2] - b) * (syspal[i][2] - b) * 2;
 		if (d < bd) {
@@ -1493,7 +1498,7 @@ g_Rectangle(a)
 		in.r -= w;
 		in.b -= w;
 	}
-	d_fill(dc, &in, dc->st.brush, 0xf0);
+	d_fill(dc, &in, dc->st.brush, d_fillrop(dc));
 	outline(dc, &r);
 	return 1;
 }
@@ -2423,7 +2428,7 @@ rgnfill(hdc, hr, hb, rop)
 }
 
 static u32 g_FillRgn(a) u32 *a; { return rgnfill(a[0], a[1], a[2], 0xf0); }
-static u32 g_PaintRgn(a) u32 *a; { struct dc *dc = dc_get(a[0]); return dc ? rgnfill(a[0], a[1], dc->st.brush, 0xf0) : 0; }
+static u32 g_PaintRgn(a) u32 *a; { struct dc *dc = dc_get(a[0]); return dc ? rgnfill(a[0], a[1], dc->st.brush, d_fillrop(dc)) : 0; }
 static u32 g_InvertRgn(a) u32 *a; { return rgnfill(a[0], a[1], 0, 0x55); }
 
 static u32

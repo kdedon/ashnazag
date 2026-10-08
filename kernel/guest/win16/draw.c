@@ -169,6 +169,22 @@ d_fillcolor(dc, r, idx)
 	}
 }
 
+/* the ROP3 that fills with the brush as the DC's ROP2 mixes the pen: shapes' insides */
+int
+d_fillrop(dc)
+	struct dc *dc;
+{
+	int r = (dc->st.rop2 - 1) & 15, code = 0, k, p, d;
+
+	for (k = 0; k < 8; k++) {
+		p = k >> 2 & 1;
+		d = k & 1;
+		if (r >> (p * 2 + d) & 1)
+			code |= 1 << k;
+	}
+	return code;
+}
+
 /* rop: the ROP3 code (high byte of the low word of a raster op) on pattern and destination */
 void
 d_fill(dc, r, hb, rop)
@@ -184,7 +200,7 @@ d_fill(dc, r, hb, rop)
 	int i, x, y, bx, by, solid = 1;
 	struct gobj *o = gobj(hb, OBJ_BRUSH);
 
-	if (o && o->u.brush.style == BS_NULL && (rop == 0xf0 || rop == 0x5a))
+	if (o && o->u.brush.style == BS_NULL)	/* a hollow brush fills nothing, whatever the mix */
 		return;
 	brushpat(dc, hb, pat);
 	for (i = 1; i < 64; i++)
@@ -516,7 +532,7 @@ polyfill(dc, p, n, winding)
 			qsort(xs, nx, sizeof *xs, icmp);
 			for (j = 0; j + 1 < nx; j += 2) {
 				r_set(&r, xs[j], y, xs[j + 1], y + 1);
-				d_fill(dc, &r, dc->st.brush, 0xf0);
+				d_fill(dc, &r, dc->st.brush, d_fillrop(dc));
 			}
 		} else {
 			/* sort with directions */
@@ -533,7 +549,7 @@ polyfill(dc, p, n, winding)
 				w += dirs[j];
 				if (w == 0) {
 					r_set(&r, start, y, xs[j], y + 1);
-					d_fill(dc, &r, dc->st.brush, 0xf0);
+					d_fill(dc, &r, dc->st.brush, d_fillrop(dc));
 				}
 			}
 		}
@@ -598,7 +614,7 @@ d_ellipse(dc, r, fill, outline)
 		l = (cx2 + 1) / 2 - h;
 		if (fill) {
 			r_set(&s, l, y, cx2 - l, y + 1);
-			d_fill(dc, &s, dc->st.brush, 0xf0);
+			d_fill(dc, &s, dc->st.brush, d_fillrop(dc));
 		}
 		if (!outline)
 			continue;

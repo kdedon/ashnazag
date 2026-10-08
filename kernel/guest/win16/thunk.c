@@ -366,9 +366,15 @@ thunk_dispatch(c, n)
 			w16_fatal("%s.%s is not done", t->t_mod ? t->t_mod->m_name : "?", e->ae_name);
 	}
 	api_depth--;
-	if (w16_debug > 2)
-		w16_log("  %s.%s(%lx %lx %lx %lx) = %lx\n", t->t_mod ? t->t_mod->m_name : "", e->ae_name,
-		    (long)a[0], (long)a[1], (long)a[2], (long)a[3], (long)r);
+	if (w16_debug > 2) {
+		char args[200];
+		int k, n = 0, m = e->ae_args ? strlen(e->ae_args) : 4;
+
+		for (k = 0; k < m && k < 12; k++)
+			n += sprintf(args + n, k ? " %lx" : "%lx", (long)a[k]);
+		args[n] = 0;
+		w16_log("  %s.%s(%s) = %lx\n", t->t_mod ? t->t_mod->m_name : "", e->ae_name, args, (long)r);
+	}
 	if (e->ae_kind == 'r') {
 		/* register entries leave the registers as they set them; Throw went elsewhere */
 		if (api_jumped)
