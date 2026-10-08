@@ -4,18 +4,21 @@ key 0x09
 type one
 key 0x0d
 type two
-click 290 87
+clickitem 103 3
 wait 100
-click 429 146
+clickid 104 -8 8
 wait 200
 shot ctrls1.ppm
-click 280 186
+clickitem 104 2
+wait 200
+clickid 105 6 5
 wait 100
-click 44 162
-click 44 198
-click 430 174
-click 430 174
+clickid 107 6 5
+wait 100
+clickid 108 -8 5
+wait 100
+clickid 108 -8 5
 wait 100
 shot ctrls2.ppm
-click 143 255
+clickid 1
 wait 200

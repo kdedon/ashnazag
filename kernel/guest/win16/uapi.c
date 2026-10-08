@@ -1005,9 +1005,9 @@ u_ScrollWindow(a)
 	u16 hdc;
 	struct dc *dc;
 	struct wnd *ch;
+	extern void caret_hide(), caret_show();
 	W(a[0]);
 
-	extern void caret_hide(), caret_show();
 	toscreen(w, LIN(a[3]), &r);
 	if (a[4]) {
 		toscreen(w, LIN(a[4]), &c);

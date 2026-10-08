@@ -1945,3 +1945,58 @@ struct impl ct_impl[] = {
 	{ "USER", "DlgDirSelectEx", c_DlgDirSelect },
 	{ 0 }
 };
+
+/* ---- for test scripts (scr_null.c) ---- */
+
+static struct wnd *
+findid(w, id)
+	struct wnd *w;
+	int id;
+{
+	struct wnd *c, *r;
+
+	for (c = w->child; c; c = c->next) {
+		if ((c->style & WS_CHILD) && c->id == id && wnd_visible(c))
+			return c;
+		if ((r = findid(c, id)) != 0)
+			return r;
+	}
+	return 0;
+}
+
+/*
+ * Where to click: on control id of the active window, at (dx, dy) from its
+ * top left (from its right or bottom when negative), its middle without
+ * them; or, item >= 0, on that item of a list box or a combo box's
+ * dropped list.  0 found.
+ */
+int
+ctl_scriptpoint(id, item, dx, dy, hasoff, xp, yp)
+	int id, item, dx, dy, hasoff, *xp, *yp;
+{
+	struct wnd *w = wnd_active ? findid(wnd_active, id) : 0;
+	struct rect r;
+
+	if (!w)
+		return -1;
+	if (item >= 0) {
+		struct wnd *l = w;
+
+		if (w->cls && !w16_stricmp(w->cls->name, "ComboBox"))
+			l = cbof(w)->list;
+		if (!l)
+			return -1;
+		*xp = l->cr.l + 8;
+		*yp = l->cr.t + (item - lbof(l)->top) * itemh(l) + itemh(l) / 2;
+		return 0;
+	}
+	r = w->wr;
+	if (!hasoff) {
+		*xp = (r.l + r.r) / 2;
+		*yp = (r.t + r.b) / 2;
+	} else {
+		*xp = dx >= 0 ? r.l + dx : r.r + dx;
+		*yp = dy >= 0 ? r.t + dy : r.b + dy;
+	}
+	return 0;
+}

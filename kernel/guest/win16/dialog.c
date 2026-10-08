@@ -61,7 +61,7 @@ basex(w)
 	if (!o)
 		return 8;
 	/* as Windows measures it: the 52 letters, (extent / 26 + 1) / 2 */
-	ext = text_width(o->u.font.bf, abc, 52) + 52 * o->u.font.bold;
+	ext = text_width(o->u.font.bf, abc, 52) + o->u.font.bold;
 	return (ext / 26 + 1) / 2;
 }
 

@@ -203,6 +203,23 @@ nextline()
 			}
 			return 1;
 		}
+		/* clickid ID [dx dy]: on a control of the active window; clickitem ID N: on a list's item */
+		if (strcmp(cmd, "clickid") == 0 || strcmp(cmd, "clickitem") == 0) {
+			extern int ctl_scriptpoint();
+			int id, a1 = 0, a2 = 0, n, item = strcmp(cmd, "clickitem") == 0;
+
+			n = sscanf(arg, "%d %d %d", &id, &a1, &a2);
+			if (n < 1 || (item && n < 2) ||
+			    (item ? ctl_scriptpoint(id, a1, 0, 0, 0, &x, &y) :
+			    ctl_scriptpoint(id, -1, a1, a2, n == 3, &x, &y)) != 0) {
+				fprintf(stderr, "startwin: script: no control for \"%s\"\n", line);
+				continue;
+			}
+			add(EV_MOVE, x, y, 0, 0, 0);
+			add(EV_BTN, x, y, 1, 0, 0);
+			add(EV_BTN, x, y, 0, 0, 0);
+			return 1;
+		}
 		if (strcmp(cmd, "key") == 0 || strcmp(cmd, "keydown") == 0 || strcmp(cmd, "keyup") == 0) {
 			char *p = arg, *e;
 

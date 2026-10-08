@@ -1855,7 +1855,7 @@ place(dc, x, y, s, n, dx, sxp, syp, wp)
 		for (i = 0; i < n; i++)
 			w += dx[i];
 	else
-		w = text_width(f, s, n) + n * (fo->bold + dc->st.extra);
+		w = text_width(f, s, n) + n * dc->st.extra + fo->bold;	/* a fake bold overhangs once */
 	if (dc->st.align & TA_UPDATECP) {
 		x = dc->st.curx;
 		y = dc->st.cury;
@@ -1895,13 +1895,13 @@ text_draw(dc, x, y, s, n, clip, opq, dx)
 		for (i = 0; i < n; i++) {
 			int c = (u8)s[i];
 
-			adv[i] = text_width(f, s + i, 1) + fo->bold + dc->st.extra;
+			adv[i] = text_width(f, s + i, 1) + dc->st.extra;
 			if (c == ' ' && dc->st.breakcnt > 0)
 				adv[i] += dc->st.breakext / dc->st.breakcnt;
 		}
 	}
 	for (w = 0, i = 0; i < n; i++)
-		w += adv ? adv[i] : text_width(f, s + i, 1) + fo->bold;
+		w += adv ? adv[i] : text_width(f, s + i, 1);
 	if (clip) {
 		rgn_init(&save);
 		rgn_copy(&save, dc_clip(dc));
@@ -1999,7 +1999,7 @@ g_GetTextExtent(a)
 	DC(a[0]);
 
 	f = font_of(dc);
-	w = s && n > 0 ? text_width(f, s, n) + n * (fontobj(dc)->bold + dc->st.extra) : 0;
+	w = s && n > 0 ? text_width(f, s, n) + n * dc->st.extra + fontobj(dc)->bold : 0;
 	h = f->f_height;
 	if (dc->st.mapmode != MM_TEXT) {
 		w = muldiv(w, dc->st.wex, dc->st.vex);
@@ -2043,7 +2043,7 @@ g_GetTextMetrics(a)
 	PW(p + 4, f->f_descent);
 	PW(p + 6, lead);		/* internal leading */
 	PW(p + 8, f->f_extlead);	/* external leading */
-	PW(p + 10, f->f_avgw + fo->bold);
+	PW(p + 10, f->f_avgw);
 	PW(p + 12, f->f_maxw + fo->bold);
 	PW(p + 14, fo->bold || f->f_weight >= 600 ? 700 : 400);
 	PB(p + 16, fo->lf.italic);
@@ -2093,7 +2093,7 @@ g_GetCharWidth(a)
 	f = font_of(dc);
 	for (c = a[1]; p && c <= (int)a[2]; c++, p += 2) {
 		ch = c;
-		PW(p, text_width(f, &ch, 1) + fontobj(dc)->bold);
+		PW(p, text_width(f, &ch, 1));
 	}
 	return 1;
 }

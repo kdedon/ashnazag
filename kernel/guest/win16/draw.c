@@ -701,7 +701,7 @@ glyphs(dc, f, x, y, s, n, dx, bold, underline, strike)
 					}
 				}
 			}
-		x += dx ? dx[k] : w + bold;
+		x += dx ? dx[k] : w;	/* a fake bold strikes one pixel over, the advance as it is */
 	}
 	if (underline || strike) {
 		r_set(&m, x0, y + (underline ? f->f_ascent + 1 : f->f_ascent * 2 / 3), x,
