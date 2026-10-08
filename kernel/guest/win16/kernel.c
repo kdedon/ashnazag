@@ -1383,6 +1383,24 @@ startprog(path, args, show)
 	return m->m_hinst;
 }
 
+/* WinExec for the host's own use (WinHelp's viewer) */
+u32
+kernel_winexec(line, show)
+	char *line;
+	int show;
+{
+	char buf[300], *p, *args;
+
+	strncpy(buf, line, sizeof buf - 1);
+	buf[sizeof buf - 1] = 0;
+	for (args = buf; *args && *args != ' '; args++)
+		;
+	if (*args)
+		*args++ = 0;
+	p = buf;
+	return startprog(p, args, show);
+}
+
 static u32
 k_WinExec(a)
 	u32 *a;

@@ -2286,15 +2286,59 @@ u_SystemParametersInfo(a)
 	return 0;
 }
 
+/*
+ * WinHelp(hwnd, file, command, data): to Windows' help viewer, WINHELP.EXE
+ * from the user's Windows, started when not running; the request goes in
+ * a WM_WINHELP message as Windows sends it (a shared block: size,
+ * command, data, reserved, the file's offset, the data's offset).
+ */
 static u32
 u_WinHelp(a)
 	u32 *a;
 {
-	/* HELP_QUIT: there is no viewer to close */
-	if ((a[2] & 0xffff) == 2)
-		return 1;
-	w16_log("startwin: WinHelp(\"%s\"): no help viewer\n", a[1] ? STR(a[1]) : "");
-	return 0;
+	extern u32 kernel_winexec();
+	struct wnd *w = 0;
+	u32 sc, cls, msg, h, p, b[1];
+	char *file = a[1] ? gptr(a[1]) : 0;
+	int cmd = a[2] & 0xffff, tries, n, len;
+
+	sc = ustr("MS_WINHELP");
+	cls = cls_find(sc, 0) ? sc : 0;
+	for (tries = 0; tries < 2 && !w; tries++) {
+		w = 0;
+		if (cls)
+			for (w = desktop->child; w; w = w->next)
+				if (w->cls == cls_find(sc, 0))
+					break;
+		if (!w) {
+			if (cmd == 2 || tries)		/* HELP_QUIT with no viewer: done */
+				break;
+			if (kernel_winexec("WINHELP.EXE -x", 1) < 32)
+				break;
+			cls = cls_find(sc, 0) ? sc : 0;
+		}
+	}
+	b[0] = ustr("WM_WINHELP");
+	msg = u_RegisterWindowMessage(b);
+	ufree(sc);
+	if (!w)
+		return cmd == 2;
+	len = file ? strlen(file) + 1 : 0;
+	n = 16 + len + ((cmd == 0x101 || cmd == 0x105) && a[3] ? gstrlen(a[3]) + 1 : 0);
+	h = g_alloc(GMEM_MOVEABLE | GMEM_DDESHARE | GMEM_ZEROINIT, n, 0);
+	p = sel_base(h);
+	PW(p, n);
+	PW(p + 2, cmd);
+	PL(p + 4, (cmd == 0x101 || cmd == 0x105) ? 0 : a[3]);	/* HELP_KEY, HELP_PARTIALKEY carry a string */
+	PW(p + 12, len ? 16 : 0);
+	if (len)
+		strcpy((char *)M + p + 16, file);
+	if (n > 16 + len) {
+		PW(p + 14, 16 + len);
+		strcpy((char *)M + p + 16 + len, gptr(a[3]));
+	}
+	wnd_send(w, msg, a[0] & 0xffff, FP(0, h));
+	return 1;
 }
 
 static u32 u_ArrangeIconicWindows(a) u32 *a; { return 0; }
@@ -2567,6 +2611,7 @@ struct impl u_impl[] = {
 	{ "USER", "SystemParametersInfo", u_SystemParametersInfo },
 	{ "USER", "WinHelp", u_WinHelp },
 	{ "USER", "WNetGetCaps", u_WNetGetCaps },
+	{ "USER", "SetMessageQueue", u_one },	/* the queue is as long as it needs */
 	{ "USER", "GetWindowPlacement", u_GetWindowPlacement },
 	{ "USER", "SetWindowPlacement", u_SetWindowPlacement },
 	{ "USER", "ArrangeIconicWindows", u_ArrangeIconicWindows },
