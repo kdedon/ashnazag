@@ -1431,6 +1431,9 @@ input(e)
 		}
 		return;
 	case EV_QUIT:
+		/* asked again (the script's end too) after WM_QUIT is posted: that stays */
+		if (quitting)
+			return;
 		quitting = 1;
 		if (wnd_active)
 			qpost(wnd_active->h, WM_SYSCOMMAND, SC_CLOSE, 0);
@@ -1590,9 +1593,19 @@ user_getmessage(a, h, min, max, remove, wait)
 		rawfill();
 		caret_blink();
 		/* the queue */
+	again:
 		for (i = qhead; i != qtail; i = (i + 1) % QSIZE)
-			if (filt(&q[i], h, min, max)) {
+			if ((q[i].hwnd && !wnd_get(q[i].hwnd)) || filt(&q[i], h, min, max)) {
 				m = q[i];
+				/* a destroyed window's messages go with it */
+				if (m.hwnd && !wnd_get(m.hwnd)) {
+					int j;
+
+					for (j = i; j != qhead; j = (j + QSIZE - 1) % QSIZE)
+						q[j] = q[(j + QSIZE - 1) % QSIZE];
+					qhead = (qhead + 1) % QSIZE;
+					goto again;
+				}
 				if (remove) {
 					/* close the gap */
 					int j;

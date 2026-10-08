@@ -619,6 +619,32 @@ rmtree(dir)
 	rmdir(dir);
 }
 
+/* what Setup adds to WIN.INI: the country settings (United States) */
+static void
+addintl(path)
+	char *path;
+{
+	FILE *fp;
+	char line[256];
+
+	if ((fp = fopen(path, "r")) != 0) {
+		while (fgets(line, sizeof line, fp))
+			if (strncmp(line, "[intl]", 6) == 0) {
+				fclose(fp);
+				return;
+			}
+		fclose(fp);
+	}
+	if ((fp = fopen(path, "a")) == 0)
+		return;
+	fprintf(fp, "\r\n[intl]\r\nsLanguage=enu\r\nsCountry=United States\r\niCountry=1\r\n");
+	fprintf(fp, "iDate=0\r\niTime=0\r\niTLZero=0\r\niCurrency=0\r\niCurrDigits=2\r\n");
+	fprintf(fp, "iNegCurr=0\r\niLzero=0\r\niDigits=2\r\niMeasure=1\r\ns1159=AM\r\ns2359=PM\r\n");
+	fprintf(fp, "sCurrency=$\r\nsThousand=,\r\nsDecimal=.\r\nsDate=/\r\nsTime=:\r\nsList=,\r\n");
+	fprintf(fp, "sShortDate=M/d/yy\r\nsLongDate=dddd, MMMM dd, yyyy\r\n");
+	fclose(fp);
+}
+
 static void
 writesysini(path)
 	char *path;
@@ -712,6 +738,8 @@ win_install(nsrc, src, cdir)
 		n++;
 	}
 	rmtree(tmp);
+	sprintf(dst, "%s/win.ini", wdir);
+	addintl(dst);
 	sprintf(dst, "%s/system.ini", wdir);
 	if (access(dst, 0) != 0)
 		writesysini(dst);

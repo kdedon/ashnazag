@@ -565,6 +565,9 @@ dos_int21(c)
 	int e;
 
 	carry(c, 0);
+	if (w16_debug > 1)
+		w16_log("INT 21h AX=%04x BX=%04x CX=%04x DX=%04x\n", AX, c->r[R_BX] & 0xffff, c->r[R_CX] & 0xffff,
+		    c->r[R_DX] & 0xffff);
 	switch (AH) {
 	case 0x02:
 		if (w16_debug)
@@ -757,6 +760,7 @@ dos_int21(c)
 		}
 		if ((a = lin(c->s[S_DS].sel, c->r[R_SI] & 0xffff)) != 0)
 			strcpy((char *)M + a, curdir[e][0] ? curdir[e] + 1 : "");
+		c->r[R_AX] = (c->r[R_AX] & ~0xffff) | 0x0100;	/* as DOS leaves it: AL 0 */
 		return 1;
 	case 0x4c:
 		w16_exit(AL);

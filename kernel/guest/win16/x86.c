@@ -2122,6 +2122,11 @@ loop(c, one)
 			}
 			if (one)
 				exec();
+			else if (c->trace)
+				while (!c->stop) {
+					(*c->trace)(c);
+					exec();
+				}
 			else
 				while (!c->stop)
 					exec();

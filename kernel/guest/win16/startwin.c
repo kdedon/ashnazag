@@ -219,6 +219,31 @@ intr(c, n)
 	return 1;
 }
 
+/* W16_TRACE=MODULE:seg[:from-to] (seg 0: all): each instruction there, for debugging */
+static char trmod[16];
+static int trseg, trfrom, trto = 0xffff;
+
+static void
+trace(c)
+	struct x86 *c;
+{
+	static struct module *m;
+	int i, seg = 0;
+
+	if (!m)
+		m = mod_find(trmod);
+	if (!m)
+		return;
+	for (i = 1; i <= m->m_nseg; i++)
+		if (m->m_seg[i].ns_sel == c->s[S_CS].sel)
+			seg = i;
+	if (seg && (!trseg || seg == trseg) && (c->eip & 0xffff) >= trfrom && (c->eip & 0xffff) <= trto)
+		w16_log("  %d:%04x AX=%04x BX=%04x CX=%04x DX=%04x SI=%04x DI=%04x BP=%04x SP=%04x DS=%04x ES=%04x\n",
+		    seg, c->eip & 0xffff, c->r[R_AX] & 0xffff, c->r[R_BX] & 0xffff, c->r[R_CX] & 0xffff,
+		    c->r[R_DX] & 0xffff, c->r[R_SI] & 0xffff, c->r[R_DI] & 0xffff, c->r[R_BP] & 0xffff,
+		    c->r[R_SP] & 0xffff, c->s[S_DS].sel, c->s[S_ES].sel);
+}
+
 static int
 fault(c, n, err)
 	struct x86 *c;
@@ -302,6 +327,8 @@ main(argc, argv)
 			w16_debug++;
 		else if (strcmp(argv[i], "-vv") == 0)
 			w16_debug += 2;
+		else if (strcmp(argv[i], "-vvv") == 0)
+			w16_debug += 3;
 		else if (strcmp(argv[i], "-S") == 0 && i + 1 < argc)
 			scr_script = argv[++i];
 		else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc)
@@ -359,6 +386,8 @@ main(argc, argv)
 	cpu->intr = intr;
 	cpu->fault = fault;
 	cpu->thunk = thunk_dispatch;
+	if (getenv("W16_TRACE") && sscanf(getenv("W16_TRACE"), "%15[^:]:%d:%x-%x", trmod, &trseg, &trfrom, &trto) >= 2)
+		cpu->trace = trace;
 	if (scr_open(w, h, 0) != 0) {
 		fprintf(stderr, "startwin: no screen\n");
 		return 1;

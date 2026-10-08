@@ -332,6 +332,24 @@ thunk_dispatch(c, n)
 	}
 	if (w16_debug > 1)
 		w16_log("call %s.%s from %04x:%04x\n", t->t_mod ? t->t_mod->m_name : "", e->ae_name, rcs, rip);
+	if (w16_debug > 2 && getenv("W16_BT") && strcmp(getenv("W16_BT"), e->ae_name) == 0) {
+		/* the callers, along the BP chain (odd BP: a far frame) */
+		u32 bp = c->r[R_BP] & 0xffff, ssb = c->s[S_SS].base;
+		int k;
+
+		for (k = 0; k < 12 && bp; k++) {
+			u16 nb = GW(ssb + (bp & ~1)), ip = GW(ssb + (bp & ~1) + 2), cs = GW(ssb + (bp & ~1) + 4);
+
+			struct module *m = bp & 1 ? mod_byhandle(cs) : 0;
+			int i, seg = 0;
+
+			for (i = 1; m && i <= m->m_nseg; i++)
+				if (m->m_seg[i].ns_sel == cs)
+					seg = i;
+			w16_log("  frame %04x: ret %04x:%04x %s seg %d\n", bp, bp & 1 ? cs : 0, ip, m ? m->m_name : "", seg);
+			bp = nb;
+		}
+	}
 	saveregs(&save);
 	api_callerds = c->s[S_DS].sel;
 	api_jumped = 0;
@@ -348,6 +366,9 @@ thunk_dispatch(c, n)
 			w16_fatal("%s.%s is not done", t->t_mod ? t->t_mod->m_name : "?", e->ae_name);
 	}
 	api_depth--;
+	if (w16_debug > 2)
+		w16_log("  %s.%s(%lx %lx %lx %lx) = %lx\n", t->t_mod ? t->t_mod->m_name : "", e->ae_name,
+		    (long)a[0], (long)a[1], (long)a[2], (long)a[3], (long)r);
 	if (e->ae_kind == 'r') {
 		/* register entries leave the registers as they set them; Throw went elsewhere */
 		if (api_jumped)

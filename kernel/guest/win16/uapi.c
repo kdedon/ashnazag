@@ -2244,11 +2244,15 @@ static u32
 u_WinHelp(a)
 	u32 *a;
 {
-	w16_log("startwin: WinHelp(\"%s\"): no help viewer\n", STR(a[1]));
+	/* HELP_QUIT: there is no viewer to close */
+	if ((a[2] & 0xffff) == 2)
+		return 1;
+	w16_log("startwin: WinHelp(\"%s\"): no help viewer\n", a[1] ? STR(a[1]) : "");
 	return 0;
 }
 
 static u32 u_ArrangeIconicWindows(a) u32 *a; { return 0; }
+static u32 u_WNetGetCaps(a) u32 *a; { return 0; }	/* no network */
 static u32 u_ShowOwnedPopups(a) u32 *a; { return 0; }
 static u32 u_GetDialogBaseUnits(a) u32 *a; { extern u32 dlg_baseunits(); return dlg_baseunits(); }
 
@@ -2459,6 +2463,7 @@ struct impl u_impl[] = {
 	{ "USER", "GetFreeSystemResources", u_GetFreeSystemResources },
 	{ "USER", "SystemParametersInfo", u_SystemParametersInfo },
 	{ "USER", "WinHelp", u_WinHelp },
+	{ "USER", "WNetGetCaps", u_WNetGetCaps },
 	{ "USER", "ArrangeIconicWindows", u_ArrangeIconicWindows },
 	{ "USER", "ShowOwnedPopups", u_ShowOwnedPopups },
 	{ "USER", "GetDialogBaseUnits", u_GetDialogBaseUnits },

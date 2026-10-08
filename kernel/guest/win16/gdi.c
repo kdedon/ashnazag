@@ -2113,6 +2113,7 @@ enumfonts(a, fam)
 static u32 g_EnumFonts(a) u32 *a; { return enumfonts(a, 0); }
 static u32 g_EnumFontFamilies(a) u32 *a; { return enumfonts(a, 1); }
 static u32 g_AddFontResource(a) u32 *a; { return 0; }
+static u32 g_SetObjectOwner(a) u32 *a; { return 1; }
 static u32 g_RemoveFontResource(a) u32 *a; { return 0; }
 
 /* ---- regions ---- */
@@ -3289,6 +3290,7 @@ struct impl g_impl[] = {
 	{ "GDI", "EnumFonts", g_EnumFonts },
 	{ "GDI", "EnumFontFamilies", g_EnumFontFamilies },
 	{ "GDI", "AddFontResource", g_AddFontResource },
+	{ "GDI", "SetObjectOwner", g_SetObjectOwner },
 	{ "GDI", "RemoveFontResource", g_RemoveFontResource },
 	{ "GDI", "CreateRectRgn", g_CreateRectRgn },
 	{ "GDI", "CreateRectRgnIndirect", g_CreateRectRgnIndirect },

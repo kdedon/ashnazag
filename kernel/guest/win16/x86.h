@@ -123,6 +123,7 @@ struct x86 {
 	void	(*io)();	/* (cpu, port, size, out, value *) */
 	void	*user;
 	int	stop;		/* x86_run returns when set */
+	void	(*trace)();	/* (cpu): before each instruction, when set (debugging) */
 	int	depth;		/* nested x86_call */
 	u32	icount;		/* instructions run, wraps */
 	int	halted;

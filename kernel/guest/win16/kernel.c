@@ -155,7 +155,8 @@ psp_make(cmdline, hinst)
 	PW(b + 0x2c, envsel);
 	PB(b + 0x80, n);
 	memcpy(M + b + 0x81, cmdline, n);
-	PB(b + 0x81 + n, 0x0d);
+	/* DOS ends the tail with CR; WinMain gets it as a C string, as InitTask leaves it */
+	PB(b + 0x81 + n, 0);
 	return psp;
 }
 
@@ -1283,6 +1284,17 @@ atom_name(at)
 }
 
 static u32 k_InitAtomTable(a) u32 *a; { return 1; }
+
+static u32
+k_LocalHandleDelta(a)
+	u32 *a;
+{
+	static int delta = 32;
+
+	if (a[0] & 0xffff)
+		delta = a[0] & 0xffff;
+	return delta;
+}
 static u32 k_AddAtom(a) u32 *a; { return atom_add(a[0]); }
 
 static u32
@@ -1543,6 +1555,12 @@ struct impl k_impl[] = {
 	{ "KERNEL", "FindAtom", k_FindAtom },
 	{ "KERNEL", "DeleteAtom", k_DeleteAtom },
 	{ "KERNEL", "GetAtomName", k_GetAtomName },
+	/* the global atoms are USER's in 3.1; one table serves both here */
+	{ "USER", "GlobalAddAtom", k_AddAtom },
+	{ "USER", "GlobalFindAtom", k_FindAtom },
+	{ "USER", "GlobalDeleteAtom", k_DeleteAtom },
+	{ "USER", "GlobalGetAtomName", k_GetAtomName },
+	{ "KERNEL", "LocalHandleDelta", k_LocalHandleDelta },
 	{ "KERNEL", "GetProfileInt", k_GetProfileInt },
 	{ "KERNEL", "GetPrivateProfileInt", k_GetPrivateProfileInt },
 	{ "KERNEL", "GetProfileString", k_GetProfileString },
