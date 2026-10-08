@@ -988,6 +988,16 @@ user_messagebox(hwnd, text, caption, style)
 	w0 = ix + tw + 24;
 	if (w0 < nb * (bw + 12) + 24)
 		w0 = nb * (bw + 12) + 24;
+	/* wide enough for its caption too, beside the system menu box */
+	{
+		struct bfont *sf = gobj(stockobj[SYSTEM_FONT], OBJ_FONT)->u.font.bf;
+		int cw = text_width(sf, caption, strlen(caption)) + sys_metric(SM_CYCAPTION) + 16;
+
+		if (w0 < cw)
+			w0 = cw;
+		if (w0 > screen.w - 16)
+			w0 = screen.w - 16;
+	}
 	h0 = (th > 32 ? th : 32) + bh + 48;
 	cls = ustr("#32770");
 	t = ustr(caption);
