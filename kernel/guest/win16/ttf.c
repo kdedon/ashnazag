@@ -3,11 +3,12 @@
  * files the user's Windows brings (Arial, Times New Roman, Courier New,
  * Symbol, Wingdings), named in WIN.INI's [fonts] through their .FOT
  * headers.  Each face at each size becomes a bitmap font like the .FON
- * ones, its advances computed at once and its glyphs scan converted
- * when first drawn: the quadratic outlines filled by the nonzero rule
- * at pixel centres, with dropout control so thin stems and bars stay,
- * as the 3.1 rasterizer fills.  No hinting.  Integer arithmetic only
- * (26.6 fixed point), for a 68k without an FPU.
+ * ones, its advances computed at once (the font's hdmx where it has the
+ * size, as GDI took them, else the hinted advances) and its glyphs made
+ * when first drawn.  The glyphs are FreeType's (built with ft/w16ftopt.h):
+ * each outline hinted by the font's own programs with the classic (v35)
+ * interpreter, as Windows 3.1's rasterizer ran them, and scan converted
+ * in black and white.  A synthetic italic leans after hinting.
  */
 
 #include <stdio.h>
@@ -16,6 +17,9 @@
 #include "w16.h"
 #include "win.h"
 #include "font.h"
+#include <ft2build.h>
+#include FT_FREETYPE_H
+#include FT_OUTLINE_H
 
 #define	B16(p)	((unsigned)(p)[0] << 8 | (p)[1])
 #define	S16(p)	((int)(short)B16(p))
@@ -35,6 +39,7 @@ struct ttfile {
 	int	asc, desc, avgw, maxw;
 	u32	cmap, loca, glyf, hmtx, glyflen;	/* offsets in d */
 	u32	hdmx, hdmxlen;	/* the hinted advances at some sizes, 0 none */
+	FT_Face	ftface;		/* FreeType's, over d (kept while it lives) */
 };
 
 struct ttsize {
@@ -42,6 +47,7 @@ struct ttsize {
 	struct ttfile *tf;
 	int	ppem, shear;
 	long	xn, xd, yn, yd;		/* font units to 26.6 pixels: * n / d */
+	FT_Size	size;			/* FreeType's for this size: its hinting state */
 	struct bfont bf;
 	unsigned short adv[NCH];
 	unsigned char w[NCH];
@@ -326,323 +332,6 @@ hdmx(tf, ppem)
 	return 0;
 }
 
-/* ---- outlines ---- */
-
-#define	MAXPT	2048
-#define	MAXCT	256
-
-struct outline {
-	long	x[MAXPT], y[MAXPT];	/* font units, y up (scaled by composites) */
-	char	on[MAXPT];
-	int	end[MAXCT];
-	int	npt, nct;
-};
-
-/* glyph g into o, through the 2.14 matrix m and offset dx, dy */
-static void
-glyph(tf, g, o, m, dx, dy, depth)
-	struct ttfile *tf;
-	int g, depth;
-	struct outline *o;
-	long *m, dx, dy;
-{
-	u8 *d = tf->d, *p, *lim;
-	u32 off, next;
-	int nc, i, n, fl, k, base;
-	long v;
-
-	if (g >= tf->nglyph || depth > 8)
-		return;
-	if (tf->locfmt) {
-		off = B32(d + tf->loca + 4 * g);
-		next = B32(d + tf->loca + 4 * g + 4);
-	} else {
-		off = 2 * (u32)B16(d + tf->loca + 2 * g);
-		next = 2 * (u32)B16(d + tf->loca + 2 * g + 2);
-	}
-	if (next <= off || next > tf->glyflen)
-		return;
-	p = d + tf->glyf + off;
-	lim = d + tf->glyf + next;
-	nc = S16(p);
-	if (nc >= 0) {
-		u8 *fp, *xp, *yp;
-		int ends[MAXCT];
-
-		if (o->nct + nc > MAXCT)
-			return;
-		for (i = 0; i < nc; i++)
-			ends[i] = B16(p + 10 + 2 * i);
-		n = nc ? ends[nc - 1] + 1 : 0;
-		if (o->npt + n > MAXPT)
-			return;
-		fp = p + 10 + 2 * nc;
-		fp += 2 + B16(fp);		/* past the instructions */
-		/* the flags, then the x and the y deltas */
-		base = o->npt;
-		for (i = 0, xp = fp; i < n && xp < lim; ) {
-			fl = *xp++;
-			k = (fl & 8) ? *xp++ + 1 : 1;
-			while (k-- > 0 && i < n)
-				o->on[base + i++] = fl;
-		}
-		for (v = 0, i = 0; i < n; i++) {
-			fl = o->on[base + i];
-			if (fl & 2)
-				v += (fl & 16) ? *xp++ : -(long)*xp++;
-			else if (!(fl & 16))
-				v += S16(xp), xp += 2;
-			o->x[base + i] = v;
-		}
-		for (v = 0, i = 0, yp = xp; i < n; i++) {
-			fl = o->on[base + i];
-			if (fl & 4)
-				v += (fl & 32) ? *yp++ : -(long)*yp++;
-			else if (!(fl & 32))
-				v += S16(yp), yp += 2;
-			o->y[base + i] = v;
-		}
-		if (yp > lim)
-			return;
-		for (i = 0; i < n; i++) {
-			long x = o->x[base + i], y = o->y[base + i];
-
-			o->x[base + i] = ((m[0] * x + m[2] * y) >> 14) + dx;
-			o->y[base + i] = ((m[1] * x + m[3] * y) >> 14) + dy;
-			o->on[base + i] &= 1;
-		}
-		for (i = 0; i < nc; i++)
-			o->end[o->nct++] = base + ends[i];
-		o->npt += n;
-		return;
-	}
-	/* composite: its parts, each moved and perhaps scaled */
-	p += 10;
-	do {
-		long cm[4], a1, a2, ox, oy;
-
-		if (p + 4 > lim)
-			return;
-		fl = B16(p);
-		k = B16(p + 2);
-		p += 4;
-		if (fl & 1)
-			a1 = S16(p), a2 = S16(p + 2), p += 4;
-		else
-			a1 = (signed char)p[0], a2 = (signed char)p[1], p += 2;
-		cm[0] = cm[3] = 1 << 14;
-		cm[1] = cm[2] = 0;
-		if (fl & 8)
-			cm[0] = cm[3] = S16(p), p += 2;
-		else if (fl & 0x40)
-			cm[0] = S16(p), cm[3] = S16(p + 2), p += 4;
-		else if (fl & 0x80)
-			cm[0] = S16(p), cm[1] = S16(p + 2), cm[2] = S16(p + 4), cm[3] = S16(p + 6), p += 8;
-		if (!(fl & 2))
-			a1 = a2 = 0;		/* matched points: not done, rare in these fonts */
-		ox = ((m[0] * a1 + m[2] * a2) >> 14) + dx;
-		oy = ((m[1] * a1 + m[3] * a2) >> 14) + dy;
-		{
-			long mm[4];
-
-			mm[0] = (m[0] * cm[0] + m[2] * cm[1]) >> 14;
-			mm[1] = (m[1] * cm[0] + m[3] * cm[1]) >> 14;
-			mm[2] = (m[0] * cm[2] + m[2] * cm[3]) >> 14;
-			mm[3] = (m[1] * cm[2] + m[3] * cm[3]) >> 14;
-			glyph(tf, k, o, mm, ox, oy, depth + 1);
-		}
-	} while (fl & 0x20);
-}
-
-/* ---- scan conversion ---- */
-
-struct edge {
-	long	x0, y0, x1, y1;		/* 26.6 pixels, y down */
-};
-
-static struct edge *edges;
-static int nedge, maxedge;
-
-static void
-line(x0, y0, x1, y1)
-	long x0, y0, x1, y1;
-{
-	if (nedge == maxedge) {
-		maxedge = maxedge ? 2 * maxedge : 512;
-		edges = (struct edge *)realloc((char *)edges, maxedge * sizeof *edges);
-	}
-	edges[nedge].x0 = x0;
-	edges[nedge].y0 = y0;
-	edges[nedge].x1 = x1;
-	edges[nedge].y1 = y1;
-	nedge++;
-}
-
-static void
-curve(x0, y0, cx, cy, x1, y1)
-	long x0, y0, cx, cy, x1, y1;
-{
-	long d = labs(x0 - 2 * cx + x1) + labs(y0 - 2 * cy + y1), px = x0, py = y0, x, y, t, u, nn;
-	int n, i;
-
-	/* segments enough that the flattening stays within a quarter pixel */
-	for (n = 1; n < 16 && d > 16; n *= 2)
-		d /= 4;
-	nn = (long)n * n;
-	for (i = 1; i <= n; i++) {
-		t = i;
-		u = n - i;
-		x = (x0 * u * u + 2 * cx * u * t + x1 * t * t) / nn;
-		y = (y0 * u * u + 2 * cy * u * t + y1 * t * t) / nn;
-		line(px, py, x, y);
-		px = x;
-		py = y;
-	}
-}
-
-/* an outline (pixels already) to edges: on and off points as TrueType has them */
-static void
-contours(o)
-	struct outline *o;
-{
-	int c, s, e, i, n;
-	long sx, sy, px, py, cx, cy, x, y;
-	int havec;
-
-	for (c = 0, s = 0; c < o->nct; s = o->end[c++] + 1) {
-		e = o->end[c];
-		n = e - s + 1;
-		if (n < 2)
-			continue;
-		/* a start on the curve: the first on point, or between two off ones */
-		for (i = 0; i < n && !o->on[s + i]; i++)
-			;
-		if (i == n) {
-			sx = (o->x[s] + o->x[s + 1]) / 2;
-			sy = (o->y[s] + o->y[s + 1]) / 2;
-			i = 1;
-		} else {
-			sx = o->x[s + i];
-			sy = o->y[s + i];
-			i++;
-		}
-		px = sx;
-		py = sy;
-		havec = 0;
-		{
-			int k, j;
-
-			for (k = 0; k < n; k++) {
-				j = s + (i - 1 + 1 + k) % n;
-				x = o->x[j];
-				y = o->y[j];
-				if (o->on[j]) {
-					if (havec)
-						curve(px, py, cx, cy, x, y);
-					else
-						line(px, py, x, y);
-					px = x, py = y, havec = 0;
-				} else if (havec) {
-					long mx = (cx + x) / 2, my = (cy + y) / 2;
-
-					curve(px, py, cx, cy, mx, my);
-					px = mx, py = my, cx = x, cy = y;
-				} else
-					cx = x, cy = y, havec = 1;
-			}
-		}
-		if (havec)
-			curve(px, py, cx, cy, sx, sy);
-		else if (px != sx || py != sy)
-			line(px, py, sx, sy);
-	}
-}
-
-struct cross {
-	long	x;
-	int	dir;
-};
-
-static int
-bycross(a, b)
-	const void *a, *b;
-{
-	long d = ((struct cross *)a)->x - ((struct cross *)b)->x;
-
-	return d < 0 ? -1 : d > 0;
-}
-
-static void
-setpix(bits, bpr, w, h, x, y)
-	u8 *bits;
-	int bpr, w, h, x, y;
-{
-	if (x >= 0 && x < w && y >= 0 && y < h)
-		bits[y * bpr + (x >> 3)] |= 0x80 >> (x & 7);
-}
-
-/*
- * Fill by the nonzero rule, sampling pixel centres along rows (vert 0)
- * or columns (vert 1); a span that misses every centre sets the pixel
- * nearest its middle (dropout control).  Pixel (0,0) is at (ox, oy).
- */
-static void
-scan(bits, bpr, w, h, ox, oy, vert)
-	u8 *bits;
-	int bpr, w, h, vert;
-	long ox, oy;
-{
-	static struct cross *cr;
-	static int maxcr;
-	int line_, nl = vert ? w : h, i, nc, wind, a, b;
-	long c, lo, hi, x, base = vert ? ox : oy, obase = vert ? oy : ox;
-
-	if (maxcr < nedge) {
-		maxcr = nedge + 64;
-		cr = (struct cross *)realloc((char *)cr, maxcr * sizeof *cr);
-	}
-	for (line_ = 0; line_ < nl; line_++) {
-		c = base + line_ * 64 + 32;
-		for (nc = 0, i = 0; i < nedge; i++) {
-			struct edge *e = &edges[i];
-			long p0 = vert ? e->x0 : e->y0, p1 = vert ? e->x1 : e->y1;
-			long q0 = vert ? e->y0 : e->x0, q1 = vert ? e->y1 : e->x1;
-
-			if (p0 == p1)
-				continue;
-			if (p0 < p1 ? (c < p0 || c >= p1) : (c < p1 || c >= p0))
-				continue;
-			cr[nc].x = q0 + (q1 - q0) * (c - p0) / (p1 - p0);
-			cr[nc].dir = p1 > p0 ? 1 : -1;
-			nc++;
-		}
-		if (nc < 2)
-			continue;
-		qsort((char *)cr, nc, sizeof *cr, bycross);
-		for (wind = 0, i = 0; i < nc - 1; i++) {
-			wind += cr[i].dir;
-			if (!wind)
-				continue;
-			lo = cr[i].x - obase;
-			hi = cr[i + 1].x - obase;
-			/* centres k*64+32 in [lo, hi) */
-			a = (int)((lo - 32 + 63 + 64 * 1024) / 64) - 1024;
-			b = (int)((hi - 32 + 63 + 64 * 1024) / 64) - 1024;
-			if (a >= b && !vert) {
-				x = ((lo + hi) / 2 + 64 * 1024) / 64 - 1024;
-				a = (int)x, b = a + 1;
-			} else if (a >= b) {
-				x = ((lo + hi) / 2 + 64 * 1024) / 64 - 1024;
-				setpix(bits, bpr, w, h, line_, (int)x);
-				continue;
-			} else if (vert)
-				continue;	/* columns only fill what rows dropped */
-			for (; a < b; a++)
-				setpix(bits, bpr, w, h, a, line_);
-		}
-	}
-}
-
 /* ---- sizes ---- */
 
 /* a / b rounded, b > 0 */
@@ -653,6 +342,70 @@ rdiv(a, b)
 	return a >= 0 ? (a + b / 2) / b : -((-a + b / 2) / b);
 }
 
+/* FreeType, once */
+static FT_Library ftlib;
+
+/* the face's FreeType face and this size's FreeType size, made when first needed: 0 if they cannot be */
+static int
+ftsize(ts)
+	struct ttsize *ts;
+{
+	struct ttfile *tf = ts->tf;
+	FT_Size_RequestRec rq;
+
+	if (ts->size)
+		return FT_Activate_Size(ts->size) == 0;
+	if (!ftlib && FT_Init_FreeType(&ftlib) != 0) {
+		ftlib = 0;
+		return 0;
+	}
+	if (!tf->ftface && (!load(tf) || FT_New_Memory_Face(ftlib, tf->d, tf->n, 0, &tf->ftface) != 0)) {
+		tf->ftface = 0;
+		return 0;
+	}
+	if (FT_New_Size(tf->ftface, &ts->size) != 0) {
+		ts->size = 0;
+		return 0;
+	}
+	FT_Activate_Size(ts->size);
+	/* the em in 26.6 pixels: ppem high, across as the size stretches it */
+	memset((char *)&rq, 0, sizeof rq);
+	rq.type = FT_SIZE_REQUEST_TYPE_NOMINAL;
+	rq.height = ts->yn;
+	rq.width = rdiv(tf->upem * ts->xn, ts->xd);
+	if (FT_Request_Size(tf->ftface, &rq) != 0) {
+		FT_Done_Size(ts->size);
+		ts->size = 0;
+		return 0;
+	}
+	return 1;
+}
+
+/* glyph gi of the size hinted (and leant) in FreeType's slot: 0 if it cannot be */
+static FT_GlyphSlot
+ftload(ts, gi)
+	struct ttsize *ts;
+	int gi;
+{
+	FT_Face face;
+	FT_Matrix m;
+
+	if (!ftsize(ts))
+		return 0;
+	face = ts->tf->ftface;
+	if (FT_Load_Glyph(face, (FT_UInt)gi, FT_LOAD_TARGET_MONO) != 0)
+		return 0;
+	if (ts->shear && face->glyph->format == FT_GLYPH_FORMAT_OUTLINE) {
+		/* the synthetic italic, after hinting: x += y * shear / 256 */
+		m.xx = 0x10000L;
+		m.xy = (FT_Fixed)ts->shear << 8;
+		m.yx = 0;
+		m.yy = 0x10000L;
+		FT_Outline_Transform(&face->glyph->outline, &m);
+	}
+	return face->glyph;
+}
+
 /* the glyph of character c (0 = FIRST) at this size, rendered now if not yet */
 struct ttglyph *
 ttf_glyph(f, c)
@@ -660,11 +413,10 @@ ttf_glyph(f, c)
 	int c;
 {
 	struct ttsize *ts = f->f_tt;
-	struct ttfile *tf = ts->tf;
 	struct ttglyph *g = &ts->g[c];
-	static struct outline *o;
-	long m[4], minx, maxx, x, y, ox, oy;
-	int i, gi, w, bpr;
+	FT_GlyphSlot slot;
+	FT_Bitmap *b;
+	int bpr, r, y, x;
 
 	if (ts->done[c])
 		return g;
@@ -672,45 +424,24 @@ ttf_glyph(f, c)
 	g->bits = 0;
 	g->bw = 0;
 	g->ox = 0;
-	if (!load(tf))
+	if (!load(ts->tf) || (slot = ftload(ts, gindex(ts->tf, c + FIRST))) == 0 ||
+	    FT_Render_Glyph(slot, FT_RENDER_MODE_MONO) != 0)
 		return g;
-	if (!o)
-		o = (struct outline *)malloc(sizeof *o);
-	o->npt = o->nct = 0;
-	gi = gindex(tf, c + FIRST);
-	m[0] = m[3] = 1 << 14;
-	m[1] = m[2] = 0;
-	glyph(tf, gi, o, m, 0L, 0L, 0);
-	if (!o->npt)
+	b = &slot->bitmap;
+	if (b->width <= 0 || b->rows <= 0 || b->width > 1024 || b->pixel_mode != FT_PIXEL_MODE_MONO)
 		return g;
-	/* to 26.6 pixels, y down from the cell's top; a synthetic italic leans */
-	for (i = 0; i < o->npt; i++) {
-		x = o->x[i] + (ts->shear ? o->y[i] * ts->shear / 256 : 0);
-		x = rdiv(x * ts->xn, ts->xd);
-		y = rdiv(o->y[i] * ts->yn, ts->yd);
-		o->x[i] = x;
-		o->y[i] = (long)ts->bf.f_ascent * 64 - y;
-	}
-	minx = maxx = o->x[0];
-	for (i = 1; i < o->npt; i++) {
-		if (o->x[i] < minx) minx = o->x[i];
-		if (o->x[i] > maxx) maxx = o->x[i];
-	}
-	ox = (minx + 64 * 1024) / 64 - 1024;
-	w = (int)((maxx + 63 + 64 * 1024) / 64 - 1024 - ox);
-	if (w <= 0)
-		w = 1;
-	if (w > 1024)
-		return g;
-	nedge = 0;
-	contours(o);
-	bpr = (w + 7) / 8;
+	/* into the cell: f_height rows from its top, the baseline f_ascent down */
+	bpr = (b->width + 7) / 8;
 	g->bits = (u8 *)calloc(1, bpr * ts->bf.f_height + 1);
-	g->bw = w;
-	g->ox = (short)ox;
-	oy = 0;
-	scan(g->bits, bpr, w, ts->bf.f_height, ox * 64, oy, 0);
-	scan(g->bits, bpr, w, ts->bf.f_height, ox * 64, oy, 1);
+	g->bw = b->width;
+	g->ox = slot->bitmap_left;
+	for (r = 0; r < (int)b->rows; r++) {
+		y = ts->bf.f_ascent - slot->bitmap_top + r;
+		if (y < 0 || y >= ts->bf.f_height)
+			continue;
+		for (x = 0; x < bpr; x++)
+			g->bits[y * bpr + x] = b->buffer[r * b->pitch + x];
+	}
 	return g;
 }
 
@@ -804,7 +535,7 @@ ttf_fontx(face, bold, italic, height, width, xdpi, ydpi)
 	ts->shear = shear;
 	f = &ts->bf;
 	f->f_face = tf->face;
-	f->f_points = (ppem * 72 + 48) / 96;
+	f->f_points = (ppem * 72 + w16_dpi / 2) / w16_dpi;	/* on the screen */
 	f->f_ascent = (int)(((long)tf->asc * ppem + tf->upem / 2) / tf->upem);
 	f->f_descent = (int)(((long)tf->desc * ppem + tf->upem / 2) / tf->upem);
 	f->f_height = f->f_ascent + f->f_descent;
@@ -814,7 +545,7 @@ ttf_fontx(face, bold, italic, height, width, xdpi, ydpi)
 	f->f_italic = tf->italic || shear;
 	f->f_pitch = tf->fixed;
 	f->f_family = tf->family;
-	f->f_res = 96;
+	f->f_res = w16_dpi;
 	f->f_charset = tf->symbol ? 2 : 0;
 	f->f_first = FIRST;
 	f->f_last = 255;
@@ -824,9 +555,13 @@ ttf_fontx(face, bold, italic, height, width, xdpi, ydpi)
 	f->f_maxw = (int)(rdiv(tf->maxw * xn, xd) + 32) / 64;
 	hd = width > 0 || stretched ? 0 : hdmx(tf, ppem);
 	for (c = 0; c < NCH; c++) {
+		FT_GlyphSlot slot;
+
 		g = gindex(tf, c + FIRST);
 		if (hd && g < tf->nglyph)
 			ts->adv[c] = hd[2 + g];
+		else if ((slot = ftload(ts, g)) != 0)
+			ts->adv[c] = (unsigned short)((slot->advance.x + 32) >> 6);	/* hinted */
 		else
 			ts->adv[c] = (unsigned short)((rdiv(advance(tf, g) * xn, xd) + 32) / 64);
 		ts->w[c] = ts->adv[c] > 255 ? 255 : ts->adv[c];

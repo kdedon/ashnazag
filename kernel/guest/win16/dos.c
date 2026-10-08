@@ -310,6 +310,33 @@ dos_close(h)
 	return 0;
 }
 
+/*
+ * INT 21h 5Ch, as SHARE.EXE gave it: a region of a file locked (or
+ * unlocked) against other processes, with the host's record locks, so
+ * other sessions sharing the file see them.  Within the session, one
+ * process, they do not conflict.  0, or a DOS error (33: locked).
+ */
+int
+dos_lock(h, off, len, unlock)
+	int h, unlock;
+	u32 off, len;
+{
+	struct flock fl;
+
+	if (h < 0 || h >= NFILE || fds[h] == -1)
+		return -6;
+	if (fds[h] < 0)
+		return 0;
+	memset((char *)&fl, 0, sizeof fl);
+	fl.l_type = unlock ? F_UNLCK : F_WRLCK;
+	fl.l_whence = 0;
+	fl.l_start = (off_t)off;
+	fl.l_len = (off_t)len;
+	if (fcntl(fds[h], F_SETLK, &fl) < 0)
+		return unlock ? (errno == EBADF ? -6 : 0) : -33;
+	return 0;
+}
+
 s32
 dos_read(h, a, n)
 	int h;
@@ -671,6 +698,15 @@ dos_int21(c)
 		strcpy(curdir[buf[0] - 'A'], buf[3] ? buf + 2 : "");
 		return 1;
 	case 0x3c:
+	case 0x5c:		/* lock or unlock a region: BX handle, CX:DX offset, SI:DI length */
+		if (AL > 1) {
+			fail(c, 1);
+			return 1;
+		}
+		r = dos_lock(BX, (u32)CX << 16 | DX, (u32)(c->r[R_SI] & 0xffff) << 16 | (c->r[R_DI] & 0xffff), AL);
+		if (r < 0)
+			fail(c, -r);
+		return 1;
 	case 0x5b:
 		if (AH == 0x5b && dos_hostpath(dsdx(c), host, sizeof host, 0) == 0) {
 			fail(c, 80);

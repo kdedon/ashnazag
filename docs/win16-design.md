@@ -62,9 +62,10 @@ Wabi 2.2 is one more source: its package as on the CD (any platform's
 startwin -install /path/to/DISK*.IMG /path/to/Wabi
 ```
 
-Then Windows goes in by Wabi's rules: `wabi_f.lst` says each SETUP.INF
-section's directory and the files left out (Print Manager, the 8514 bold
-fonts, Dr. Watson and the rest). Wabi's own files go where its
+Then Windows goes in by Wabi's rules: `wabi_f.lst` (`wabi_fwg.lst` for
+Windows for Workgroups 3.11, whose SETUP.INF title says so: the same rules
+and its `[mapi]` DLLs) says each SETUP.INF section's directory and the
+files left out (Print Manager, the EGA fonts, Dr. Watson and the rest). Wabi's own files go where its
 `wabidirupdate` and `wiscript` put them: its home (`wbin`, `printers`, the
 locale's `lib/locale/xx/wabi`) to `~/WIN16/wabihome`, which is drive W: as
 `$WABIHOME` was Wabi's; TIMER.DRV, the printer drivers and their help, the
@@ -101,7 +102,17 @@ a platform it did not know) name the drives as they did for Wabi (`$HOME`,
 changed in the Configuration Manager is mapped again at once. The current
 directory is on the deepest drive it is under. `-D X=dir` adds one and
 wins. `-m MB` sets the 16-bit memory
-(default 8). `-g WxH` sizes the screen for the memory backend. Under xdm it
+(default 8). `-g WxH` sizes the screen for the memory backend.
+
+System fonts are chosen as Wabi chose them: on a screen more than 640
+pixels wide large fonts (Windows' 8514 set: a 20 pixel system font, 120
+dpi logical inch), on the rest small fonts (VGA's: 16 pixels, 96 dpi);
+`-LF` and `-SF` choose, as `wabi -LF` and `-SF` did. With large fonts the
+8514 files are loaded in place of the VGA ones WIN.INI and SYSTEM.INI name
+(8514SYS.FON for VGASYS.FON, SSERIFF.FON for SSERIFE.FON and so on: Setup
+installs both, and so did Wabi), LOGPIXELS is 120, and the caption, menu
+bar, caption buttons and scroll bars follow the larger system font, as
+they followed the display driver's. Under xdm it
 is the session "Windows 3.x programs (Win16)" (`xdmenv win`).
 
 Debugging: `-v` logs loads, `-vv` every API call and DOS call, `-vvv`
@@ -110,6 +121,16 @@ Name is called; `W16_TRACE=MODULE:seg[:from-to]` logs each instruction
 there (seg 0: all of the module); `W16_WATCH=sel:off` reports the API call
 that changed a guest word; with the memory screen, `W16_SND=file` keeps
 the sound played (Windows' sample formats, as given).
+
+Built with the memory screen (`scr_null.c`, as `tests/win16/run.sh` builds
+it), `-S script` feeds input from a script and `-o shot.ppm` writes the
+screen at the end. A script is one command a line (`#` comments): `wait
+MS`; `move X Y`; `click`, `rclick`, `dclick`, `down` and `up X Y`; `key VK
+...`, `keydown VK`, `keyup VK` (virtual keys, hex or decimal); `type TEXT`
+(with Shift as the characters need); `clickid ID [DX DY]` on a control of
+the active window, `clickitem ID N` on a list's item; `shot FILE` (PPM);
+`tree`, the window tree to standard error; `quit`. The script's end is a
+quit.
 
 ## Architecture
 
@@ -175,11 +196,14 @@ the sound played (Windows' sample formats, as given).
   8-bit palette device (the 20 static colours at the ends, a 6x6x6 cube,
   greys; brush colours the palette lacks dithered from the 16 VGA colours,
   as Windows 3.1's drivers do), DCs, mapping modes, regions, ROP2 and ROP3,
-  DIBs and DDBs, Windows' own `.FON` bitmap fonts (96 dpi sizes preferred)
+  DIBs and DDBs, Windows' own `.FON` bitmap fonts (the screen's resolution's sizes preferred)
   and TrueType: the user's `.TTF` files, named in WIN.INI by their `.FOT`
-  headers, scan converted at any size when first drawn (nonzero rule,
-  dropout control, no hinting; 26.6 integer arithmetic for a 68k without an
-  FPU). The system bitmaps (OBM_*, the display driver's in Windows) are
+  headers, at any size, each glyph made when first drawn by FreeType
+  (`ft/`: fetched at build time by `ft/freetype.sh`, only its TrueType
+  driver and black-and-white rasterizer built), hinted by the font's own
+  programs with the classic v35 interpreter as Windows 3.1's rasterizer ran
+  them; advances from the font's hdmx where it has the size, as GDI took
+  them, else hinted. The system bitmaps (OBM_*, the display driver's in Windows) are
   drawn with the frame's routines. The spooler's GetSpoolJob lists WIN.INI's
   printers to Print Manager.
 - **Screen (`scr.h`)**: `scr_fb.c` on the display service (a session on
@@ -255,10 +279,14 @@ the test programs, `WATCOM`): builds `startwin` with the memory screen,
 checks `-install` on synthetic compressed disks, builds and runs the test
 programs in `tests/win16/src` with their input scripts, and compares what
 they report (`RESULT.TXT`) and their exit codes with `tests/win16/expect`.
-The x87 test compares inline x87 results with independently computed ones;
-the voice test checks SOUND.DRV's samples (length and pitch); the sock test
-runs Winsock over the loopback: a connection by blocking calls, select,
-WSAAsyncSelect's events and an asynchronous lookup.
+The programs: hello (a window with a line of text, closed by a timer),
+menus (a menu bar, accelerators, a modal dialog, MessageBox, string
+resources), ctrls (the standard controls in a dialog), fpu (inline x87 results against independently
+computed ones), voice (SOUND.DRV's samples, length and pitch), sock
+(Winsock over the loopback: a connection by blocking calls, select,
+WSAAsyncSelect's events and an asynchronous lookup) and meta (a picture
+recorded and played back pixel for pixel as drawn directly, EnumMetaFile,
+the metafile's bits, a disk metafile, one metafile played into another).
 `sh tests/win16/x86suite.sh` runs the 80386 instruction suite.
 `sh tests/win16/build.sh out` cross-builds the AMIX binary.
 
@@ -268,7 +296,30 @@ Windows; Notepad, Write, Cardfile, Calendar, Calculator, Clock, Solitaire,
 Minesweeper, PIF Editor, Clipboard Viewer, Task List, Control Panel, File
 Manager, Paintbrush, Character Map, Windows Help, Print Manager, Recorder,
 Object Packager, Sound Recorder and Media Player (playing through our wave
-driver), Terminal (up to its port settings).
+driver), Terminal (up to its port settings). With the user's Wabi 2.2 as
+well: the Wabi Tools group, the Configuration Manager, Wabi Registration,
+its Windows Install recognising the installation, the release notes and
+troubleshooting help, PowerPoint Viewer with the Sun advertisement and its
+sound (OLE to Sound Recorder); printing from Notepad and Write to the
+LaserJet III and the Epson FX-80 drivers, their output decoded and checked.
+
+## Known bugs
+
+- Windows for Workgroups 3.11 installs and runs (Program Manager, File
+  Manager with its toolbar, ClipBook Viewer, Mail's first run, Schedule+,
+  Hearts, Print Manager); its networking finds no DOS network (NETAPI's
+  real-mode calls fail, as under Wabi). ClipBook Viewer's frame, shown by
+  SetWindowPlacement, misses its first WM_SIZE, so its Clipboard icon is
+  misplaced. SetSysModalWindow does not yet confine input.
+
+- Wabi's Configuration Manager on a screen 640 pixels wide (small fonts)
+  opens with its page over its tabs. It places the page while the tabs
+  still hold their placeholder names; with their real names in small
+  fonts five tabs (each as wide as the widest, "DOS Emulator") need two
+  rows, and the page covers the second until a tab is chosen. Wabi itself
+  did the same at that size: it is the applet's, with Windows' own font
+  metrics. On larger screens (large fonts, as Wabi had them there) the
+  dialog is wider and the tabs fit in one row.
 
 ## Not done yet
 
@@ -277,11 +328,6 @@ driver), Terminal (up to its port settings).
   are written to the repository's conventions but unrun.
 - Serial ports (COMM.DRV's OpenComm and the rest over the host's ttys:
   Terminal), MIDI output, recording, printing to FILE: ports.
-- Wabi's Configuration Manager first shows its Diskette page over its
-  second row of tabs: at our 96 dpi it asks for 10 point MS Sans Serif,
-  as Windows maps it five tabs need two rows, and it places the page before
-  adding them. Choosing a tab places it right. Wabi, at its display's real
-  resolution, got a smaller face.
-- TrueType hinting, scaled raster fonts (a bitmap face stretched to a size
-  it lacks), the clipboard's formats beyond text, DDEML's advanced paths,
-  the MDI client's scroll bars, scaled cursors.
+- Scaled raster fonts (a bitmap face stretched to a size it lacks), the
+  clipboard's formats beyond text, DDEML's advanced paths, the MDI client's
+  scroll bars, scaled cursors.

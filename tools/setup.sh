@@ -265,6 +265,9 @@ if [ ! -x "$TC/bin/hfsck" ]; then
 		die "hfsutils failed; see $TC/hfsutils.log"
 fi
 
+step "FreeType for the Win16 environment's TrueType"
+sh "$AUX/kernel/guest/win16/ft/freetype.sh" > /dev/null || die "FreeType: see kernel/guest/win16/ft/freetype.sh"
+
 step "68040/68060 port at $PORT_PIN"
 PT=$AUX/kernel/amix-040-060-port
 gitpin $PORT_URL $PORT_PIN "$PT"

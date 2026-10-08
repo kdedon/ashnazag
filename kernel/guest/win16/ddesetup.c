@@ -111,7 +111,7 @@ readgroups(inf)
 	char *inf;
 {
 	extern char windir[], sysdir[];
-	char *p, *q, l[256], key[64], name[64], desc[80], exe[80], icon[80], idx[16], buf[2048];
+	char *p, *q, l[256], key[64], name[64], desc[80], exe[80], icon[80], idx[16], buf[2048], seen[1024], tag[84];
 	int len, grp;
 
 	if (!(p = section(inf, "progman.groups")))
@@ -125,6 +125,7 @@ readgroups(inf)
 		if (!name[0] || !(q = section(inf, key)))
 			continue;
 		len = sprintf(buf, "[CreateGroup(%s)]", name);
+		seen[0] = 0;
 		for (grp = 0; (q = line(q, l, sizeof l)) != 0; ) {
 			if (l[0] == ';')
 				continue;
@@ -136,6 +137,12 @@ readgroups(inf)
 				continue;
 			if (!there(windir, exe) && !there(sysdir, exe))
 				continue;
+			/* an item of a name the group has is replaced, as Setup replaced it: once (WfW's Mail, for Mail and Fax) */
+			sprintf(tag, "|%s|", desc);
+			if (strstr(seen, tag))
+				continue;
+			if (strlen(seen) + strlen(tag) < sizeof seen)
+				strcat(seen, tag);
 			if (len + 200 > (int)sizeof buf)
 				break;
 			if (icon[0])

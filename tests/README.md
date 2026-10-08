@@ -91,3 +91,7 @@ Tests see `/tests/ksyms` (kernel symbol addresses, for `t_kmem("freemem")` or `t
 | `summarize.py` | builds `summary.txt` and the exit status from `serial.log` |
 | `aux/build.sh` | `t_aux`'s modules, A/UX programs, `/shlib/libc1_s`, vt100 terminfo and termcap from `AUXROOT`, and `abi` (`abi.c`, `abi0.s`, `abi.ld`, made an A/UX COFF file by `elf2aux.py`); `macabi` (`macabi.c`, `macabi0.s`) and, with the `uinter` module, the Mac environment files for `t_mac` |
 | `dlm/build.sh` | `t_dlm`'s modules (`dlm/mod/`), built with the kernel tree's `dlm/tools/mkmod` against the kernel under test |
+
+## The Windows 3.x environment
+
+`tests/win16/` runs on the build host, not in QEMU: `sh tests/win16/run.sh` builds `startwin` with its in-memory screen, checks `startwin -install` on synthetic compressed disks and runs the Win16 test programs in `tests/win16/src` (built with Open Watcom 2, `WATCOM`) with their input scripts against `tests/win16/expect`; `sh tests/win16/x86suite.sh` runs the 80386 instruction suite. Details in `docs/win16-design.md`.

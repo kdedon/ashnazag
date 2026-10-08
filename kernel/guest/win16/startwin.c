@@ -3,8 +3,8 @@
  * KERNEL, USER and GDI in native code, the program's x86 code
  * interpreted, on a Windows 3.1 style desktop of our own.
  *
- *	startwin [-C dir] [-D X=dir]... [-m MB] [-g WxH] [-v] [-S script]
- *		 [-o shot.ppm] [program [arguments]]
+ *	startwin [-C dir] [-D X=dir]... [-m MB] [-g WxH] [-LF|-SF] [-v]
+ *		 [-S script] [-o shot.ppm] [program [arguments]]
  *
  * Drive C: is dir (default ~/WIN16, made with WINDOWS, WINDOWS\SYSTEM
  * and TEMP in it), H: the home directory, R: the root and W: Wabi's
@@ -14,7 +14,9 @@
  * deepest drive's it is under, but the root's.  A program named without
  * a drive is looked for in the current directory, then C:\WINDOWS.  Without a program,
  * C:\WINDOWS\PROGMAN.EXE if it is there.  -m sets guest memory (8 MB),
- * -g the screen where the device lets us choose, -v more messages
+ * -g the screen where the device lets us choose, -LF and -SF Wabi's
+ * large or small system fonts (by default large on a screen more than
+ * 640 pixels wide, as Wabi chose), -v more messages
  * (-vv every call), -S and -o drive the in-memory screen of host builds.
  */
 
@@ -369,7 +371,7 @@ setupreg()
 static void
 usage()
 {
-	fprintf(stderr, "usage: startwin [-C dir] [-D X=dir]... [-m MB] [-g WxH] [-v] [-S script] [-o shot.ppm] [program [args]]\n"
+	fprintf(stderr, "usage: startwin [-C dir] [-D X=dir]... [-m MB] [-g WxH] [-LF|-SF] [-v] [-S script] [-o shot.ppm] [program [args]]\n"
 	    "       startwin [-C dir] -install disk.img... | disks-directory | windows-directory\n");
 	exit(2);
 }
@@ -383,6 +385,7 @@ main(argc, argv)
 	int i, k, w = 640, h = 480, mb = 8, err, code, len;
 	struct module *m;
 	char cwd[1024], *inst = 0, given[26];
+	int fontsize = 0;	/* -LF, -SF: Wabi's large or small system fonts */
 
 	memset(given, 0, sizeof given);
 	for (i = 1; i < argc && argv[i][0] == '-'; i++) {
@@ -413,6 +416,10 @@ main(argc, argv)
 			inst = argv[i];
 		else if (strcmp(argv[i], "-strict") == 0)
 			w16_strict = 1;
+		else if (strcmp(argv[i], "-LF") == 0)
+			fontsize = 120;
+		else if (strcmp(argv[i], "-SF") == 0)
+			fontsize = 96;
 		else
 			usage();
 	}
@@ -497,6 +504,14 @@ main(argc, argv)
 		fprintf(stderr, "startwin: no screen\n");
 		return 1;
 	}
+	/*
+	 * As Wabi chose: large system fonts (Windows' 8514 set, 120 dpi) on a
+	 * screen more than 640 pixels wide, small (VGA's, 96 dpi) on the rest.
+	 */
+	w16_dpi = fontsize ? fontsize : screen.w > 640 ? 120 : 96;
+	if (w16_debug)
+		w16_log("startwin: screen %dx%d, %s fonts (%d dpi)\n", screen.w, screen.h, w16_dpi > 96 ? "large" : "small",
+		    w16_dpi);
 	gdi_init();
 	kernel_init();
 	thunk_init();

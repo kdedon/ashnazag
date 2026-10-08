@@ -4,7 +4,8 @@
 #   sh tests/win16/build.sh outdir
 #
 # Out: outdir/startwin.  The runtime is first checked on this host
-# (tests/win16/run.sh).  Nothing from Windows is needed or built in.
+# (tests/win16/run.sh).  Nothing from Windows is needed or built in;
+# FreeType's TrueType parts are (fetched by ft/freetype.sh).
 set -e
 T=$(cd "$(dirname "$0")/.." && pwd)
 AUX=$(cd "$T/.." && pwd)
@@ -18,11 +19,13 @@ sh "$T/win16/run.sh"
 LIBGCC=$(ls "$TC"/lib/gcc-lib/m68k-cbm-sysv4/*/libgcc.a | tail -1)
 LIBM=; for l in "$SYS/usr/lib/libm.a" "$SYS/usr/ccs/lib/libm.a"; do [ -f "$l" ] && LIBM=$l; done
 objs=
-for f in "$G"/*.c "$AUX/kernel/guest/sndout.c"; do
+# FreeType for TrueType (kernel/guest/win16/ft/freetype.sh), then ours
+FTF=$(sh "$G/ft/freetype.sh" flags)
+for f in $(sh "$G/ft/freetype.sh" srcs) "$G"/*.c "$AUX/kernel/guest/sndout.c"; do
 	case $(basename "$f") in scr_null.c|snd_null.c) continue ;; esac
 	o=$OUT/obj/$(basename "$f" .c).o
 	nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O2 -w -D__STDC__=0 \
-		-I"$G" -I"$AUX/kernel/guest/include" -I"$AUX/kernel/mac/display" -I"$AUX/kernel/mac/sound" \
+		-I"$G" -I"$AUX/kernel/guest/include" -I"$AUX/kernel/mac/display" -I"$AUX/kernel/mac/sound" $FTF \
 		-c "$f" -o "$o"
 	objs="$objs $o"
 done

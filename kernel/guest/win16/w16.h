@@ -233,6 +233,7 @@ extern void w16_exit();		/* (code): the task ends (longjmp) */
 extern void w16_fatal(char *, ...);	/* the environment ends with a message */
 extern void w16_log(char *, ...);
 extern int w16_debug;
+extern int w16_dpi;		/* the screen's logical inch: 96 (small fonts) or 120 (large, the 8514 set) */
 extern u32 w16_ticks();		/* milliseconds since start */
 extern char windir[], sysdir[];	/* DOS paths of the Windows and system directories */
 extern int profile_get();	/* (file or 0 = WIN.INI, section, key, default, out, size) */

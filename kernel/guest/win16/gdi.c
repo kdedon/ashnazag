@@ -912,8 +912,8 @@ g_GetDeviceCaps(a)
 	switch (a[1]) {
 	case 0: return 0x300;		/* DRIVERVERSION */
 	case 2: return 1;		/* TECHNOLOGY: raster display */
-	case 4: return 208;		/* HORZSIZE mm */
-	case 6: return 156;		/* VERTSIZE */
+	case 4: return (int)((long)screen.w * 208 * 96 / (640L * w16_dpi));	/* HORZSIZE mm: VGA's 208 at 640 */
+	case 6: return (int)((long)screen.h * 156 * 96 / (480L * w16_dpi));	/* VERTSIZE */
 	case 8: return dc->kind == DCK_MEMORY ? dc->s->w : screen.w;	/* HORZRES */
 	case 10: return dc->kind == DCK_MEMORY ? dc->s->h : screen.h;
 	case 12: return dc->s && dc->s->mono ? 1 : 8;	/* BITSPIXEL */
@@ -933,8 +933,8 @@ g_GetDeviceCaps(a)
 	case 40: return 36;		/* ASPECTX */
 	case 42: return 36;		/* ASPECTY */
 	case 44: return 51;		/* ASPECTXY */
-	case 88: return 96;		/* LOGPIXELSX */
-	case 90: return 96;		/* LOGPIXELSY */
+	case 88: return w16_dpi;	/* LOGPIXELSX: 96 small fonts, 120 large */
+	case 90: return w16_dpi;	/* LOGPIXELSY */
 	case 104: return 256;		/* SIZEPALETTE */
 	case 106: return 20;		/* NUMRESERVED */
 	case 108: return 18;		/* COLORRES */
@@ -1330,7 +1330,7 @@ g_GetNearestColor(a)
 
 /* ---- mapping ---- */
 
-/* LOGPIXELSX (88) or LOGPIXELSY (90) of a DC: a printer's own, else the screen's */
+/* LOGPIXELSX (88) or LOGPIXELSY (90) of a DC: a printer's own, else the screen's (w16_dpi) */
 static int
 dc_dpi(dc, idx)
 	struct dc *dc;
@@ -1338,7 +1338,7 @@ dc_dpi(dc, idx)
 {
 	extern int prn_caps();
 
-	return dc->prn || dc->prnof ? prn_caps(dc, idx) : 96;
+	return dc->prn || dc->prnof ? prn_caps(dc, idx) : w16_dpi;
 }
 
 /*

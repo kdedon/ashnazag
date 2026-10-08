@@ -1,7 +1,8 @@
 #!/bin/sh
 # mkwin.sh -- the Win16 environment's files: startwin, nothing else.
-# It has its own KERNEL, USER and GDI and needs no Windows files; each
-# user's C: (~/WIN16) is made on first run.
+# It has its own KERNEL, USER and GDI; the rest of Windows (and Wabi's
+# Windows-side files) each user installs from their own copies with
+# `startwin -install'.  Each user's C: (~/WIN16) is made on first run.
 #
 #   sh images/winenv/mkwin.sh outdir
 #

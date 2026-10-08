@@ -2,8 +2,9 @@
  * fontfile.c -- Windows' own bitmap fonts: the .FON files in the user's
  * SYSTEM directory (NE files whose RT_FONT resources are .FNT fonts,
  * versions 2 and 3), made into our struct bfont beside the built-in
- * ones.  Of a face's sizes for several displays, those for 96 dpi (VGA)
- * are kept.  Vector fonts (Modern, Roman, Script) are left out.
+ * ones.  Of a face's sizes for several displays, those for the screen's
+ * resolution are kept: 96 dpi (VGA, small fonts) or 120 (8514, large
+ * fonts; w16_dpi).  Vector fonts (Modern, Roman, Script) are left out.
  */
 
 #include <sys/types.h>
@@ -245,9 +246,9 @@ rebuild()
 {
 	int i, j, nb;
 
-	/* the sizes for other displays go where VGA's exist */
+	/* the sizes for other displays go where the screen's exist */
 	for (i = j = 0; i < nloaded; i++)
-		if (loaded[i].f_res == 96 || !hasres(loaded[i].f_face, 96))
+		if (loaded[i].f_res == w16_dpi || !hasres(loaded[i].f_face, w16_dpi))
 			loaded[j++] = loaded[i];
 	nloaded = j;
 	for (nb = 0; bfonts[nb].f_face; nb++)
@@ -286,10 +287,37 @@ font_add(name)
 }
 
 /*
+ * A font file as the screen's resolution has it: Setup names the VGA
+ * fonts VGA*.FON and *E.FON, the 8514 ones (large fonts) 8514*.FON and
+ * *F.FON.  With large fonts the 8514 file is loaded when it is there.
+ */
+static int
+font_addres(name)
+	char *name;
+{
+	char alt[300];
+	int n = strlen(name);
+
+	if (w16_dpi > 96 && n > 3 && n < 250) {
+		alt[0] = 0;
+		if (!w16_strnicmp(name, "vga", 3))
+			sprintf(alt, "8514%s", name + 3);
+		else if (n > 5 && !w16_stricmp(name + n - 5, "e.fon")) {
+			strcpy(alt, name);
+			alt[n - 5] = name[n - 5] == 'E' ? 'F' : 'f';
+		}
+		if (alt[0] && font_add(alt))
+			return 1;
+	}
+	return font_add(name);
+}
+
+/*
  * The fonts Windows loads: SYSTEM.INI's System, Fixedsys and Terminal
  * (fonts.fon, fixedfon.fon, oemfonts.fon) and those WIN.INI's [fonts]
- * lists, as Setup wrote them.  Without a [fonts] section, every .FON in
- * SYSTEM (sysdir, a host path).
+ * lists, as Setup wrote them, each for the screen's resolution
+ * (font_addres).  Without a [fonts] section, every .FON in SYSTEM
+ * (sysdir, a host path).
  */
 void
 font_init(sysdir)
@@ -303,11 +331,11 @@ font_init(sysdir)
 
 	for (i = 0; boot[i]; i++)
 		if (profile_get("SYSTEM.INI", "boot", boot[i], "", val, sizeof val) > 0)
-			font_add(val);
+			font_addres(val);
 	n = profile_get((char *)0, "fonts", (char *)0, "", keys, sizeof keys);
 	for (k = keys; n > 0 && *k; k += strlen(k) + 1)
 		if (profile_get((char *)0, "fonts", k, "", val, sizeof val) > 0)
-			font_add(val);
+			font_addres(val);
 	if (n <= 0 && sysdir && (dp = opendir(sysdir)) != 0) {
 		while ((e = readdir(dp)) != 0) {
 			i = strlen(e->d_name);

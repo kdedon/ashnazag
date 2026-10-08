@@ -16,7 +16,8 @@
  * One of the SRCs may be the user's Wabi 2.2: its package (as on the CD,
  * any of its platforms: their Win16 files are the same) or an installed
  * $WABIHOME, whichever holds wbin/wabi_f.lst.  Then Windows goes in by
- * Wabi's rules (wabi_f.lst: what each SETUP.INF section is and what is
+ * Wabi's rules (wabi_f.lst, or wabi_fwg.lst for Windows for Workgroups:
+ * what each SETUP.INF section is and what is
  * left out), and Wabi's own Win16 files as its wabidirupdate and wiscript
  * put them: its home (wbin, printers, the locale's files) to C:\WABIHOME,
  * which is drive W: as $WABIHOME was Wabi's, its timer, printer drivers,
@@ -782,7 +783,27 @@ findwabi(dir, depth)
 	return r;
 }
 
-/* wabi_f.lst: `[section] windows|system ...' and `exclude file|extension name' */
+/* SETUP.INF's title says Workgroups: Windows for Workgroups */
+static int
+workgroups(path)
+	char *path;
+{
+	FILE *fp = fopen(path, "r");
+	char line[512];
+	int wfw = 0;
+
+	if (!fp)
+		return 0;
+	while (!wfw && fgets(line, sizeof line, fp)) {
+		lower(line);
+		if (strstr(line, "title") && strstr(line, "workgroups"))
+			wfw = 1;
+	}
+	fclose(fp);
+	return wfw;
+}
+
+/* wabi_f.lst (wabi_fwg.lst): `[section] windows|system ...' and `exclude file|extension name' */
 static void
 readrules(path)
 	char *path;
@@ -1148,7 +1169,10 @@ win_install(nsrc, src, cdir)
 		return 1;
 	}
 	if (wabihome[0]) {
-		sprintf(tmp, "%s/wbin/wabi_f.lst", wabihome);
+		/* Wabi's rules for the Windows given: wabi_fwg.lst for Windows for Workgroups */
+		sprintf(tmp, "%s/wbin/wabi_fwg.lst", wabihome);
+		if (!disks || !workgroups(lookup("setup.inf")->path) || access(tmp, R_OK) != 0)
+			sprintf(tmp, "%s/wbin/wabi_f.lst", wabihome);
 		readrules(tmp);
 	}
 	if (disks)

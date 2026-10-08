@@ -303,7 +303,7 @@ dlg_create(hinst, t, ownerh, proc, param, modal)
 		u32 a[14];
 
 		memset(a, 0, sizeof a);
-		a[0] = (u32)(-(pt * 96 / 72)) & 0xffff;
+		a[0] = (u32)(-((pt * w16_dpi + 36) / 72)) & 0xffff;
 		a[0] = (u32)(s32)(short)a[0];
 		a[4] = 700;	/* 3.1 dialogs are bold */
 		a[13] = ustr(face);

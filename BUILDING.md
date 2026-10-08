@@ -42,6 +42,7 @@ images. The last four packages are only for building QEMU.
 | `toolchain/bin/h*` | hfsutils 3.2.6 with hfsck | Debian's `hfsutils_3.2.6.orig.tar.gz` plus `toolchain/hfsutils-patches` |
 | `toolchain/dl/syssrc.tgz` | NetBSD 10.1 kernel sources (68040/060 support packages) | archive.netbsd.org, sha256 pinned |
 | `toolchain/qemu-local` | QEMU 8.2.2 with `toolchain/qemu-patches` | `setup.sh --qemu` (runs `toolchain/build-qemu.sh`) |
+| `toolchain/src/freetype-2.13.3` | FreeType 2.13.3 sources: the Win16 environment's TrueType (its TrueType driver, bytecode interpreter and black-and-white rasterizer only), used under its GPLv2 option | SourceForge, sha256 pinned; `kernel/guest/win16/ft/freetype.sh` (also run by the Win16 builds when missing) |
 | `kernel/amix-040-060-port` | 68040/68060 port | [amix-040-060-port](https://github.com/asokero/amix-040-060-port) at `54fba4d` plus `kernel/port-local.diff`; setup writes its `config.sh` |
 
 The patched QEMU is required for the tests: stock QEMU 8.2 loses 68040 page writes under
@@ -87,6 +88,7 @@ Optional open-source downloads: `--tos-src` (EmuTOS 1.4, fVDI), `--x11` (X11R6.3
 | tos | `tests/run-qemu.sh` (t_tos) | suite + `--tos-src` |
 | amiga | `tests/run-qemu.sh` (t_amiga), `images/amigaenv/mkamiga.sh` | suite + AmigaOS 3.2 CD |
 | falcon | `PLATFORM=atari sh kernel/build.sh`, `kernel/atari/mkdisk.sh` | kernel + tape 02, 03, 10, `--tos-src`; Hatari for tests (`kernel/atari/build-hatari.sh`) |
+| win16 | `sh tests/win16/run.sh` (on the host), `sh tests/win16/build.sh out`, `images/winenv/mkwin.sh` | the host's C compiler; Open Watcom 2 (`WATCOM`, default `toolchain/watcom`; not built by setup.sh) for the test programs; the AMIX toolchain for the AMIX binary. No Windows or Wabi files: each user installs theirs at run time (`startwin -install`, `docs/win16-design.md`) |
 
 ## The A/UX disk
 
