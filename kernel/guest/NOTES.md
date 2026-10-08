@@ -2,6 +2,8 @@
 
 Design: `docs/guest-container-design.md` (§2, §3, §13, §15 G0).
 
+The other environments here: `tos/`, `cpm/` and `win16/` (`README.md`, `docs/win16-design.md`).
+
 ## Pieces
 
 ```

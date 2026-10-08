@@ -280,6 +280,95 @@ u_SetWindowPos(a)
 	return 1;
 }
 
+/*
+ * BeginDeferWindowPos, DeferWindowPos, EndDeferWindowPos: SetWindowPos
+ * calls kept and made together at the end.  A handle names a list of
+ * them (DWPBASE + slot).
+ */
+#define	NDWP	16
+#define	DWPBASE	0x7d00
+
+static struct dwp {
+	int	used, n, max;
+	u32	(*e)[7];	/* hwnd, after, x, y, cx, cy, flags */
+} dwps[NDWP];
+
+static u32
+u_BeginDeferWindowPos(a)
+	u32 *a;
+{
+	int i, n = (short)a[0];
+
+	for (i = 0; i < NDWP && dwps[i].used; i++)
+		;
+	if (i == NDWP || n < 0)
+		return 0;
+	dwps[i].used = 1;
+	dwps[i].n = 0;
+	dwps[i].max = n > 4 ? n : 4;
+	dwps[i].e = (u32 (*)[7])malloc(dwps[i].max * sizeof *dwps[i].e);
+	return dwps[i].e ? DWPBASE + i : (dwps[i].used = 0);
+}
+
+static struct dwp *
+dwpof(h)
+	u32 h;
+{
+	int i = (int)(h & 0xffff) - DWPBASE;
+
+	return i >= 0 && i < NDWP && dwps[i].used ? &dwps[i] : 0;
+}
+
+/* DeferWindowPos(hdwp, hwnd, after, x, y, cx, cy, flags): the handle, 0 (and the list gone) on failure */
+static u32
+u_DeferWindowPos(a)
+	u32 *a;
+{
+	struct dwp *d = dwpof(a[0]);
+	int k;
+
+	if (!d)
+		return 0;
+	if (!wnd_get(a[1])) {
+		free((char *)d->e);
+		d->used = 0;
+		return 0;
+	}
+	/* a window already in the list: its new place replaces the old */
+	for (k = 0; k < d->n && (d->e[k][0] & 0xffff) != (a[1] & 0xffff); k++)
+		;
+	if (k == d->n) {
+		if (d->n == d->max) {
+			u32 (*ne)[7] = (u32 (*)[7])realloc((char *)d->e, 2 * d->max * sizeof *d->e);
+
+			if (!ne)
+				return 0;
+			d->e = ne;
+			d->max *= 2;
+		}
+		d->n++;
+	}
+	memcpy((char *)d->e[k], (char *)(a + 1), 7 * sizeof(u32));
+	return a[0] & 0xffff;
+}
+
+static u32
+u_EndDeferWindowPos(a)
+	u32 *a;
+{
+	struct dwp *d = dwpof(a[0]);
+	int k;
+
+	if (!d)
+		return 0;
+	for (k = 0; k < d->n; k++)
+		if (wnd_get(d->e[k][0]))
+			u_SetWindowPos(d->e[k]);
+	free((char *)d->e);
+	d->used = 0;
+	return 1;
+}
+
 static u32
 u_BringWindowToTop(a)
 	u32 *a;
@@ -780,11 +869,27 @@ u_SetCapture(a)
 static u32 u_ReleaseCapture(a) u32 *a; { wnd_capture = 0; return 0; }
 static u32 u_GetCapture(a) u32 *a; { return wnd_capture ? wnd_capture->h : 0; }
 
+/*
+ * SetSysModalWindow, GetSysModalWindow: the system-modal window kept and
+ * reported while it lives (input is not yet confined to it).
+ */
+static u16 sysmodal;
+
 static u32
 u_SetSysModalWindow(a)
 	u32 *a;
 {
-	return 0;
+	u16 old = sysmodal && wnd_get(sysmodal) ? sysmodal : 0;
+
+	sysmodal = wnd_get(a[0]) ? (u16)a[0] : 0;
+	return old;
+}
+
+static u32
+u_GetSysModalWindow(a)
+	u32 *a;
+{
+	return sysmodal && wnd_get(sysmodal) ? sysmodal : 0;
 }
 
 /* ---- painting ---- */
@@ -2346,11 +2451,11 @@ u_MessageBox(a)
 /*
  * ExitWindows: every top-level window is asked (WM_QUERYENDSESSION);
  * if none refuses, each hears WM_ENDSESSION and the session ends, all
- * its tasks with it.  A refusal: FALSE.
+ * its tasks with it.  A refusal: 0.  Also a script's end, if closing
+ * the active window did not end the session (user.c, EV_QUIT).
  */
-static u32
-u_ExitWindows(a)
-	u32 *a;
+int
+user_exitwindows()
 {
 	extern int task_endsession;
 	struct wnd *w;
@@ -2369,6 +2474,13 @@ u_ExitWindows(a)
 	task_endsession = 1;
 	w16_exit(0);
 	return 0;
+}
+
+static u32
+u_ExitWindows(a)
+	u32 *a;
+{
+	return user_exitwindows();
 }
 
 static u32 u_GetFreeSystemResources(a) u32 *a; { return 80; }
@@ -2553,8 +2665,8 @@ u_SetWindowPlacement(a)
 		r_set(&w->normal, r.l + px, r.t + py, r.r + px, r.b + py);
 	} else
 		wnd_setpos(w, (struct wnd *)0, r.l, r.t, r.r - r.l, r.b - r.t, SWP_NOZORDER | SWP_NOACTIVATE);
-	if (cmd != SW_SHOWNORMAL || (w->style & (WS_MINIMIZE | WS_MAXIMIZE)))
-		wnd_show(w, cmd);
+	/* then its show command, as Windows applies it: a window made hidden is shown, and gets its first WM_SIZE */
+	wnd_show(w, cmd);
 	return 1;
 }
 static u32 u_ShowOwnedPopups(a) u32 *a; { return 0; }
@@ -2585,6 +2697,9 @@ struct impl u_impl[] = {
 	{ "USER", "ChildWindowFromPoint", u_ChildWindowFromPoint },
 	{ "USER", "MoveWindow", u_MoveWindow },
 	{ "USER", "SetWindowPos", u_SetWindowPos },
+	{ "USER", "BeginDeferWindowPos", u_BeginDeferWindowPos },
+	{ "USER", "DeferWindowPos", u_DeferWindowPos },
+	{ "USER", "EndDeferWindowPos", u_EndDeferWindowPos },
 	{ "USER", "BringWindowToTop", u_BringWindowToTop },
 	{ "USER", "CloseWindow", u_CloseWindow },
 	{ "USER", "OpenIcon", u_OpenIcon },
@@ -2625,6 +2740,7 @@ struct impl u_impl[] = {
 	{ "USER", "ReleaseCapture", u_ReleaseCapture },
 	{ "USER", "GetCapture", u_GetCapture },
 	{ "USER", "SetSysModalWindow", u_SetSysModalWindow },
+	{ "USER", "GetSysModalWindow", u_GetSysModalWindow },
 	{ "USER", "BeginPaint", u_BeginPaint },
 	{ "USER", "EndPaint", u_EndPaint },
 	{ "USER", "GetDC", u_GetDC },

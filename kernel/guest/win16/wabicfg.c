@@ -120,9 +120,14 @@ c_GetEntry(a)
 {
 	char *k = gptr(a[0]), *b = gptr(a[1]);
 
+	int r;
+
 	if (!k || !b || !(a[2] & 0xffff))
 		return ENOTFOUND;
-	return getkey(INI, k, b, (int)(a[2] & 0xffff)) ? 0 : ENOTFOUND;
+	r = getkey(INI, k, b, (int)(a[2] & 0xffff));
+	if (w16_debug > 1)
+		w16_log("startwin: WABICFG %s = %s\n", k, r ? b : "(none)");
+	return r ? 0 : ENOTFOUND;
 }
 
 /* CFGGETDEFAULTENTRY(key, buf, size): the value Wabi shipped */
@@ -132,9 +137,14 @@ c_GetDefaultEntry(a)
 {
 	char *k = gptr(a[0]), *b = gptr(a[1]);
 
+	int r;
+
 	if (!k || !b || !(a[2] & 0xffff))
 		return ENOTFOUND;
-	return getkey(DEFINI, k, b, (int)(a[2] & 0xffff)) ? 0 : ENOTFOUND;
+	r = getkey(DEFINI, k, b, (int)(a[2] & 0xffff));
+	if (w16_debug > 1)
+		w16_log("startwin: WABICFG default %s = %s\n", k, r ? b : "(none)");
+	return r ? 0 : ENOTFOUND;
 }
 
 /* CFGSETENTRY(key, value, size, validate only): 0 accepted */

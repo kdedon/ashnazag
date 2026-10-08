@@ -20,6 +20,7 @@
 #include "apitab.h"
 
 int w16_debug;
+int w16_dpi = 96;
 char windir[128] = "C:\\WINDOWS", sysdir[128] = "C:\\WINDOWS\\SYSTEM";
 
 static u16 lowsel[2], dummysel;

@@ -247,10 +247,12 @@ The image builds put in the files from DRI's release zip (`media/cpm68k/68kv1_3.
 
 ## The Windows 3.x environment (Win16)
 
-`startwin` runs Windows 3.1 programs as Wabi did: its own KERNEL, USER and GDI, the programs' x86 code interpreted, the rest of Windows from your own copy. Install your Windows 3.1 or 3.11 once, from the floppy images, the disks' files or an installed Windows directory:
+`startwin` runs Windows 3.1 programs as Sun's Wabi did: its own KERNEL, USER and GDI, the programs' x86 code interpreted, the rest of Windows from your own copy, and Wabi's own Windows-side files from your own copy of Wabi 2.2. Install once, from the Windows 3.1 or 3.11 floppy images, the disks' files or an installed Windows directory, plus, optionally, the Wabi 2.2 package from its CD (or an installed `$WABIHOME`):
 
 ```sh
-startwin -install DISK1.IMG DISK2.IMG DISK3.IMG DISK4.IMG DISK5.IMG DISK6.IMG
+startwin -install DISK1.IMG DISK2.IMG DISK3.IMG DISK4.IMG DISK5.IMG DISK6.IMG /cdrom/Wabi
 ```
 
-Then `startwin` alone starts Program Manager (its groups are made on the first run, as Setup made them), `startwin notepad.exe` one program; or pick "Windows 3.x programs (Win16)" at the xdm session chooser. C: is `~/WIN16`, H: your home directory, R: `/`. Closing Program Manager ends the session. No Windows files are in the image; `images/winenv/mkwin.sh` makes the archive with `startwin`. Details in `docs/win16-design.md`.
+Then `startwin` alone starts Program Manager (its groups are made on the first run, as Setup made them, and Wabi's "Wabi Tools" group with them), `startwin notepad.exe` one program; or pick "Windows 3.x programs (Win16)" at the xdm session chooser. C: is `~/WIN16`, H: your home directory, R: `/`; with Wabi, W: is Wabi's home (`~/WIN16/wabihome`) and WABI.INI's drive settings apply, changed in Wabi's Configuration Manager (Control Panel, "Wabi Config"). `-D X=dir` adds a drive for one run, `-C dir` uses another C: folder; on a screen more than 640 pixels wide Windows' large fonts are used, as under Wabi (`-SF` small, `-LF` large). Printing goes through Wabi's LaserJet and Epson drivers (installed from Control Panel's Printers) to `lp`, or to the command WABI.INI's `Printers.command_lptN` names. Closing Program Manager ends the session.
+
+No Windows or Wabi files are in the image; `images/winenv/mkwin.sh` makes the archive with `startwin`. Details in `docs/win16-design.md`.
