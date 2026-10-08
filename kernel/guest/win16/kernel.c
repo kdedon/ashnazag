@@ -958,7 +958,7 @@ k_GetDriveType(a)
 
 	if (d < 0 || d >= 26 || !drive_root[d])
 		return 0;
-	return d < 2 ? 2 : d == 2 ? 3 : 4;	/* removable, fixed, remote */
+	return d < 2 ? 2 : 3;	/* removable (A:, B:) or fixed: no network drives here */
 }
 
 static u32
@@ -1225,6 +1225,7 @@ atom_name(at)
 }
 
 static u32 k_InitAtomTable(a) u32 *a; { return 1; }
+static u32 k_FileCDR(a) u32 *a; { return 1; }	/* file change notices: taken, none are sent */
 
 static u32
 k_LocalHandleDelta(a)
@@ -1591,6 +1592,7 @@ struct impl k_impl[] = {
 	{ "USER", "GlobalDeleteAtom", k_DeleteAtom },
 	{ "USER", "GlobalGetAtomName", k_GetAtomName },
 	{ "KERNEL", "LocalHandleDelta", k_LocalHandleDelta },
+	{ "KERNEL", "FileCDR", k_FileCDR },
 	{ "KERNEL", "GetProfileInt", k_GetProfileInt },
 	{ "KERNEL", "GetPrivateProfileInt", k_GetPrivateProfileInt },
 	{ "KERNEL", "GetProfileString", k_GetProfileString },

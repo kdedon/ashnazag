@@ -28,7 +28,9 @@ int dos_drive = 2;			/* C: */
 static char curdir[26][128];		/* without the drive, from the root: "" or "\\DIR" */
 static int fds[NFILE];
 static char fnames[NFILE][128];		/* DOS names, for messages */
-static u32 dta;				/* far pointer */
+static u32 dta0;			/* the DTA outside any task */
+/* each task's own disk transfer address (far pointer) */
+#define	dta	(*(curtask ? &curtask->t_dta : &dta0))
 static int lasterr;
 
 void
@@ -582,6 +584,10 @@ dos_int21(c)
 		if ((c->r[R_DX] & 0xff) < 26 && drive_root[c->r[R_DX] & 0xff])
 			dos_drive = c->r[R_DX] & 0xff;
 		SETAL(26);
+		return 1;
+	case 0x11:		/* FCB find first, next (volume labels): nothing */
+	case 0x12:
+		SETAL(0xff);
 		return 1;
 	case 0x19:
 		SETAL(dos_drive);

@@ -231,6 +231,16 @@ intr(c, n)
 	case 0x33:
 		SETW(R_AX, 0);		/* no mouse driver: Windows has the mouse */
 		return 1;
+	case 0x25:
+	case 0x26:
+		/*
+		 * Absolute disk read and write: no disks below the files here.
+		 * "Not ready", and as DOS does the flags stay on the stack.
+		 */
+		SETW(R_AX, 0x8002);
+		x86_setflags(c, x86_flags(c) | F_CF);
+		x86_push16(c, x86_flags(c));
+		return 1;
 	case 0x10:
 	case 0x16:
 	case 0x5c:

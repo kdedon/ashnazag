@@ -2343,6 +2343,7 @@ u_WinHelp(a)
 
 static u32 u_ArrangeIconicWindows(a) u32 *a; { return 0; }
 static u32 u_WNetGetCaps(a) u32 *a; { return 0; }	/* no network */
+static u32 u_WNetNotSupported(a) u32 *a; { return 1; }	/* WN_NOT_SUPPORTED */
 
 /* WINDOWPLACEMENT: length, flags, showCmd, ptMinPosition, ptMaxPosition, rcNormalPosition */
 static u32
@@ -2611,6 +2612,10 @@ struct impl u_impl[] = {
 	{ "USER", "SystemParametersInfo", u_SystemParametersInfo },
 	{ "USER", "WinHelp", u_WinHelp },
 	{ "USER", "WNetGetCaps", u_WNetGetCaps },
+	{ "USER", "WNetGetConnection", u_WNetNotSupported },
+	{ "USER", "WNetAddConnection", u_WNetNotSupported },
+	{ "USER", "WNetCancelConnection", u_WNetNotSupported },
+	{ "USER", "WNetGetUser", u_WNetNotSupported },
 	{ "USER", "SetMessageQueue", u_one },	/* the queue is as long as it needs */
 	{ "USER", "GetWindowPlacement", u_GetWindowPlacement },
 	{ "USER", "SetWindowPlacement", u_SetWindowPlacement },

@@ -1977,20 +1977,13 @@ g_ExtTextOut(a)
 	if (!s)
 		n = 0;
 	place(dc, (short)a[1], (short)a[2], s ? s : "", n, dx, &x, &y, &w);
-	if (opq && dc->st.bkmode == OPAQUE)
-		;
-	else if (opq) {
+	/* ETO_OPAQUE: the whole rectangle in the background colour, whatever the text covers */
+	if (opq) {
 		d_fillcolor(dc, opq, dc->s->mono ? pal_mono(dc->st.bk) : pal_index(dc->st.bk));
 		opq = 0;
 	}
-	if (opq || n) {
-		int keep = dc->st.bkmode;
-
-		if (opq)
-			dc->st.bkmode = TRANSPARENT;
+	if (n)
 		text_draw(dc, x, y, s ? s : "", n, clip, opq, dx);
-		dc->st.bkmode = keep;
-	}
 	if (dx)
 		free(dx);
 	return 1;

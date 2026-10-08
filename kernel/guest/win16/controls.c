@@ -707,8 +707,14 @@ lb_drawitem(w, dc, i, r)
 	struct rect t;
 
 	if (w->style & (LBS_OWNERDRAWFIXED | LBS_OWNERDRAWVARIABLE)) {
-		u32 p = ualloc(26), q = ulin(p);
+		u32 p, q;
+		u16 br;
 
+		/* the item erased first, in the parent's list box brush, as Windows does */
+		br = ctlcolor(l->combo ? l->owner : w, dc->h, 2);
+		d_fill(dc, r, br ? br : stockobj[WHITE_BRUSH], 0xf0);
+		p = ualloc(26);
+		q = ulin(p);
 		PW(q, 2);
 		PW(q + 2, w->id);
 		PW(q + 4, i);
@@ -795,6 +801,29 @@ lb_insert(w, pos, p)
 		if ((w->style & LBS_SORT) && s)
 			for (pos = 0; pos < l->n && l->it[pos].s && w16_stricmp(l->it[pos].s, s) <= 0; pos++)
 				;
+		else if ((w->style & LBS_SORT) && (w->style & (LBS_OWNERDRAWFIXED | LBS_OWNERDRAWVARIABLE))) {
+			/* the owner's order (WM_COMPAREITEM), by halves */
+			int lo = 0, hi = l->n, mid;
+			u32 cp = ualloc(18), q = ulin(cp);
+
+			while (lo < hi) {
+				mid = (lo + hi) / 2;
+				PW(q, 2);		/* ODT_LISTBOX */
+				PW(q + 2, w->id);
+				PW(q + 4, w->h);
+				PW(q + 6, mid);
+				PL(q + 8, l->it[mid].data);
+				PW(q + 12, (u16)-1);
+				PL(q + 14, p);
+				if ((short)wnd_send(l->combo ? l->owner->parent : w->parent, WM_COMPAREITEM, w->id, cp) <= 0)
+					lo = mid + 1;
+				else
+					hi = mid;
+				q = ulin(cp);
+			}
+			ufree(cp);
+			pos = lo;
+		}
 	}
 	memmove(&l->it[pos + 1], &l->it[pos], (l->n - pos) * sizeof *l->it);
 	l->n++;

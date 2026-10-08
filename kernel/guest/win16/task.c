@@ -113,6 +113,7 @@ task_new(m, cmdline, show)
 	t->t_show = show;
 	strncpy(t->t_cmdline, cmdline, sizeof t->t_cmdline - 1);
 	t->t_psp = psp_make(cmdline, m->m_hinst);
+	t->t_dta = FP(t->t_psp, 0x80);
 	t->t_htask = g_alloc(GMEM_ZEROINIT, 0x100, m->m_hinst);
 	PB(sel_base(t->t_htask) + 0xfa, 'T');
 	PB(sel_base(t->t_htask) + 0xfb, 'D');

@@ -206,6 +206,7 @@ struct task {
 	int	t_idle;		/* waiting in GetMessage with nothing to do */
 	int	t_quit, t_quitcode;	/* WM_QUIT posted */
 	void	*t_ctx;		/* task.c's */
+	u32	t_dta;		/* DOS's disk transfer address: PSP:80h to start */
 };
 extern struct task *curtask, *tasks[];
 extern int ntasks;
