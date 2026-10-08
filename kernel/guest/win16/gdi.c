@@ -2259,6 +2259,52 @@ g_EnumObjects(a)
 	return r;
 }
 
+/*
+ * GetSpoolJob, the spooler's interface to Print Manager.  Option 0x14:
+ * the queues, "printer\0port\0" pairs ending in an empty string, from
+ * WIN.INI's [devices] (name=driver,port[,port ...]); 0x15: Print
+ * Manager registers its window.  Nothing is ever queued here.
+ */
+static u32
+g_GetSpoolJob(a)
+	u32 *a;
+{
+	char keys[1024], val[256], *k, *port, *e;
+	u32 p = lin(FPSEL(a[1]), FPOFF(a[1])), n, size;
+
+	switch (a[0] & 0xffff) {
+	case 0x14:
+		if (!p)
+			return 0;
+		size = GW(p);
+		if (size < 2)
+			return 0;
+		n = 0;
+		if (profile_get((char *)0, "devices", (char *)0, "", keys, sizeof keys) > 0)
+			for (k = keys; *k; k += strlen(k) + 1) {
+				if (profile_get((char *)0, "devices", k, "", val, sizeof val) <= 0 ||
+				    !(port = strchr(val, ',')))
+					continue;
+				for (port++; *port == ' '; port++)
+					;
+				if ((e = strchr(port, ',')) != 0)
+					*e = 0;
+				if (!*port || n + strlen(k) + strlen(port) + 3 > size)
+					continue;
+				strcpy((char *)M + p + n, k);
+				n += strlen(k) + 1;
+				strcpy((char *)M + p + n, port);
+				n += strlen(port) + 1;
+			}
+		PB(p + n, 0);
+		PB(p + n + 1, 0);
+		return 1;
+	case 0x15:
+		return 1;
+	}
+	return 0;
+}
+
 /* AddFontResource(file): its fonts join the list (a module handle in the low word is not handled) */
 static u32
 g_AddFontResource(a)
@@ -3475,6 +3521,7 @@ struct impl g_impl[] = {
 	{ "GDI", "EnumFontFamilies", g_EnumFontFamilies },
 	{ "GDI", "AddFontResource", g_AddFontResource },
 	{ "GDI", "EnumObjects", g_EnumObjects },
+	{ "GDI", "GetSpoolJob", g_GetSpoolJob },
 	{ "GDI", "SetObjectOwner", g_SetObjectOwner },
 	{ "GDI", "RemoveFontResource", g_RemoveFontResource },
 	{ "GDI", "CreateRectRgn", g_CreateRectRgn },
