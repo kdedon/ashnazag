@@ -514,7 +514,7 @@ loadfile(name, from, errp)
 	struct module *m;
 	FILE *fp;
 	u32 neoff, nelen, off, len, alloc, sz;
-	int i, n, err, isours = 0;
+	int i, n, err, isours = 0, copy;
 
 	*errp = 0;
 	/* the module name: the file's base name */
@@ -532,6 +532,7 @@ loadfile(name, from, errp)
 		m->m_ref++;
 		return m;
 	}
+	copy = forcecopy;
 	forcecopy = 0;		/* its imports are shared */
 	for (i = 0; ours[i]; i++)
 		if (strcmp(ours[i], base) == 0)
@@ -544,6 +545,11 @@ loadfile(name, from, errp)
 			return m;
 		*errp = 2;		/* file not found */
 		return 0;
+	}
+	/* loaded already from that file, under its own module name (MAIN.CPL is MAINCPL) */
+	if (!copy && (m = mod_find_path(dos)) != 0) {
+		m->m_ref++;
+		return m;
 	}
 	if ((fp = fopen(host, "rb")) == 0) {
 		*errp = 2;

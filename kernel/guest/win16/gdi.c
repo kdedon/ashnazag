@@ -2961,6 +2961,35 @@ bitmap_handle(b)
 	return h;
 }
 
+/* for the system's own bitmaps (obm.c): a colour bitmap, a memory DC drawing on it */
+u16
+gdi_newbitmap(w, h)
+	int w, h;
+{
+	return bitmap_handle(bm_new(w, h, 0));
+}
+
+u16
+gdi_drawon(hbm)
+	u32 hbm;
+{
+	u16 h = dc_new(DCK_MEMORY);
+	u32 a[2];
+
+	memdc_target(dc_get(h));
+	a[0] = h;
+	a[1] = hbm;
+	g_SelectObject(a);
+	return h;
+}
+
+void
+gdi_drawn(hdc)
+	u32 hdc;
+{
+	dc_free(hdc);
+}
+
 static u32
 g_CreateDIBitmap(a)
 	u32 *a;

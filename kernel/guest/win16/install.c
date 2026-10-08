@@ -31,7 +31,8 @@ static char *skip[] = {
 	"keyboard.drv", "mouse.drv", "system.drv", "sound.drv", "comm.drv", "lmouse.drv",
 	"system.ini", "system.src", "setup.exe", "setup.hlp", "setup.txt",
 	"expand.exe", "dosx.exe", "smartdrv.exe", "himem.sys", "emm386.exe", "ramdrive.sys",
-	"mscdex.exe", "msd.exe", "msd.ini", "drwatson.exe", "winsetup.exe", "decompr.exe", 0
+	"mscdex.exe", "msd.exe", "msd.ini", "drwatson.exe", "winsetup.exe", "decompr.exe",
+	"cpwin386.cpl", 0
 };
 static char *skipext[] = { ".386", ".3gr", ".lgo", ".rle", ".sys", ".com", ".gr2", ".gr3", ".mod", 0 };
 

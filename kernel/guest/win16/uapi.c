@@ -864,6 +864,28 @@ toscreen(w, p, r)
 		*r = w->cr;
 }
 
+/*
+ * InvalidateRect/InvalidateRgn: the window, and its children there too
+ * unless it clips them (WS_CLIPCHILDREN), as Windows does: Control
+ * Panel repaints its applet pane by invalidating the frame.
+ */
+static void
+invalidate(w, r, erase)
+	struct wnd *w;
+	struct rect *r;
+	int erase;
+{
+	struct wnd *c;
+	struct rect m;
+
+	wnd_invalidate(w, r, erase);
+	if (w->style & WS_CLIPCHILDREN)
+		return;
+	for (c = w->child; c; c = c->next)
+		if ((c->style & WS_VISIBLE) && r_and(&m, r, &c->wr) && r_and(&m, &m, &w->cr))
+			invalidate(c, &m, erase);
+}
+
 static u32
 u_InvalidateRect(a)
 	u32 *a;
@@ -878,7 +900,7 @@ u_InvalidateRect(a)
 		return 0;
 	}
 	toscreen(w, LIN(a[1]), &r);
-	wnd_invalidate(w, &r, a[2]);
+	invalidate(w, &r, a[2]);
 	return 0;
 }
 
@@ -892,13 +914,13 @@ u_InvalidateRgn(a)
 	W(a[0]);
 
 	if (!o) {
-		wnd_invalidate(w, (struct rect *)0, a[2]);
+		invalidate(w, &w->cr, a[2]);
 		return 0;
 	}
 	for (i = 0; i < o->u.rgn.n; i++) {
 		r = o->u.rgn.r[i];
 		r.l += w->cr.l; r.r += w->cr.l; r.t += w->cr.t; r.b += w->cr.t;
-		wnd_invalidate(w, &r, a[2]);
+		invalidate(w, &r, a[2]);
 	}
 	return 0;
 }
@@ -1603,8 +1625,13 @@ u_LoadBitmap(a)
 	struct module *m = mod_byhandle(a[0]);
 	u32 d, size;
 
-	if (!LO16(a[0]) || !m)
-		return 0;		/* the system's (OBM_*): none yet */
+	if (!LO16(a[0])) {
+		extern u16 obm_load();
+
+		return FPSEL(a[1]) ? 0 : obm_load(FPOFF(a[1]));	/* the system's (OBM_*) */
+	}
+	if (!m)
+		return 0;
 	d = res_data(m, FP(0, RT_BITMAP), a[1], &size);
 	if (!d)
 		return 0;
