@@ -1166,9 +1166,16 @@ static u32
 g_SetTextJustification(a)
 	u32 *a;
 {
+	int d, n = (short)a[2];
 	DC(a[0]);
-	dc->st.breakext = (short)a[1];
-	dc->st.breakcnt = (short)a[2];
+
+	/* in device pixels, a break's share each and the remainder a pixel at a time, as GDI keeps them */
+	d = lx2dx(dc, (short)a[1]);
+	if (n <= 0 || !d)
+		n = d = 0;
+	dc->st.breakcnt = n;
+	dc->st.breakext = n ? d / n : 0;
+	dc->st.breakrem = d - n * dc->st.breakext;
 	return 1;
 }
 
@@ -1857,6 +1864,46 @@ g_ExtFloodFill(a)
  * Text at logical (x, y) by the alignment; the cell's top left in
  * surface pixels back in *sx, *sy and the width drawn in *w.
  */
+/*
+ * The advances of s's characters in pixels, with SetTextCharacterExtra's
+ * extra and SetTextJustification's break extra; their sum.  use: the
+ * remainder of the break extra is taken, as text drawn takes it.
+ */
+static int
+advances(dc, s, n, adv, use)
+	struct dc *dc;
+	char *s;
+	int n, *adv, use;
+{
+	struct bfont *f = font_of(dc);
+	int i, a, w = 0, extra = lx2dx(dc, dc->st.extra), brk = f->f_res ? f->f_break : ' ';
+	int rem = dc->st.breakrem;
+
+	for (i = 0; i < n; i++) {
+		a = text_width(f, s + i, 1) + extra;
+		if ((u8)s[i] == brk && dc->st.breakcnt) {
+			a += dc->st.breakext;
+			if (rem > 0)
+				a++, rem--;
+			else if (rem < 0)
+				a--, rem++;
+		}
+		if (adv)
+			adv[i] = a;
+		w += a;
+	}
+	if (use)
+		dc->st.breakrem = rem;
+	return w;
+}
+
+static int
+justified(dc)
+	struct dc *dc;
+{
+	return dc->st.extra || dc->st.breakext || dc->st.breakrem;
+}
+
 static void
 place(dc, x, y, s, n, dx, sxp, syp, wp)
 	struct dc *dc;
@@ -1871,7 +1918,8 @@ place(dc, x, y, s, n, dx, sxp, syp, wp)
 		for (i = 0; i < n; i++)
 			w += dx[i];
 	else
-		w = text_width(f, s, n) + n * dc->st.extra + fo->bold;	/* a fake bold overhangs once */
+		w = (justified(dc) ? advances(dc, s, n, (int *)0, 0) : text_width(f, s, n)) +
+		    fo->bold;	/* a fake bold overhangs once */
 	if (dc->st.align & TA_UPDATECP) {
 		x = dc->st.curx;
 		y = dc->st.cury;
@@ -1890,6 +1938,23 @@ place(dc, x, y, s, n, dx, sxp, syp, wp)
 	*wp = w;
 }
 
+/* after text at surface x, w wide, with TA_UPDATECP: the current position past it (before it, right aligned) */
+static void
+movecp(dc, x, w)
+	struct dc *dc;
+	int x, w;
+{
+	int ex, ey = 0;
+
+	if (!(dc->st.align & TA_UPDATECP))
+		return;
+	if ((dc->st.align & TA_CENTER) == TA_CENTER)
+		return;
+	ex = ((dc->st.align & TA_RIGHT) ? x : x + w) - dc->ox;
+	dp2lp(dc, &ex, &ey);
+	dc->st.curx = ex;
+}
+
 /* draw at a surface position; opaque fills the cells, or *opq when given */
 void
 text_draw(dc, x, y, s, n, clip, opq, dx)
@@ -1905,16 +1970,10 @@ text_draw(dc, x, y, s, n, clip, opq, dx)
 	int w, i, *adv = dx, own = 0;
 	extern void glyphs();
 
-	if (!adv && (dc->st.extra || dc->st.breakext)) {
+	if (!adv && justified(dc)) {
 		adv = (int *)malloc(sizeof(int) * (n + 1));
 		own = 1;
-		for (i = 0; i < n; i++) {
-			int c = (u8)s[i];
-
-			adv[i] = text_width(f, s + i, 1) + dc->st.extra;
-			if (c == ' ' && dc->st.breakcnt > 0)
-				adv[i] += dc->st.breakext / dc->st.breakcnt;
-		}
+		advances(dc, s, n, adv, 1);
 	}
 	for (w = 0, i = 0; i < n; i++)
 		w += adv ? adv[i] : text_width(f, s + i, 1);
@@ -1951,12 +2010,7 @@ g_TextOut(a)
 		return 1;
 	place(dc, (short)a[1], (short)a[2], s, n, (int *)0, &x, &y, &w);
 	text_draw(dc, x, y, s, n, (struct rect *)0, (struct rect *)0, (int *)0);
-	if (dc->st.align & TA_UPDATECP) {
-		int ex = x + w - dc->ox, ey = 0;
-
-		dp2lp(dc, &ex, &ey);
-		dc->st.curx = ex;
-	}
+	movecp(dc, x, w);
 	return 1;
 }
 
@@ -1992,6 +2046,9 @@ g_ExtTextOut(a)
 	}
 	if (!s)
 		n = 0;
+	if (w16_debug > 2)
+		w16_log("ExtTextOut \"%.*s\" align %x cp %d,%d extra %d break %d/%d\n", n, s ? s : "", dc->st.align,
+		    dc->st.curx, dc->st.cury, dc->st.extra, dc->st.breakext, dc->st.breakcnt);
 	place(dc, (short)a[1], (short)a[2], s ? s : "", n, dx, &x, &y, &w);
 	/* ETO_OPAQUE: the whole rectangle in the background colour, whatever the text covers */
 	if (opq) {
@@ -2000,6 +2057,7 @@ g_ExtTextOut(a)
 	}
 	if (n)
 		text_draw(dc, x, y, s ? s : "", n, clip, opq, dx);
+	movecp(dc, x, w);
 	if (dx)
 		free(dx);
 	return 1;
@@ -2015,7 +2073,8 @@ g_GetTextExtent(a)
 	DC(a[0]);
 
 	f = font_of(dc);
-	w = s && n > 0 ? text_width(f, s, n) + n * dc->st.extra + fontobj(dc)->bold : 0;
+	/* with the extra and the break extra set, as GDI's */
+	w = s && n > 0 ? advances(dc, s, n, (int *)0, 0) + fontobj(dc)->bold : 0;
 	h = f->f_height;
 	if (dc->st.mapmode != MM_TEXT) {
 		w = muldiv(w, dc->st.wex, dc->st.vex);

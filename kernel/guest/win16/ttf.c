@@ -34,6 +34,7 @@ struct ttfile {
 	int	upem, locfmt, nglyph, nhm;
 	int	asc, desc, avgw, maxw;
 	u32	cmap, loca, glyf, hmtx, glyflen;	/* offsets in d */
+	u32	hdmx, hdmxlen;	/* the hinted advances at some sizes, 0 none */
 };
 
 struct ttsize {
@@ -219,6 +220,8 @@ ttf_add(path)
 	if (!(t = table(d, tf->n, "hmtx", (u32 *)0)))
 		goto bad;
 	tf->hmtx = t - d;
+	if ((t = table(d, tf->n, "hdmx", &tf->hdmxlen)) != 0)
+		tf->hdmx = t - d;
 	famname(d, tf->n, tf->face);
 	if (!tf->face[0] || tf->upem <= 0 || tf->nhm <= 0)
 		goto bad;
@@ -300,6 +303,27 @@ advance(tf, g)
 	u8 *h = tf->d + tf->hmtx;
 
 	return B16(h + 4 * (g < tf->nhm ? g : tf->nhm - 1));
+}
+
+/* the hdmx record for ppem, as GDI takes its advances from: 0 none */
+static u8 *
+hdmx(tf, ppem)
+	struct ttfile *tf;
+	int ppem;
+{
+	u8 *h = tf->d + tf->hdmx, *r;
+	long i, n, size;
+
+	if (!tf->hdmx || tf->hdmxlen < 8)
+		return 0;
+	n = S16(h + 2);
+	size = (long)B32(h + 4);
+	if (size < 2 + tf->nglyph || 8 + n * size > (long)tf->hdmxlen)
+		return 0;
+	for (i = 0, r = h + 8; i < n; i++, r += size)
+		if (r[0] == ppem)
+			return r;
+	return 0;
 }
 
 /* ---- outlines ---- */
@@ -722,6 +746,7 @@ ttf_font(face, bold, italic, height, width)
 	struct ttsize *ts;
 	struct bfont *f;
 	int ppem, shear, c, g, cell;
+	u8 *hd;
 	long xn, xd;
 
 	if (!tf)
@@ -775,9 +800,13 @@ ttf_font(face, bold, italic, height, width)
 	f->f_break = ' ';
 	f->f_avgw = (int)(rdiv(tf->avgw * xn, xd) + 32) / 64;
 	f->f_maxw = (int)(rdiv(tf->maxw * xn, xd) + 32) / 64;
+	hd = width > 0 ? 0 : hdmx(tf, ppem);
 	for (c = 0; c < NCH; c++) {
 		g = gindex(tf, c + FIRST);
-		ts->adv[c] = (unsigned short)((rdiv(advance(tf, g) * xn, xd) + 32) / 64);
+		if (hd && g < tf->nglyph)
+			ts->adv[c] = hd[2 + g];
+		else
+			ts->adv[c] = (unsigned short)((rdiv(advance(tf, g) * xn, xd) + 32) / 64);
 		ts->w[c] = ts->adv[c] > 255 ? 255 : ts->adv[c];
 	}
 	f->f_w = ts->w;

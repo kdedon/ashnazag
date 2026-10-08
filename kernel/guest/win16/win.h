@@ -132,7 +132,8 @@ struct dcstate {
 	int	curx, cury;
 	int	mapmode, wox, woy, wex, wey, vox, voy, vex, vey;
 	int	bx, by;		/* brush origin */
-	int	extra, breakext, breakcnt;
+	int	extra;		/* SetTextCharacterExtra's, logical */
+	int	breakext, breakrem, breakcnt;	/* SetTextJustification's: device pixels a break, the remainder's left */
 	struct rgn *clip;	/* the program's clip region, in device units from the DC origin; 0 none */
 };
 
