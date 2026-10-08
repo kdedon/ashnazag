@@ -2334,11 +2334,7 @@ static struct apient a_OLE2[] = {
 	{ 0 }
 };
 
-/* ours, not Windows': MMSYSTEM's timer driver and our wave driver (mmdrv.c) */
-static struct apient a_TIMER[] = {
-	{ 1, "DriverProc", 'p', "lwwll", 'l' },
-	{ 0 }
-};
+/* ours, not Windows': our wave driver (mmdrv.c) */
 
 static struct apient a_ASHAUDIO[] = {
 	{ 1, "DriverProc", 'p', "lwwll", 'l' },
@@ -2370,7 +2366,6 @@ struct apimod apimods[] = {
 	{ "WINSOCK", a_WINSOCK },
 	{ "COMPOBJ", a_COMPOBJ },
 	{ "OLE2", a_OLE2 },
-	{ "TIMER", a_TIMER },
 	{ "ASHAUDIO", a_ASHAUDIO },
 	{ 0 }
 };

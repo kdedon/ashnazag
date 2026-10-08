@@ -153,6 +153,7 @@ extern struct module *mod_byhandle();	/* (hmod or hinst or a selector of it) */
 extern struct module *mod_load();	/* (dos path or name, &error): loaded with refs, or 0 */
 extern void mod_free();			/* (module) */
 extern u32 mod_proc();			/* (module, ordinal or 0, name or 0): far pointer, 0 none */
+extern u32 drv_proc();			/* (module, far pointer): what GetProcAddress gives for it */
 extern int mod_ordinal();		/* (module, name): ordinal, 0 none */
 extern char *ne_resname();		/* (module, ordinal) for messages */
 

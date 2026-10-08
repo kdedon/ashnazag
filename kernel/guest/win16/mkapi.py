@@ -19,9 +19,8 @@ MODS = [
     ('DDEML', 'ddeml.dll16'), ('WINSOCK', 'winsock.dll16'), ('COMPOBJ', 'compobj.dll16'),
     ('OLE2', 'ole2.dll16'),
 ]
-# ours, not Windows': MMSYSTEM's timer driver and our wave driver (mmdrv.c)
+# ours, not Windows': our wave driver (mmdrv.c)
 OWN = [
-    ('TIMER', [(1, 'DriverProc', 'p', 'lwwll', 'l')]),
     ('ASHAUDIO', [(1, 'DriverProc', 'p', 'lwwll', 'l'), (2, 'wodMessage', 'p', 'wwlll', 'l'),
                   (3, 'widMessage', 'p', 'wwlll', 'l'), (4, 'modMessage', 'p', 'wwlll', 'l'),
                   (5, 'midMessage', 'p', 'wwlll', 'l'), (6, 'auxMessage', 'p', 'wwlll', 'l')]),
@@ -76,7 +75,7 @@ def main():
         for o, n, k, a, r in ents:
             print('\t{ %d, "%s", \'%s\', "%s", \'%s\' },' % (o, n, k, a, r))
         print('\t{ 0 }\n};\n')
-    print('/* ours, not Windows\': MMSYSTEM\'s timer driver and our wave driver (mmdrv.c) */')
+    print('/* ours, not Windows\': our wave driver (mmdrv.c) */')
     for mod, ents in OWN:
         print('static struct apient a_%s[] = {' % mod)
         for o, n, k, a, r in ents:

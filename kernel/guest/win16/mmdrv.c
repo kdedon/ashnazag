@@ -1,9 +1,9 @@
 /*
- * mmdrv.c -- the multimedia drivers that are ours, as Wabi's were: the
- * timer (TIMER.DRV, MMSYSTEM's clock and timeSetEvent) and the wave
- * output (ASHAUDIO.DRV) on the session's sound (snd.h).  MMSYSTEM is the
- * user's; it opens these through SYSTEM.INI's [drivers] (timer=, wave=)
- * and calls their DriverProc and wodMessage.
+ * mmdrv.c -- the multimedia drivers' work that is ours, as it was Wabi's
+ * engine's: the timer's services behind Wabi's TIMER.DRV (MMSYSTEM's clock
+ * and timeSetEvent) and the wave output (ASHAUDIO.DRV, in place of Wabi's
+ * Solaris one) on the session's sound (snd.h).  MMSYSTEM is the user's; it
+ * opens these through SYSTEM.INI's [drivers] (timer=, wave=).
  *
  * Windows runs a driver's work at interrupt time; here mm_tick() does
  * it, from the message loop and between API calls: samples fed a lead
@@ -76,17 +76,23 @@ struct tev {
 
 static struct tev tevs[NTEV];
 
-static u32
-timerproc(a)
+/*
+ * The timer's services, as Wabi's engine gave them: its TIMER.DRV (the
+ * user's copy of Wabi's) answers only the generic driver messages and
+ * passes the rest to DefDriverProc, which hands the timer's here.  a[]
+ * is DefDriverProc's (id, driver, message, lParam1, lParam2); *done
+ * says whether it was one of them.
+ */
+u32
+mm_timer(a, done)
 	u32 *a;
+	int *done;
 {
 	u32 p;
 	int i;
 
+	*done = 1;
 	switch (a[2] & 0xffff) {
-	case DRV_LOAD: case DRV_ENABLE: case DRV_DISABLE: case DRV_FREE:
-	case DRV_OPEN: case DRV_CLOSE: case DRV_INSTALL: case DRV_REMOVE:
-		return 1;
 	case TDD_GETSYSTEMTIME:
 		return w16_ticks();
 	case TDD_GETDEVCAPS:
@@ -119,6 +125,7 @@ timerproc(a)
 	case TDD_ENDMINPERIOD:
 		return 0;
 	}
+	*done = 0;
 	return 0;
 }
 
@@ -624,7 +631,6 @@ struct impl mm_impl[] = {
 	{ "SOUND", "SyncAllVoices", s_nop },
 	{ "SOUND", "CountVoiceNotes", s_CountVoiceNotes },
 	{ "SOUND", "SetVoiceThreshold", s_nop },
-	{ "TIMER", "DriverProc", timerproc },
 	{ "ASHAUDIO", "DriverProc", audioproc },
 	{ "ASHAUDIO", "wodMessage", wodmessage },
 	{ "ASHAUDIO", "widMessage", widmessage },

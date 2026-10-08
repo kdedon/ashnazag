@@ -21,7 +21,7 @@ struct module *modules;
 
 /* the system modules: ours whatever the disk holds */
 static char *ours[] = { "KERNEL", "USER", "GDI", "KEYBOARD", "SYSTEM", "SOUND",
-	"DISPLAY", "MOUSE", "TOOLHELP", "TIMER", "ASHAUDIO", "WINSOCK", 0 };
+	"DISPLAY", "MOUSE", "TOOLHELP", "ASHAUDIO", "WINSOCK", 0 };
 
 #define	NEW(p)	((p)[0] | (p)[1] << 8)
 #define	NEL(p)	(NEW(p) | (u32)NEW((p) + 2) << 16)
@@ -90,7 +90,7 @@ native(name)
 	strcpy(m->m_name, am->am_name);
 	sprintf(m->m_path, "%s\\%s.%s", sysdir, am->am_name,
 	    strcmp(am->am_name, "KERNEL") == 0 || strcmp(am->am_name, "USER") == 0 ||
-	    strcmp(am->am_name, "GDI") == 0 ? "EXE" : strstr(" KEYBOARD SYSTEM SOUND DISPLAY MOUSE TIMER ASHAUDIO ",
+	    strcmp(am->am_name, "GDI") == 0 ? "EXE" : strstr(" KEYBOARD SYSTEM SOUND DISPLAY MOUSE ASHAUDIO ",
 	    am->am_name) ? "DRV" : "DLL");
 	m->m_native = 1;
 	m->m_dll = 1;

@@ -355,9 +355,12 @@ k_GetProcAddress(a)
 
 	if (!m)
 		return 0;
+	if (w16_debug > 1)
+		w16_log("startwin: GetProcAddress %s %s%s\n", m->m_name, ISINT(a[1]) ? "#" : "",
+		    ISINT(a[1]) ? "" : STR(a[1]));
 	if (ISINT(a[1]))
-		return mod_proc(m, FPOFF(a[1]), (char *)0);
-	return mod_proc(m, 0, STR(a[1]));
+		return drv_proc(m, mod_proc(m, FPOFF(a[1]), (char *)0));
+	return drv_proc(m, mod_proc(m, 0, STR(a[1])));
 }
 
 /* run a DLL's entry point (LibMain): CX heap, DI hInstance, DS DGROUP, ES:SI command line */

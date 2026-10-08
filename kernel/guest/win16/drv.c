@@ -115,7 +115,7 @@ drv_open(name, section, lp)
 	memset((char *)d, 0, sizeof *d);
 	d->used = 1;
 	d->m = m;
-	d->proc = mod_proc(m, 0, "DriverProc");
+	d->proc = drv_proc(m, mod_proc(m, 0, "DriverProc"));
 	strncpy(d->alias, name, sizeof d->alias - 1);
 	d->order = ++norder;
 	if (!d->proc) {
@@ -205,6 +205,48 @@ u_DefDriverProc(a)
 		return 1;	/* DRV_OK */
 	}
 	return 0;
+}
+
+/*
+ * Wabi's TIMER.DRV is a stub: its timer services were its engine's,
+ * answered before the stub saw them.  So are ours: MMSYSTEM is given
+ * this in place of its DriverProc, which answers the TDD_ messages and
+ * passes it the rest.
+ */
+static u32 timerproc;
+
+static u32
+timer_wrap(a)
+	u32 *a;
+{
+	extern u32 mm_timer();
+	u32 r;
+	int done;
+
+	r = mm_timer(a, &done);
+	if (done || !timerproc)
+		return r;
+	cb_begin();
+	cb_push32(a[0]);
+	cb_push16(a[1]);
+	cb_push16(a[2]);
+	cb_push32(a[3]);
+	cb_push32(a[4]);
+	return cb_call(timerproc, 0);
+}
+
+/* the DriverProc to hand out for a module's export */
+u32
+drv_proc(m, p)
+	struct module *m;
+	u32 p;
+{
+	extern u32 thunk_internal();
+
+	if (!p || strcmp(m->m_name, "TIMER") || p != mod_proc(m, 0, "DriverProc"))
+		return p;
+	timerproc = p;
+	return thunk_internal(timer_wrap, "lwwll", 'l', "TimerDriverProc");
 }
 
 /* GetDriverInfo(h, DRIVERINFOSTRUCT far *): length, hDriver, hModule, szAliasName[128] */
