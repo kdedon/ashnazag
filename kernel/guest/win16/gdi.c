@@ -270,47 +270,86 @@ mkfont(lf)
 	return h;
 }
 
-/* the built-in font nearest what a LOGFONT asks */
+/* the face of the list that stands for name, or 0 */
+static char *
+font_face(name)
+	char *name;
+{
+	struct bfont *f;
+
+	if (!name || !*name)
+		return 0;
+	for (f = fontlist; f->f_face; f++)
+		if (w16_stricmp(f->f_face, name) == 0)
+			return f->f_face;
+	return 0;
+}
+
+/*
+ * The font nearest what a LOGFONT asks: its face, else the face Windows
+ * puts for it (FontSubstitutes, TrueType's bitmap stand-ins), else one
+ * for its family and pitch; the built-in faces when Windows' fonts are
+ * not there.  Then the nearest height, weight and slant of that face.
+ */
 struct bfont *
 font_pick(lf)
 	struct logfont *lf;
 {
+	static char *alias[][2] = {
+		{ "Helv", "MS Sans Serif" }, { "Helvetica", "MS Sans Serif" }, { "Arial", "MS Sans Serif" },
+		{ "Swiss", "MS Sans Serif" }, { "Tms Rmn", "MS Serif" }, { "Times", "MS Serif" },
+		{ "Times New Roman", "MS Serif" }, { "Roman", "MS Serif" }, { "Courier New", "Courier" },
+		{ "Modern", "Courier" }, { "Wingdings", "Symbol" },
+		/* and the built-in faces for Windows' */
+		{ "MS Sans Serif", "Helv" }, { "MS Serif", "Tms Rmn" }, { "System", "Helv" },
+		{ "Small Fonts", "Helv" }, { "Fixedsys", "Courier" }, { "Terminal", "Courier" }, { 0, 0 }
+	};
 	struct bfont *f, *best = 0;
-	char *fam;
-	int want, score, bs = 1 << 30, fixed;
+	char *face = 0, *try[6];
+	int want, score, bs = 1 << 30, fixed, i, j, n = 0, fam = lf->pitchfam & 0xf0;
 
-	fixed = (lf->pitchfam & 3) == 1 || (lf->pitchfam & 0xf0) == 0x30;
-	if (!w16_stricmp(lf->face, "Courier") || !w16_stricmp(lf->face, "Courier New") ||
-	    !w16_stricmp(lf->face, "Fixedsys") || !w16_stricmp(lf->face, "Terminal") ||
-	    !w16_stricmp(lf->face, "Modern"))
-		fixed = 1;
-	if (fixed)
-		fam = "Courier";
-	else if (!w16_stricmp(lf->face, "Tms Rmn") || !w16_stricmp(lf->face, "Times New Roman") ||
-	    !w16_stricmp(lf->face, "MS Serif") || !w16_stricmp(lf->face, "Roman") ||
-	    !w16_stricmp(lf->face, "Times") || (!lf->face[0] && (lf->pitchfam & 0xf0) == 0x10))
-		fam = "Tms Rmn";
-	else
-		fam = "Helv";
+	fixed = (lf->pitchfam & 3) == 1 || fam == 0x30;
+	try[n++] = lf->face;
+	for (i = 0; alias[i][0] && n < 3; i++)
+		if (!w16_stricmp(lf->face, alias[i][0]))
+			try[n++] = alias[i][1];
+	try[n++] = fixed ? "Courier" : fam == 0x10 ? "MS Serif" : "MS Sans Serif";
+	try[n++] = fixed ? "Courier" : fam == 0x10 ? "Tms Rmn" : "Helv";
+	for (i = 0; i < n && !face; i++) {
+		face = font_face(try[i]);
+		/* an alias of an alias: Arial -> MS Sans Serif -> Helv */
+		for (j = 0; !face && alias[j][0]; j++)
+			if (!w16_stricmp(try[i], alias[j][0]))
+				face = font_face(alias[j][1]);
+	}
+	if (!face)
+		face = fontlist[0].f_face;
 	want = lf->height < 0 ? -lf->height : lf->height;
 	if (want == 0)
-		want = 16;
-	for (f = bfonts; f->f_face; f++) {
-		int h = lf->height < 0 ? f->f_height - (f->f_height - f->f_ascent - f->f_descent) : f->f_height;
+		want = fixed ? 15 : 13;
+	for (f = fontlist; f->f_face; f++) {
+		int h;
 
-		if (lf->height < 0)
+		if (f->f_face != face && strcmp(f->f_face, face) != 0)
+			continue;
+		if (lf->height >= 0)
+			h = f->f_height;
+		else if (f->f_res)
+			h = f->f_height - f->f_leading;
+		else
 			h = f->f_ascent + f->f_descent - (f->f_ascent + f->f_descent) / 6;
+		/* nearest, a smaller one before a larger */
 		score = (h > want ? (h - want) * 3 : (want - h) * 2) * 10;
-		if (strcmp(f->f_face, fam) != 0)
-			score += 10000;
 		if ((f->f_weight >= 600) != (lf->weight >= 600))
 			score += 15;
+		if (!f->f_italic != !lf->italic)
+			score += 5;
 		if (score < bs) {
 			bs = score;
 			best = f;
 		}
 	}
-	return best;
+	return best ? best : fontlist;
 }
 
 void
@@ -320,6 +359,13 @@ gdi_init()
 	int i;
 
 	pal_init();
+	/* Windows' fonts from the user's SYSTEM directory, when there */
+	{
+		char host[1024];
+		extern char sysdir[];
+
+		font_init(dos_hostpath(sysdir, host, sizeof host, 0) == 0 ? host : (char *)0);
+	}
 	stockobj[WHITE_BRUSH] = mkbrush(BS_SOLID, RGB(255, 255, 255), 0);
 	stockobj[LTGRAY_BRUSH] = mkbrush(BS_SOLID, RGB(192, 192, 192), 0);
 	stockobj[GRAY_BRUSH] = mkbrush(BS_SOLID, RGB(128, 128, 128), 0);
@@ -337,13 +383,17 @@ gdi_init()
 	stockobj[DEVICE_DEFAULT_FONT] = mkfont(&lf);
 	lf.weight = 400;
 	lf.pitchfam = 1;
+	strcpy(lf.face, "Terminal");
+	lf.height = 12;
+	stockobj[OEM_FIXED_FONT] = mkfont(&lf);
 	strcpy(lf.face, "Courier");
 	lf.height = 14;
-	stockobj[OEM_FIXED_FONT] = mkfont(&lf);
 	stockobj[ANSI_FIXED_FONT] = mkfont(&lf);
+	strcpy(lf.face, "Fixedsys");
+	lf.height = 15;
 	stockobj[SYSTEM_FIXED_FONT] = mkfont(&lf);
 	lf.pitchfam = 2;
-	strcpy(lf.face, "Helv");
+	strcpy(lf.face, "MS Sans Serif");
 	lf.height = 12;
 	stockobj[ANSI_VAR_FONT] = mkfont(&lf);
 	stockobj[DEFAULT_PALETTE] = gobj_new(OBJ_PAL);
@@ -768,7 +818,7 @@ bfonts_count()
 {
 	int n = 0;
 
-	while (bfonts[n].f_face)
+	while (fontlist[n].f_face)
 		n++;
 	return n;
 }
@@ -1989,12 +2039,12 @@ g_GetTextMetrics(a)
 		return 0;
 	f = font_of(dc);
 	fo = fontobj(dc);
-	lead = f->f_height > 14 ? 3 : f->f_height > 10 ? 2 : 1;
+	lead = f->f_res ? f->f_leading : f->f_height > 14 ? 3 : f->f_height > 10 ? 2 : 1;
 	PW(p, f->f_height);
 	PW(p + 2, f->f_ascent);
 	PW(p + 4, f->f_descent);
 	PW(p + 6, lead);		/* internal leading */
-	PW(p + 8, 0);			/* external leading */
+	PW(p + 8, f->f_extlead);	/* external leading */
 	PW(p + 10, f->f_avgw + fo->bold);
 	PW(p + 12, f->f_maxw + fo->bold);
 	PW(p + 14, fo->bold || f->f_weight >= 600 ? 700 : 400);
@@ -2003,11 +2053,11 @@ g_GetTextMetrics(a)
 	PB(p + 18, fo->lf.strikeout);
 	PB(p + 19, f->f_first);
 	PB(p + 20, f->f_last);
-	PB(p + 21, '?');
-	PB(p + 22, ' ');
+	PB(p + 21, f->f_res ? f->f_default : '?');
+	PB(p + 22, f->f_res ? f->f_break : ' ');
 	/* pitch and family: bit 0 set is variable pitch, as Windows has it */
 	PB(p + 23, (f->f_pitch ? 0 : 1) | f->f_family);
-	PB(p + 24, 0);			/* ANSI_CHARSET */
+	PB(p + 24, f->f_charset);	/* ANSI_CHARSET mostly */
 	PW(p + 25, fo->bold);		/* overhang */
 	PW(p + 27, 96);
 	PW(p + 29, 96);
@@ -2066,13 +2116,16 @@ enumfonts(a, fam)
 	tm = g_alloc(GMEM_ZEROINIT, 64, 0);
 	lfa = sel_base(lf);
 	tma = sel_base(tm);
-	for (f = bfonts; f->f_face && r; f++) {
+	for (f = fontlist; f->f_face && r; f++) {
+		/* the built-in fonts only stand in when Windows' are not there */
+		if (!f->f_res && fontlist[0].f_res)
+			break;
 		if (want && *want && w16_stricmp(want, f->f_face) != 0)
 			continue;
 		if (!want || !*want) {
 			/* faces only: the first of each */
-			for (seen = 0, i = 0; &bfonts[i] != f; i++)
-				if (strcmp(bfonts[i].f_face, f->f_face) == 0)
+			for (seen = 0, i = 0; &fontlist[i] != f; i++)
+				if (strcmp(fontlist[i].f_face, f->f_face) == 0)
 					seen = 1;
 			if (seen)
 				continue;
