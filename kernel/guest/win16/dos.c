@@ -593,11 +593,20 @@ dos_int21(c)
 		x86_loadseg(c, S_ES, FPSEL(dta));
 		SETW(R_BX, FPOFF(dta));
 		return 1;
-	case 0x25:		/* set vector: ignored */
+	case 0x25:		/* set vector: kept for INT n to reach (startwin.c) */
+		{
+			extern u32 pmvec[];
+
+			pmvec[AL] = FP(c->s[S_DS].sel, DX);
+		}
 		return 1;
 	case 0x35:
-		x86_loadseg(c, S_ES, 0);
-		SETW(R_BX, 0);
+		{
+			extern u32 pmvec[];
+
+			x86_loadseg(c, S_ES, FPSEL(pmvec[AL]));
+			SETW(R_BX, FPOFF(pmvec[AL]));
+		}
 		return 1;
 	case 0x2a:
 		now = time((time_t *)0);

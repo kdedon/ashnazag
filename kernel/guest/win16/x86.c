@@ -299,6 +299,27 @@ rd(sr, off, sz)
 	return RD32(mem, a);
 }
 
+/* for x87.c: guest memory through a segment register, faulting as the CPU does */
+u32
+x86_rd(c, sr, off, sz)
+	struct x86 *c;
+	int sr, sz;
+	u32 off;
+{
+	return rd(sr, off, sz);
+}
+
+static void wr();
+
+void
+x86_wr(c, sr, off, sz, v)
+	struct x86 *c;
+	int sr, sz;
+	u32 off, v;
+{
+	wr(sr, off, sz, v);
+}
+
 static void
 wr(sr, off, sz, v)
 	int sr, sz;

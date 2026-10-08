@@ -153,6 +153,8 @@ extern void x86_exception();	/* (cpu, n, error): raise from a host handler */
 extern u32 x86_lin();		/* (cpu, sel, off): linear address, or ~0 */
 extern int x86_retthunk;	/* thunk number that ends x86_call */
 extern void x86_setret();	/* (sel, off): where x86_call returns to (a return thunk) */
+extern u32 x86_rd();		/* (cpu, sreg, off, size 0 byte 1 word 2 dword) */
+extern void x86_wr();		/* (cpu, sreg, off, size, value) */
 extern void x87_init();		/* (cpu) */
 extern void x87_exec();		/* (cpu, op, mod, reg, rm, seg, off) */
 

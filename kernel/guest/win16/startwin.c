@@ -34,6 +34,8 @@ extern void initdeps();
 #define	AX	(c->r[R_AX] & 0xffff)
 #define	SETW(n, v)	(c->r[n] = (c->r[n] & ~0xffff) | ((v) & 0xffff))
 
+u32 pmvec[256];		/* protected-mode interrupt vectors the program set */
+
 static void
 carry(c, on)
 	struct x86 *c;
@@ -140,12 +142,17 @@ dpmi(c)
 		g_free(c->r[R_DX] & 0xffff);
 		return 1;
 	case 0x0200:
-	case 0x0204:
 		SETW(R_CX, 0);
 		SETW(R_DX, 0);
 		return 1;
-	case 0x0201:
+	case 0x0204:		/* the protected-mode vector, as set */
+		SETW(R_CX, FPSEL(pmvec[c->r[R_BX] & 0xff]));
+		c->r[R_DX] = FPOFF(pmvec[c->r[R_BX] & 0xff]);
+		return 1;
 	case 0x0205:
+		pmvec[c->r[R_BX] & 0xff] = FP(c->r[R_CX] & 0xffff, c->r[R_DX] & 0xffff);
+		return 1;
+	case 0x0201:
 		return 1;
 	case 0x0400:
 		SETW(R_AX, 0x005a);
@@ -173,11 +180,32 @@ dpmi(c)
 	return 1;
 }
 
+
 static int
 intr(c, n)
 	struct x86 *c;
 	int n;
 {
+	/*
+	 * A vector the program set (DOS 25h, DPMI 0205h) that we do not serve
+	 * ourselves: as an interrupt into its handler.  WIN87EM's emulator
+	 * takes INT 34h-3Eh so.
+	 */
+	if (pmvec[n] && n != 0x21 && n != 0x31 && n != 0x2f) {
+		u32 sp;
+
+		x86_push16(c, x86_flags(c));
+		x86_push16(c, c->s[S_CS].sel);
+		x86_push16(c, c->eip & 0xffff);
+		x86_setflags(c, x86_flags(c) & ~0x0300);	/* IF, TF */
+		if (x86_loadseg(c, S_CS, FPSEL(pmvec[n]))) {
+			sp = c->r[R_SP];
+			(void)sp;
+			w16_fatal("INT %02Xh: its handler %04x:%04x is not there", n, FPSEL(pmvec[n]), FPOFF(pmvec[n]));
+		}
+		c->eip = FPOFF(pmvec[n]);
+		return 1;
+	}
 	switch (n) {
 	case 0x21:
 		return dos_int21(c);
@@ -212,7 +240,7 @@ intr(c, n)
 		return 1;
 	case 0x34: case 0x35: case 0x36: case 0x37: case 0x38: case 0x39:
 	case 0x3a: case 0x3b: case 0x3c: case 0x3d: case 0x3e:
-		w16_fatal("the program uses the floating-point emulator (INT %02Xh); no x87 yet", n);
+		w16_fatal("the program uses the floating-point emulator (INT %02Xh), and WIN87EM.DLL is not installed", n);
 		return 0;
 	}
 	w16_log("startwin: INT %02Xh AX=%04x not done\n", n, AX);
@@ -378,9 +406,10 @@ main(argc, argv)
 		dos_chdir(d);
 	}
 	mem_init((u32)mb << 20);
-	thecpu.fpu = 0;
 	x86_init(&thecpu, M, MSIZE, LDT);
 	cpu = &thecpu;
+	cpu->fpu = 1;		/* the x87 on the host's floating point (x87.c) */
+	x87_init(cpu);
 	cpu->prot = 1;
 	cpu->cr0 = 1;
 	cpu->intr = intr;

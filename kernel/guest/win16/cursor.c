@@ -272,12 +272,12 @@ letter(c)
  * pixel for cursors, a byte (a palette index) for icons.
  */
 static u16
-newico(i)
+newico_in(i, h)
 	struct ico *i;
+	u16 h;			/* a block to hold it, or 0 for a new one */
 {
 	int k, x, y, ab = ((i->w + 15) / 16) * 2, xb = i->cursor ? ab : (i->w + 1) & ~1;
-	u16 h;
-	u32 p, a, xo;
+	u32 p, a, xo, size = 12 + ab * i->h + xb * i->h;
 
 	for (k = 1; k < NICO; k++)
 		if (!icos[k])
@@ -286,7 +286,12 @@ newico(i)
 		return 0;
 	if (!bysel)
 		bysel = (struct ico **)calloc(LDTSIZE, sizeof *bysel);
-	h = g_alloc(GMEM_MOVEABLE | GMEM_DDESHARE | GMEM_ZEROINIT, 12 + ab * i->h + xb * i->h, 0);
+	if (h) {
+		if (!g_realloc(h, size, GMEM_MOVEABLE))
+			return 0;
+		memset(M + sel_base(h), 0, size);
+	} else
+		h = g_alloc(GMEM_MOVEABLE | GMEM_DDESHARE | GMEM_ZEROINIT, size, 0);
 	if (!h)
 		return 0;
 	p = sel_base(h);
@@ -315,6 +320,13 @@ newico(i)
 	i->hnd = h;
 	bysel[SELIX(h)] = i;
 	return h;
+}
+
+static u16
+newico(i)
+	struct ico *i;
+{
+	return newico_in(i, 0);
 }
 
 static struct ico *
@@ -433,10 +445,21 @@ cur_get()
 /* ---- from resources ---- */
 
 /* a DIB icon or cursor image: header at a, the image twice as high (XOR then AND) */
+static u16 fromdib_in();
+
 static u16
 fromdib(a, len, hx, hy, cursor)
 	u32 a, len;
 	int hx, hy, cursor;
+{
+	return fromdib_in(a, len, hx, hy, cursor, 0);
+}
+
+static u16
+fromdib_in(a, len, hx, hy, cursor, into)
+	u32 a, len;
+	int hx, hy, cursor;
+	u16 into;
 {
 	int w = GL(a + 4), h2 = GL(a + 8), h = h2 / 2, bpp = GW(a + 14), ncol, x, y, stride, astride;
 	u32 ct, xb, ab;
@@ -484,7 +507,7 @@ fromdib(a, len, hx, hy, cursor)
 	}
 	if (cursor)
 		mkdev(i);
-	return newico(i);
+	return newico_in(i, into);
 }
 
 static u16
@@ -708,16 +731,32 @@ c_GetIconID(a)
 	return id;
 }
 
-/* LoadIconHandler(hRes, fNew): an icon from a loaded RT_ICON resource (a DIB when fNew) */
+/* LoadIconHandler(hRes, fNew): a loaded RT_ICON resource (a DIB when fNew) made an icon in place */
 static u32
 c_LoadIconHandler(a)
 	u32 *a;
 {
 	struct gblock *b = g_block(a[0]);
+	u8 *copy;
+	u32 n, t;
+	u16 h;
 
-	if (!b || b->gb_discarded)
+	if (!b || b->gb_discarded || ico_get(a[0]))
 		return 0;
-	return fromdib(b->gb_base, b->gb_size, 0, 0, 0);
+	/* the DIB is read from a copy: the block becomes the icon */
+	n = b->gb_size;
+	copy = (u8 *)malloc(n);
+	memcpy(copy, M + b->gb_base, n);
+	t = g_alloc(GMEM_MOVEABLE, n, 0);
+	if (!t) {
+		free(copy);
+		return 0;
+	}
+	memcpy(M + sel_base(t), copy, n);
+	free(copy);
+	h = fromdib_in(sel_base(t), n, 0, 0, 0, (u16)a[0]);
+	g_free(t);
+	return h;
 }
 
 /* DumpIcon(lpInfo, lpLen, lpXorBits, lpAndBits): where the parts of a locked icon are */

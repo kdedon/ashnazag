@@ -20,7 +20,7 @@
 struct module *modules;
 
 /* the system modules: ours whatever the disk holds */
-static char *ours[] = { "KERNEL", "USER", "GDI", "KEYBOARD", "SYSTEM", "SOUND", "WIN87EM",
+static char *ours[] = { "KERNEL", "USER", "GDI", "KEYBOARD", "SYSTEM", "SOUND",
 	"DISPLAY", "MOUSE", "TOOLHELP", 0 };
 
 #define	NEW(p)	((p)[0] | (p)[1] << 8)
