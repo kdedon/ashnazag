@@ -1,0 +1,45 @@
+# x86known.txt -- SingleStepTests 80386 (real mode, 459d49f) tests where the
+# 386EX does something we do not copy.  All are corner cases no Win16 code
+# depends on: x86test -k skips them.  One hash per line, then file and name.
+#
+# Stack wraparound with SP below 8 during PUSHAD, BOUND, RET n and RETF:
+# the 386EX's partial pushes and its #SS ordering.
+# AAM 0: the flags the 386EX leaves in the #DE frame.
+# DIV/IDIV quotient overflow: the 386EX writes AX before taking #DE in
+# some byte cases, or takes a different exception path.
+a19a3795eb2ce05998222f3d573de35023293c0b 62.MOO.gz bound bx,[fs:bx-48h]
+cfa9a2b884f6d4818ad75098bddab2a79e85cbb3 6660.MOO.gz pushad
+368405bf0153cdf2ab72e4e214c3fc3d53e7fe28 6660.MOO.gz pushad
+e3dba2cf41260e669633a369786d07647fc9cf5b 6660.MOO.gz pushad
+0157f9b6874d8e3ac951f2d9c15e5c7a25bf4626 6660.MOO.gz pushad
+dcdccc3287fe549d424a362423e24537e7846921 6660.MOO.gz pushad
+3235953e3b82fe31dbda4b77b0d08d50395ffbc1 6660.MOO.gz pushad
+d3644a7421a5c95621496fd6a5fbfd1a04203b64 6660.MOO.gz pushad
+9e91448ef2fda3ec92132d7dc4a96a32588d8603 6660.MOO.gz pushad
+05367456ff18b99bd3721744b91397d6c6c21b32 6662.MOO.gz bound ebx,[fs:bx-48h]
+a580287b3d41a3583fb2cdb95cadfdec3ffecf19 66CA.MOO.gz retfd D5BBh
+9568ee14a845df9dde28f9244c2f88d1f063e043 66CB.MOO.gz retfd
+cc2a29147c4a39015af6a5afdfcbaa16aa1f6929 6762.MOO.gz bound bx,[ss:ebp+edi*4-Bh]
+c30147a2fb7f67459cb7a1a4c888b670edd838f5 67F6.7.MOO.gz idiv cl
+8bddec44e46b709759d5d1550cd9fa16ab8e89fc 67F6.7.MOO.gz idiv byte [ds:edx+46h]
+a06745936bac371e6afb861b5bc87be4b2dd676e 67F6.7.MOO.gz idiv cl
+35f2dfaf4d9a6d4d9b5e5bb0370c41db1eab1faa C2.MOO.gz ret BC90h
+6b00e0df24d4e7b0ce6ed4f679ff281d79a956f9 D4.MOO.gz aam 0
+caba701ba68505fee6e08211ac8552616247d93a D4.MOO.gz aam 0
+ea4adfbaf2e2cf0688b6af05d01a3e8eb805695b D4.MOO.gz aam 0
+0b95793c7af6a3ff1d743192522f804bfa2171ec D4.MOO.gz aam 0
+6f787529179973f826f8f037d81935cddad3a0a9 D4.MOO.gz aam 0
+6486142b75f8845fe3cb4b462c62b4ef11070134 D4.MOO.gz aam 0
+50eaa6eed86e0b65ab79fde5cb4c8462824d32f5 D4.MOO.gz aam 0
+6eac1c2aae3786f4bcd060b48847126a75a5d744 D4.MOO.gz aam 0
+c320e2d1ddd327db36854f5e0b8320cd24902bd4 D4.MOO.gz aam 0
+f3b8b0bc0c728919bf44964e6c7f8d6d4d8da009 D4.MOO.gz aam 0
+9324b97e69a76c93ecf0d3b2575e55fe7676a46e F6.6.MOO.gz div byte [ss:bp+di+6AE2h]
+8813025dcf45588bd5141eb4d7081c67d6cf3ec3 F6.7.MOO.gz idiv byte [ds:di-1F4h]
+c6d731127bec724d40594edc28a6ad8fdf14acbc F6.7.MOO.gz idiv cl
+c1392c8316c2d0532d80fb1fcb78832533093e4e F6.7.MOO.gz idiv byte [ds:3F74h]
+b674afe8d525fdf51217456b4a3f0b9102350cc4 F6.7.MOO.gz idiv byte [es:bx-5281h]
+13e7537c7cd00f676d17da613b4289afb93b338d F6.7.MOO.gz idiv byte [ds:bx+di+BB0h]
+a4a926d8bbca1f281b0a479fd8c79fe3231bad34 F6.7.MOO.gz idiv byte [ds:407h]
+64ac534a31921ec2dc9ab15f564d3bbcfe9972ec F7.6.MOO.gz div word [ds:di+6913h]
+total 1150800 tests, 35 failed, 9603 undefined not run, 0 known differences

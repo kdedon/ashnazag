@@ -1,0 +1,8 @@
+metafile dc 1
+closed 1
+played differs 0
+enum differs 0
+records 1 textout 1 select 1 dib 1 region 1
+bits 1
+copy differs 0
+disk differs 0

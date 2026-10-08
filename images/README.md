@@ -244,3 +244,13 @@ or pick "CP/M-68K environment" at the xdm session chooser (last in the list) or 
 
 The image builds put in the files from DRI's release zip (`media/cpm68k/68kv1_3.zip`, `CPMZIP`); without it there is no CP/M. `images/cpmenv/mkcpm.sh` makes the archive; details in `kernel/guest/cpm/CPM.md`.
 
+
+## The Windows 3.x environment (Win16)
+
+`startwin` runs Windows 3.1 programs as Wabi did: its own KERNEL, USER and GDI, the programs' x86 code interpreted, the rest of Windows from your own copy. Install your Windows 3.1 or 3.11 once, from the floppy images, the disks' files or an installed Windows directory:
+
+```sh
+startwin -install DISK1.IMG DISK2.IMG DISK3.IMG DISK4.IMG DISK5.IMG DISK6.IMG
+```
+
+Then `startwin` alone starts Program Manager (its groups are made on the first run, as Setup made them), `startwin notepad.exe` one program; or pick "Windows 3.x programs (Win16)" at the xdm session chooser. C: is `~/WIN16`, H: your home directory, R: `/`. Closing Program Manager ends the session. No Windows files are in the image; `images/winenv/mkwin.sh` makes the archive with `startwin`. Details in `docs/win16-design.md`.

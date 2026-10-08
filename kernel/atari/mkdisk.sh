@@ -157,10 +157,12 @@ if [ "$TOSENV" = 1 ]; then
 		{ tail "$E/tos.log"; exit 1; }
 	sh "$K/../images/cpmenv/mkcpm.sh" "$E/cpm" > "$E/cpm.log" 2>&1 ||
 		{ tail "$E/cpm.log"; exit 1; }
+	sh "$K/../images/winenv/mkwin.sh" "$E/win" > "$E/win.log" 2>&1 ||
+		{ tail "$E/win.log"; exit 1; }
 	# guest's folders go on /home, which is mounted over the root's
 	mkdir -p "$E/gt"
-	for a in tos cpm; do (cd "$E/gt" && cpio -id --quiet < "$E/$a/guest.cpio"); done
-	(cd "$E/gt/home" && find guest/TOS guest/CPM 2> /dev/null |
+	for a in tos cpm win; do (cd "$E/gt" && cpio -id --quiet < "$E/$a/guest.cpio"); done
+	(cd "$E/gt/home" && find guest/TOS guest/CPM guest/WIN16 2> /dev/null |
 		cpio -o -H newc -R 100:1 --quiet) > "$E/homeguest.cpio"
 	rm -rf "$E/gt"
 	{ echo 'd /etc/tos 755 0 3'
@@ -169,7 +171,8 @@ if [ "$TOSENV" = 1 ]; then
 	  for f in starttos maketos tosdrive; do echo "f /usr/bin/$f 755 0 3 $E/tos/$f"; done
 	  echo "a $E/tos/sys.cpio"
 	  echo "a $E/tos/games.cpio"
-	  echo "a $E/cpm/cpm.cpio"; } >> "$W/root.manifest"
+	  echo "a $E/cpm/cpm.cpio"
+	  echo "a $E/win/win.cpio"; } >> "$W/root.manifest"
 fi
 if [ "$MACENV" = 1 ]; then
 	R6=$E/mac6/a201
@@ -230,6 +233,8 @@ fi
 	cpio -it < "$E/cpm/cpm.cpio" 2> /dev/null | grep -q CPM.SYS &&
 		printf '%s\n' ' CP/M   startcpm        CP/M-68K in this terminal; EXIT ends it' \
 		'                        drives A: to P: are ~/CPM/A to ~/CPM/P'
+	cpio -it < "$E/win/win.cpio" 2> /dev/null | grep -q startwin &&
+		printf '%s\n' ' Win16  startwin        Windows 3.x programs; startwin -install your disks first'
 	:; }
   [ -z "$X11" ] || echo ' X      startx          twm; or  xsession  for a menu of sessions'
   echo ' Sound  sndtest         a tone through the DMA sound'

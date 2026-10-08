@@ -68,6 +68,8 @@ sh "$AUX/images/tosenv/mktos.sh" "$P/tos" ||
 	{ echo "[FAIL] TOS container files"; exit 1; }
 sh "$AUX/images/cpmenv/mkcpm.sh" "$P/cpm" > "$P/cpm.log" 2>&1 ||
 	{ tail "$P/cpm.log"; echo "[FAIL] CP/M-68K environment files"; exit 1; }
+sh "$AUX/images/winenv/mkwin.sh" "$P/win" > "$P/win.log" 2>&1 ||
+	{ tail "$P/win.log"; echo "[FAIL] Win16 environment files"; exit 1; }
 
 # the Amiga environment, installed as installmig would from AMIGASTAGE
 # (images/amigaenv/mkamiga.sh's output; proprietary, image only).  The
