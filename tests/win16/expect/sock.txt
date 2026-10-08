@@ -1,0 +1,25 @@
+startup 0
+version 257
+htons 13330
+inet_addr 1
+10.1.2.3
+localhost 1
+bad socket 1
+bind 0
+listen 0
+getsockname 0
+port given 1
+connect 0
+accept 1
+send 5
+hello
+select idle 0
+async 0
+read event 1
+recv 1
+close event 1
+recv end 0
+async lookup 1
+lookup answer 1
+cleanup 0
+after cleanup 1

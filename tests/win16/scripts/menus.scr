@@ -1,0 +1,32 @@
+wait 300
+shot menus0.ppm
+click 35 49
+wait 100
+shot menus1.ppm
+click 60 69
+wait 100
+keydown 0x11
+key 0x4e
+keyup 0x11
+wait 50
+click 35 49
+wait 50
+click 60 117
+wait 50
+key 0x70
+wait 200
+shot menus2.ppm
+type Bob
+key 0x0d
+wait 100
+click 35 49
+wait 50
+click 60 89
+wait 200
+shot menus3.ppm
+type y
+wait 100
+click 35 49
+wait 50
+click 60 145
+wait 100
