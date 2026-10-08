@@ -784,8 +784,9 @@ g_CreateCompatibleDC(a)
 }
 
 static u32
-g_CreateDC(a)
+createdc(a, ic)
 	u32 *a;
+	int ic;
 {
 	char *drv = gptr(a[0]);
 	u16 h;
@@ -796,7 +797,7 @@ g_CreateDC(a)
 		extern u16 prn_create();
 
 		/* a printer, through its driver (CreateIC: an information context) */
-		if ((h = prn_create(drv, gptr(a[1]), gptr(a[2]), a[3], a[4] == 1)) != 0)
+		if ((h = prn_create(drv, gptr(a[1]), gptr(a[2]), a[3], ic)) != 0)
 			return h;
 		/* a driver that is not there: an information context that draws nowhere */
 		h = dc_new(DCK_INFO);
@@ -813,20 +814,10 @@ g_CreateDC(a)
 	return h;
 }
 
-/* CreateIC: CreateDC, an information context */
-static u32
-g_CreateIC(a)
-	u32 *a;
-{
-	u32 b[5];
+static u32 g_CreateDC(a) u32 *a; { return createdc(a, 0); }
 
-	b[0] = a[0];
-	b[1] = a[1];
-	b[2] = a[2];
-	b[3] = a[3];
-	b[4] = 1;
-	return g_CreateDC(b);
-}
+/* CreateIC: CreateDC, an information context */
+static u32 g_CreateIC(a) u32 *a; { return createdc(a, 1); }
 
 static u32
 g_DeleteDC(a)
