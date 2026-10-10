@@ -10,8 +10,8 @@
 #    SoundOut's output component, which hides the hardware's.  Without it
 #    A/UX's own sound traps stay, playing through /dev/snd.
 #  - A 'gpch' that stores a cache routine in the table at $DB8 skips it.
-# usage: auxguard.py [-n] [-s] %System     (-n: list only)
-import sys, os, struct
+# usage: auxguard.py [-n] [-s] [-S] %System     (-n: list only)
+import sys, os, struct, hashlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import rsrcedit
 
@@ -75,13 +75,40 @@ def install_table(b):
                 return g
     return []
 
+
+SOUND3_ORIGINAL = 'e50236c3f2f04000513dce7549fccabc06291ebb3d342c60298c93bf3f9f2caf'
+SOUND3_LEGACY_ENABLED = '5cf329672e590934d9982228a7d15d1405257bdb249e9513cc2c37f63960185f'
+SOUND3_ENABLED = '3252ea519b7f62fe89c385b98e549c71dd7d56b0cee2c3472bb863537ff8c98e'
+SOUND3_GROUPS = (0x9497, 0x94d1, 0x94b6)
+SOUND3_CONDITIONS = {0x9497: (0x13c, NOTAUX), 0x94d1: (0x13c, NOTAUX),
+                     0x94b6: (0x10001c, 0x100000)}
+
+def sound3(b):
+    digest = hashlib.sha256(b).hexdigest()
+    if digest not in (SOUND3_ORIGINAL, SOUND3_LEGACY_ENABLED, SOUND3_ENABLED):
+        raise ValueError('unrecognized native Sound Manager resource')
+    out = bytearray(b)
+    changed = 0
+    for at in SOUND3_GROUPS:
+        cond = int.from_bytes(out[at:at + 3], 'big')
+        original, mask = SOUND3_CONDITIONS[at]
+        if cond not in (original, original & ~mask):
+            raise ValueError('unexpected native Sound Manager condition')
+        if cond & mask:
+            out[at:at + 3] = (cond & ~mask).to_bytes(3, 'big')
+            changed += 1
+    if hashlib.sha256(out).hexdigest() != SOUND3_ENABLED:
+        raise ValueError('native Sound Manager guard authentication failed')
+    return bytes(out), changed
+
 if __name__ == '__main__':
     a = sys.argv[1:]
     dry = '-n' in a
     snd = '-s' in a
-    a = [x for x in a if x not in ('-n', '-s')]
+    snd3 = '-S' in a
+    a = [x for x in a if x not in ('-n', '-s', '-S')]
     if len(a) != 1:
-        sys.exit('usage: auxguard.py [-n] [-s] %System')
+        sys.exit('usage: auxguard.py [-n] [-s] [-S] %System')
     d = bytearray(open(a[0], 'rb').read())
     base, _ = fork(d)
     n = 0
@@ -123,6 +150,17 @@ if __name__ == '__main__':
             print('gpch %d: $DB8 store' % rid)
             d[off + k - 0x18] = 0x60
             n += 1
+    if snd3:
+        found = False
+        for t, rid, off, ln in resources(d, base):
+            if (t, rid) == (b'gpch', 666):
+                replacement, count = sound3(bytes(d[off:off + ln]))
+                d[off:off + ln] = replacement
+                n += count
+                found = True
+                print('gpch 666: native Sound Manager guards %d' % count)
+        if not found:
+            raise ValueError('native Sound Manager resource missing')
     if not dry and n:
         with open(a[0] + '.tmp', 'wb') as f:
             f.write(d)

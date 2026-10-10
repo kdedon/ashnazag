@@ -167,7 +167,7 @@ struct otx {				/* one endpoint: q_ptr of both queues */
 	struct otbs	*x_sess;
 	struct otx	*x_snext;	/* the session's endpoints */
 	struct otx	*x_next;	/* all endpoints */
-	unsigned long	x_cookie;
+	unsigned long	x_cookie, x_generation;
 	int		x_proto;
 	int		x_ringidx;	/* this endpoint's ring entry, or -1 */
 	int		x_flags;
@@ -179,8 +179,13 @@ struct otx {				/* one endpoint: q_ptr of both queues */
 	int		x_rbufcall, x_wbufcall;	/* per queue */
 	unsigned char	x_la[OT_INETADDR_LEN], x_ra[OT_INETADDR_LEN], x_rp[OT_INETADDR_LEN];
 	int		x_lalen, x_ralen, x_rplen;
+	unsigned long	x_accept_cookie, x_accept_generation;
+	long		x_accept_seq;
+	int		x_accept_pending, x_accept_lalen, x_accept_ralen;
+	unsigned char	x_accept_la[OT_INETADDR_LEN], x_accept_ra[OT_INETADDR_LEN];
 	struct {
 		long		seq;
+		int		valid, alen;
 		unsigned char	a[OT_INETADDR_LEN];
 	}		x_ind[OTB_NIND];
 	struct otx_oeng	x_oe;
@@ -220,7 +225,7 @@ void	otb_post();			/* (x, events) */
 struct otbs *otb_sfind();		/* (id) */
 void	otb_sdetach();			/* (x) */
 extern int	otb_nst;
-int	otbst_open(), otbst_close(), otbst_read(), otbst_write(), otbst_ioctl(),
+int	otbst_identity(), otbst_open(), otbst_close(), otbst_read(), otbst_write(), otbst_ioctl(),
 	otbst_poll();
 
 /* IPL 4, the level splstr() stands for; never lowers */

@@ -23,6 +23,7 @@
  *			id,ver,minver,sym,sym... (repeatable, up to 8)
  *	  -u spec	the same, exported by index only
  *	  -C creator	file creator (AUXn)
+ *	  -I symbol	import record in the linked object (repeatable)
  *	  -f fmt	bin (MacBinary, default), ad (AppleDouble), rsrc
  *
  * Files are read as MacBinary, AppleDouble or a bare resource fork.
@@ -1357,7 +1358,7 @@ struct esym {
 };
 
 struct fset {
-	char		*id;
+	char		*id, *parent;
 	unsigned	ver, minver;
 	int		named, nf;
 	char		**fn;
@@ -1763,8 +1764,9 @@ putres(fk, type, id, attr, name, b)
 }
 
 static int
-build(obj, out, lname, lver, code, lid, f1, f2, fs, nfs, creator, fmt)
-	char *obj, *out, *lname, *code, *creator, *fmt;
+build(obj, out, lname, lver, code, lid, f1, f2, fs, nfs, creator, fmt, imports, ni)
+	char *obj, *out, *lname, *code, *creator, *fmt, **imports;
+	int ni;
 	unsigned lver, f1, f2;
 	int lid, nfs;
 	struct fset *fs;
@@ -1772,7 +1774,9 @@ build(obj, out, lname, lver, code, lid, f1, f2, fs, nfs, creator, fmt)
 	struct esym *ent, *m0, *bl;
 	long below, off, j, sz;
 	int i, k, sg, first[3], cnt[3];
-	struct buf jt, sb[3], lr, blk, rf;
+	struct buf jt, sb[3], lr, blk, rf, ib;
+	struct libi li;
+	long importoff[64];
 	struct libr l;
 	struct fork fk;
 	unsigned char e[8];
@@ -1783,8 +1787,39 @@ build(obj, out, lname, lver, code, lid, f1, f2, fs, nfs, creator, fmt)
 	memset(&lr, 0, sizeof lr);
 	memset(&blk, 0, sizeof blk);
 	memset(&rf, 0, sizeof rf);
+	memset(&ib, 0, sizeof ib);
 	layout(fs, nfs);
 	below = datalen;
+	for (i = 0; i < ni; i++) {
+		struct esym *s = symbol(imports[i]);
+		long end;
+
+		if (!s || target(s, 0L, &off) != SEG_DATA || off < 0 ||
+		    off + 17 > datab.n || off & 1)
+			die("invalid import record %s", imports[i]);
+		for (k = 0; k < 12; k++)
+			if (datab.p[off + k])
+				die("import record %s has initial manager state", imports[i]);
+		if (rd16(datab.p + off + 14) > rd16(datab.p + off + 12))
+			die("import record %s has an invalid version range", imports[i]);
+		for (end = off + 16; end < datab.n && datab.p[end]; end++)
+			;
+		if (end == off + 16 || end == datab.n || end - off - 16 > 255)
+			die("import record %s has no terminated class id", imports[i]);
+		for (j = off + 16; j < end; j++)
+			if (datab.p[j] < 33 || datab.p[j] > 126)
+				die("import record %s has an invalid class id", imports[i]);
+		for (k = 0; k < i; k++)
+			if (importoff[k] == off - below)
+				die("duplicate import record %s", imports[i]);
+		importoff[i] = off - below;
+	}
+	if (ni) {
+		memset(&li, 0, sizeof li);
+		li.n = ni;
+		li.off = importoff;
+		emitlibi(&li, &ib);
+	}
 	if ((ent = symbol("__aslm_entry")) == 0 || (m0 = symbol("__aslm_main0")) == 0 ||
 	    (bl = symbol("__aslm_blk")) == 0)
 		die("the runtime (__aslm_entry, __aslm_main0, __aslm_blk) is not linked in", "");
@@ -1910,13 +1945,20 @@ build(obj, out, lname, lver, code, lid, f1, f2, fs, nfs, creator, fmt)
 		l.c[i].ver = fs[i].ver;
 		l.c[i].minver = fs[i].minver;
 		l.c[i].name = fs[i].id;
+		if (fs[i].parent) {
+			l.c[i].np = 1;
+			l.c[i].par = (char **)xalloc(2L * sizeof(char *));
+			l.c[i].par[0] = fs[i].parent;
+		}
 	}
 	emitlibr(&l, &lr);
 	/* fork */
 	memset(&fk, 0, sizeof fk);
 	fk.r = (struct res *)xalloc(8L * (long)sizeof(struct res));
 	fk.dataoff = 256;
-	putres(&fk, "libr", lid, 0, (char *)0, &lr);
+	putres(&fk, "libr", lid, 0, lname, &lr);
+	if (ni)
+		putres(&fk, "libi", lid, 0, (char *)0, &ib);
 	putres(&fk, code, 0, 0x20, (char *)0, &jt);
 	putres(&fk, code, 1, 0x10, "%A5Init", &sb[1]);
 	putres(&fk, code, 2, 0x20, "Main", &sb[2]);
@@ -1940,7 +1982,9 @@ main(argc, argv)
 	char *mode = 0, *in = 0, *only = 0, *out = 0, *lname = "AUXLib$lib", *code = "cdAU";
 	char *creator = "AUXn", *fmt = "bin";
 	unsigned lver = 0x0110, f1 = 0x0840, f2 = 0x001c;
-	int lid = 128, nfs = 0, i;
+	int lid = 128, nfs = 0, i, ni = 0;
+	char *imports[64], *parents[8];
+	int np = 0;
 	struct fset fs[8];
 	struct file f;
 	struct fork fk;
@@ -1967,10 +2011,20 @@ main(argc, argv)
 		case 'v': lver = strtoul(argv[++i], (char **)0, 0); break;
 		case 'c': code = argv[++i]; break;
 		case 'i': lid = atoi(argv[++i]); break;
+		case 'I':
+			if (ni == 64)
+				die("at most 64 imported sets", "");
+			imports[ni++] = argv[++i];
+			break;
 		case 'F': f1 = strtoul(argv[++i], (char **)0, 0); break;
 		case 'G': f2 = strtoul(argv[++i], (char **)0, 0); break;
 		case 'C': creator = argv[++i]; break;
 		case 'f': fmt = argv[++i]; break;
+		case 'p':
+			if (np == 8 || i + 1 == argc)
+				die("expected at most 8 parent specs", "");
+			parents[np++] = argv[++i];
+			break;
 		case 'e':
 		case 'u':
 			if (nfs == 8)
@@ -1984,9 +2038,27 @@ main(argc, argv)
 	if (in == 0)
 		die("usage: mkaslm -d|-t|-l|-x file, or mkaslm [options] -o out obj", "");
 	if (out) {
+		for (i = 0; i < np; i++) {
+			char *copy, *parent;
+			int k;
+
+			copy = xalloc((long)strlen(parents[i]) + 1);
+			strcpy(copy, parents[i]);
+			parent = strchr(copy, ',');
+			if (!parent || parent == copy || !parent[1] || strchr(parent + 1, ','))
+				die("parent spec needs class,parent: %s", parents[i]);
+			*parent++ = 0;
+			if (!strcmp(copy, parent) || strlen(parent) > 255)
+				die("invalid parent: %s", parents[i]);
+			for (k = 0; k < nfs && strcmp(copy, fs[k].id); k++)
+				;
+			if (k == nfs || fs[k].parent)
+				die("unknown or duplicate parent class: %s", copy);
+			fs[k].parent = parent;
+		}
 		if (strlen(code) != 4 || strlen(creator) != 4)
 			die("type and creator codes are 4 characters", "");
-		return build(in, out, lname, lver, code, lid, f1, f2, fs, nfs, creator, fmt);
+		return build(in, out, lname, lver, code, lid, f1, f2, fs, nfs, creator, fmt, imports, ni);
 	}
 	if (mode == 0)
 		die("no mode given", "");

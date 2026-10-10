@@ -67,8 +67,13 @@ extern void b3_conout(), b3_list(), b3_wboot();
 extern long b3_bios();
 
 /* bdos3.c */
+#define	B3_SHIM		0x7d		/* BIOS function: run b3_shimh through the shim */
+#define	SHIM_80		1		/* .COM, CP/M-80 */
+#define	SHIM_86		2		/* .CMD, CP/M-86 */
+extern int b3_shim, b3_shimdrv, shimtype();
+extern struct hfile b3_shimh;
 extern long cpm_bdos3();
-extern void b3_init();
+extern void b3_init(), b3_relog();
 extern unsigned long b3_get16(), b3_get32();
 extern void b3_put16(), b3_put32();
 extern int b3_retcode;
@@ -83,8 +88,12 @@ extern void b3_chain();
 
 /* hostfs.c */
 extern char b3_root[1024];
-extern int hf_drives(), hf_dir(), hf_scan(), hf_find(), hf_create();
+#define	HF_AREAS	1		/* user N > 0 is subdirectory N */
+#define	HF_RO		2
+#define	HF_SYS		4		/* programs not found elsewhere are looked for here */
+extern int hf_drives(), hf_rodrives(), hf_dir(), hf_scan(), hf_find(), hf_create();
 extern int hf_open(), hf_unlink(), hf_rename(), hf_setattr(), hf_protect();
-extern int hf_truncate(), hf_name(), hf_mkdist();
+extern int hf_truncate(), hf_name();
 extern long hf_free();
-extern void hf_flush(), hf_stamp();
+extern void hf_flush(), hf_stamp(), hf_setdrive();
+extern char *hf_drive();

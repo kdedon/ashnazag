@@ -1,10 +1,12 @@
 wait login:
 type root\n
 wait # 
-type (startx; echo x-`expr 3 + 4`-ended; cat /tmp/Xamix.log) &\n
-type until [ -p /tmp/.X11-unix/X0 ]; do sleep 2; done; sleep 60; echo x-`expr 1 + 1`-up\n
+typeconsole /tests/t_envram; echo envram-rc=$?\n
+wait envram-rc=0
+typeconsole ( (until [ -p /tmp/.X11-unix/X0 ]; do sleep 2; done; sleep 60; echo x-`expr 1 + 1`-up) & startx; echo x-`expr 3 + 4`-ended; cat /tmp/Xamix.log) &\n
+waitjob
 wait x-2-up
-debug screenshot OUT/1-desktop.png
+shot OUT/1-desktop.png xterm
 type echo key-`expr 6 + 36`-ok > /dev/console\n
 wait key-42-ok
 sleep 5
@@ -14,10 +16,16 @@ wait x-7-ended
 wait Videl
 sleep 3
 debug screenshot OUT/3-console.png
-type (startx -- -depth 1 -kbd de; echo x-`expr 5 + 6`-ended; cat /tmp/Xamix.log) &\n
-type until [ -p /tmp/.X11-unix/X0 ]; do sleep 2; done; sleep 60; echo x-`expr 2 + 2`-up\n
+typeconsole ( (until [ -p /tmp/.X11-unix/X0 ]; do sleep 2; done; sleep 60; echo x-`expr 2 + 2`-up) & startx -- -depth 1 -kbd de; echo x-`expr 5 + 6`-ended; cat /tmp/Xamix.log) &\n
+waitjob
 wait x-4-up
-type echo kezy\n
+shot OUT/4-ready.png xterm
+type echo kezy\x20
+event keydown 0x2a
+event keypress 0x60
+event keyup 0x2a
+type \x20&dev&console\n
+wait keyz
 sleep 5
 debug screenshot OUT/4-de.png
 event keydown 0x1d

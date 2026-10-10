@@ -211,6 +211,15 @@ struct otb_stats {
 #define	OTB_STSIG		OTB_IOC(0x21)	/* arg: signal on queue empty -> not, 0 none */
 #define	OTB_STMULTI		OTB_IOC(0x22)	/* struct otb_stmulti */
 #define	OTB_STSTATS		OTB_IOC(0x23)	/* struct otb_ststats */
+#define	OTB_SETIDENT		OTB_IOC(0x24)
+#define	OTB_GETIDENT		OTB_IOC(0x25)
+#define	OTB_ST_ANCHOR		2
+
+struct otb_identity {
+	unsigned char version[4], address[4], mask[4], router[4];
+	unsigned char dns[12], domain[64];
+};
+
 #define	OTB_ST_BRIDGE		1		/* frames to and from the LAN */
 
 struct otb_station {

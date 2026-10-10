@@ -1,10 +1,12 @@
 wait login:
 type guest\n
 wait $ 
-type (startx > /tmp/sx.log 2>&1; echo x-`expr 3 + 4`-ended) &\n
-type until [ -p /tmp/.X11-unix/X0 ]; do sleep 2; done; sleep 60; echo x-`expr 1 + 1`-up\n
+typeconsole ( (until [ -p /tmp/.X11-unix/X0 ]; do sleep 2; done; sleep 60; echo x-`expr 1 + 1`-up) & startx > /tmp/sx.log 2>&1; echo x-`expr 3 + 4`-ended) &\n
+waitjob
 wait x-2-up
-type echo typed-in-xterm\n
+shot OUT/1-ready.png xterm
+type echo typed-in-xterm > /dev/console\n
+wait typed-in-xterm
 sleep 5
 debug screenshot OUT/1-x.png
 event keydown 0x1d

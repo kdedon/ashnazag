@@ -1885,7 +1885,7 @@ main(argc, argv)
 	struct mod_mreg reg;
 	struct amigainfo ai;
 	struct stat sb;
-	int mj = AMIGA_MAJOR;
+	int mj = AMIGA_MAJOR, registered;
 
 	if (argc > 1 && strcmp(argv[1], "stat") == 0) {
 		struct amigastat st;
@@ -1907,7 +1907,8 @@ main(argc, argv)
 	modpath(MD);
 	strcpy(reg.md_modname, "amigaguest");
 	reg.md_typedata = (caddr_t)&mj;
-	if (!t_check("register_cdev", modadm(MOD_TY_CDEV, MOD_C_MREG, &reg) == 0 || errno == EEXIST,
+	registered = modadm(MOD_TY_CDEV, MOD_C_MREG, &reg);
+	if (!t_check("register_cdev", registered == 0 || errno == EEXIST,
 	    "modadm: %s", T_ERR))
 		return t_done();
 	if (!t_check("open", (afd = open("/dev/amiga", O_RDWR)) >= 0, "/dev/amiga: %s", T_ERR))

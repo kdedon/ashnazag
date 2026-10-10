@@ -1,17 +1,21 @@
 /*
  * startcpm -- run CP/M-68K as this process.
  *
- *	startcpm [-e env]
+ *	startcpm [-e env] [-d X=path] ...
  *
  * DRI's CPM.SYS (CCP and BDOS, linked with a sample BIOS) is loaded at
  * its own address in memory mapped at 0, and the process becomes a lone
  * guest: CP/M runs natively, its supervisor state virtual, its traps
  * through its own vector table.  The sample BIOS's init is skipped in
  * the loaded copy; trap #3 comes here instead, and trap #2 goes to our
- * own CP/M 3 BDOS.  The console is the caller's terminal.  Drives A: to
- * P: are the directories ~/CPM/A to ~/CPM/P (or, with -e, ~/CPM/env/A
- * ...).  Without A:, one is made holding links to the distribution's
- * files.  EXIT ends the session.
+ * own CP/M 3 BDOS.  The console is the caller's terminal.  Drives:
+ *	A:	~/CPM (with -e, ~/CPM/env), user areas as subdirectories
+ *	H:	home
+ *	M:	~/.cpm/tmp (with -e, ~/.cpm/tmp/env), private, emptied at start
+ *	O:	/
+ *	P:	DRI's programs, read-only; programs not found elsewhere run from here
+ * The CCP knows only A: to P:.  Lines X=path in ~/CPM/DRIVES, then -d,
+ * add or replace drives; MOUNT (on P:) changes them in a session.  EXIT ends the session.
  */
 
 #include <sys/types.h>
@@ -28,15 +32,18 @@
 #include <pwd.h>
 #include <dirent.h>
 #include <termio.h>
-#include "tosio.h"
+#include "../include/cpmio.h"
 #include "bdos3.h"
+#include "cpmshim.h"
 #include "../include/envroot.h"
+#include "../include/envmem.h"
 
 #define	MEM	0x400000L	/* memory at 0 */
 #define	TABLES	0x400L		/* BIOS tables, up to CP/M */
 #define	SYS	"/cpm/sys/CPM.SYS"
 #define	DIST	"/cpm/dist"
 #define	QUIT	0x7f		/* BIOS function: end the session, d1 the status */
+#define	MOUNT	0x7e		/* BIOS function: MOUNT, d1 its base page */
 
 extern void cpm_t2(), cpm_t3(), cpm_go(), cpm_wboot();
 
@@ -49,14 +56,6 @@ static unsigned long tables = TABLES, tablim, mrt;
 static int iobyte, lst = -1;
 static int tty, peeked = -1, eof;
 static struct termio tio;
-
-/* EXIT.68K: move.w #QUIT,d0; moveq #0,d1; trap #3 */
-static unsigned char exitprg[] = {
-	0x60, 0x1a, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0x30, 0x3c, 0, QUIT, 0x72, 0, 0x4e, 0x43,
-	0, 0, 0, 0, 0, 0, 0, 0		/* no relocations */
-};
 
 static void
 die(what)
@@ -169,25 +168,216 @@ rawtty()
 		tty = 1;
 }
 
-/* A:, made from the distribution when missing */
-static void
-drivea()
-{
-	char path[1100];
-	struct stat sb;
+/* ---- drives ---- */
 
-	sprintf(path, "%s/a", root);
-	if (stat(path, &sb) == 0)
+long cpm_bios();
+static char *home;
+
+static int
+samecase(a, b)
+	char *a, *b;
+{
+	for (; *a && (*a | 32) == (*b | 32); a++, b++)
+		;
+	return *a == 0 && *b == 0;
+}
+
+static void
+cputs(s)
+	char *s;
+{
+	for (; *s; s++) {
+		if (*s == '\n')
+			cpm_bios(4L, (long)'\r', 0L);
+		cpm_bios(4L, (long)*s, 0L);
+	}
+}
+
+/* ~ and relative names start at home */
+static int
+fullpath(p, out)
+	char *p, *out;
+{
+	if (strlen(home) + strlen(p) + 2 > 1024)
+		return -1;
+	if (*p == '/')
+		strcpy(out, p);
+	else if (*p == '~' && (p[1] == 0 || p[1] == '/'))
+		sprintf(out, "%s%s", home, p + 1);
+	else
+		sprintf(out, "%s/%s", home, p);
+	return 0;
+}
+
+/* "X=path": 0, or -1 when it is not one; an empty path removes X: */
+static int
+setmap(spec)
+	char *spec;
+{
+	char path[1024];
+	int d = *spec;
+
+	d = d >= 'a' && d <= 'z' ? d - 'a' : d - 'A';
+	if (d < 0 || d >= NDRV || spec[1] != '=')
+		return -1;
+	if (spec[2] == 0) {
+		hf_setdrive(d, "", 0);
+		return 0;
+	}
+	if (fullpath(spec + 2, path) < 0)
+		return -1;
+	hf_setdrive(d, path, 0);
+	return 0;
+}
+
+/* M:, private and empty */
+static void
+tmpdrive(env, path)
+	char *env, *path;
+{
+	char f[1400];
+	struct dirent *de;
+	struct stat sb;
+	DIR *dp;
+
+	sprintf(path, "%s/.cpm", home);
+	mkdir(path, 0700);
+	strcat(path, "/tmp");
+	mkdir(path, 0700);
+	if (env) {
+		sprintf(path + strlen(path), "/%s", env);
+		mkdir(path, 0700);
+	}
+	if (lstat(path, &sb) < 0 || (sb.st_mode & S_IFMT) != S_IFDIR || sb.st_uid != getuid() ||
+	    chmod(path, 0700) < 0) {
+		path[0] = 0;
 		return;
-	sprintf(path, "%s/A", root);
-	if (stat(path, &sb) == 0)
+	}
+	if ((dp = opendir(path)) == 0)
 		return;
-	if (hf_mkdist(path, DIST, (char *)exitprg, "exit.68k", (int)sizeof exitprg) < 0)
-		die(path);
-	fprintf(stderr, "startcpm: made A: in %s\n", path);
-	sprintf(path, "%s/a.img", root);
-	if (stat(path, &sb) == 0)
-		fprintf(stderr, "startcpm: %s is no longer used; cpmtools copies its files out\n", path);
+	while ((de = readdir(dp)) != 0) {
+		sprintf(f, "%s/%s", path, de->d_name);
+		if (lstat(f, &sb) == 0 && (sb.st_mode & S_IFMT) != S_IFDIR)
+			unlink(f);
+	}
+	closedir(dp);
+}
+
+static void
+drives(env, nd, dv)
+	char *env, **dv;
+	int nd;
+{
+	char path[1100], line[1200];
+	FILE *fp;
+	int i, n = 0;
+
+	hf_setdrive(0, root, HF_AREAS);
+	hf_setdrive('H' - 'A', home, 0);
+	tmpdrive(env, path);
+	hf_setdrive('M' - 'A', path, 0);
+	hf_setdrive('O' - 'A', "/", 0);
+	hf_setdrive('P' - 'A', DIST, HF_RO | HF_SYS);
+	sprintf(path, "%s/CPM/DRIVES", home);
+	if ((fp = fopen(path, "r")) != 0) {
+		while (fgets(line, sizeof line, fp) != 0) {
+			n++;
+			line[strcspn(line, "\r\n")] = 0;
+			if (line[0] && line[0] != '#' && setmap(line) < 0)
+				fprintf(stderr, "startcpm: %s line %d: not X=path\n", path, n);
+		}
+		fclose(fp);
+	}
+	for (i = 0; i < nd; i++)
+		if (setmap(dv[i]) < 0)
+			fprintf(stderr, "startcpm: -d %s: not X=path\n", dv[i]);
+}
+
+/* the CCP gives the tail in upper case: each missing name is matched ignoring case */
+static int
+anycase(p)
+	char *p;
+{
+	char *q, *e, c;
+	struct dirent *de;
+	struct stat sb;
+	DIR *dp;
+	int found;
+
+	if (stat(p, &sb) == 0)
+		return 0;
+	for (q = p + 1; *q; q = *e ? e + 1 : e) {
+		e = strchr(q, '/');
+		if (e == 0)
+			e = q + strlen(q);
+		c = *e;
+		*e = 0;
+		if (stat(p, &sb) < 0) {
+			q[-1] = 0;
+			dp = opendir(q == p + 1 ? "/" : p);
+			q[-1] = '/';
+			found = 0;
+			while (dp && !found && (de = readdir(dp)) != 0)
+				if (samecase(de->d_name, q)) {
+					strcpy(q, de->d_name);
+					found = 1;
+				}
+			if (dp)
+				closedir(dp);
+			if (!found) {
+				*e = c;
+				return -1;
+			}
+		}
+		*e = c;
+	}
+	return 0;
+}
+
+/* MOUNT X: path, or MOUNT alone to list the drives */
+static void
+mount(bp)
+	unsigned long bp;
+{
+	char tail[130], path[1100], line[1200], *p;
+	struct stat sb;
+	int d, fl, n;
+
+	if (bp < TABLES || bp > MEM - 0x100)
+		return;
+	n = *(unsigned char *)(bp + 0x80);
+	if (n > 127)
+		n = 127;
+	memcpy(tail, (char *)bp + 0x81, n);
+	tail[n] = 0;
+	for (p = tail; *p == ' '; p++)
+		;
+	if (*p == 0) {
+		for (d = 0; d < NDRV; d++)
+			if (*(p = hf_drive(d, &fl))) {
+				sprintf(line, "%c: %s%s\n", 'A' + d, p, fl & HF_RO ? " (R/O)" : "");
+				cputs(line);
+			}
+		return;
+	}
+	d = *p - 'A';
+	if (d < 0 || d >= NDRV || p[1] != ':' || p[2] != ' ') {
+		cputs("usage: MOUNT [X: path]\n");
+		return;
+	}
+	for (p += 2; *p == ' '; p++)
+		;
+	p[strcspn(p, " ")] = 0;
+	if (fullpath(p, path) < 0 || anycase(path) < 0 || stat(path, &sb) < 0 ||
+	    (sb.st_mode & S_IFMT) != S_IFDIR) {
+		sprintf(line, "MOUNT: no directory %s\n", p);
+		cputs(line);
+		return;
+	}
+	hf_setdrive(d, path, 0);
+	b3_relog();
+	sprintf(line, "%c: %s\n", 'A' + d, path);
+	cputs(line);
 }
 
 /* ---- the BIOS ---- */
@@ -289,6 +479,11 @@ cpm_bios(fn, d1, d2)
 		if (d1 != 34 && d1 != 35)	/* traps #2 and #3 stay ours */
 			put32(d1 * 4, d2);
 		return old;
+	case MOUNT:
+		mount((unsigned long)d1);
+		return 0;
+	case B3_SHIM:
+		return cpm_shim((unsigned long)d1);
 	case QUIT:
 		quit((int)(d1 & 0xff));
 	}
@@ -332,6 +527,7 @@ b3_bios(fn, d1, d2)
 void
 b3_wboot()
 {
+	cpm_shimabort();
 	flush();
 	cpm_wboot();
 }
@@ -407,17 +603,18 @@ main(argc, argv)
 	int argc;
 	char **argv;
 {
-	struct tosenter te;
 	struct passwd *pw;
 	unsigned long pc;
-	char *env = 0, *h;
-	int c, fd;
+	char *env = 0, *h, *dv[NDRV];
+	int c, fd, nd = 0;
 
-	while ((c = getopt(argc, argv, "e:")) != -1)
+	while ((c = getopt(argc, argv, "e:d:")) != -1)
 		if (c == 'e')
 			env = optarg;
+		else if (c == 'd' && nd < NDRV)
+			dv[nd++] = optarg;
 		else {
-			fprintf(stderr, "usage: startcpm [-e env]\n");
+			fprintf(stderr, "usage: startcpm [-e env] [-d X=path] ...\n");
 			return 2;
 		}
 	h = getenv("HOME");
@@ -430,24 +627,20 @@ main(argc, argv)
 	mkroot();
 	if (envlock("startcpm", "cpm", root) == -1)
 		return 1;
-	if ((fd = open("/dev/zero", O_RDWR)) < 0)
-		die("/dev/zero");
-	if (mmap((caddr_t)0, MEM, PROT_READ | PROT_WRITE | PROT_EXEC,
-	    MAP_PRIVATE | MAP_FIXED, fd, 0) == (caddr_t)-1)
-		die("mmap");
-	close(fd);
+	if (envmem_region(0, MEM, 0, -1) < 0)
+		die("guest memory");
 	pc = loadsys();
-	drivea();
+	home = h;
+	drives(env, nd, dv);
 	b3_init((unsigned long)cpm_t2, get32(mrt + 2), MEM, galloc(16L + 65536L / 8 + 128));
 	put32(34 * 4L, (unsigned long)cpm_t2);
 	put32(35 * 4L, (unsigned long)cpm_t3);
-	if ((fd = open("/dev/tos", O_RDWR)) < 0)
-		die("/dev/tos");
+	if ((fd = open("/dev/cpm", O_RDWR)) < 0)
+		die("/dev/cpm");
 	fcntl(fd, F_SETFD, 1);
-	te.te_ramsize = MEM;
-	te.te_flags = TEF_NOMACH;
-	if (ioctl(fd, TOSIOC_ENTER, &te) < 0)
-		die("TOSIOC_ENTER");
+	if (ioctl(fd, CPMIOC_ENTER, 0) < 0)
+		die("CPMIOC_ENTER");
+	close(fd);
 	signal(SIGHUP, onsig);
 	signal(SIGTERM, onsig);
 	signal(SIGINT, onsig);

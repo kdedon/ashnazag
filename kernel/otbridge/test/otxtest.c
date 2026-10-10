@@ -153,6 +153,22 @@ up()
 	struct otx_res r;
 	int n;
 
+	{
+		long info[] = { H_INFO_ACK, 0, 1, -2, -2, 16, -1, 16384, 2, 0, 2 };
+		long states[] = { -1, 17, 18, 2147483647L };
+		int i;
+		for(i=0;i<17;i++) {
+			info[9]=i;L(in,11,info);
+			check("up.info_ack_state",otx_xup(in,44,out,sizeof out,&r)==44 &&
+			    OB_G32(out)==OT_INFO_ACK && OB_G32(out+36)==i+1 &&
+			    !memcmp(in+4,out+4,32) && !memcmp(in+40,out+40,4));
+		}
+		for(i=0;i<4;i++) {
+			info[9]=states[i];L(in,11,info);
+			check("up.info_ack_invalid_state",otx_xup(in,44,out,sizeof out,&r)==44 && OB_G32(out+36)==19);
+		}
+		check("up.info_ack_short",otx_xup(in,40,out,sizeof out,&r)==-OT_TSYSERR);
+	}
 	{	/* privileged bind refused */
 		long v[] = { H_ERROR_ACK, H_BIND_REQ, 3, 13 }, o[] = { OT_ERROR_ACK, OT_BIND_REQ, OT_TACCES, OT_EACCES };
 		L(in, 4, v);

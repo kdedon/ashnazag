@@ -99,21 +99,43 @@ extern int getksym();
 #ifdef SYS81
 #define	SYS76
 #define	SYSDIR	MACVOL "/S81"
+#define	USERSYS	MACVOL "/S81u"
 #define	SYSVER	0x0810
+#ifdef COFF81
+#ifdef COFF81D
+#define TNAME "coff81d"
+#define SHOT "coff81d_"
+#else
+#define TNAME "coff81"
+#define SHOT "coff81_"
+#endif
+#else
 #define	TNAME	"mac81"
 #define	SHOT	"mac81_"
-#define	TBMEM	"TBMEMORY=16M"
+#endif
+#define	TBMEM	"TBMEMORY=32M"
 #else
 #ifdef SYS76
 #define	SYSDIR	MACVOL "/S761"
 #define	USERSYS	MACVOL "/S761u"
 #define	SYSVER	0x0761
+#ifdef COFF76
+#ifdef COFF76C
+#define TNAME "coff76c"
+#define SHOT "coff76c_"
+#else
+#define TNAME "coff76"
+#define SHOT "coff76_"
+#endif
+#else
 #define	TNAME	"mac76"
 #define	SHOT	"mac76_"
+#endif
 #define	TBMEM	"TBMEMORY=16M"
 #else
 #define	SYSDIR	"/mac/sys/Sys7"
 #define	TBMEM	"TBMEMORY=8M"
+#define	SHOT	"mac_"
 #endif
 #endif
 #endif
@@ -131,7 +153,17 @@ static int hfd = -1, hseq;	/* host line */
 static char hrep[128];
 static int scrw = 800, scrh = 600;	/* the Mac's screen */
 
-#define	SETTLE	25		/* s from the Mac in front to the screen dump */
+/* the desktop pattern under the menu bar: white, or 8.1's grey Platinum one */
+/* a 50% grey desktop, or a tiled picture such as the CD's */
+#define DESKOK(chk, top, tx, ty, dom) ((SYSVER == 0x0810 ? \
+    (top) >= 20 && (top) < 300 : (top) >= 900) && ((chk) >= 900 || \
+    ((tx) >= 995 && (ty) >= 995 && (dom) < 900)))
+#define	SETTLE	25
+#ifdef SYS81
+static long heap81(), g32();
+static int rdmac();
+static long macwat;		/* a master pointer the first session's heap lost */
+#endif		/* s from the Mac in front to the screen dump */
 
 /* a host request (display/hostio.py); its answer, 0 if none in 20 s */
 static char *
@@ -265,6 +297,520 @@ char *name;
 	if (getksym(name, &a, &info) < 0 || kmemrw(a, &v, 0) < 0)
 		return -1;
 	return v;
+}
+
+static pid_t macpid;
+static void pause_ms();
+
+static int
+cofframrange(fd,address,n)
+int fd;
+unsigned long address,n;
+{
+    prpsinfo_t ps;prmap_t maps[129];struct shmid_ds ram;
+    unsigned long base,size;int count,id,i;
+    if(!n || address>0xffffffffUL-n ||
+        ioctl(fd,PIOCPSINFO,&ps)!=0 || ps.pr_zomb ||
+        !(ps.pr_pid==macpid || (ps.pr_ppid==macpid && !strcmp(ps.pr_fname,"CommandShell"))) ||
+        (id=shmget(TLOW,0,0))<0 || shmctl(id,IPC_STAT,&ram)!=0 || ram.shm_cpid!=macpid ||
+        address>=(unsigned long)ram.shm_segsz || n>(unsigned long)ram.shm_segsz-address ||
+        ioctl(fd,PIOCNMAP,&count)!=0 || count<1 || count>128)return 0;
+    memset(maps,0,sizeof maps);
+    if(ioctl(fd,PIOCMAP,maps)!=0)return 0;
+    for(i=0;i<count;i++) {
+        base=(unsigned long)maps[i].pr_vaddr;size=maps[i].pr_size;
+        if((maps[i].pr_mflags&(MA_READ|MA_SHARED))==(MA_READ|MA_SHARED) &&
+            base<=address && address-base<size && n<=size-(address-base))return 1;
+    }
+    return 0;
+}
+
+static void
+coffcommtarget(fd)
+int fd;
+{
+    prpsinfo_t ps;unsigned char bytes[32];char hex[65];long target;int i,j;
+
+    if(ioctl(fd,PIOCPSINFO,&ps)!=0 || ps.pr_pid!=macpid ||
+        ps.pr_ppid!=getpid() || ps.pr_zomb)return;
+    if(lseek(fd,(off_t)0x62cL,0)==-1 || read(fd,(char *)bytes,4)!=4)return;
+    target=((long)bytes[0]<<24)|((long)bytes[1]<<16)|((long)bytes[2]<<8)|bytes[3];
+    t_info("coff_comm_target","%lx",target);
+    if((target&1) || !((target>=0x10000L && cofframrange(fd,target,128)) ||
+        (target>=0x40800000L && target<0x40900000L)))return;
+    for(i=0;i<128;i+=32) {
+        if(lseek(fd,(off_t)(target+i),0)==-1 || read(fd,(char *)bytes,32)!=32)break;
+        for(j=0;j<32;j++)sprintf(hex+2*j,"%02x",bytes[j]);
+        t_info("coff_comm_code","%lx %s",target+i,hex);
+    }
+}
+
+static int
+coffterminal(pid,verbose)
+int pid,verbose;
+{
+    static unsigned char signature[]={0x20,0x79,0x10,0x04,0xc2,0x68,
+        0xb1,0xf9,0x10,0x04,0xc2,0x50,0x66,0x20,0x4a,0x79,0x10,0x04,0x10,0xc8};
+    unsigned char code[sizeof signature];
+    char path[48];prpsinfo_t ps;
+    long front=0,console=0;short reading=0,mode=0;
+    int fd,result=-1;
+    sprintf(path,"/proc/%d",pid);
+    if(pid<=1 || (fd=open(path,O_RDONLY))<0)return -1;
+    if(ioctl(fd,PIOCPSINFO,&ps)==0 && ps.pr_pid==pid && ps.pr_ppid==macpid &&
+        !strcmp(ps.pr_fname,"CommandShell") && !ps.pr_zomb &&
+        lseek(fd,(off_t)0x100123dcL,0)!=-1 &&
+        read(fd,(char *)code,sizeof code)==sizeof code && !memcmp(code,signature,sizeof code) &&
+        lseek(fd,(off_t)0x1004c268L,0)!=-1 && read(fd,(char *)&front,4)==4 &&
+        lseek(fd,(off_t)0x1004c250L,0)!=-1 && read(fd,(char *)&console,4)==4 &&
+        lseek(fd,(off_t)0x100410c8L,0)!=-1 && read(fd,(char *)&reading,2)==2 &&
+        lseek(fd,(off_t)0x10040872L,0)!=-1 && read(fd,(char *)&mode,2)==2) {
+        result=front!=0 && front!=console;
+        if(verbose)t_info("coff_terminal_focus","front %lx console %lx reading %d mode %d ordinary %d",
+            front,console,(int)reading,(int)mode,result);
+    }
+    close(fd);return result;
+}
+
+static void
+coffordinary(pid)
+int pid;
+{
+    int i,state=coffterminal(pid,1);
+    if(state==0) {
+        host("key meta_l+n");
+        for(i=0;i<100 && coffterminal(pid,0)==0;i++)pause_ms(100L);
+        state=coffterminal(pid,1);
+    }
+    t_check("coff_ordinary_terminal",state==1,"authenticated foreground backend %d",state);
+}
+
+static unsigned long
+coffword(p)
+unsigned char *p;
+{
+    return ((unsigned long)p[0]<<24)|((unsigned long)p[1]<<16)|((unsigned long)p[2]<<8)|p[3];
+}
+
+static int
+coffrect(port,bitmap,w,h,box)
+unsigned char *port,*bitmap;
+int w,h,*box;
+{
+    int t,l,b,r,i;
+    t=(short)(((unsigned)port[16]<<8)|port[17])-(short)(((unsigned)bitmap[0]<<8)|bitmap[1]);
+    l=(short)(((unsigned)port[18]<<8)|port[19])-(short)(((unsigned)bitmap[2]<<8)|bitmap[3]);
+    b=(short)(((unsigned)port[20]<<8)|port[21])-(short)(((unsigned)bitmap[0]<<8)|bitmap[1]);
+    r=(short)(((unsigned)port[22]<<8)|port[23])-(short)(((unsigned)bitmap[2]<<8)|bitmap[3]);
+    box[0]=l+12;box[1]=t+12;box[2]=r-24;box[3]=b-24;
+    for(i=0;i<2;i++)if(box[i]<0)box[i]=0;
+    if(box[2]>w)box[2]=w;if(box[3]>h)box[3]=h;
+    return box[2]-box[0]>=240 && box[3]-box[1]>=40;
+}
+
+static int
+coffvisible(pid)
+int pid;
+{
+    unsigned char ptr[4],port[24],bitmap[14];
+    char path[48],request[160],*reply,*q="echo auxshellvisibleoutputauxshellvisibleoutput";
+    prpsinfo_t ps;unsigned long window,pixmap;
+    int fd,w=0,h=0,box[4],rows=-1,pixels=-1,ok=0;
+    if(coffterminal(pid,0)<0)return 0;
+    sprintf(path,"/proc/%d",pid);
+    if((fd=open(path,O_RDONLY))<0)return 0;
+    if(ioctl(fd,PIOCPSINFO,&ps)!=0 || ps.pr_pid!=pid || ps.pr_ppid!=macpid ||
+        strcmp(ps.pr_fname,"CommandShell") || ps.pr_zomb ||
+        lseek(fd,(off_t)0x1004c260L,0)==-1 || read(fd,(char *)ptr,4)!=4)goto out;
+    window=coffword(ptr);
+    if(window<0x10000L || !cofframrange(fd,window,sizeof port) ||
+        lseek(fd,(off_t)window,0)==-1 || read(fd,(char *)port,sizeof port)!=sizeof port)goto out;
+    if((port[6]&0xc0)==0xc0) {
+        pixmap=coffword(port+2);
+        if(pixmap<0x10000L || !cofframrange(fd,pixmap,4) ||
+            lseek(fd,(off_t)pixmap,0)==-1 || read(fd,(char *)ptr,4)!=4)goto out;
+        pixmap=coffword(ptr);
+        if(pixmap<0x10000L || !cofframrange(fd,pixmap,sizeof bitmap) ||
+            lseek(fd,(off_t)pixmap,0)==-1 || read(fd,(char *)bitmap,sizeof bitmap)!=sizeof bitmap)goto out;
+        memmove(bitmap,bitmap+6,8);
+    } else memcpy(bitmap,port+8,8);
+    reply=host("shot " SHOT "coff_text_before");
+    if(!reply || sscanf(reply,"%d %d",&w,&h)!=2 || !coffrect(port,bitmap,w,h,box))goto out;
+    for(;*q;q++) {
+        if(*q==' ')host("key spc");
+        else {sprintf(request,"key %c",*q);host(request);}
+    }
+    host("key ret");pause_ms(1500L);
+    host("shot " SHOT "coff_text_after");
+    sprintf(request,"glyph " SHOT "coff_text_before " SHOT "coff_text_after %d %d %d %d",
+        box[0],box[1],box[2],box[3]);
+    reply=host(request);
+    if(reply)sscanf(reply,"glyph %d %d",&rows,&pixels);
+    ok=rows>=4 && rows<=24 && pixels>=128;
+    t_info("coff_visible_pixels","rect %d,%d,%d,%d rows %d pixels %d",
+        box[0],box[1],box[2],box[3],rows,pixels);
+out:
+    close(fd);return ok;
+}
+
+static unsigned long
+cofffsword(b)
+unsigned char *b;
+{
+    return ((unsigned long)b[0]<<24)|((unsigned long)b[1]<<16)|((unsigned long)b[2]<<8)|b[3];
+}
+
+static int
+cofffsread(fd,address,b,n)
+int fd,n;
+long address;
+unsigned char *b;
+{
+    return address>=0 && cofframrange(fd,(unsigned long)address,(unsigned long)n) &&
+        lseek(fd,(off_t)address,0)!=-1 && read(fd,(char *)b,n)==n;
+}
+
+static void
+cofffsdump(fd,label,address,n)
+int fd,n;
+char *label;
+long address;
+{
+    unsigned char b[32];char hex[65];int j,offset,m;
+    for(offset=0;offset<n;offset+=32) {
+        m=n-offset<32?n-offset:32;
+        if(!cofffsread(fd,address+offset,b,m))return;
+        for(j=0;j<m;j++)sprintf(hex+2*j,"%02x",b[j]);
+        t_info(label,"%lx +%d %s",address,offset,hex);
+    }
+}
+
+static void
+cofffsclose(fd,stack)
+int fd;
+unsigned long stack;
+{
+    static unsigned char hook[]={0x2f,0x00,0x0c,0x01,0x00,0x60,0x66,0x2a,0x0c,0x00};
+    static unsigned char tail[]={0x4e,0xf0,0x01,0xf1,0x00,0x08,0x7d,0x28};
+    unsigned char b[32],pb[26],fcb[24];unsigned long original,table,vcb,globals;
+    unsigned short ref,size,length;
+    if(!cofffsread(fd,0x13596L,b,sizeof hook) || memcmp(b,hook,sizeof hook) ||
+        !cofffsread(fd,0x135daL,b,sizeof tail) || memcmp(b,tail,sizeof tail))return;
+    cofffsdump(fd,"coff_fs_shadow_state",0x88694L,12);
+    cofffsdump(fd,"coff_fs_chain",0x87d24L,16);
+    cofffsdump(fd,"coff_fs_trap_entries",0x400L,20);
+    if(cofffsread(fd,0x2b6L,b,4)) {
+        globals=cofffsword(b);
+        if(globals>=0x10000UL && cofframrange(fd,globals,0x188))
+            cofffsdump(fd,"coff_fs_iodone_vector",globals+0x184,4);
+    }
+    if(!cofffsread(fd,0x88698L,b,4))return;
+    original=cofffsword(b);
+    if(original>=0x10000UL && cofframrange(fd,original,64))
+        cofffsdump(fd,"coff_fs_original_pb",original,64);
+    else if(stack>=0x10000UL && stack<=0xffffefffUL &&
+        original>=stack && original<=stack+4096UL-64) {
+        int offset,j;char hex[65];
+        for(offset=0;offset<64;offset+=32) {
+            if(lseek(fd,(off_t)(original+offset),0)==-1 || read(fd,(char *)b,32)!=32)break;
+            for(j=0;j<32;j++)sprintf(hex+2*j,"%02x",b[j]);
+            t_info("coff_fs_original_pb","%lx +%d %s",original,offset,hex);
+        }
+    }
+    if(!cofffsread(fd,0x886a0L,pb,sizeof pb))return;
+    ref=((unsigned short)pb[24]<<8)|pb[25];
+    if(!cofffsread(fd,0x3f6L,b,2))return;
+    size=((unsigned short)b[0]<<8)|b[1];
+    if(size!=94 || ref<2 || (ref-2)%size)return;
+    if(!cofffsread(fd,0x34eL,b,4))return;
+    table=cofffsword(b);
+    if(table<0x10000UL || !cofframrange(fd,table,2) || !cofffsread(fd,table,b,2))return;
+    length=((unsigned short)b[0]<<8)|b[1];
+    if(length<2 || ref>length || size>length-ref || !cofframrange(fd,table,length))return;
+    if(!cofffsread(fd,table+ref,fcb,sizeof fcb))return;
+    t_info("coff_fs_fcb","table %lx length %u size %u ref %x file %lx flags %x vcb %lx",
+        table,(unsigned)length,(unsigned)size,(unsigned)ref,cofffsword(fcb),
+        ((unsigned)fcb[4]<<8)|fcb[5],cofffsword(fcb+20));
+    cofffsdump(fd,"coff_fs_fcb_bytes",table+ref,94);
+    vcb=cofffsword(fcb+20);
+    if(vcb>=0x10000UL && cofframrange(fd,vcb,82) && !(vcb&1))
+        cofffsdump(fd,"coff_fs_vcb_identity",vcb+0x4c,6);
+}
+
+static void
+coffqdchain(fd,a5)
+int fd;
+long a5;
+{
+    unsigned char b[32];char hex[65];unsigned long slot,port;int i,j,n;
+    if(a5<0x10000L || !cofframrange(fd,a5,4) || lseek(fd,(off_t)a5,0)==-1 || read(fd,(char *)b,4)!=4)return;
+    slot=coffword(b);
+    t_info("coff_qd_slot","A5 %lx slot %lx",a5,slot);
+    if(slot<0x10000L || !cofframrange(fd,slot,4) || lseek(fd,(off_t)slot,0)==-1 || read(fd,(char *)b,4)!=4)return;
+    port=coffword(b);
+    t_info("coff_qd_native_port","A5 %lx port %lx",a5,port);
+    if(port<0x10000L || !cofframrange(fd,port,108))return;
+    for(i=0;i<108;i+=32) {
+        n=108-i<32?108-i:32;
+        if(lseek(fd,(off_t)(port+i),0)==-1 || read(fd,(char *)b,n)!=n)break;
+        for(j=0;j<n;j++)sprintf(hex+2*j,"%02x",b[j]);
+        t_info("coff_qd_native_bytes","%lx +%d %s",port,i,hex);
+    }
+}
+
+static void
+coffqdtargets(fd)
+int fd;
+{
+    unsigned char b[32];char hex[65];unsigned long target;int i,j,k;
+    static unsigned short traps[6]={0xa874,0xa882,0xa884,0xa885,0xa8ec,0xa901};
+    cofffsdump(fd,"coff_window_manager",0x9d6L,16);
+    cofffsdump(fd,"coff_original_frontwindow",0x1004c260L,4);
+    if(lseek(fd,(off_t)0xcb2,0)!=-1 && read(fd,(char *)b,1)==1)
+        t_info("coff_mmu32bit","%u",(unsigned)b[0]);
+    for(i=0;i<6;i++) {
+        if(lseek(fd,(off_t)(0xe00L+4*(traps[i]&0x3ff)),0)==-1 || read(fd,(char *)b,4)!=4)continue;
+        target=coffword(b);
+        for(k=0;k<3;k++) {
+            if(!((target>=0x10000L && cofframrange(fd,target,32)) ||
+                (target>=0x40800000L && target<=0x40900000L-32)))break;
+            if(lseek(fd,(off_t)target,0)==-1 || read(fd,(char *)b,32)!=32)break;
+            for(j=0;j<32;j++)sprintf(hex+2*j,"%02x",b[j]);
+            t_info("coff_qd_entry","trap %x depth %d target %lx %s",traps[i],k,target,hex);
+            if(b[0]==0x4e && b[1]==0xf9)target=coffword(b+2);
+            else if(traps[i]==0xa882 && !memcmp(b,"\040\125\040\120\014\150\000\061\000\110\147\004\116\372",14))
+                target+=14+(short)(((unsigned)b[14]<<8)|b[15]);
+            else break;
+        }
+    }
+    if(lseek(fd,(off_t)0x1008L,0)!=-1 && read(fd,(char *)b,4)==4) {
+        target=coffword(b);
+        if(target>=0x10000L && cofframrange(fd,target,16) && lseek(fd,(off_t)target,0)!=-1 &&
+            read(fd,(char *)b,16)==16 &&
+            !memcmp(b,"\040\125\040\120\014\150\000\061\000\110\147\004\116\372",14)) {
+            target+=14+(short)(((unsigned)b[14]<<8)|b[15]);
+            if(target>=0x10000L && cofframrange(fd,target,12) && lseek(fd,(off_t)target,0)!=-1 &&
+                read(fd,(char *)b,12)==12 && !memcmp(b,"\116\126\377\374\110\347\007\030\074\056\000\024",12) &&
+                lseek(fd,(off_t)0x1aa0L,0)!=-1 && read(fd,(char *)b,4)==4) {
+                target=coffword(b);
+                for(i=0;i<64;i+=32) {
+                    if(!((target>=0x10000L && cofframrange(fd,target,64)) ||
+                        (target>=0x40800000L && target<=0x40900000L-64)) ||
+                        lseek(fd,(off_t)(target+i),0)==-1 || read(fd,(char *)b,32)!=32)break;
+                    for(j=0;j<32;j++)sprintf(hex+2*j,"%02x",b[j]);
+                    t_info("coff_qd_dispatch","vector 1aa0 target %lx +%d %s",target,i,hex);
+                }
+            }
+        }
+    }
+}
+
+static int
+coffparentrange(location,size)
+long location,size;
+{
+    char path[48];int fd,ok;
+    sprintf(path,"/proc/%d",(int)macpid);
+    if((fd=open(path,O_RDONLY))<0)return 0;
+    ok=location>0 && size>0 && cofframrange(fd,(unsigned long)location,(unsigned long)size);
+    close(fd);return ok;
+}
+
+static void
+coffparentstack(char *buf)
+{
+    char *p;long base=0,size=0,sp=0,location=0,native=0,cleanup=-99;
+    p=strstr(buf,"hooks_cleanup ");if(p)sscanf(p,"hooks_cleanup %ld",&cleanup);
+    t_check("coff_public_hooks_cleanup",cleanup>=0 &&
+        (getsym("uinter_coffnative47")!=1 || cleanup==1),"%ld",cleanup);
+    p=strstr(buf,"private_stack_base ");if(p)sscanf(p,"private_stack_base %ld",&base);
+    p=strstr(buf,"private_stack_size ");if(p)sscanf(p,"private_stack_size %ld",&size);
+    p=strstr(buf,"fork_parent_sp ");if(p)sscanf(p,"fork_parent_sp %ld",&sp);
+    p=strstr(buf,"native_location ");if(p)sscanf(p,"native_location %ld",&location);
+    p=strstr(buf,"native_size ");if(p)sscanf(p,"native_size %ld",&native);
+    t_check("coff_parent_private_stack",base==0x70000000L && size==65536L &&
+        sp>=base && sp-base<size && location>0 && native>0 &&
+        coffparentrange(location,native) &&
+        !(sp>=location && sp-location<native),
+        "base %lx size %ld SP %lx native %lx/%ld",base,size,sp,location,native);
+}
+
+static void
+coffsnapshot(pid)
+int pid;
+{
+    char path[48],hex[65],buf[4097];
+    unsigned char memory[32];
+    prpsinfo_t ps;prstatus_t st;
+    unsigned long at=0,info;
+    long count,record[8],address;
+    int fd,i,j,n,offset;
+    t_info("coff_stackspace","calls %ld forward %ld allocations %ld refused %ld",
+        getsym("uin_coffspacecalls"),getsym("uin_coffspaceforward"),
+        getsym("uin_coffspacealloc"),getsym("uin_coffspacerefused"));
+    sprintf(path,"/proc/%d",pid);
+    if(pid>1 && (fd=open(path,O_RDONLY))>=0) {
+        if(ioctl(fd,PIOCPSINFO,&ps)==0 && ps.pr_pid==pid &&
+            !strcmp(ps.pr_fname,"CommandShell") && !ps.pr_zomb && ps.pr_ppid==macpid &&
+            ioctl(fd,PIOCSTATUS,&st)==0) {
+            t_info("coff_child_state","parent %d PC %lx SP %lx A5 %lx instr %lx",
+                (int)ps.pr_ppid,(long)st.pr_reg[16],(long)st.pr_reg[15],
+                (long)st.pr_reg[13],st.pr_instr);
+            cofffsclose(fd,(unsigned long)st.pr_reg[15]);
+            t_info("coff_child_a6","%lx",(long)st.pr_reg[14]);
+            coffqdtargets(fd);
+            t_info("coff_child_io","D0 %lx D1 %lx A0 %lx A1 %lx",
+                (long)st.pr_reg[0],(long)st.pr_reg[1],(long)st.pr_reg[8],(long)st.pr_reg[9]);
+            address=(long)st.pr_reg[8];
+            if(address>=0x10000L && cofframrange(fd,address,64))
+                for(offset=0;offset<64;offset+=32) {
+                    if(lseek(fd,(off_t)(address+offset),0)==-1 ||
+                        read(fd,(char *)memory,32)!=32)break;
+                    for(j=0;j<32;j++)sprintf(hex+2*j,"%02x",memory[j]);
+                    t_info("coff_io_pb","%lx +%d %s",address,offset,hex);
+                }
+            for(i=0;i<3;i++) {
+                address=i==2?0x3e0L:i?0x390L:0x350L;
+                if(lseek(fd,(off_t)address,0)!=-1 && read(fd,(char *)memory,32)==32) {
+                    for(j=0;j<32;j++)sprintf(hex+2*j,"%02x",memory[j]);
+                    t_info("coff_fs_lowmem","%lx %s",address,hex);
+                }
+            }
+            for(i=0;i<2;i++) {
+                address=(long)st.pr_reg[i?15:16];
+                if(lseek(fd,(off_t)address,0)!=-1 &&
+                    (n=read(fd,(char *)memory,i?32:16))>0) {
+                    for(j=0;j<n;j++)sprintf(hex+2*j,"%02x",memory[j]);
+                    t_info("coff_child_memory","%lx %s",address,hex);
+                }
+            }
+            address=0x904L;
+            if(lseek(fd,(off_t)address,0)!=-1 && read(fd,(char *)memory,4)==4) {
+                long a5=((long)memory[0]<<24)|((long)memory[1]<<16)|((long)memory[2]<<8)|memory[3];
+                t_info("coff_qd_current_a5","%lx",a5);
+                for(i=0;i<2;i++) {
+                    address=i?(long)st.pr_reg[13]:a5;
+                    if(address<4 || !cofframrange(fd,address-4,8))continue;
+                    coffqdchain(fd,address);
+                    if(lseek(fd,(off_t)(address-4),0)!=-1 && read(fd,(char *)memory,4)==4) {
+                        long port=((long)memory[0]<<24)|((long)memory[1]<<16)|((long)memory[2]<<8)|memory[3];
+                        t_info("coff_qd_port","A5 %lx port %lx",address,port);
+                        if(port>=0x10000L && cofframrange(fd,port,108))
+                            for(offset=0;offset<108;offset+=32) {
+                                n=108-offset<32?108-offset:32;
+                                if(lseek(fd,(off_t)(port+offset),0)==-1 ||
+                                    read(fd,(char *)memory,n)!=n)break;
+                                for(j=0;j<n;j++)sprintf(hex+2*j,"%02x",memory[j]);
+                                t_info("coff_qd_port_bytes","%lx +%d %s",port,offset,hex);
+                            }
+                    }
+                }
+            }
+            at=0;
+            if(getksym("uin_coffqdfirst",&at,&info)==0) {
+                int km=open("/dev/kmem",O_RDONLY);
+                long port=0;
+                if(km>=0) {
+                    if(lseek(km,(off_t)(at+12),0)!=-1)
+                        read(km,(char *)&port,4);
+                    close(km);
+                }
+                if(port>=0x10000L && cofframrange(fd,port,108))
+                    for(offset=0;offset<108;offset+=32) {
+                        n=108-offset<32?108-offset:32;
+                        if(lseek(fd,(off_t)(port+offset),0)==-1 ||
+                            read(fd,(char *)memory,n)!=n)break;
+                        for(j=0;j<n;j++)sprintf(hex+2*j,"%02x",memory[j]);
+                        t_info("coff_qd_first_port","%lx +%d %s",port,offset,hex);
+                    }
+            }
+            for(i=0;i<4096;i+=32) {
+                address=(long)st.pr_reg[15]+i;
+                if(lseek(fd,(off_t)address,0)==-1 || read(fd,(char *)memory,32)!=32)break;
+                for(j=0;j<32;j++)sprintf(hex+2*j,"%02x",memory[j]);
+                t_info("coff_child_stack","%lx %s",address,hex);
+            }
+        }
+        close(fd);
+    }
+    t_info("coff_file_counts","reads %ld seeks %ld errors %ld captured %ld",
+        getsym("aux_filecalls"),getsym("aux_filecalls")<0?-1:getsym("aux_filecount")-getsym("aux_filecalls"),getsym("aux_filebad"),getsym("aux_filefailedcount"));
+    at=0;count=getsym("aux_filefailedcount");
+    if(count>0 && count<=16 && getksym("aux_filefailed",&at,&info)==0 &&
+        (fd=open("/dev/kmem",O_RDONLY))>=0) {
+        for(i=0;i<count;i++)if(lseek(fd,(off_t)(at+i*sizeof record),0)!=-1 &&
+            read(fd,(char *)record,sizeof record)==sizeof record)
+            t_info("coff_file_error","PID %ld call %ld fd %ld errno %ld value %ld file %lx vnode %lx offset %lx",
+                record[0],record[1],record[2],record[3],record[4],record[5],record[6],record[7]);
+        close(fd);
+    }
+    at=0;count=getsym("aux_openfailedcount");
+    if(count>0 && count<=16 && getksym("aux_openfailed",&at,&info)==0 &&
+        (fd=open("/dev/kmem",O_RDONLY))>=0) {
+        long opened[23];
+        for(i=0;i<count;i++)if(lseek(fd,(off_t)(at+i*sizeof opened),0)!=-1 &&
+            read(fd,(char *)opened,sizeof opened)==sizeof opened)
+            t_info("coff_open_error","PID %ld errno %ld flags %lx mode %lx address %lx PC %lx copied %ld path %.64s",
+                opened[0],opened[1],opened[2],opened[3],opened[4],opened[5],opened[6],(char *)(opened+7));
+        close(fd);
+    }
+    if((fd=open("/dev/kmem",O_RDONLY))>=0) {
+        char *symbols[12],*counts[12];int k,words;
+        symbols[0]="uin_coffdraw";symbols[1]="uin_coffset";symbols[2]="uin_coffnatdraw";
+        symbols[3]="uin_cofftooltext";symbols[4]="uin_cofftoolbits";symbols[5]="uin_cofffont";symbols[6]="uin_cofffontpost";symbols[7]="uin_coffpixels";symbols[8]="uin_coffvis";symbols[9]="uin_coffwin";symbols[10]="uin_coffviswrite";symbols[11]="uin_coffconvert";
+        counts[0]="uin_coffdrawcount";counts[1]="uin_coffsetcount";counts[2]="uin_coffnatdrawcount";
+        counts[3]="uin_cofftooltextcount";counts[4]="uin_cofftoolbitscount";counts[5]="uin_cofffontcount";counts[6]="uin_cofffontpostcount";counts[7]="uin_coffpixelscount";counts[8]="uin_coffviscount";counts[9]="uin_coffwincount";counts[10]="uin_coffviswritecount";counts[11]="uin_coffconvertcount";
+        for(k=0;k<12;k++) {
+            count=getsym(counts[k]);at=0;
+            t_info("coff_qd_capture","%s count %ld",symbols[k],count);
+            if(count<=0 || count>8 || getksym(symbols[k],&at,&info)!=0)continue;
+            words=count*(k==11?40:k==1?8:k==8?32:k==10?128:k==9?96:k>=5&&k<7?64:48);
+            for(i=0;i<words;i+=8)if(lseek(fd,(off_t)(at+i*4),0)!=-1 &&
+                read(fd,(char *)record,sizeof record)==sizeof record)
+                t_info(symbols[k],"%d %lx %lx %lx %lx %lx %lx %lx %lx",i,
+                    record[0],record[1],record[2],record[3],record[4],record[5],record[6],record[7]);
+        }
+        close(fd);
+    }
+    t_info("coff_native_fault","count %ld PC %lx address %lx",
+        getsym("guest_nfault7"),getsym("guest_f7pc"),getsym("guest_f7ea"));
+    t_info("coff_alert_count","%ld",getsym("uin_coffalertcount"));
+    t_info("coff_console_state","bind %ld out %ld in %ld read %ld notify %ld detach %ld",
+        getsym("aux_conbind"),getsym("aux_conout"),getsym("aux_conin"),
+        getsym("aux_conread"),getsym("aux_connotify"),getsym("aux_condetach"));
+    t_info("coff_console_diag","open %ld openerr %ld stage %ld error %ld ioc %ld cmd %lx len %ld reply %ld",
+        getsym("aux_conopen"),getsym("aux_conopenerr"),getsym("aux_constage"),getsym("aux_conerror"),
+        getsym("aux_conioc"),getsym("aux_concmd"),getsym("aux_conlen"),getsym("aux_conreply"));
+    if((fd=open("/dev/kmem",O_RDONLY))>=0) {
+        char *symbols[5];int k,words;
+        symbols[0]="uin_coffstartup";symbols[1]="uin_coffalert";symbols[2]="uin_coffqdfirst";symbols[3]="uin_coff47";symbols[4]="uin_coffsyserr";
+        for(k=0;k<5;k++) {at=0;if(getksym(symbols[k],&at,&info)==0) {
+            words=k==4?320:k==3?16:k==2?8:k?136:24;
+            for(i=0;i<words;i+=8)if(lseek(fd,(off_t)(at+i*4),0)!=-1 &&
+                read(fd,(char *)record,sizeof record)==sizeof record)
+                t_info(symbols[k],"%d %lx %lx %lx %lx %lx %lx %lx %lx",i,
+                    record[0],record[1],record[2],record[3],record[4],record[5],record[6],record[7]);
+        }
+        }
+        close(fd);
+    }
+    at=0;
+    count=getsym("uin_cofftracecount");
+    if(count>0 && getksym("uin_cofftrace",&at,&info)==0 &&
+        (fd=open("/dev/kmem",O_RDONLY))>=0) {
+        for(i=count>64?count-64:0;i<count;i++) {
+            if(lseek(fd,(off_t)(at+(i&63)*sizeof record),0)!=-1 &&
+                read(fd,(char *)record,sizeof record)==sizeof record)
+                t_info("coff_native_trap","%lx %lx %lx %lx %lx %lx %lx %lx",
+                    record[0],record[1],record[2],record[3],record[4],record[5],record[6],record[7]);
+        }
+        close(fd);
+    }
+    if((fd=open("/tmp/coffchild.out",O_RDONLY))>=0) {
+        n=read(fd,buf,sizeof buf-1);close(fd);
+        if(n>0) {buf[n]=0;for(i=0;i<n;i+=128)
+            t_info("coff_child_log","%.*s",n-i<128?n-i:128,buf+i);}
+    }
 }
 
 #ifndef SYS76
@@ -563,7 +1109,6 @@ int fd, secs;
 	}
 }
 
-static pid_t macpid;
 
 /* startmac's output read and dropped after the relay, so its writes never block */
 static pid_t
@@ -993,13 +1538,25 @@ startmac()
 	static char *av[] = { "/mac/bin/startmac", 0 };
 	char pat[80], *q1, *o, *s, *z;
 	int p[2], st, id, fd;
-	long npriv0, npriv;
+	long npriv0, npriv, nal0;
 	pid_t pid, dp;
 
 	t_rearm(240);
+	if ((nal0 = getsym("uinter_nalwatch")) < 0)
+		nal0 = 0;
 	/* opens and commands from here on; the ring keeps the first 8 KB */
 	setsym("aux_tpos", 0L);
 	setsym("uinter_trace", 1L);
+	t_check("deferred_trace_armed",setsym("aux_defertrace",1L)==0,"");
+#ifdef SYS81
+        {
+            long trace=access("/etc/aux/ASLMTraceProbe",F_OK)==0 ? 1L : 0L;
+            t_check("aslm_trace_configuration",setsym("uinter_aslmtrace",trace)==0 &&
+                getsym("uinter_aslmtrace")==trace,"requested %ld",trace);
+        }
+	t_check("native_filemanager_groups",getsym("uinter_fmgroup")==0,
+	    "suppression %ld",getsym("uinter_fmgroup"));
+#endif
 #ifdef SYS6
 	setsym("aux_trace", 4L | 8L | 16L);
 #else
@@ -1069,6 +1626,7 @@ startmac()
 	if (macid > 0)
 		t_check("console_after_exit", waitfront(0L, 5), "front %ld", front());
 	t_info("privileged_emulated", "%ld", npriv - npriv0);
+	t_info("aline_watched", "%ld", getsym("uinter_nalwatch") - nal0);
 	/* killed: Mac RAM goes with it, or it blocks the next startmac */
 	t_check("mac_ram_freed", shmget(TLOW, 0, 0) < 0, "'tLOW' left after SIGKILL");
 	if ((id = shmget(TLOW, 0, 0)) >= 0)
@@ -1292,9 +1850,11 @@ static int
 shotdiff(a, b)
 char *a, *b;
 {
-	char req[64], *r;
+	char req[128], *r;
 	int n = -1;
+	unsigned long na = strlen(a), nb = strlen(b);
 
+	if (na > sizeof req - 6 || nb > sizeof req - 6 - na) return -1;
 	sprintf(req, "cmp %s %s", a, b);
 	if ((r = host(req)) != 0 && sscanf(r, "diff %d", &n) != 1)
 		n = strcmp(r, "same") == 0 ? 0 : -1;
@@ -1366,6 +1926,83 @@ char *shot;
 	host("button 0");
 }
 
+#ifdef SYS81
+static long
+mac_cpu()
+{
+ char path[40];
+ prpsinfo_t ps;
+ prstatus_t st;
+ struct dirent *de;
+ DIR *d;
+ long ms = 0,ut,sy;
+ char name[17];
+ int fd, found = 0;
+
+ if ((d = opendir("/proc")) == 0) return -1;
+ while ((de = readdir(d)) != 0) {
+  if (de->d_name[0] == '.') continue;
+  sprintf(path, "/proc/%s", de->d_name);
+  if ((fd = open(path, O_RDONLY)) < 0) continue;
+  if (ioctl(fd, PIOCPSINFO, &ps) == 0 && !ps.pr_zomb &&
+      (ps.pr_pid == macpid || ps.pr_ppid == macpid)) {
+   if (found>=32) {close(fd);closedir(d);return -1;}
+   if (ioctl(fd, PIOCSTATUS, &st) != 0) { close(fd); closedir(d); return -1; }
+   ut=st.pr_utime.tv_sec*1000L+st.pr_utime.tv_nsec/1000000;
+   sy=st.pr_stime.tv_sec*1000L+st.pr_stime.tv_nsec/1000000;
+   memcpy(name,ps.pr_fname,16);name[16]=0;
+   t_info("finder_idle_process","pid %ld parent %ld name %s state %c user %ld system %ld signal %d pending %lx held %lx",
+       (long)ps.pr_pid,(long)ps.pr_ppid,name,ps.pr_sname,ut,sy,
+       st.pr_cursig,st.pr_sigpend.sigbits[0],st.pr_sighold.sigbits[0]);
+   ms += (st.pr_utime.tv_sec + st.pr_stime.tv_sec) * 1000L +
+       (st.pr_utime.tv_nsec + st.pr_stime.tv_nsec) / 1000000;
+   found++;
+  }
+  close(fd);
+ }
+ closedir(d);
+ return found ? ms : -1;
+}
+#endif
+
+#ifdef SYS81
+static void
+logoutstate()
+{
+ char path[40], hex[129];
+ unsigned char b[64];
+ prpsinfo_t ps;
+ prstatus_t st;
+ struct dirent *de;
+ DIR *d;
+ int fd, i, n, j;
+ long a;
+
+ if ((d = opendir("/proc")) == 0) return;
+ while ((de = readdir(d)) != 0) {
+  if (de->d_name[0] == '.') continue;
+  sprintf(path, "/proc/%s", de->d_name);
+  if ((fd = open(path, O_RDONLY)) < 0) continue;
+  if (ioctl(fd, PIOCPSINFO, &ps) == 0 && !ps.pr_zomb &&
+      (ps.pr_pid == macpid || ps.pr_ppid == macpid) &&
+      ioctl(fd, PIOCSTATUS, &st) == 0) {
+   t_info("logout_state", "pid %d %s %c wchan %lx pc %lx instr %lx d0 %lx sp %lx",
+    (int)ps.pr_pid, ps.pr_fname, ps.pr_sname, (long)ps.pr_wchan,
+    (long)st.pr_reg[16], st.pr_instr, (long)st.pr_reg[0], (long)st.pr_reg[15]);
+   for (j = 0; j < 2; j++) {
+    a = (long)st.pr_reg[j ? 15 : 16];
+    if (lseek(fd, (off_t)a, 0) != -1 && (n = read(fd, (char *)b, sizeof b)) > 0) {
+     for (i = 0; i < n; i++) sprintf(hex + 2*i, "%02x", b[i]);
+     t_info("logout_memory", "%lx %s", a, hex);
+    }
+   }
+  }
+  close(fd);
+ }
+ closedir(d);
+}
+#endif
+
 /* the session ended from the Mac: startmac exits by itself, nothing halts */
 static void
 loggedout(pfx)
@@ -1380,7 +2017,10 @@ char *pfx;
 	for (t0 = t_now_ms(); t_now_ms() - t0 < 60000L; pause_ms(500L))
 		if ((r = waitpid(macpid, &st, WNOHANG)) != 0)
 			break;
-	sprintf(n, "%s_exits", pfx);
+	#ifdef SYS81
+ if (r != macpid) { host("shot mac81_logout_stall"); logoutstate(); }
+#endif
+ sprintf(n, "%s_exits", pfx);
 	t_check(n, r == macpid, "startmac still running after %ld ms", t_now_ms() - t0);
 	sprintf(n, "%s_clean", pfx);
 	/* doLogout's _exit(0); a fault or any other exit is not a Log Out */
@@ -1493,6 +2133,19 @@ sdskipped()
 #define	AUXRES		"/mac/lib/Resources/%AUXResources"
 #define	AUXRESSP	"/mac/lib/Resources/%AUX Resources"
 
+/* the Special menu's title, its Shut Down item and the Apple menu's Log Out */
+#ifdef SYS81
+#define	SPECIALH	181
+#define	SHUTH		200
+#define	SHUTV		109
+#define	LOGOUTV		123
+#else
+#define	SPECIALH	232
+#define	SHUTH		250
+#define	SHUTV		139
+#define	LOGOUTV		60
+#endif
+
 /* Special > Shut Down as root: the Mac ends by itself, with no panic */
 static void
 shutdown76()
@@ -1507,17 +2160,25 @@ shutdown76()
 	/* the halt recorded, the session killed in its place */
 	setsym("uinter_adcall", 0L);
 	setsym("uinter_adtest", 1L);
-	moveto(232, 9);
+#ifdef SYS81
+	macdump("shutdown_error", 0xaf0L, 2);
+	macdump("shutdown_power_entry", 0xd14cL, 12);
+	macdump("shutdown_dialog_call", 0xd166L, 12);
+#endif
+	moveto(SPECIALH, 9);
 	host("button 1");
 	pause_ms(800L);
-	moveto(250, 139);
+	moveto(SHUTH, SHUTV);
 	pause_ms(500L);
 	host("shot " SHOT "shutdown");
 	host("button 0");
 	for (t0 = t_now_ms(); t_now_ms() - t0 < 60000L; pause_ms(500L))
 		if ((r = waitpid(macpid, &st, WNOHANG)) != 0)
 			break;
-	t_check("shutdown_exits", r == macpid, "startmac still running after %ld ms",
+	#ifdef SYS81
+ if (r != macpid) { host("shot mac81_shutdown_stall"); logoutstate(); }
+#endif
+ t_check("shutdown_exits", r == macpid, "startmac still running after %ld ms",
 	    t_now_ms() - t0);
 	if (r == macpid) {
 		t_info("shutdown_status", "%#x after %ld ms", st, t_now_ms() - t0);
@@ -1563,9 +2224,6 @@ halt76()
 		macpid = 0;
 	unlink(AUXRESSP);
 }
-
-/* the Mac menus' Log Out item */
-#define	LOGOUTV	60
 
 /* path and everything under it owned by uid */
 static void
@@ -1649,6 +2307,7 @@ char *sys, *pfx;
 	static char *av[] = { "/mac/bin/startmac", 0 };
 	char *env[10], tb[80], n[40], shot[40], req[60], *r;
 	int p[2], fd, i, st, chk = 0, white = 0, top = 0;
+    int tilex = 0, tiley = 0, dominant = 1000;
 	pid_t pid, dp;
 
 	t_rearm(240);
@@ -1688,22 +2347,32 @@ char *sys, *pfx;
 			t_rearm(120);
 			host(req);
 			sprintf(req, "mac %s", shot);
+			tilex = tiley = 0; dominant = 1000;
 			if ((r = host(req)) != 0)
-				sscanf(r, "checker %d white %d top %d", &chk, &white, &top);
+				sscanf(r, "checker %d white %d top %d tilex %d tiley %d dominant %d",
+                    &chk, &white, &top, &tilex, &tiley, &dominant);
 			sprintf(req, "shot %s", shot);
-			if (chk >= 900 && top >= 900)
+			if (DESKOK(chk, top, tilex, tiley, dominant))
 				break;
 			pause_ms(10000L);
 		}
 		sprintf(n, "%s_desktop", pfx);
-		t_check(n, chk >= 900 && top >= 900, "checker %d, menu bar %d per mille", chk, top);
+		t_check(n, DESKOK(chk, top, tilex, tiley, dominant), "checker %d, menu %d, tile %d/%d, dominant %d",
+            chk, top, tilex, tiley, dominant);
+#ifdef SYS81
+		/* the layout repeats: the next session watches what this one lost */
+		sprintf(req, "/proc/%05d", (int)pid);
+		macwat = heap81(req, 0L);
+		sprintf(n, "%s_heap", pfx);
+		t_check(n, macwat == 0, "master pointer %lx lost", macwat);
+#endif
 		if (strcmp(pfx, "halt") == 0) {
 			halt76();
 			goto out;
 		}
 		if (uid) {
 			/* Log Out in place of Restart and Shut Down */
-			moveto(232, 9);
+			moveto(SPECIALH, 9);
 			host("button 1");
 			pause_ms(800L);
 			sprintf(req, "shot %s%s_special", SHOT, pfx);
@@ -1730,7 +2399,7 @@ char *sys, *pfx;
 			/* with the dialog's resources Special > Log Out still logs out */
 			link(AUXRES, AUXRESSP);
 			sprintf(req, "%s%s_speciallogout", SHOT, pfx);
-			menuitem(232, 9, 250, 123, req);
+			menuitem(SPECIALH, 9, SHUTH, SHUTV - 16, req);
 		} else {
 			sprintf(req, "%s%s_apple", SHOT, pfx);
 			menuitem(20, 9, 60, LOGOUTV, req);
@@ -1794,6 +2463,1162 @@ macvol()
 	    "mount " MACDEV " failed");
 }
 
+#ifdef SYS81
+#ifdef OT81
+#include "ot81-run.h"
+#endif
+static unsigned long
+probe81(pfx)
+char *pfx;
+{
+	char b[8192], n[96], *q, *end;
+	unsigned long hi = 0, lo = 0;
+	long stop = t_now_ms() + 60000L;
+	int f, k, count = 0, done = 0, finderok = 0;
+
+	b[0] = 0;
+
+	unlink("/tmp/mac81probe.out");
+	host("key m"); host("key a"); host("key c"); host("key 8");
+	host("key 1"); host("key p"); host("key r"); host("key o");
+	host("key b"); host("key e"); host("key meta_l+o");
+	while (t_now_ms() < stop) {
+		f = open("/tmp/mac81probe.out", O_RDONLY);
+		k = f < 0 ? -1 : read(f, b, sizeof b - 1);
+		if (f >= 0) close(f);
+		if (k > 0) {
+			b[k] = 0;
+			if (strstr(b, "mac81probe done")) { done = 1; break; }
+		}
+		pause_ms(500L);
+	}
+	sprintf(n, "%s_complete", pfx);
+	t_check(n, done, "helper did not finish");
+	for (q = b; q && *q; q = end ? end + 1 : 0) {
+		end = strchr(q, '\n');
+		if (!end) break;
+		*end = 0;
+		if (!strncmp(q, "mac81probe I ", 13))
+			t_info(pfx, "%s", q + 13);
+        if (!strncmp(q,"mac81probe I video_main ",24)) {
+            unsigned char lm[4]; char path[32]; long observed=atol(q+24),current=-1;
+            sprintf(path,"/proc/%05d",(int)macpid);
+            if ((f=open(path,O_RDONLY))>=0) {
+                if(rdmac(f,0x8a4L,(char *)lm,4)) current=g32(lm);
+                close(f);
+            }
+            t_info("video_main_identity","public %ld lowmem %ld equal %d",observed,current,observed==current);
+        }
+		if (!strcmp(q, "mac81probe P finder_process")) finderok = 1;
+		if (!strncmp(q, "mac81probe I finder_psn ", 24))
+			sscanf(q + 24, "%lu %lu", &hi, &lo);
+		if (!strncmp(q, "mac81probe P ", 13) || !strncmp(q, "mac81probe F ", 13)) {
+			sprintf(n, "%s_%.60s", pfx, q + 13);
+			t_check(n, q[11] == 'P', "%s", q);
+			count++;
+		}
+	}
+	sprintf(n, "%s_contracts", pfx);
+	t_check(n, count == 82, "%d of 82 contracts", count);
+	return done && finderok && !hi ? lo : 0;
+}
+
+static int
+windowtitle81(fd, title)
+int fd;
+char *title;
+{
+    unsigned char b[148], p[256];
+    long w, h, text; int i, n;
+    if (!rdmac(fd, 0x9d6L, (char *)b, 4)) return 0;
+    w=g32(b);
+    for (i=0; w && i<64; i++) {
+        if ((w&1) || !rdmac(fd,w,(char *)b,sizeof(b))) return 0;
+        if (b[110]) {
+            h=g32(b+134);
+            if (!h || (h&1) || !rdmac(fd,h,(char *)p,4)) return 0;
+            text=g32(p);
+            if (!text || !rdmac(fd,text,(char *)p,1)) return 0;
+            n=p[0];
+            if (n && !rdmac(fd,text+1,(char *)p,n)) return 0;
+            p[n]=0;
+            t_info("panel_window_title","%s",(char *)p);
+            return !strcmp((char *)p,title);
+        }
+        h=g32(b+144);
+        if (h==w) return 0;
+        w=h;
+    }
+    return 0;
+}
+
+static long idledefaultvalues[5];
+static int idledefaultseen;
+
+static int
+idlestub81(phase)
+int phase;
+{
+    char *opt=getenv("MACPMSTUB"),*wait=getenv("MACPMIDLE");
+    char *names[5]={"uin_pmidlestate","uin_pmidlerequests","uin_pmidleallocations","uin_pmidlerestores","uin_pmidlewatchedcalls"};
+    unsigned long base,info;long value[5],zero=0;int i,ok=1;
+    if(!opt && !wait) {
+        if(getsym("uin_pmidle")!=1 || getsym("uin_pmidlestub")!=1)return 0;
+        for(i=0;i<5;i++) {
+            base=0;info=0;value[i]=-1;
+            if(getksym(names[i],&base,&info)<0 || !base || kmemrw(base,&value[i],0)<0)ok=0;
+        }
+        t_info("finder_idle_stub","default phase %d state %ld requests %ld allocations %ld restores %ld watched %ld",
+            phase,value[0],value[1],value[2],value[3],value[4]);
+        if(phase==1) {
+            idledefaultseen=0;
+            if(!ok || value[0]!=2 || value[1]<1 || value[2]<1)return 0;
+            for(i=0;i<5;i++)idledefaultvalues[i]=value[i];
+            idledefaultseen=1;return 1;
+        }
+        return ok && idledefaultseen && value[0]==(phase==2 ? 0 : 2) &&
+            value[1]==idledefaultvalues[1] && value[2]==idledefaultvalues[2] &&
+            value[3]==idledefaultvalues[3]+(phase==2 ? 1 : 0) &&
+            value[4]>=idledefaultvalues[4];
+    }
+    if(phase==1 && setsym("uin_pmidlestub",0L)<0)ok=0;
+    if(!opt || strcmp(opt,"1"))return ok;
+    if(!wait || strcmp(wait,"1"))return 0;
+    for(i=0;i<5;i++) {
+        base=0;info=0;value[i]=-1;
+        if(getksym(names[i],&base,&info)<0 || !base || kmemrw(base,&value[i],0)<0)ok=0;
+        else if(phase==1 && !i && value[0]!=0)return 0;
+        else if(phase==1 && i && kmemrw(base,&zero,1)<0)ok=0;
+    }
+    t_info("finder_idle_stub","phase %d state %ld requests %ld allocations %ld restores %ld watched %ld",
+        phase,value[0],value[1],value[2],value[3],value[4]);
+    if(phase==1)return ok && value[0]==0 && setsym("uin_pmidlestub",1L)==0;
+    if(phase==2 && setsym("uin_pmidlestub",0L)<0)ok=0;
+    return ok && value[0]==(phase==2 ? 0 : 2) && value[1]==1 && value[2]==1 && value[3]==(phase==2 ? 1 : 0);
+}
+
+static int
+idlepm81(arm)
+int arm;
+{
+    char *opt=getenv("MACPMIDLE");
+    char *names[6]={"uin_pmidlecalls","uin_pmidlerefused","uin_pmidlesleeps","uin_pmidleinterrupts","uin_pmidleticks","uin_pmidlezero"};
+    unsigned long base,info;long value[6],zero=0,words[12],count;int i,j,row,ok;
+    if(!opt && !getenv("MACPMSTUB"))return idlestub81(arm ? 1 : 0);
+    ok=setsym("uin_pmidle",0L)==0;
+    if(arm && !idlestub81(1))ok=0;
+    if(!opt || strcmp(opt,"1"))return ok;
+    for(i=0;i<6;i++) {
+        base=0;info=0;value[i]=-1;
+        if(getksym(names[i],&base,&info)<0 || !base ||
+            kmemrw(base,&value[i],0)<0)ok=0;
+        else if(arm && kmemrw(base,&zero,1)<0)ok=0;
+    }
+    t_info("finder_idle_pm","%s calls %ld refused %ld sleeps %ld interrupts %ld",
+        arm ? "before" : "after",value[0],value[1],value[2],value[3]);
+    t_info("finder_idle_pm_ticks","%s ticks %ld zero %ld",arm ? "before" : "after",value[4],value[5]);
+    {long skipped=-1;base=0;info=0;
+     if(getksym("uin_watchskipped",&base,&info)>=0 && base)
+         if(kmemrw(base,&skipped,0)<0)skipped=-1;
+     t_info("finder_idle_filter","%s skipped %ld",arm ? "before" : "after",skipped);
+    }
+    if(arm)return ok && setsym("uin_pmidletracecount",0L)==0 && setsym("uin_pmidle",1L)==0;
+    count=getsym("uin_pmidletracecount");base=0;info=0;
+    if(count<0 || count>8 || getksym("uin_pmidletrace",&base,&info)<0 || !base)return 0;
+    for(row=0;row<count;row++) {
+        for(j=0;j<12;j++) {words[j]=-1;if(kmemrw(base+row*48+j*4,&words[j],0)<0)ok=0;}
+        t_info("finder_idle_pm_signal","row %d tick %lx/%lx result %ld signal %ld/%ld pending %lx/%lx held %lx/%lx pid %ld pc %lx queue %ld",
+            row,words[0],words[1],words[2],words[3],words[4],words[5],words[6],words[7],words[8],words[9],words[10],words[11]);
+    }
+    return ok && idlestub81(0);
+}
+
+static int
+idlewne81(arm)
+int arm;
+{
+    unsigned long base[2],info;long values[10],zero=0;int i,j,at=0,ok=1;
+    char *names[2]={"uin_wnestats","uin_wnelast"};
+    if(setsym("uin_frontdiag",0L)<0)ok=0;
+    for(i=0;i<2;i++) {
+        base[i]=0;info=0;
+        if(getksym(names[i],&base[i],&info)<0 || !base[i]) {ok=0;continue;}
+        for(j=0;j<(i ? 6 : 4);j++) {
+            values[at]=-1;
+            if(kmemrw(base[i]+j*4,arm ? &zero : &values[at],arm)<0)ok=0;
+            at++;
+        }
+    }
+    if(arm)return ok && setsym("uin_frontdiag",1L)==0;
+    if(ok) {
+        t_info("finder_idle_wne","calls %ld zero %ld positive %ld unlimited %ld",
+            values[0],values[1],values[2],values[3]);
+        t_info("finder_idle_wne_last","caller %lx mask %lx sleep %lx region %lx event %lx sp %lx",
+            values[4],values[5],values[6],values[7],values[8],values[9]);
+    }
+    return ok;
+}
+
+static int
+publicwindowtitle81(fd,title,baseline)
+int fd;
+char *title;
+long baseline;
+{
+    char name[256];unsigned long at=0,info;long serial,count,until=t_now_ms()+10000;
+    int f,ok=0;
+    if(getksym("uin_fronttitle",&at,&info)<0 || !at)return 0;
+    while(t_now_ms()<until) {
+        count=getsym("uin_frontcount");serial=getsym("uin_frontserial");
+        if(count>baseline && serial>=0 && !(serial&1) && getsym("uin_frontpid")==macpid) {
+            f=open("/dev/kmem",O_RDONLY);
+            if(f>=0) {
+                ok=lseek(f,(off_t)at,SEEK_SET)!=-1 && read(f,name,sizeof name)==sizeof name;
+                close(f);
+            }
+            if(ok && getsym("uin_frontserial")==serial && name[255]==0) {
+                t_info("panel_window_title","%s",name);
+                if(!strcmp(name,title))return 1;
+            }
+        }
+        poll((struct pollfd *)0,0L,100);
+    }
+    return 0;
+}
+
+static int
+monitorstate81(fd, state)
+int fd;
+unsigned char *state;
+{
+    unsigned char b[46], p[34]; long h,g,pm;
+    if (!rdmac(fd,0x8a4L,(char *)b,4) || !(h=g32(b)) || (h&1) ||
+        !rdmac(fd,h,(char *)b,4) || !(g=g32(b)) || (g&1) ||
+        !rdmac(fd,g,(char *)b,sizeof(b)) || !(h=g32(b+22)) || (h&1) ||
+        !rdmac(fd,h,(char *)p,4) || !(pm=g32(p)) || (pm&1) ||
+        !rdmac(fd,pm,(char *)p,sizeof(p))) return 0;
+    memcpy((char *)state,(char *)b,sizeof(b));
+    state[46]=p[32]; state[47]=p[33];
+    return 1;
+}
+
+static int
+monitorcontrols81(fd,w,b,x,y)
+int fd;
+long w;
+unsigned char *b;
+int *x,*y;
+{
+    unsigned char hp[4],rb[10],c[105]; long h,region,a,next;
+    int i,n,k,found=0,dx,dy,left,top,right,bottom;
+    h=g32(b+118);
+    if(!h || (h&1) || !rdmac(fd,h,(char *)hp,4) || !(region=g32(hp)) ||
+        (region&1) || !rdmac(fd,region,(char *)rb,sizeof(rb)) ||
+        ((rb[0]<<8)|rb[1])<10) return 0;
+    dx=(short)((rb[4]<<8)|rb[5])-(short)((b[18]<<8)|b[19]);
+    dy=(short)((rb[2]<<8)|rb[3])-(short)((b[16]<<8)|b[17]);
+    t_info("monitors_origin","content %d,%d port %d,%d translation %d,%d",
+        (short)((rb[4]<<8)|rb[5]),(short)((rb[2]<<8)|rb[3]),
+        (short)((b[18]<<8)|b[19]),(short)((b[16]<<8)|b[17]),dx,dy);
+    h=g32(b+140);
+    for(i=0;h && i<64;i++,h=next) {
+        if((h&1) || !rdmac(fd,h,(char *)hp,4) || !(a=g32(hp)) || (a&1) ||
+            !rdmac(fd,a,(char *)c,41))return 0;
+        next=g32(c); n=c[40];
+        if(n>63) {if(next==h)return 0;continue;}
+        if(n && !rdmac(fd,a+41,(char *)c+41,n))return 0;
+        c[41+n]=0;
+        k=!strcmp((char *)c+41,"Colors:")?0:!strcmp((char *)c+41,"Grays:")?1:-1;
+        if(k>=0) {
+            left=(short)((c[10]<<8)|c[11]);top=(short)((c[8]<<8)|c[9]);
+            right=(short)((c[14]<<8)|c[15]);bottom=(short)((c[12]<<8)|c[13]);
+            if(g32(c+4)!=w || !c[16] || c[17]==255 || right<=left || bottom<=top || (found&(1<<k)))return 0;
+            x[k]=dx+(left+right)/2;y[k]=dy+(top+bottom)/2;
+            t_info("monitors_control","%s owner %lx rect %d,%d,%d,%d center %d,%d",
+                (char *)c+41,w,left,top,right,bottom,x[k],y[k]);
+            if(x[k]<(short)((rb[4]<<8)|rb[5]) || x[k]>=(short)((rb[8]<<8)|rb[9]) ||
+                y[k]<(short)((rb[2]<<8)|rb[3]) || y[k]>=(short)((rb[6]<<8)|rb[7]))return 0;
+            found|=1<<k;
+        }
+        if(next==h)return 0;
+    }
+    return !h && found==3;
+}
+
+static void
+monitorcolor81(fd)
+int fd;
+{
+    unsigned char initial[48],state[48],b[148];
+    long w,stop,count; int i,x[2],y[2],ready,origin=0; char name[64],shot[96];
+    if (!t_check("monitors_initial_device",monitorstate81(fd,initial),"unreadable main GDevice")) return;
+    if (!t_check("monitors_device_shape",initial[0]==0xff && initial[1]==0xcd &&
+        !initial[34] && !initial[35] && !initial[36] && !initial[37] &&
+        ((initial[38]<<8)|initial[39])==600 && ((initial[40]<<8)|initial[41])==800 &&
+        g32(initial+42)==128 && !initial[46] && initial[47]==8,
+        "expected hosted800x6008-bit ref-51")) return;
+    if (!t_check("monitors_front",windowtitle81(fd,"Monitors"),"Monitors must remain front")) return;
+    if (rdmac(fd,0x9d6L,(char *)b,4)) {
+        w=g32(b);
+        for(i=0;w && i<64;i++) {
+            if ((w&1) || !rdmac(fd,w,(char *)b,sizeof(b))) break;
+            if(b[110]) {origin=monitorcontrols81(fd,w,b,x,y);break;}
+            if(g32(b+144)==w)break;
+            w=g32(b+144);
+        }
+    }
+    if (!t_check("monitors_radio_geometry",origin && x[0]>=0 && x[0]<800 && y[0]>=0 && y[0]<600 &&
+        x[1]>=0 && x[1]<800 && y[1]>=0 && y[1]<600,"radio controls unavailable or outside display")) return;
+    for(i=0;i<2;i++) {
+        if (!windowtitle81(fd,"Monitors")) {t_check("monitors_switch_front",0,"Monitors lost front");return;}
+        count=getsym("uinter_video_graysets");
+        if (count<0 || !moveto(x[i],y[i])) {t_check("monitors_switch_input",0,"driver diagnostic or pointer unavailable");return;}
+        host("button 1");host("button 0");
+        memcpy((char *)state,(char *)initial,sizeof(state));
+        stop=t_now_ms()+10000L;ready=0;
+        while(t_now_ms()<stop) {
+            if(monitorstate81(fd,state) && ((state[21]&1)==!i) &&
+                getsym("uinter_video_gray")==i && getsym("uinter_video_graysets")>count) {ready=1;break;}
+            pause_ms(100L);
+        }
+        sprintf(name,"monitors_%s_state",i?"grays":"colors");
+        t_check(name,ready,"GDevice flag %d gray %ld controls %ld",state[21]&1,
+            getsym("uinter_video_gray"),getsym("uinter_video_graysets")-count);
+        sprintf(shot,"shot " SHOT "monitors_%s",i?"grays":"colors");host(shot);
+        sprintf(name,"monitors_%s_geometry",i?"grays":"colors");
+        t_check(name,ready && !memcmp((char *)state+34,(char *)initial+34,14),"mode/rect/depth changed");
+        if(!ready)return;
+    }
+}
+
+static void
+panel81(name, label)
+char *name, *label;
+{
+    char cmd[64], shot[96], check[96], title[64], path[32];
+    int n, fd, identified=0; char *q;long frontbase;
+    t_rearm(120);
+    frontbase=getsym("uin_frontcount");
+    t_check("panel_public_window_armed",frontbase>=0 && setsym("uin_frontdiag",1L)==0,"");
+    moveto(10, 450);
+    host("button 1"); host("button 0");
+    pause_ms(1500L);
+    host("shot " SHOT "panel_desktop");
+    for (q=name; *q; q++) {
+        int c=*q;
+        if (c>='A' && c<='Z') c+='a'-'A';
+        sprintf(cmd,"key %c",c);
+        host(cmd);
+    }
+    host("key meta_l+o");
+    sprintf(shot, SHOT "%s_open",label);
+    n=waitshot(shot,SHOT "panel_desktop",10000,1 << 30,40);
+    sprintf(check,"%s_panel_open",label);
+    if (!t_check(check,n>=10000,"%d pixels changed",n)) {setsym("uin_frontdiag",0L);return;}
+    strncpy(title,name,sizeof(title)-1); title[sizeof(title)-1]=0;
+    if (title[0]>='a' && title[0]<='z') title[0]+='A'-'a';
+    sprintf(path,"/proc/%05d",(int)macpid);
+    if ((fd=open(path,O_RDONLY))>=0) {
+        identified=publicwindowtitle81(fd,title,frontbase);
+        close(fd);
+    }
+    setsym("uin_frontdiag",0L);
+    sprintf(check,"%s_panel_identity",label);
+    t_check(check,identified,"expected front window %s",title);
+    if (identified && !strcmp(title,"Monitors") && (fd=open(path,O_RDONLY))>=0) {
+        monitorcolor81(fd); close(fd);
+    }
+    host("key meta_l+w");
+    sprintf(shot,SHOT "%s_closed",label);
+    n=waitshot(shot,SHOT "panel_desktop",0,1999,40);
+    sprintf(check,"%s_panel_closed",label);
+    t_check(check,n>=0 && n<2000,"%d pixels changed",n);
+    sprintf(check,"%s_panel_alive",label);
+    t_check(check,alive76(),"");
+}
+
+static int
+namedksym81(name,addr,info)
+char *name;
+unsigned long *addr,*info;
+{
+    *addr=0;
+    return getksym(name,addr,info);
+}
+
+static int
+commandpid81()
+{
+    DIR *d; struct dirent *de; prpsinfo_t ps;
+    char path[64]; int fd, pid=0;
+    if (!(d=opendir("/proc"))) return 0;
+    while ((de=readdir(d))) {
+        if (de->d_name[0]=='.') continue;
+        sprintf(path,"/proc/%s",de->d_name);
+        if ((fd=open(path,O_RDONLY))<0) continue;
+        if (ioctl(fd,PIOCPSINFO,&ps)==0 && !ps.pr_zomb &&
+            !strcmp(ps.pr_fname,"CommandShell")) pid=ps.pr_pid;
+        close(fd);
+    }
+    closedir(d); return pid;
+}
+
+static void
+command81()
+{
+    int i, n, pid=0; char cmd[32], *q="commandshell";
+    t_rearm(120);
+    if (!t_check("coff_initial",!commandpid81(),"CommandShell already running")) return;
+    host("shot " SHOT "coff_desktop");
+    for (;*q;q++) { sprintf(cmd,"key %c",*q); host(cmd); }
+    host("key meta_l+o");
+    for (i=0;i<100 && !(pid=commandpid81());i++) pause_ms(100L);
+    t_info("coff_pid","%d",pid);
+    if (!t_check("coff_process",pid>0,"no CommandShell process")) {
+        host("shot " SHOT "coff_rejected");
+        host("key ret");
+        n=waitshot(SHOT "coff_failure_closed",SHOT "coff_desktop",0,1999,40);
+        t_check("coff_failure_restored",n>=0 && n<2000,"%d pixels changed",n);
+        return;
+    }
+    n=waitshot(SHOT "coff_open",SHOT "coff_desktop",10000,1 << 30,40);
+    if (!t_check("coff_window",n>=10000,"%d pixels changed",n)) return;
+    host("key meta_l+q");
+    for (i=0;i<100 && commandpid81();i++) pause_ms(100L);
+    t_check("coff_quit",!commandpid81(),"CommandShell still running");
+    n=waitshot(SHOT "coff_closed",SHOT "coff_desktop",0,1999,40);
+    t_check("coff_desktop",n>=0 && n<2000,"%d pixels changed",n);
+    t_check("coff_finder_alive",alive76(),"");
+}
+
+static void
+coffpm81(fd)
+int fd;
+{
+    unsigned char b[16];char hex[33];long a,base,pc;int i,j,n;
+    static int selectors[]={16,17,55,59};
+    if(lseek(fd,(off_t)0x904,0)!=-1 && read(fd,(char *)b,4)==4) {
+        a=((long)b[0]<<24)|((long)b[1]<<16)|((long)b[2]<<8)|b[3];
+        t_info("carrier_currenta5","%lx",a);
+    }
+    if(lseek(fd,(off_t)0xb7c,0)==-1 || read(fd,(char *)b,4)!=4)return;
+    a=((long)b[0]<<24)|((long)b[1]<<16)|((long)b[2]<<8)|b[3];
+    t_info("carrier_systema5","%lx",a);
+    if(a<0x11000L || !cofframrange(fd,a-3308,3308+60*8))return;
+    base=a-3308;
+    for(i=0;i<4;i++) {
+        a=base+8*selectors[i];
+        if(lseek(fd,(off_t)a,0)==-1 || read(fd,(char *)b,8)!=8)continue;
+        pc=((long)b[0]<<24)|((long)b[1]<<16)|((long)b[2]<<8)|b[3];
+        t_info("carrier_pm_selector","%d address %lx target %lx input %d output %d",
+            selectors[i],a,pc,((int)b[4]<<8)|b[5],((int)b[6]<<8)|b[7]);
+        if(pc<0x10000L || !cofframrange(fd,pc,16) || (pc&1) ||
+            lseek(fd,(off_t)pc,0)==-1 || (n=read(fd,(char *)b,16))!=16)continue;
+        for(j=0;j<n;j++)sprintf(hex+2*j,"%02x",b[j]);
+        t_info("carrier_pm_code","%d %lx %s",selectors[i],pc,hex);
+    }
+}
+
+static void
+commanddirect81once()
+{
+    int i,n,pid=0,fd,owned=0,quit=0,killed=0,done=0,io=0;long reaped=0,status=-1;prpsinfo_t ps;
+    char path[48],cmd[32],buf[4097],*line,*q="commandshell";
+    t_rearm(120);
+    t_check("coff_diag_armed",setsym("uin_coffdiag",1L)==0 && setsym("aux_filediag",2L)==0,"");
+    if (!t_check("coff_initial",!commandpid81(),"CommandShell already running")) {
+        t_info("coff_adapter_state","launch %ld front %ld exit %ld refused %ld",getsym("uin_cofflaunch"),getsym("uin_cofffront"),getsym("uin_coffexit"),getsym("uin_coffrefused"));
+    t_info("coff_diag_state","seen %ld closed %ld old55 %ld",getsym("uin_coffseen"),getsym("uin_coffclosed"),getsym("uin_coffcalls"));
+    setsym("aux_trace",0L);
+    setsym("uin_coffdiag",0L);setsym("aux_filediag",0L);return;
+    }
+    sprintf(path,"/proc/%d",(int)macpid);
+    if((fd=open(path,O_RDONLY))>=0) {coffcommtarget(fd);coffpm81(fd);close(fd);}
+    unlink("/tmp/coffprobe.out");unlink("/tmp/coffchild.out");
+    host("shot " SHOT "coff_desktop");
+    t_check("coff_unix_trace",setsym("aux_trace",7L | 16L)==0,"");
+    for (;*q;q++) { sprintf(cmd,"key %c",*q); host(cmd); }
+    host("key meta_l+o");
+    for (i=0;i<100 && !(pid=commandpid81());i++) pause_ms(100L);
+    t_info("coff_pid","%d",pid);
+    if(pid>1) {
+        sprintf(path,"/proc/%d",pid);
+        if((fd=open(path,O_RDONLY))>=0) {
+            if(ioctl(fd,PIOCPSINFO,&ps)==0 && ps.pr_pid==pid && ps.pr_ppid==macpid &&
+                !strcmp(ps.pr_fname,"CommandShell") && !ps.pr_zomb) {
+                owned=1;coffpm81(fd);
+            }
+            close(fd);
+        }
+    }
+    if (!t_check("coff_process",owned,"pid %d owner %ld",pid,(long)macpid)) {
+        coffsnapshot(0);
+        setsym("aux_trace",16L);
+        host("shot " SHOT "coff_rejected");
+        host("key ret");
+        n=waitshot(SHOT "coff_failure_closed",SHOT "coff_desktop",0,1999,40);
+        t_check("coff_failure_restored",n>=0 && n<2000,"%d pixels changed",n);
+        t_info("coff_adapter_state","launch %ld front %ld exit %ld refused %ld",getsym("uin_cofflaunch"),getsym("uin_cofffront"),getsym("uin_coffexit"),getsym("uin_coffrefused"));
+    t_info("coff_diag_state","seen %ld closed %ld old55 %ld",getsym("uin_coffseen"),getsym("uin_coffclosed"),getsym("uin_coffcalls"));
+    setsym("aux_trace",0L);
+    setsym("uin_coffdiag",0L);setsym("aux_filediag",0L);
+        return;
+    }
+    setsym("aux_trace",16L);
+    n=waitshot(SHOT "coff_open",SHOT "coff_desktop",10000,1 << 30,40);
+    t_info("coff_window_pixels","%d pixels changed",n);
+    coffsnapshot(pid);
+    coffordinary(pid);
+    setsym("aux_trace",16L);
+    unlink("/tmp/coffio");
+    q="touch /tmp/coffio";
+    for(;*q;q++) {
+        if(*q==' ') sprintf(cmd,"key spc");
+        else if(*q=='/') sprintf(cmd,"key slash");
+        else sprintf(cmd,"key %c",*q);
+        host(cmd);
+    }
+    host("key ret");
+    for(i=0;i<100 && access("/tmp/coffio",F_OK)!=0;i++) pause_ms(100L);
+    io=access("/tmp/coffio",F_OK)==0;
+    t_check("coff_visible_output",coffvisible(pid),"terminal must render command output");
+    t_check("coff_window",n>=10000 && io,"%d pixels changed; typed command %d",n,io);
+    t_check("coff_original_io",io,
+        "CommandShell must execute the typed command");
+    unlink("/tmp/coffio");
+    if(!io) {host("key ret");pause_ms(500L);}
+    host("key meta_l+q");
+    for (i=0;i<100 && commandpid81();i++) pause_ms(100L);
+    quit=!commandpid81();
+    t_check("coff_quit",io && quit,"CommandShell still running");
+    if(!quit) {host("shot " SHOT "coff_quit_pending");coffsnapshot(pid);}
+    if(!quit && (fd=open(path,O_RDONLY))>=0) {
+        if(ioctl(fd,PIOCPSINFO,&ps)==0 && ps.pr_pid==pid && ps.pr_ppid==macpid &&
+            !strcmp(ps.pr_fname,"CommandShell") && !ps.pr_zomb) killed=kill(pid,SIGKILL)==0;
+        close(fd);pause_ms(1000L);
+    }
+    t_info("coff_owned_cleanup","fallback killed %d",killed);
+    if((fd=open("/tmp/coffprobe.out",O_RDONLY))>=0) {
+        n=read(fd,buf,sizeof buf-1);close(fd);
+        if(n>0) {
+            buf[n]=0;coffparentstack(buf);line=strstr(buf,"reaped ");if(line)sscanf(line,"reaped %ld",&reaped);
+            line=strstr(buf,"status ");if(line)sscanf(line,"status %ld",&status);
+            done=strstr(buf,"done\n")!=0;
+            for(i=0;i<n;i+=128)t_info("coff_native_owner","%.*s",n-i<128?n-i:128,buf+i);
+        }
+    }
+    t_check("coff_native_reaped",reaped==pid && done,"pid %d reaped %ld done %d",pid,reaped,done);
+    t_check("coff_normal_status",io && quit && reaped==pid && done && status==0,"quit %d Unix status %ld",quit,status);
+    n=waitshot(SHOT "coff_closed",SHOT "coff_desktop",0,1999,40);
+    t_check("coff_desktop",n>=0 && n<2000,"%d pixels changed",n);
+    t_check("coff_finder_alive",alive76(),"");
+    t_info("coff_adapter_state","launch %ld front %ld exit %ld refused %ld",getsym("uin_cofflaunch"),getsym("uin_cofffront"),getsym("uin_coffexit"),getsym("uin_coffrefused"));
+    t_info("coff_diag_state","seen %ld closed %ld old55 %ld",getsym("uin_coffseen"),getsym("uin_coffclosed"),getsym("uin_coffcalls"));
+    setsym("aux_trace",0L);
+    setsym("uin_coffdiag",0L);setsym("aux_filediag",0L);
+}
+
+static void
+commanddirect81()
+{
+    char *opt=getenv("COFFNATIVE47");
+    long saved=getsym("uinter_coffnative47");
+    int i,native47=opt ? !strcmp(opt,"1") : saved;
+    t_check("coff_native47_mode",setsym("uinter_coffnative47",native47)==0,"");
+    for(i=0;i<2;i++) {
+        t_info("coff_launch_iteration","%d",i+1);
+        commanddirect81once();
+    }
+    setsym("uinter_coffnative47",saved);
+}
+
+
+static void
+commandcarrier81()
+{
+    char cmd[32],buf[4097],path[40],*q="coffcarrier",*line,*end;
+    long owner=0,child=0,reaped=0,stack=0; int i,fd,n,killed=0,live=0,io=0,done=0,j,k,off; prpsinfo_t ps; prstatus_t st;
+    unsigned char memory[32];char hex[65];long address;
+    t_check("carrier_staged",access("/etc/aux/CoffProbe",F_OK)==0,"");
+    if(access("/etc/aux/CoffProbe",F_OK)<0) return;
+    t_rearm(65);
+    t_check("coff_diag_armed",setsym("uin_coffdiag",1L)==0 && setsym("aux_filediag",2L)==0,"");
+    unlink("/tmp/coffprobe.out"); unlink("/tmp/coffchild.out"); unlink("/tmp/coffio");
+    host("shot " SHOT "carrier_before");
+    sprintf(cmd,"move %d %d",scrw-30,scrh-30); host(cmd);
+    host("down left");pause_ms(150L);host("up left");pause_ms(1200L);
+    for(;*q;q++) {sprintf(cmd,"key %c",*q);host(cmd);}
+    host("key meta_l+o");
+    for(i=0;i<150 && !child;i++) {
+        if((fd=open("/tmp/coffprobe.out",O_RDONLY))>=0) {
+            n=read(fd,buf,sizeof buf-1);close(fd);
+            if(n>0) {buf[n]=0;line=strstr(buf,"owner ");if(line) sscanf(line,"owner %ld",&owner);
+                line=strstr(buf,"child ");if(line) sscanf(line,"child %ld",&child);}
+        }
+        if(!child) pause_ms(100L);
+    }
+    t_info("coff_carrier","owner %ld child %ld",owner,child);
+    if(child>1 && owner>1) {
+        pause_ms(10000L);
+        host("shot " SHOT "carrier_child");
+        sprintf(path,"/proc/%ld",child);
+        if((fd=open(path,O_RDONLY))>=0) {
+            if(ioctl(fd,PIOCPSINFO,&ps)==0) {
+                t_info("coff_carrier_child","pid %d parent %d command %s zombie %d",
+                    (int)ps.pr_pid,(int)ps.pr_ppid,ps.pr_fname,ps.pr_zomb);
+                if(ps.pr_pid==child && ps.pr_ppid==owner &&
+                    !strcmp(ps.pr_fname,"CommandShell") && !ps.pr_zomb) {
+                    live=1;
+                    coffpm81(fd);
+                    if(ioctl(fd,PIOCSTATUS,&st)==0) {
+                        t_info("carrier_child_state","pid %d state %c wchan %lx PC %lx SP %lx instr %lx",
+                            (int)ps.pr_pid,ps.pr_sname,(long)ps.pr_wchan,
+                            (long)st.pr_reg[16],(long)st.pr_reg[15],st.pr_instr);
+                        for(j=0;j<2;j++) {
+                            address=(long)st.pr_reg[j?15:16];
+                            if(lseek(fd,(off_t)address,0)!=-1 && (n=read(fd,(char *)memory,sizeof memory))>0) {
+                                for(k=0;k<n;k++)sprintf(hex+2*k,"%02x",memory[k]);
+                                t_info("carrier_child_memory","%lx %s",address,hex);
+                                if(j==1) for(off=0;off+8<=n;off+=4) {
+                                    if(memory[off]==0x20 && memory[off+6]==0 && memory[off+7]==0x28) {
+                                        address=((long)memory[off+2]<<24)|((long)memory[off+3]<<16)|
+                                            ((long)memory[off+4]<<8)|memory[off+5];
+                                        if(address>0x10000L && cofframrange(fd,address,16) &&
+                                            lseek(fd,(off_t)address,0)!=-1 && read(fd,(char *)memory,16)==16) {
+                                            for(k=0;k<16;k++)sprintf(hex+2*k,"%02x",memory[k]);
+                                            t_info("carrier_native_call","%lx %s",address,hex);
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    q="touch /tmp/coffio";
+                    for(;*q;q++) {
+                        sprintf(cmd,"key %s",*q==' '?"spc":*q=='/'?"slash":"");
+                        if(*q!=' ' && *q!='/') sprintf(cmd,"key %c",*q);
+                        host(cmd);
+                    }
+                    host("key ret");
+                    for(i=0;i<100 && !io;i++) {io=access("/tmp/coffio",F_OK)==0;if(!io)pause_ms(100L);}
+                    killed=kill((pid_t)child,SIGKILL)==0;
+                }
+            }
+            close(fd);
+        }
+    }
+    t_check("carrier_child",live,"owner %ld child %ld",owner,child);
+    t_check("carrier_original_io",io,"CommandShell must execute the typed command");
+    t_check("carrier_owned_cleanup",killed,"");
+    t_info("coff_carrier_cleanup","owned child killed %d",killed);
+    pause_ms(3000L); host("shot " SHOT "carrier_after");
+    if((fd=open("/tmp/coffprobe.out",O_RDONLY))>=0) {
+        n=read(fd,buf,sizeof buf-1);close(fd);if(n>0) {
+            buf[n]=0;coffparentstack(buf);
+            for(line=buf;*line;line=end) {
+                end=strchr(line,'\n');if(!end)break;*end++=0;
+                t_info("coff_carrier_log","%s",line);
+                if(!strncmp(line,"reaped ",7))sscanf(line+7,"%ld",&reaped);
+                if(!strncmp(line,"fork_child_sp ",14))sscanf(line+14,"%ld",&stack);
+                if(!strcmp(line,"done"))done=1;
+            }
+
+        }
+    }
+    if((fd=open("/tmp/coffchild.out",O_RDONLY))>=0) {
+        n=read(fd,buf,sizeof buf-1);close(fd);if(n>0) {buf[n]=0;for(i=0;i<n;i+=128)t_info("coff_carrier_binary","%.*s",n-i<128 ? n-i : 128,buf+i);}
+    }
+    t_check("carrier_private_stack",stack==0x3fffff00L,"%ld",stack);
+    t_check("carrier_reaped",child>1 && reaped==child && done,"child %ld reaped %ld done %d",child,reaped,done);
+    t_check("carrier_finder",alive76(),"");
+    t_info("coff_adapter_state","launch %ld front %ld exit %ld refused %ld",getsym("uin_cofflaunch"),getsym("uin_cofffront"),getsym("uin_coffexit"),getsym("uin_coffrefused"));
+    t_info("coff_diag_state","seen %ld closed %ld old55 %ld",getsym("uin_coffseen"),getsym("uin_coffclosed"),getsym("uin_coffcalls"));
+    setsym("uin_coffdiag",0L);setsym("aux_filediag",0L);
+    unlink("/tmp/coffio");
+}
+
+static void
+commandunix81()
+{
+    static char *av[] = { "/mac/bin/CommandShell", 0 };
+    char buf[8193], path[32];
+    unsigned char low[4], a5data[16];
+    long a5;
+    int fd, n, i, st=0, done=0;
+    pid_t child, w;
+    long trace=getsym("uinter_trace");
+
+    if (access("/etc/aux/CoffUnixProbe",F_OK)<0) return;
+    t_rearm(45);
+    fd=open("/tmp/coffunix.out",O_WRONLY|O_CREAT|O_TRUNC,0600);
+    if (fd<0) return;
+    setsym("uinter_trace",1L);
+    child=fork();
+    if (child==0) {
+        setpgrp(); dup2(fd,1); dup2(fd,2); close(fd);
+        execve(av[0],av,macenv); _exit(127);
+    }
+    close(fd);
+    if (child>0) {
+        for (i=0;i<200;i++) {
+            w=waitpid(child,&st,WNOHANG);
+            if (w==child) { done=1; break; }
+            if (w<0) { done=1; st=-1; break; }
+            pause_ms(100L);
+        }
+        t_info("coff_unix","pid %d live %d exited %d status %#x",(int)child,
+            commandpid81(),done,st);
+        sprintf(path,"/proc/%d",(int)child);
+        if ((fd=open(path,O_RDONLY))>=0) {
+            if (rdmac(fd,0x904L,(char *)low,4)) {
+                a5=g32(low);
+                t_info("coff_unix_a5","%#lx readable %d",a5,
+                    a5>0 && !(a5&1) && rdmac(fd,a5-4,(char *)a5data,sizeof a5data));
+            }
+            if (rdmac(fd,0x9d6L,(char *)low,4))
+                t_info("coff_unix_windows","%#lx",g32(low));
+            if (rdmac(fd,0xb7cL,(char *)low,4)) {
+                a5=g32(low);
+                if (a5>1106 && !(a5&1) && rdmac(fd,a5-1106,(char *)low,4))
+                    t_info("coff_unix_native_current","%#lx",g32(low));
+            }
+            close(fd);
+        }
+        host("shot " SHOT "coff_unix");
+        if (!done) {
+            kill(-child,SIGKILL);
+            w=t_waitchild(child,&st,10);
+            t_info("coff_unix_cleanup","wait %d status %#x",(int)w,st);
+        }
+    }
+    if (trace>=0) setsym("uinter_trace",trace);
+    if ((fd=open("/tmp/coffunix.out",O_RDONLY))>=0) {
+        n=read(fd,buf,sizeof buf-1);
+        if (n>0) { buf[n]=0; for(i=0;i<n;i+=128)t_info("coff_unix_output","%.*s",n-i<128 ? n-i : 128,buf+i); }
+        close(fd);
+    }
+    unlink("/tmp/coffunix.out");
+}
+
+static void
+recover81()
+{
+	unsigned long before, after;
+	int n;
+	struct stat root, mount;
+
+	commandunix81();
+
+	t_check("finder_copy_cross_mount", stat("/", &root)==0 &&
+	    stat("/macsys", &mount)==0 && root.st_dev!=mount.st_dev,
+	    "source and destination require separate host filesystems");
+	t_rearm(240);
+	before = probe81("filemanager");
+	if (!before) return;
+	setsym("uin_polldiag",1L);
+	setsym("uin_forcehitcount",0L); setsym("uin_forcehitpending",0L);
+    {
+        unsigned long sym,addr=0; long zero=0; int k;
+        if(namedksym81("uin_forcehitcalls",&addr,&sym)==0)
+            for(k=0;k<2;k++) kmemrw(addr+k*4,&zero,1);
+        if(namedksym81("uin_pollnative",&addr,&sym)==0)
+            for(k=0;k<4;k++) kmemrw(addr+k*4,&zero,1);
+        if(namedksym81("uin_forcehitlast",&addr,&sym)==0)
+            for(k=0;k<4;k++) kmemrw(addr+k*4,&zero,1);
+    }
+	pause_ms(1000L);
+	host("shot " SHOT "before_forcequit");
+	host("down alt"); host("down meta_l"); host("down esc");
+	pause_ms(1500L);
+	host("up esc"); host("up meta_l"); host("up alt");
+	n = waitshot(SHOT "forcequit_dialog", SHOT "before_forcequit", 1000, 1 << 30, 20);
+	t_info("forcequit_path", "admit %ld arm %ld WNE %ld dispatch %ld retry %ld expire %ld off %ld",
+	    getsym("uin_forceadmit"), getsym("uin_forcearm"), getsym("uin_forcewne"),
+	    getsym("uin_forcedispatch"), getsym("uin_forceretry"),
+	    getsym("uin_forceexpire"), getsym("uin_forceoff"));
+	t_info("forcequit_observe", "active %ld flags %lx A-lines %ld last %lx at %lx",
+	    getsym("uin_forceactive"), getsym("uin_forceflags"), getsym("uin_forcealine"),
+	    getsym("uin_forceop"), getsym("uin_forcepc"));
+	t_info("forcequit_publish", "published %ld refused %ld",
+	    getsym("uin_forcepublish"), getsym("uin_forcefailed"));
+	if (!t_check("forcequit_dialog", n >= 1000, "%d pixels changed", n)) return;
+	if (!t_check("forcequit_cancel_button", moveto(581, 212), "")) return;
+	host("button 1"); host("button 0");
+	n = waitshot(SHOT "forcequit_cancelled", SHOT "before_forcequit", 0, 1999, 20);
+	t_info("forcequit_modal", "poll %ld restored %ld", getsym("uin_forcepoll"), getsym("uin_forceunpoll"));
+	t_info("forcequit_input", "mouse %lx host %lx MB %lx cursor %lx word %ld mode %ld",
+	    getsym("uin_pollmouse"),getsym("uin_pollhost"),getsym("uin_pollmb"),
+	    getsym("uin_pollcursor"),getsym("uin_pollword"),getsym("uin_pollmode"));
+	t_info("forcequit_button", "down %ld up %ld edges %ld faults %ld downmouse %lx downhost %lx downcursor %lx downMB %lx",
+	    getsym("uin_polldown"),getsym("uin_pollup"),getsym("uin_polledges"),getsym("uin_pollfault"),
+	    getsym("uin_polldownmouse"),getsym("uin_polldownhost"),getsym("uin_polldowncursor"),getsym("uin_polldownmb"));
+	{
+	    unsigned long addr=0,info; long words[8]; int block,j,ok,count;
+	    if(namedksym81("uin_pollport",&addr,&info)==0) for(block=0;block<16;block++) {
+	        ok=1;
+	        for(j=0;j<4;j++) if(kmemrw(addr+block*16+j*4,&words[j],0)<0) ok=0;
+	        if(ok) t_info("forcequit_port","%d %08lx %08lx %08lx %08lx",
+	            block,words[0],words[1],words[2],words[3]);
+	    }
+        {
+            long calls[2]={-1,-1}, last[4]={-1,-1,-1,-1}, native[4]={-1,-1,-1,-1}; int k;
+            if(namedksym81("uin_pollnative",&addr,&info)==0)
+                for(k=0;k<4;k++) kmemrw(addr+k*4,&native[k],0);
+            t_info("forcequit_nativepoll","samples %ld MB %lx return %lx pressed %ld",
+                native[0],native[1],native[2],native[3]);
+            if(namedksym81("uin_pollcalls",&addr,&info)==0) {
+                long modes[5]; for(k=0;k<5;k++) {modes[k]=-1;kmemrw(addr+k*4,&modes[k],0);}
+                t_info("forcequit_pollcalls","%ld %ld %ld %ld %ld",modes[0],modes[1],modes[2],modes[3],modes[4]);
+            }
+            if(namedksym81("uin_pollstatelast",&addr,&info)==0) {
+                long state[5];for(k=0;k<5;k++) {state[k]=-1;kmemrw(addr+k*4,&state[k],0);}
+                t_info("forcequit_statepath","PC %lx expected %lx stage %ld SP %lx copyfaults %lx",state[0],state[1],state[2],state[3],state[4]);
+            }
+            t_info("forcequit_interrupts","input %ld restart prevented %ld",getsym("aux_pollintr"),getsym("aux_pollretry"));
+            if(namedksym81("aux_polllast",&addr,&info)==0) {
+                long state[4];for(k=0;k<4;k++) {state[k]=-1;kmemrw(addr+k*4,&state[k],0);}
+                t_info("forcequit_restart","compat %lx signal %ld restartmask %lx PC %lx",state[0],state[1],state[2],state[3]);
+            }
+            if(namedksym81("uin_forcehitcalls",&addr,&info)==0)
+                for(k=0;k<2;k++) kmemrw(addr+k*4,&calls[k],0);
+            if(namedksym81("uin_forcehitlast",&addr,&info)==0)
+                for(k=0;k<4;k++) kmemrw(addr+k*4,&last[k],0);
+            t_info("forcequit_hitpath","point %ld result %ld PC %lx expected %lx mode %ld stage %ld count %ld pending %ld",
+                calls[0],calls[1],last[0],last[1],last[2],last[3],getsym("uin_forcehitcount"),getsym("uin_forcehitpending"));
+        }
+	    count=getsym("uin_forcehitcount"); if(count<0 || count>32) count=0;
+	    if(namedksym81("uin_forcehits",&addr,&info)==0) for(block=0;block<count;block++) {
+	        ok=1;
+	        for(j=0;j<8;j++) if(kmemrw(addr+block*32+j*4,&words[j],0)<0) ok=0;
+	        if(ok) t_info("forcequit_hit","%d point %lx A3 %lx rect %lx %lx D3 %lx result %lx CCR %lx MB %lx",
+	            block,words[0],words[1],words[2],words[3],words[4],words[5],words[6],words[7]);
+	    }
+	    setsym("uin_polldiag",0L);
+        setsym("aux_polldiag",0L);
+	}
+	if (!t_check("forcequit_cancel_restored", n >= 0 && n < 2000,
+	    "%d pixels changed", n)) return;
+	if (!t_check("forcequit_cancel_alive", alive76(), "")) return;
+	host("down alt"); host("down meta_l"); host("down esc");
+	pause_ms(1500L);
+	host("up esc"); host("up meta_l"); host("up alt");
+	n = waitshot(SHOT "forcequit_reopened", SHOT "before_forcequit", 1000, 1 << 30, 20);
+	if (!t_check("forcequit_reopened", n >= 1000, "%d pixels changed", n)) return;
+	if (!t_check("forcequit_quit_button", moveto(505, 212), "")) return;
+	host("button 1"); host("button 0");
+	n = waitshot(SHOT "finder_relaunched", SHOT "before_forcequit", 0, 1999, 60);
+	t_check("finder_desktop_restored", n >= 0 && n < 2000, "%d pixels changed", n);
+	after = probe81("after_relaunch");
+	t_check("finder_process_replaced", before && after && before != after,
+	    "Finder serial %lu -> %lu", before, after);
+	if (!t_check("relaunch_alive", alive76(), "") || !after || before == after) return;
+	host("shot " SHOT "before_repeat_forcequit");
+	host("down alt"); host("down meta_l"); host("down esc");
+	pause_ms(1500L);
+	host("up esc"); host("up meta_l"); host("up alt");
+	n = waitshot(SHOT "repeat_forcequit_dialog", SHOT "before_repeat_forcequit", 1000, 1 << 30, 20);
+	t_info("repeat_forcequit_publish", "published %ld refused %ld wrapper %lx previousword %ld",
+	    getsym("uin_forcepublish"), getsym("uin_forcefailed"),
+	    getsym("uin_forceentry"), getsym("uin_forceword"));
+	if (!t_check("repeat_forcequit_dialog", n >= 1000, "%d pixels changed", n)) return;
+	if (!t_check("repeat_forcequit_cancel_button", moveto(581, 212), "")) return;
+	host("button 1"); host("button 0");
+	n = waitshot(SHOT "repeat_forcequit_cancelled", SHOT "before_repeat_forcequit", 0, 1999, 20);
+	t_check("repeat_forcequit_cancel_restored", n >= 0 && n < 2000, "%d pixels changed", n);
+	t_check("repeat_forcequit_cancel_alive", alive76(), "");
+}
+#endif
+
+#ifdef COFF76
+static void
+coffpm76(fd)
+int fd;
+{
+    unsigned char b[16];char hex[33];long a,base,pc;int i,j,n;
+    static int selectors[]={16,17,55,59};
+    if(lseek(fd,(off_t)0x904,0)!=-1 && read(fd,(char *)b,4)==4) {
+        a=((long)b[0]<<24)|((long)b[1]<<16)|((long)b[2]<<8)|b[3];
+        t_info("carrier_currenta5","%lx",a);
+    }
+    if(lseek(fd,(off_t)0xb7c,0)==-1 || read(fd,(char *)b,4)!=4)return;
+    a=((long)b[0]<<24)|((long)b[1]<<16)|((long)b[2]<<8)|b[3];
+    t_info("carrier_systema5","%lx",a);
+    if(a<0x11000L || !cofframrange(fd,a-3308,3308+60*8))return;
+    base=a-3330;
+    for(i=0;i<4;i++) {
+        a=base+8*selectors[i];
+        if(lseek(fd,(off_t)a,0)==-1 || read(fd,(char *)b,8)!=8)continue;
+        pc=((long)b[0]<<24)|((long)b[1]<<16)|((long)b[2]<<8)|b[3];
+        t_info("carrier_pm_selector","%d address %lx target %lx input %d output %d",
+            selectors[i],a,pc,((int)b[4]<<8)|b[5],((int)b[6]<<8)|b[7]);
+        if(pc<0x10000L || !cofframrange(fd,pc,16) || (pc&1) ||
+            lseek(fd,(off_t)pc,0)==-1 || (n=read(fd,(char *)b,16))!=16)continue;
+        for(j=0;j<n;j++)sprintf(hex+2*j,"%02x",b[j]);
+        t_info("carrier_pm_code","%d %lx %s",selectors[i],pc,hex);
+    }
+}
+
+static int
+commandpid76()
+{
+    DIR *d; struct dirent *de; prpsinfo_t ps;
+    char path[64]; int fd, pid=0;
+    if (!(d=opendir("/proc"))) return 0;
+    while ((de=readdir(d))) {
+        if (de->d_name[0]=='.') continue;
+        sprintf(path,"/proc/%s",de->d_name);
+        if ((fd=open(path,O_RDONLY))<0) continue;
+        if (ioctl(fd,PIOCPSINFO,&ps)==0 && !ps.pr_zomb &&
+            !strcmp(ps.pr_fname,"CommandShell")) pid=ps.pr_pid;
+        close(fd);
+    }
+    closedir(d); return pid;
+}
+
+static void
+commandcarrier76()
+{
+    char cmd[32],buf[4097],path[40],*q="coffcarrier",*line,*end;
+    char *pixels;
+    long owner=0,child=0,reaped=0,stack=0; int i,fd,n,killed=0,live=0,io=0,done=0,quit=0,window=0,j,k,off; prpsinfo_t ps; prstatus_t st;
+    unsigned char memory[32];char hex[65];long address;
+    t_check("carrier_staged",access("/etc/aux/CoffProbe",F_OK)==0,"");
+    if(access("/etc/aux/CoffProbe",F_OK)<0) return;
+    t_rearm(90);
+    t_check("coff_diag_armed",setsym("uin_coffdiag",1L)==0 && setsym("aux_filediag",2L)==0,"");
+    unlink("/tmp/coffprobe.out"); unlink("/tmp/coffchild.out"); unlink("/tmp/coffio");
+    host("shot " SHOT "carrier_desktop");
+    host("shot " SHOT "carrier_before");
+    sprintf(cmd,"move %d %d",scrw-30,scrh-30); host(cmd);
+    host("down left");pause_ms(150L);host("up left");pause_ms(1200L);
+    for(;*q;q++) {sprintf(cmd,"key %c",*q);host(cmd);}
+    host("key meta_l+o");
+    for(i=0;i<150 && !child;i++) {
+        if((fd=open("/tmp/coffprobe.out",O_RDONLY))>=0) {
+            n=read(fd,buf,sizeof buf-1);close(fd);
+            if(n>0) {buf[n]=0;line=strstr(buf,"owner ");if(line) sscanf(line,"owner %ld",&owner);
+                line=strstr(buf,"child ");if(line) sscanf(line,"child %ld",&child);}
+        }
+        if(!child) pause_ms(100L);
+    }
+    t_info("coff_carrier","owner %ld child %ld",owner,child);
+    if(child>1 && owner>1) {
+        pause_ms(10000L);
+        host("shot " SHOT "carrier_child");
+        n=0;pixels=host("cmp " SHOT "carrier_desktop " SHOT "carrier_child");
+        if(pixels)sscanf(pixels,"diff %d",&n);
+        window=n>10000;
+        sprintf(path,"/proc/%ld",child);
+        if((fd=open(path,O_RDONLY))>=0) {
+            if(ioctl(fd,PIOCPSINFO,&ps)==0) {
+                t_info("coff_carrier_child","pid %d parent %d command %s zombie %d",
+                    (int)ps.pr_pid,(int)ps.pr_ppid,ps.pr_fname,ps.pr_zomb);
+                if(ps.pr_pid==child && ps.pr_ppid==owner &&
+                    !strcmp(ps.pr_fname,"CommandShell") && !ps.pr_zomb) {
+                    live=1;
+                    coffpm76(fd);
+                    if(ioctl(fd,PIOCSTATUS,&st)==0) {
+                        t_info("carrier_child_state","pid %d state %c wchan %lx PC %lx SP %lx instr %lx",
+                            (int)ps.pr_pid,ps.pr_sname,(long)ps.pr_wchan,
+                            (long)st.pr_reg[16],(long)st.pr_reg[15],st.pr_instr);
+                        for(j=0;j<2;j++) {
+                            address=(long)st.pr_reg[j?15:16];
+                            if(lseek(fd,(off_t)address,0)!=-1 && (n=read(fd,(char *)memory,sizeof memory))>0) {
+                                for(k=0;k<n;k++)sprintf(hex+2*k,"%02x",memory[k]);
+                                t_info("carrier_child_memory","%lx %s",address,hex);
+                                if(j==1) for(off=0;off+8<=n;off+=4) {
+                                    if(memory[off]==0x20 && memory[off+6]==0 && memory[off+7]==0x28) {
+                                        address=((long)memory[off+2]<<24)|((long)memory[off+3]<<16)|
+                                            ((long)memory[off+4]<<8)|memory[off+5];
+                                        if(address>0x10000L && cofframrange(fd,address,16) &&
+                                            lseek(fd,(off_t)address,0)!=-1 && read(fd,(char *)memory,16)==16) {
+                                            for(k=0;k<16;k++)sprintf(hex+2*k,"%02x",memory[k]);
+                                            t_info("carrier_native_call","%lx %s",address,hex);
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    q="touch /tmp/coffio";
+                    for(;*q;q++) {
+                        sprintf(cmd,"key %s",*q==' '?"spc":*q=='/'?"slash":"");
+                        if(*q!=' ' && *q!='/') sprintf(cmd,"key %c",*q);
+                        host(cmd);
+                    }
+                    host("key ret");
+                    for(i=0;i<100 && !io;i++) {io=access("/tmp/coffio",F_OK)==0;if(!io)pause_ms(100L);}
+                    host("key meta_l+q");
+                    for(i=0;i<100;i++) {
+                        int qfd=open(path,O_RDONLY);prpsinfo_t ended;
+                        if(qfd<0) {quit=1;break;}
+                        n=ioctl(qfd,PIOCPSINFO,&ended);close(qfd);
+                        if(n==0 && ended.pr_pid==child && ended.pr_ppid==owner &&
+                            !strcmp(ended.pr_fname,"CommandShell")) {
+                            if(ended.pr_zomb) {quit=1;break;}
+                        } else break;
+                        pause_ms(100L);
+                    }
+                    if(!quit) {
+                        prpsinfo_t owned;
+                        if(ioctl(fd,PIOCPSINFO,&owned)==0 && owned.pr_pid==child &&
+                            owned.pr_ppid==owner && !strcmp(owned.pr_fname,"CommandShell") && !owned.pr_zomb)
+                            killed=kill((pid_t)child,SIGKILL)==0;
+                    }
+                }
+            }
+            close(fd);
+        }
+    }
+    t_check("carrier_window",live && window,"live child %d window change %d",live,window);
+    t_check("carrier_child",live,"owner %ld child %ld",owner,child);
+    t_check("carrier_original_io",io,"CommandShell must execute the typed command");
+    t_check("carrier_normal_quit",quit,"Command-Q must exit the original Unix child");
+    t_check("carrier_owned_cleanup",quit || killed,"");
+    t_info("coff_carrier_cleanup","owned child killed %d",killed);
+    pause_ms(3000L); host("shot " SHOT "carrier_after");
+    if((fd=open("/tmp/coffprobe.out",O_RDONLY))>=0) {
+        n=read(fd,buf,sizeof buf-1);close(fd);if(n>0) {
+            buf[n]=0;coffparentstack(buf);
+            for(line=buf;*line;line=end) {
+                end=strchr(line,'\n');if(!end)break;*end++=0;
+                t_info("coff_carrier_log","%s",line);
+                if(!strncmp(line,"reaped ",7))sscanf(line+7,"%ld",&reaped);
+                if(!strncmp(line,"fork_child_sp ",14))sscanf(line+14,"%ld",&stack);
+                if(!strcmp(line,"done"))done=1;
+            }
+
+        }
+    }
+    if((fd=open("/tmp/coffchild.out",O_RDONLY))>=0) {
+        n=read(fd,buf,sizeof buf-1);close(fd);if(n>0) {buf[n]=0;for(i=0;i<n;i+=128)t_info("coff_carrier_binary","%.*s",n-i<128 ? n-i : 128,buf+i);}
+    }
+    t_check("carrier_private_stack",stack==0x3fffff00L,"%ld",stack);
+    t_check("carrier_reaped",child>1 && reaped==child && done,"child %ld reaped %ld done %d",child,reaped,done);
+    t_check("carrier_finder",alive76(),"");
+    t_info("coff_adapter_state","launch %ld front %ld exit %ld refused %ld",getsym("uin_cofflaunch"),getsym("uin_cofffront"),getsym("uin_coffexit"),getsym("uin_coffrefused"));
+    t_info("coff_diag_state","seen %ld closed %ld old55 %ld",getsym("uin_coffseen"),getsym("uin_coffclosed"),getsym("uin_coffcalls"));
+    setsym("uin_coffdiag",0L);setsym("aux_filediag",0L);
+    unlink("/tmp/coffio");
+}
+
+static void
+command76once()
+{
+    int i,n,pid=0,fd,owned=0,quit=0,killed=0,done=0,io=0;long reaped=0,status=-1;prpsinfo_t ps;
+    char path[48],cmd[32],buf[4097],*line,*q="commandshell";
+    t_rearm(120);
+    t_check("coff_diag_armed",setsym("uin_coffdiag",1L)==0 && setsym("aux_filediag",2L)==0,"");
+    if (!t_check("coff_initial",!commandpid76(),"CommandShell already running")) {
+        t_info("coff_adapter_state","launch %ld front %ld exit %ld refused %ld",getsym("uin_cofflaunch"),getsym("uin_cofffront"),getsym("uin_coffexit"),getsym("uin_coffrefused"));
+    t_info("coff_diag_state","seen %ld closed %ld old55 %ld",getsym("uin_coffseen"),getsym("uin_coffclosed"),getsym("uin_coffcalls"));
+    setsym("aux_trace",0L);
+    setsym("uin_coffdiag",0L);setsym("aux_filediag",0L);return;
+    }
+    sprintf(path,"/proc/%d",(int)macpid);
+    if((fd=open(path,O_RDONLY))>=0) {coffcommtarget(fd);coffpm76(fd);close(fd);}
+    unlink("/tmp/coffprobe.out");unlink("/tmp/coffchild.out");
+    host("shot " SHOT "coff_desktop");
+    t_check("coff_unix_trace",setsym("aux_trace",7L | 16L)==0,"");
+    for (;*q;q++) { sprintf(cmd,"key %c",*q); host(cmd); }
+    host("key meta_l+o");
+    for (i=0;i<100 && !(pid=commandpid76());i++) pause_ms(100L);
+    t_info("coff_pid","%d",pid);
+    if(pid>1) {
+        sprintf(path,"/proc/%d",pid);
+        if((fd=open(path,O_RDONLY))>=0) {
+            if(ioctl(fd,PIOCPSINFO,&ps)==0 && ps.pr_pid==pid && ps.pr_ppid==macpid &&
+                !strcmp(ps.pr_fname,"CommandShell") && !ps.pr_zomb) {
+                owned=1;coffpm76(fd);
+            }
+            close(fd);
+        }
+    }
+    if (!t_check("coff_process",owned,"pid %d owner %ld",pid,(long)macpid)) {
+        coffsnapshot(0);
+        setsym("aux_trace",16L);
+        host("shot " SHOT "coff_rejected");
+        host("key ret");
+        n=waitshot(SHOT "coff_failure_closed",SHOT "coff_desktop",0,1999,40);
+        t_check("coff_failure_restored",n>=0 && n<2000,"%d pixels changed",n);
+        t_info("coff_adapter_state","launch %ld front %ld exit %ld refused %ld",getsym("uin_cofflaunch"),getsym("uin_cofffront"),getsym("uin_coffexit"),getsym("uin_coffrefused"));
+    t_info("coff_diag_state","seen %ld closed %ld old55 %ld",getsym("uin_coffseen"),getsym("uin_coffclosed"),getsym("uin_coffcalls"));
+    setsym("aux_trace",0L);
+    setsym("uin_coffdiag",0L);setsym("aux_filediag",0L);
+        return;
+    }
+    setsym("aux_trace",16L);
+    n=waitshot(SHOT "coff_open",SHOT "coff_desktop",10000,1 << 30,40);
+    t_info("coff_window_pixels","%d pixels changed",n);
+    coffsnapshot(pid);
+    coffordinary(pid);
+    setsym("aux_trace",16L);
+    unlink("/tmp/coffio");
+    q="touch /tmp/coffio";
+    for(;*q;q++) {
+        if(*q==' ') sprintf(cmd,"key spc");
+        else if(*q=='/') sprintf(cmd,"key slash");
+        else sprintf(cmd,"key %c",*q);
+        host(cmd);
+    }
+    host("key ret");
+    for(i=0;i<100 && access("/tmp/coffio",F_OK)!=0;i++) pause_ms(100L);
+    io=access("/tmp/coffio",F_OK)==0;
+    t_check("coff_visible_output",coffvisible(pid),"terminal must render command output");
+    t_check("coff_window",n>=10000 && io,"%d pixels changed; typed command %d",n,io);
+    t_check("coff_original_io",io,
+        "CommandShell must execute the typed command");
+    unlink("/tmp/coffio");
+    if(!io) {host("key ret");pause_ms(500L);}
+    host("key meta_l+q");
+    for (i=0;i<100 && commandpid76();i++) pause_ms(100L);
+    quit=!commandpid76();
+    t_check("coff_quit",io && quit,"CommandShell still running");
+    if(!quit) {host("shot " SHOT "coff_quit_pending");coffsnapshot(pid);}
+    if(!quit && (fd=open(path,O_RDONLY))>=0) {
+        if(ioctl(fd,PIOCPSINFO,&ps)==0 && ps.pr_pid==pid && ps.pr_ppid==macpid &&
+            !strcmp(ps.pr_fname,"CommandShell") && !ps.pr_zomb) killed=kill(pid,SIGKILL)==0;
+        close(fd);pause_ms(1000L);
+    }
+    t_info("coff_owned_cleanup","fallback killed %d",killed);
+    if((fd=open("/tmp/coffprobe.out",O_RDONLY))>=0) {
+        n=read(fd,buf,sizeof buf-1);close(fd);
+        if(n>0) {
+            buf[n]=0;coffparentstack(buf);line=strstr(buf,"reaped ");if(line)sscanf(line,"reaped %ld",&reaped);
+            line=strstr(buf,"status ");if(line)sscanf(line,"status %ld",&status);
+            done=strstr(buf,"done\n")!=0;
+            for(i=0;i<n;i+=128)t_info("coff_native_owner","%.*s",n-i<128?n-i:128,buf+i);
+        }
+    }
+    t_check("coff_native_reaped",reaped==pid && done,"pid %d reaped %ld done %d",pid,reaped,done);
+    t_check("coff_normal_status",io && quit && reaped==pid && done && status==0,"quit %d Unix status %ld",quit,status);
+    n=waitshot(SHOT "coff_closed",SHOT "coff_desktop",0,1999,40);
+    t_check("coff_desktop",n>=0 && n<2000,"%d pixels changed",n);
+    t_check("coff_finder_alive",alive76(),"");
+    t_info("coff_adapter_state","launch %ld front %ld exit %ld refused %ld",getsym("uin_cofflaunch"),getsym("uin_cofffront"),getsym("uin_coffexit"),getsym("uin_coffrefused"));
+    t_info("coff_diag_state","seen %ld closed %ld old55 %ld",getsym("uin_coffseen"),getsym("uin_coffclosed"),getsym("uin_coffcalls"));
+    setsym("aux_trace",0L);
+    setsym("uin_coffdiag",0L);setsym("aux_filediag",0L);
+}
+
+static void
+command76()
+{
+    char *opt=getenv("COFFNATIVE47");
+    long saved=getsym("uinter_coffnative47");
+    int i,native47=opt ? !strcmp(opt,"1") : saved;
+    t_check("coff_native47_mode",setsym("uinter_coffnative47",native47)==0,"");
+    for(i=0;i<2;i++) {
+        t_info("coff_launch_iteration","%d",i+1);
+        command76once();
+    }
+    setsym("uinter_coffnative47",saved);
+}
+
+#endif
+
 /* About closed, SimpleText opened from the desktop and quit, the disk window */
 static void
 app76()
@@ -1805,6 +3630,41 @@ app76()
 	host("key meta_l+w");
 	n = waitshot(SHOT "closed", SHOT "desktop", 0, 1999, 20);
 	t_check("about_closed", n >= 0 && n < 2000, "%d pixels from the desktop", n);
+#ifdef COFF76
+#ifdef COFF76C
+    commandcarrier76();
+#else
+    command76();
+#endif
+    shutdown76();
+    return;
+#endif
+#ifdef COFF81
+#ifdef COFF81D
+    commanddirect81();
+#else
+    commandcarrier81();
+#endif
+    shutdown76();
+    return;
+#endif
+#ifdef OT81
+	if (access("/mac/lib/OTFastProbe", R_OK) == 0) {
+		ot81probe("network");
+		t_check("finder_stays", alive76(), "");
+		shutdown76();
+		return;
+	}
+#endif
+#if defined(SYS81) && !defined(OT81) && defined(MAC81FAST)
+    if (access("/mac/lib/MacFastProbe", R_OK) == 0) {
+        panel81("Appearance", "appearance");
+        panel81("Monitors", "monitors");
+        recover81();
+        shutdown76();
+        return;
+    }
+#endif
 	/* typing selects the desktop icon by name; Command-O opens it */
 	t_rearm(120);
 	host("key s");
@@ -1817,8 +3677,56 @@ app76()
 	t_check("simpletext_open", n >= 100000 && chk >= 0 && chk < 100,
 	    "%d pixels changed, checker %d per mille", n, chk);
 	t_check("simpletext_alive", alive76(), "");
+#ifdef SYS81
+	t_rearm(240);
+	host("key meta_l+o");
+	n = waitshot(SHOT "open_dialog", SHOT "simpletext", 10000, 1 << 30, 20);
+	t_check("standard_open_dialog", n >= 10000, "%d pixels changed", n);
+	if (n >= 10000) host("key esc");
+	n = waitshot(SHOT "open_cancelled", SHOT "simpletext", 0, 1999, 20);
+	t_check("standard_open_cancel", n >= 0 && n < 2000, "%d pixels changed", n);
+	host("key m"); host("key a"); host("key c"); host("key 8"); host("key 1");
+	pause_ms(400L); host("shot " SHOT "typed_text");
+	host("key meta_l+s");
+	n = waitshot(SHOT "save_dialog", SHOT "typed_text", 10000, 1 << 30, 20);
+	t_check("standard_save_dialog", n >= 10000, "%d pixels changed", n);
+	if (n >= 10000) host("key esc");
+	n = waitshot(SHOT "save_cancelled", SHOT "typed_text", 0, 1999, 20);
+	t_check("standard_save_cancel", n >= 0 && n < 2000, "%d pixels changed", n);
+	unlink("/Desktop Folder/mac81dialog");
+	unlink("/Desktop Folder/%mac81dialog");
+	host("key meta_l+s");
+	n = waitshot(SHOT "save_again", SHOT "typed_text", 10000, 1 << 30, 20);
+	if (n >= 10000) {
+		host("key meta_l+d"); pause_ms(400L);
+		host("key meta_l+a");
+		host("key m"); host("key a"); host("key c"); host("key 8"); host("key 1");
+		host("key d"); host("key i"); host("key a"); host("key l"); host("key o"); host("key g");
+		host("key ret");
+	}
+	n = waitshot(SHOT "saved_text", SHOT "typed_text", 0, 9999, 20);
+	{
+		char data[8]; int f, bytes = -1;
+		f = open("/Desktop Folder/mac81dialog", O_RDONLY);
+		if (f >= 0) { bytes = read(f, data, sizeof data); close(f); }
+		t_check("standard_save_data", bytes == 5 && !memcmp(data, "mac81", 5),
+		    "%d bytes", bytes);
+	}
+
+#endif
 	t_rearm(120);
 	host("key meta_l+q");
+#ifdef SYS81
+	n = waitshot(SHOT "text_closed", SHOT "simpletext", 100000, 1 << 30, 20);
+	if (n < 100000) {
+		host("key meta_l+d");
+		n = waitshot(SHOT "text_discarded", SHOT "simpletext", 100000, 1 << 30, 20);
+	}
+	if (n >= 100000) {
+		unlink("/Desktop Folder/mac81dialog");
+		unlink("/Desktop Folder/%mac81dialog");
+	}
+#endif
 	n = waitshot(SHOT "quit", SHOT "closed", 0, 1999, 40);
 	t_check("simpletext_quit", n >= 0 && n < 2000, "%d pixels from the desktop", n);
 	t_check("finder_alive", alive76(), "");
@@ -1832,8 +3740,22 @@ app76()
 	host("key meta_l+w");
 	n = waitshot(SHOT "diskclosed", SHOT "quit", 0, 1999, 20);
 	t_check("disk_window_closed", n >= 0 && n < 2000, "%d pixels from the desktop", n);
+#ifdef SYS81
+#ifdef OT81
+	ot81probe("network");
+#else
+	command81();
+	panel81("appearance","appearance");
+	panel81("monitors","monitors");
+	recover81();
+#endif
+#endif
+#ifdef SYS81
+    t_check("finder_idle_button_armed",setsym("uin_evbuttoncount",0L)==0 &&
+        setsym("uin_evdiag",1L)==0,"");
+#endif
 	/* the Special menu held open */
-	moveto(232, 9);
+	moveto(SPECIALH, 9);
 	host("button 1");
 	pause_ms(800L);
 	host("shot " SHOT "special");
@@ -1841,9 +3763,224 @@ app76()
 	pause_ms(1000L);
 	n = shotdiff(SHOT "diskclosed", SHOT "special");
 	t_check("special_menu", n > 1000, "%d pixels changed", n);
+#ifdef SYS81
+    host("key esc");
+    host("button 0");
+    t_check("finder_idle_cursor_desktop",moveto(scrw/4,scrh/2),"");
+    host("click 1");
+    n=waitshot(SHOT "idle_ready",SHOT "diskclosed",0,1999,20);
+    t_check("finder_idle_desktop_ready",n>=0 && n<2000,
+        "%d pixels from the closed desktop",n);
+    n=shotdiff(SHOT "special",SHOT "idle_ready");
+    t_check("finder_idle_menu_dismissed",n>1000,"%d pixels from the open menu",n);
+	/* two idle minutes: still running, the desktop unchanged */
+	t_rearm(240);
+	{
+		long before, after, stats[8], value, zero=0; int j, armed=1, readok=1;
+		unsigned long base=0, lastbase=0, info;
+		if (getksym("uin_evstats",&base,&info)<0 || !base) armed=0;
+		for (j=0;armed && j<8;j++)
+			if (kmemrw(base+j*4,&zero,1)<0) armed=0;
+		setsym("uin_evtracecount",0L);
+		t_check("finder_idle_events_armed",armed && setsym("uin_evdiag",1L)==0,"");
+		t_check("finder_idle_wne_armed",idlewne81(1),"");
+        pause_ms(1000L);
+        t_check("finder_idle_wne_read",idlewne81(0),"");
+		t_check("finder_idle_phase_armed",setsym("uin_pmphaseon",0L)==0 &&
+            setsym("uin_pmphasecount",0L)==0 && setsym("uin_pmidletracecount",0L)==0 &&
+            setsym("uin_pmphaseon",1L)==0,"");
+        pause_ms(1000L);
+        {unsigned long addr=0,phaseinfo=0;long words[16],count;int row,k,ok;
+         ok=setsym("uin_pmphaseon",0L)==0;count=getsym("uin_pmphasecount");
+         if(count<0 || count>8 || getksym("uin_pmphase",&addr,&phaseinfo)<0 || !addr)ok=0;
+         else for(row=0;row<count;row++) {
+             for(k=0;k<16;k++){words[k]=-1;if(kmemrw(addr+row*64+k*4,words+k,0)<0)ok=0;}
+             t_info("finder_idle_pm_phase","row %d previouswake %lx entry %lx wake %lx nativepc %lx fp %lx caller %lx sp %lx a5 %lx signal %ld/%ld pending %lx flags %lx",
+                 row,words[0],words[1],words[2],words[3],words[4],words[5],words[6],words[7],words[8],words[9],words[10],words[11]);
+             t_info("finder_idle_pm_clock","row %d nativeTicks %lx/%lx virtualSR %lx held %lx",row,words[12],words[13],words[14],words[15]);
+         }
+         addr=0;phaseinfo=0;count=getsym("uin_pmphasecount");
+         if(count<0 || count>8 || getksym("uin_pmwatch",&addr,&phaseinfo)<0 || !addr)ok=0;
+         else for(row=0;row<count;row++) {
+             for(k=0;k<8;k++){words[k]=-1;if(kmemrw(addr+row*32+k*4,words+k,0)<0)ok=0;}
+             t_info("finder_idle_pm_watch","row %d macflags %lx gpflags %lx missing %lx pending %ld forceflags %lx coffdiag %ld watched %ld skipped %ld",
+                 row,words[0],words[1],words[2],words[3],words[4],words[5],words[6],words[7]);
+         }
+         addr=0;phaseinfo=0;count=getsym("uin_pmidletracecount");
+         if(count<0 || count>8 || getksym("uin_pmidletrace",&addr,&phaseinfo)<0 || !addr)ok=0;
+         else for(row=0;row<count;row++) {
+             for(k=0;k<12;k++){words[k]=-1;if(kmemrw(addr+row*48+k*4,words+k,0)<0)ok=0;}
+             t_info("finder_idle_pm_wait","row %d hosttick %lx/%lx result %ld signal %ld/%ld pending %lx/%lx held %lx/%lx pid %ld pc %lx queue %ld",
+                 row,words[0],words[1],words[2],words[3],words[4],words[5],words[6],words[7],words[8],words[9],words[10],words[11]);
+         }
+         t_check("finder_idle_phase_read",ok,"");
+        }
+		t_check("finder_idle_pm_armed",idlepm81(1),"");
+        t_info("finder_idle_pm_before","calls %ld sleeps %ld interrupts %ld ticks %ld zero %ld refused %ld",
+            getsym("uin_pmidlecalls"),getsym("uin_pmidlesleeps"),getsym("uin_pmidleinterrupts"),
+            getsym("uin_pmidleticks"),getsym("uin_pmidlezero"),getsym("uin_pmidlerefused"));
+		before=mac_cpu();
+		host("prof 10 mac81_idle");
+		pause_ms(120000L);
+		after = mac_cpu();
+        t_info("finder_idle_pm_after","calls %ld sleeps %ld interrupts %ld ticks %ld zero %ld refused %ld",
+            getsym("uin_pmidlecalls"),getsym("uin_pmidlesleeps"),getsym("uin_pmidleinterrupts"),
+            getsym("uin_pmidleticks"),getsym("uin_pmidlezero"),getsym("uin_pmidlerefused"));
+		t_check("finder_idle_pm_read",idlepm81(0),"");
+		setsym("uin_evdiag",0L);
+		for (j=0;j<8;j++) {
+			stats[j]=-1;
+			if (!base || kmemrw(base+j*4,&stats[j],0)<0) readok=0;
+		}
+		t_info("finder_idle_events","calls %ld force %ld event %ld nonblock %ld expired %ld mouse %ld sleeps %ld signal %ld",stats[0],stats[1],stats[2],stats[3],stats[4],stats[5],stats[6],stats[7]);
+        {
+            unsigned long buttons=0;long words[10],count=getsym("uin_evbuttoncount");int k,row;
+            if(getksym("uin_evbuttons",&buttons,&info)<0 || !buttons || count<0 || count>8)readok=0;
+            else for(row=0;row<count;row++) {
+                for(k=0;k<10;k++) {
+                    words[k]=-1;
+                    if(kmemrw(buttons+row*40+k*4,&words[k],0)<0)readok=0;
+                }
+                t_info("finder_idle_button","row %d kind %ld what %ld flags %lx evmask %lx q %ld tick %lx pc %lx mask %lx btn %ld written %ld",
+                    row,words[0],words[1],words[2],words[3],words[4],words[5],words[6],words[7],words[8],words[9]);
+            }
+        }
+		if (getksym("uin_evlast",&lastbase,&info)<0 || !lastbase) readok=0;
+		for (j=0;j<8;j++) {
+			value=-1;
+			if (!lastbase || kmemrw(lastbase+j*4,&value,0)<0) readok=0;
+			t_info("finder_idle_event_last","field %d value %lx",j,value);
+		}
+		t_check("finder_idle_events_read",readok,"");
+		t_check("finder_idle_cpu_read", before >= 0 && after >= before,
+		    "%ld -> %ld ms", before, after);
+		if (before >= 0 && after >= before) {
+			t_info("finder_idle_cpu", "%ld ms over 120000 ms", after - before);
+			t_check("finder_idle_cpu_bounded",after-before<=24000L,
+			    "%ld ms over 120000 ms (maximum 20%%)",after-before);
+		}
+	}
+	host("shot " SHOT "idle");
+	n = shotdiff(SHOT "diskclosed", SHOT "idle");
+	t_check("finder_idle", n >= 0 && n < 2000, "%d pixels from the desktop", n);
+#endif
 	t_check("finder_stays", alive76(), "");
 	shutdown76();
+#ifdef SYS81
+    if((!getenv("MACPMSTUB") && !getenv("MACPMIDLE")) ||
+        (getenv("MACPMSTUB") && !strcmp(getenv("MACPMSTUB"),"1")))
+        t_check("finder_idle_stub_restored",idlestub81(2),"");
+#endif
 }
+
+#ifdef SYS81
+/* n bytes of the Mac task's memory at addr */
+static int
+rdmac(fd, addr, b, n)
+int fd;
+long addr;
+char *b;
+int n;
+{
+	return lseek(fd, addr, 0) != -1 && read(fd, b, n) == n;
+}
+
+static long
+g32(c)
+unsigned char *c;
+{
+	return (long)c[0] << 24 | (long)c[1] << 16 | c[2] << 8 | c[3];
+}
+
+/*
+ * A heap zone (z, or SysZone and the low-memory layout if 0): its header,
+ * then the first block whose size leaves the zone or whose master
+ * pointer does not point back, with the two blocks before it.
+ */
+static long
+heap81(path, z)
+char *path;
+long z;
+{
+	unsigned char c[64], lm[4];
+	char buf[400];
+	long b, lim, sz, prev[2], mp, tgt = 0;
+	int fd, i, n = 0, nb = 0, nbad = 0;
+	static long lmaddr[] = { 0x2a6, 0x2aa, 0x10c, 0x108, 0x130, 0x114, 0x118, 0x2a2, 0x1ef0 };
+
+	if ((fd = open(path, O_RDONLY)) < 0)
+		return -1;
+	if (z == 0) {
+		for (i = 0; i < 9; i++)
+			if (rdmac(fd, lmaddr[i], (char *)lm, 4))
+				n += sprintf(buf + n, " %lx=%lx", lmaddr[i], g32(lm));
+		t_info("mac_lowmem", "SysZone ApplZone BufPtr MemTop ApplLimit HeapEnd TheZone ROMBase -:%s", buf);
+		if (!rdmac(fd, 0x2a6L, (char *)lm, 4))
+			{ tgt = -1; goto out; }
+		z = g32(lm);
+	}
+	if (!rdmac(fd, z, (char *)c, 52))
+		{ tgt = -1; goto out; }
+	for (n = 0, i = 0; i < 52; i++)
+		n += sprintf(buf + n, "%02x", c[i]);
+	t_info("mac_zone", "%lx: %s", z, buf);
+	lim = g32(c);
+	prev[0] = prev[1] = 0;
+	for (b = z + 52; b < lim && nb < 200000; b += sz, nb++) {
+		if (!rdmac(fd, b, (char *)c, 16)) {
+			tgt = -1;
+			goto out;
+		}
+		sz = g32(c + 4);
+		mp = -1;
+		if (c[0] & 0x80 && rdmac(fd, z + g32(c + 8), (char *)lm, 4))
+			mp = g32(lm);
+		if (tgt && b <= tgt && tgt < b + sz) {
+			for (n = 0, i = 0; i < 16; i++)
+				n += sprintf(buf + n, "%02x", c[i]);
+			t_info("mac_mpblk", "%lx in #%d at %lx: %s", tgt, nb, b, buf);
+			if (rdmac(fd, tgt - 32, (char *)c, 64)) {
+				for (n = 0, i = 0; i < 64; i++)
+					n += sprintf(buf + n, "%s%02x", i == 32 ? " | " : "", c[i]);
+				t_info("mac_mparea", "%s", buf);
+			}
+			if (!rdmac(fd, b, (char *)c, 16))
+				break;
+		}
+		if (sz >= 12 && !(sz & 3) && b + sz <= lim && (c[0] & 0x80) && mp != b + 12 &&
+		    nbad++ < 4) {
+			t_info("mac_badmp", "#%d at %lx: %08lx %08lx %08lx mp at %lx = %lx",
+			    nb, b, g32(c), sz, g32(c + 8), z + g32(c + 8), mp);
+			if (!tgt)
+				tgt = z + g32(c + 8);
+		}
+		if (sz < 12 || (sz & 3) || b + sz > lim || (c[0] & 0xc0) == 0xc0) {
+			t_info("mac_badblk", "#%d at %lx: %08lx %08lx %08lx mp %lx; before %lx %lx",
+			    nb, b, g32(c), sz, g32(c + 8), mp, prev[0], prev[1]);
+			for (i = 0; i < 2; i++)
+				if (prev[i] && rdmac(fd, prev[i], (char *)c, 48)) {
+					int k, m = 0;
+
+					for (k = 0; k < 48; k++)
+						m += sprintf(buf + m, "%02x", c[k]);
+					t_info("mac_prevblk", "%lx: %s", prev[i], buf);
+				}
+			if (!tgt)
+				tgt = b;
+			goto out;
+		}
+		prev[1] = prev[0];
+		prev[0] = b;
+	}
+	if (b != lim && !tgt)
+		tgt = -1;
+	t_info("mac_heapok", "%lx: %d blocks to %lx (limit %lx)", z, nb, b, lim);
+out:
+	close(fd);
+	return tgt;
+}
+
+#endif
 
 /* the 7.6.1 Finder: its desktop, the System version, About This Computer */
 static void
@@ -1852,26 +3989,66 @@ screen76()
 	unsigned char *lm;
 	char *r;
 	int id, n, chk = 0, white = 0, top = 0, diff = 0;
+    int tilex = 0, tiley = 0, dominant = 1000;
 
 	hostopen();
 	if (hfd < 0) {
 		t_skip("mac_screen", "no host line");
 		return;
 	}
-	/* the menu bar white, the rest mostly the desktop pattern */
+	/* Wait for the Finder menu bar to appear. */
 	for (n = 0; n < 8; n++) {
 		t_rearm(120);
 		host("shot " SHOT "desktop");
 		r = host("mac " SHOT "desktop");
+		tilex = tiley = 0; dominant = 1000;
 		if (r)
-			sscanf(r, "checker %d white %d top %d", &chk, &white, &top);
-		if (chk >= 900 && top >= 900)
+			sscanf(r, "checker %d white %d top %d tilex %d tiley %d dominant %d",
+                &chk, &white, &top, &tilex, &tiley, &dominant);
+#if defined(SYS81) && !defined(COFF81)
+		if (DESKOK(chk, top, tilex, tiley, dominant))
+#elif defined(COFF81)
+		if (top >= 20 && top < 300)
+#elif defined(COFF76)
+		if (top >= 900)
+#else
+		if (DESKOK(chk, top, tilex, tiley, dominant))
+#endif
 			break;
 		pause_ms(10000L);
 	}
-	t_info("mac_screen_stats", "checker %d white %d top %d", chk, white, top);
-	t_check("finder_desktop", chk >= 900 && top >= 900, "checker %d, menu bar %d per mille",
-	    chk, top);
+	t_info("mac_screen_stats", "checker %d white %d top %d tile %d/%d dominant %d",
+        chk, white, top, tilex, tiley, dominant);
+#ifdef SYS81
+    if(top < 20 || top >= 300) {
+        char path[32],hex[65]; unsigned char bytes[32]; long pc=getsym("guest_f7pc"); int fd,k;
+        t_info("startup_fault","count %ld PC %lx EA %lx",getsym("guest_nfault7"),pc,getsym("guest_f7ea"));
+        sprintf(path,"/proc/%d",(int)macpid);
+        if(pc>0 && (fd=open(path,O_RDONLY))>=0) {
+            if(lseek(fd,(off_t)pc,0)!=-1 && read(fd,(char *)bytes,32)==32) {
+                for(k=0;k<32;k++)sprintf(hex+2*k,"%02x",bytes[k]);
+                t_info("startup_fault_code","%lx %s",pc,hex);
+            }
+            close(fd);
+        }
+    }
+#endif
+
+#if defined(SYS81) && !defined(COFF81)
+	/* the Platinum menu bar is grey, with white only in its highlights */
+	t_check("finder_desktop", DESKOK(chk, top, tilex, tiley, dominant),
+	    "checker %d, menu %d, tile %d/%d, dominant %d",
+        chk, top, tilex, tiley, dominant);
+#elif defined(COFF81)
+	t_check("finder_menu", top >= 20 && top < 300,
+	    "menu bar white %d per mille", top);
+#elif defined(COFF76)
+	t_check("finder_menu", top >= 900, "menu bar %d per mille", top);
+#else
+	t_check("finder_desktop", DESKOK(chk, top, tilex, tiley, dominant),
+	    "checker %d, menu %d, tile %d/%d, dominant %d",
+        chk, top, tilex, tiley, dominant);
+#endif
 	id = shmget(TLOW, 0, 0);
 	lm = id < 0 ? 0 : (unsigned char *)shmat(id, (char *)0, SHM_RDONLY);
 	if (lm && lm != (unsigned char *)-1) {
@@ -2033,6 +4210,26 @@ char **argv;
 		t_skip("all", "no uinter module on this root");
 		return t_done();
 	}
+#ifdef OT81
+	if (access("/mac/lib/OTProvProbe", R_OK) == 0) {
+		int bmj = 55;
+		strcpy(reg.md_modname, "otbridge");
+		reg.md_typedata = (caddr_t)&bmj;
+		if (!t_check("provider_register", modadm(MOD_TY_CDEV, MOD_C_MREG, &reg) == 0, "%s", T_ERR) ||
+		    !t_check("provider_load", modload("/tests/otb/otbridge") >= 0, "%s", T_ERR))
+			return t_done();
+	}
+#endif
+#ifdef SYS81
+    {
+        struct rlimit rl;int ok=getrlimit(RLIMIT_VMEM,&rl)==0;
+        if(ok && rl.rlim_cur<48L*1024*1024) {
+            if(rl.rlim_max<48L*1024*1024)ok=0;
+            else {rl.rlim_cur=48L*1024*1024;ok=setrlimit(RLIMIT_VMEM,&rl)==0;}
+        }
+        if(!t_check("session_memory_limit",ok,"32 MB Mac RAM plus 16 MB process headroom"))return t_done();
+    }
+#endif
 	e = modpath(MD) < 0 ? errno : 0;
 	strcpy(reg.md_modname, "auxexec");
 	reg.md_typedata = (caddr_t)&er;
@@ -2075,6 +4272,10 @@ char **argv;
 #endif
 		t_skip("startmac", "no startmac, ROM or System file on this root");
 	else {
+#ifdef SYS81
+  t_check("full_template", access(SYSDIR "/.stamp", R_OK) == 0 &&
+      access(USERSYS "/.stamp", R_OK) == 0, "8.1 qualification requires full System Folders");
+#endif
 		fidd();
 		deskfolder();
 #ifdef SYS6
@@ -2094,26 +4295,90 @@ char **argv;
 		/* the module loaded, then a Quadra 800 (no ProductInfo of its own) */
 		e = open("/dev/uinter0", O_RDWR);
 		t_check("boxflag", setsym("uinter_boxflag", 29L) == 0, "no uinter_boxflag");
-#ifndef SYS81
+#ifdef SYS81
+        t_check("force_diag_armed", setsym("uin_polldiag",1L)==0 &&
+            getsym("uin_polldiag")==1L && setsym("aux_polldiag",1L)==0,
+            "Force diagnostics before startup");
+#endif
 		system("/usr/bin/rm -rf /tmp/.mac");
+#ifndef SYS81
 		/* the run's last stage: a root session that shuts down */
 		if (argc > 1 && strcmp(argv[1], "halt") == 0) {
 			session76(0, SYSDIR, "halt");
 			return t_done();
 		}
-		session76(atoi(OTHERUID), USERSYS, "user");
-		dotmac("user_dotmac", atoi(OTHERUID), atoi(OTHERUID) + 1);
 #endif
+	#if !defined(COFF76) && !defined(COFF81D) && !defined(OT81)
+	session76(atoi(OTHERUID), USERSYS, "user");
+		dotmac("user_dotmac", atoi(OTHERUID), atoi(OTHERUID) + 1);
 		session76(0, SYSDIR, "root");
+#endif
 		/* made by _AUXDispatch(36, 0); t_mac's run leaves one */
 		system("/usr/bin/rm -rf /tmp/.mac");
 		/* SimpleText on the desktop, for the Finder to open */
 		copyf(SYSDIR "/SimpleText", "/Desktop Folder/SimpleText");
 		copyf(SYSDIR "/%SimpleText", "/Desktop Folder/%SimpleText");
+#ifdef SYS81
+		/* this session's patches only */
+		setsym("uinter_patched", 0L);
+        setsym("uinter_soundnative", 0L);
+#endif
+#ifdef COFF76
+        copyf("/mac/bin/CommandShell", "/Desktop Folder/CommandShell");
+        copyf("/mac/bin/%CommandShell", "/Desktop Folder/%CommandShell");
+        if(access("/etc/aux/CoffProbe",F_OK)==0)
+            copyf("/mac/lib/COFFCarrier/COFFCarrier", "/Desktop Folder/COFFCarrier");
+#endif
+#ifdef SYS81
+        copyf("/mac/bin/CommandShell", "/Desktop Folder/CommandShell");
+        copyf("/mac/bin/%CommandShell", "/Desktop Folder/%CommandShell");
+        copyf(SYSDIR "/Control Panels/Appearance", "/Desktop Folder/Appearance");
+        copyf(SYSDIR "/Control Panels/%Appearance", "/Desktop Folder/%Appearance");
+        copyf(SYSDIR "/Control Panels/Monitors", "/Desktop Folder/Monitors");
+        copyf(SYSDIR "/Control Panels/%Monitors", "/Desktop Folder/%Monitors");
+        if(access("/etc/aux/CoffProbe",F_OK)==0)
+            copyf("/mac/lib/COFFCarrier/COFFCarrier", "/Desktop Folder/COFFCarrier");
+		copyf("/mac/lib/Mac81Probe/Mac81Probe", "/Desktop Folder/Mac81Probe");
+#ifdef OT81
+		copyf("/mac/lib/OTProbe/OTProbe", "/Desktop Folder/OTProbe");
+#endif
+#endif
 		startmac();
+#ifdef COFF76
+        unlink("/Desktop Folder/CommandShell"); unlink("/Desktop Folder/%CommandShell");
+        unlink("/Desktop Folder/COFFCarrier");
+#endif
+#ifdef SYS81
+        unlink("/Desktop Folder/CommandShell"); unlink("/Desktop Folder/%CommandShell");
+        unlink("/Desktop Folder/Appearance"); unlink("/Desktop Folder/%Appearance");
+        unlink("/Desktop Folder/Monitors"); unlink("/Desktop Folder/%Monitors");
+        unlink("/Desktop Folder/COFFCarrier");
+		unlink("/Desktop Folder/Mac81Probe");
+#ifdef OT81
+		unlink("/Desktop Folder/OTProbe");
+#endif
+#endif
 		unlink("/Desktop Folder/SimpleText");
 		unlink("/Desktop Folder/%SimpleText");
 		dotmac("auxdispatch_36", 0, atoi(OTHERUID));
+#ifdef SYS81
+		/*
+		 * the HFS Plus queue walk repaired, both _AUXDispatch(36) calls made,
+		 * _SoundDispatch answered, the selected File Manager configuration,
+		 * FSSpecs made for Unix volumes, _HFSDispatch's table entry taken
+		 */
+		t_check("sound_dispatch_initialization", (getsym("uinter_patched") & 0x20) != 0 ||
+            getsym("uinter_soundnative") > 0,
+            "neither bootstrap nor authenticated native initialization");
+		t_check("live_patches", getsym("uinter_fmgroup") >= 0 &&
+		    ((getsym("uinter_patched") |
+            (getsym("uinter_soundnative") > 0 ? 0x20L : 0)) & ~0x2e00L) ==
+		    (getsym("uinter_fmgroup") == 0 ? 0x113f : 0x117f),
+		    "applied %#lx", getsym("uinter_patched"));
+		/* SimpleText's exit ran the Process Manager's Time Manager cleanup */
+		t_check("tm_cleanup", (getsym("uinter_patched") & 0x600) != 0,
+		    "applied %#lx", getsym("uinter_patched"));
+#endif
 		setsym("uinter_boxflag", -1L);
 		if (e >= 0)
 			close(e);

@@ -32,6 +32,7 @@ W=$B/test
 rm -rf "$W"
 mkdir -p "$W"
 NICE="nice -n 19"
+sh "$T/cslots-check.sh" "$W"
 fails=0
 pass() { echo "PASS $*"; }
 fail() { echo "FAIL $*"; fails=$((fails + 1)); }

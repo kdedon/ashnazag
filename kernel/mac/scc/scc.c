@@ -102,6 +102,82 @@ static void scc_ioctl(), scc_iocdata(), scc_setattr(), scc_getattr();
 static void scc_mctl(), scc_ack(), scc_nak(), scc_copyin(), scc_copyout();
 static mblk_t *scc_txfill();
 static void scc_conout();
+static caddr_t scc_routekey;
+static int (*scc_routeout)();
+static void (*scc_routeread)();
+
+/* The route owns messages only while its STREAMS queue remains installed. */
+int
+scc_conroute(key, output, reading)
+	caddr_t key;
+	int (*output)();
+	void (*reading)();
+{
+	mblk_t *mp;
+	struct stroptions *so;
+	int s;
+
+	if (!key || !output || !reading)
+		return EINVAL;
+	if (!(mp = allocb(sizeof *so, BPRI_MED)))
+		return ENOSR;
+	s = scc_spl();
+	if (scc_routekey || !scc_sc[0].sc_rq) {
+		scc_splx(s);freeb(mp);
+		return EBUSY;
+	}
+	scc_routekey = key;scc_routeout = output;scc_routeread = reading;
+	mp->b_datap->db_type = M_SETOPTS;
+	so = (struct stroptions *)mp->b_wptr;
+	bzero((caddr_t)so, sizeof *so);so->so_flags = SO_MREADON;
+	mp->b_wptr += sizeof *so;
+	putnext(scc_sc[0].sc_rq, mp);
+	scc_splx(s);
+	return 0;
+}
+
+void
+scc_conunroute(key)
+	caddr_t key;
+{
+	mblk_t *mp;
+	struct stroptions *so;
+	int s = scc_spl();
+
+	if (key == scc_routekey) {
+		scc_routekey = 0;scc_routeout = 0;scc_routeread = 0;
+		if (scc_sc[0].sc_rq && (mp = allocb(sizeof *so, BPRI_MED))) {
+			mp->b_datap->db_type = M_SETOPTS;
+			so = (struct stroptions *)mp->b_wptr;
+			bzero((caddr_t)so, sizeof *so);so->so_flags = SO_MREADOFF;
+			mp->b_wptr += sizeof *so;putnext(scc_sc[0].sc_rq, mp);
+		}
+		if (scc_sc[0].sc_rq) qenable(WR(scc_sc[0].sc_rq));
+	}
+	scc_splx(s);
+}
+
+int
+scc_confeed(key, mp)
+	caddr_t key;
+	mblk_t *mp;
+{
+	if (key != scc_routekey || !scc_sc[0].sc_rq)
+		return ENXIO;
+	if (!canput(scc_sc[0].sc_rq->q_next))
+		return EAGAIN;
+	putnext(scc_sc[0].sc_rq, mp);
+	return 0;
+}
+
+void
+scc_conresume(key)
+	caddr_t key;
+{
+	if (key == scc_routekey && scc_sc[0].sc_rq)
+		qenable(WR(scc_sc[0].sc_rq));
+}
+
 
 /* ------------------------------------------------------------ chip */
 
@@ -670,6 +746,8 @@ register queue_t *q;
 	if (sp == NULL)
 		return 0;
 	tp = &sp->sc_tty;
+	if (sp == &scc_sc[0] && scc_routekey && scc_routeread)
+		(*scc_routeread)(scc_routekey, 2);
 
 	if (sp->sc_flags & SCF_HUP) {
 		s = scc_spl();
@@ -750,6 +828,11 @@ register mblk_t *mp;
 	register int s;
 
 	switch (mp->b_datap->db_type) {
+	case M_READ:
+		if (sp == &scc_sc[0] && scc_routekey && scc_routeread)
+			(*scc_routeread)(scc_routekey, 1);
+		freemsg(mp);
+		break;
 	case M_DATA:
 	case M_DELAY:
 	case M_BREAK:
@@ -972,6 +1055,12 @@ register queue_t *q;
 		}
 		switch (mp->b_datap->db_type) {
 		case M_DATA:
+			if (sp == &scc_sc[0] && scc_routekey && scc_routeout) {
+				if (sp->sc_tty.t_state & TTSTOP) {putbq(q,mp);return 0;}
+				ok = (*scc_routeout)(scc_routekey, mp);
+				if (ok < 0) {putbq(q, mp);return 0;}
+				if (ok > 0) break;
+			}
 			if (sp == &scc_sc[0] && fbcons_active()) {
 				if (sp->sc_tty.t_state & TTSTOP) {
 					putbq(q, mp);	/* ^S stops the screen too */

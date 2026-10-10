@@ -80,7 +80,7 @@ if [ -n "$AR" ]; then
 			[ -f "$s" ] && break
 		done
 		[ -n "$s" ] || { echo "mksys76.sh: no A/UX $f"; exit 1; }
-		cp "$s" "$OUT/$f"
+		python3 "$AUX/tools/asingle2ad.py" "$s" "$OUT/$f"
 	done
 fi
 sh "$D/logout/build.sh" "$OUT/Apple Menu Items"

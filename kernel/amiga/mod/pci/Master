@@ -1,0 +1,3 @@
+# pci: /dev/pci, configuration space for lspci
+$depend opci
+pci	pci	m	0	0	0

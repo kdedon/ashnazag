@@ -9,11 +9,10 @@
 # - guest_chain[N] is the handler the slot had before (gates.lst);
 # - each gate sends supervisor faults and native processes to that
 #   handler and reaches guest_gate_c only after testing p_evpdp;
-# - guest_gate_c calls guest_trap and leaves through ureturn or the
-#   chain;
-# - the A-line gate sends a guest with GPF_ALINE to guest_linea, which
-#   leaves by rte or through guest_gate_c;
-# - hooksw names the seven hook pointers, all 0 at link time;
+# - each common/fast entry preserves registers and dispatches through
+#   a checked module hook; missing hooks reach the stock vector;
+# - the A-line gate selects guest_linea with GPF_ALINE;
+# - hooksw names the hook pointers, all 0 at link time;
 # - the events stubs, sendsig, valid_usr_range, fsig and execsw are ours,
 #   with the stock bodies at __amix_*; execsw has 11 rows and the
 #   stock table's three rows are coffexec, elfexec, intpexec.
@@ -41,7 +40,7 @@ for s in secs:
             b = s['off'] + 16 * k
             n = u32(b)
             nm = d[st+n:d.index(b'\0', st+n)].decode()
-            if u16(b + 14) and d[b + 12] >> 4:
+            if u16(b + 14) and (d[b + 12] >> 4 or nm == 'guest_gate_missing'):
                 sym.setdefault(nm, (u32(b + 4), u32(b + 8)))
                 byaddr.setdefault(u32(b + 4), nm)
 
@@ -98,9 +97,25 @@ for v, t in gated:
         bad_g.append(v)
 check(not bad_g, 'gates: native and supervisor paths reach the stock handler, '
       'guest_gate_c only after the p_evpdp test' + (' (not: %s)' % bad_g if bad_g else ''))
-txt = dis(gc, 0x60)
-check(('<guest_trap>' in txt) and ('<ureturn>' in txt) and txt.count('jsr') == 1,
-      'guest_gate_c: one call, guest_trap; exit through ureturn')
+for f in ('guest_gate_c', 'guest_linea', 'guest_ftrap', 'guest_fpriv'):
+    txt = dis(sym[f][0], 18)
+    ins = [l.split('\t')[2] for l in txt.splitlines() if l.count('\t') >= 2]
+    check(len(ins) == 4 and ins[0].startswith('tstl') and
+          '<%s_hook>' % f in txt and '<guest_gate_missing>' in txt and
+          ins[2].startswith('movel') and '%sp@-' in ins[2] and ins[3] == 'rts',
+          '%s: checked, register-preserving module trampoline' % f)
+check(all(f not in sym for f in ('gc_gate_c', 'gc_linea', 'gc_ftrap', 'gc_fpriv')),
+      'module gate bodies absent from static kernel')
+txt = dis(sym['guest_gate_missing'][0], 40)
+ins = [l.split('\t')[2] for l in txt.splitlines() if l.count('\t') >= 2]
+expected = ['movel %a0,%sp@-', 'movel %d0,%sp@-', 'movew %sp@(14),%d0',
+            'andiw #4092,%d0', None, 'movel %a0@(0,%d0:w),%sp@-',
+            'movel %sp@(4),%d0', 'moveal %sp@(8),%a0',
+            'movel %sp@,%sp@(8)', 'lea %sp@(8),%sp', 'rts']
+check(len(ins) == len(expected) and all(a == b or
+      (b is None and a.startswith('lea ') and '<guest_chain>' in a and a.endswith(',%a0'))
+      for a, b in zip(ins, expected)),
+      'missing gate hook: original vector handler with CPU frame preserved')
 txt = dis(sym['guest_gate_10'][0], 0x60)
 txt = txt[txt.index('<guest_gate_10>:'):].split('<guest_gate_', 2)[1]
 check('btst #0,%a0@(15)' in txt and '<guest_linea>' in txt,
@@ -111,17 +126,6 @@ for v, bit, off, f in ((8, 1, 15, 'guest_fpriv'), (33, 0, 14, 'guest_ftrap'),
     txt = txt[txt.index('<guest_gate_%d>:' % v):].split('<guest_gate_', 2)[1]
     check('btst #%d,%%a0@(%d)' % (bit, off) in txt and '<%s>' % f in txt,
           'gate %d: gp_flags bit %d at %d selects %s' % (v, bit, off, f))
-for f in ('guest_fpriv', 'guest_ftrap'):
-    txt = dis(sym[f][0], 0x300)
-    ins = [l.split('\t')[2] for l in txt.splitlines() if l.count('\t') >= 2]
-    check('rte' in ins and '<guest_gate_c>' in txt and '<u+0x374>' in txt,
-          '%s: returns by rte, falls back to guest_gate_c' % f)
-la = sym['guest_linea'][0]
-txt = dis(la, 0xc0)
-ins = [l.split('\t')[2] for l in txt.splitlines() if l.count('\t') >= 2]
-check('rte' in ins and '<guest_gate_c>' in txt and '<u+0x374>' in txt,
-      'guest_linea: returns by rte, falls back to guest_gate_c')
-
 hs = sym['hooksw'][0]
 names, ok = [], True
 for i in range(16):
@@ -132,7 +136,7 @@ for i in range(16):
     names.append(s[:s.index(b'\0')].decode())
     p = L(hs + 16 * i + 4)
     ok = ok and byaddr.get(p) == names[-1] + '_hook' and L(p) == 0 and L(hs + 16 * i + 12) == 0
-check(ok and names == ['guest_trap', 'guest_exec', 'guest_fork', 'guest_exit',
+check(ok and names == ['ds_evpost', 'ds_unloadsess', 'ds_segcount', 'guest_gate_c', 'guest_linea', 'guest_ftrap', 'guest_fpriv', 'guest_trap', 'guest_exec', 'guest_fork', 'guest_exit',
                        'guest_sendsig', 'guest_vur', 'guest_fsig', 'guest_unote'],
       'hooksw: %s, pointers 0, no owner' % ' '.join(names))
 

@@ -54,8 +54,9 @@ case "$1" in
 	# the display service's Atari build: its interrupt level, page size
 	! grep -qw ds_vidput "$O/exports" || KCC="$KCC -DDS_ATARI"
 	! grep -qw ata_idcm "$O/exports" || KCC="$KCC -DATA060"
+	! grep -qw am_dsinit "$O/exports" || KCC="$KCC -DDS_AMIGA"
 	rm -rf "$O/mod.d"
-	for m in guestcore auxcore auxexec uinter tosguest amigaguest; do
+	for m in guestcore auxcore auxexec uinter tosguest amigaguest cpmguest; do
 		d=$O/src/$m
 		rm -rf "$d"; mkdir -p "$d"
 		objs=
@@ -63,21 +64,33 @@ case "$1" in
 			kcc "$c" "$d/$(basename "$c" .c).o"
 			objs="$objs $d/$(basename "$c" .c).o"
 		done
+		for s in "$G/mod/$m"/*.s; do
+			[ -f "$s" ] || continue
+			$NICE m68k-cbm-sysv4-gcc -m68040 -c "$s" -o "$d/$(basename "$s" .s).o"
+			objs="$objs $d/$(basename "$s" .s).o"
+		done
 		m68k-cbm-sysv4-ld -r -o "$d/Driver.o" $objs
 		cp "$G/mod/$m/Master" "$d/"
 		DLM_TOOLS=$O/tools sh "$DLM/tools/mkmod" -e "$O/exports" -o "$O" "$d"
+		[ "$m" != guestcore ] || python3 "$G/chkgatemod.py" "$O/mod.d/$m"
 	done
+	python3 "$G/chklonemod.py" "$KERNEL" "$O/mod.d/guestcore" "$O/mod.d/cpmguest" "$O/mod.d/tosguest"
+	if grep -qw ds_modinit "$O/exports"; then
+		sh "$K/mac/display/mods.sh" "$KERNEL" "$O/display"
+		cp "$O/display/mod.d/dsuser" "$O/mod.d/"
+	fi
 	;;
 -t)
 	O=$G/build/test
 	mkdir -p "$O"
 	# interface headers, alone and together, as the kernel compiles them
-	for h in guest.h guest_rpage.h guest_rom.h; do
+	for h in guest.h guest_rpage.h guest_rom.h guest_lone.h cpmio.h; do
 		printf '#include "kinc.h"\n#include "%s"\n' "$h" > "$O/h.c"
 		kcc "$O/h.c" "$O/h.o"
 	done
 	printf '#include "kinc.h"\n#include "guest_rpage.h"\n#include "guest_rom.h"\nstruct guest_ctr c; struct guest_rpage rp; struct guest_romdesc rd; struct guest_profile pf;\n' > "$O/h.c"
 	kcc "$O/h.c" "$O/h.o"
+	python3 "$G/test/lone/run.py"
 	python3 "$G/test/chktab.py" "$G/mod/auxcore/auxcalls.c" "$G/mod/auxcore/auxconv.c"
 	${HOSTCC:-cc} -std=gnu89 -w -o "$O/t_auxsock" "$G/test/t_auxsock.c" \
 		"$G/mod/auxcore/auxsockx.c"

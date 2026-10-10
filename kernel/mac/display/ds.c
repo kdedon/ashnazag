@@ -20,6 +20,10 @@
 #include "sys/poll.h"
 #include "sys/kmem.h"
 #include "sys/stream.h"
+#include "sys/cred.h"
+#include "sys/proc.h"
+#include "sys/disp.h"
+#include "sys/session.h"
 #include "sys/time.h"
 #ifdef DS_ATARI
 #include "sys/cred.h"
@@ -34,6 +38,8 @@
 #include "fbcons.h"
 #include "adb.h"
 #include "ds.h"
+#include "sys/conf.h"
+extern struct streamtab coinfo;
 
 extern timestruc_t hrestime;
 extern long lbolt;
@@ -60,6 +66,10 @@ extern int ata_svfb;
 #define DS_SV	0
 #endif
 extern int fbp_nmode, fbp_cur;
+#ifdef DS_AMIGA
+extern int am_dsinit();
+extern void am_dsclut();
+#endif
 
 struct dsdisp ds_disp;
 struct dssess ds_sess[1 + DS_NSESS];
@@ -170,7 +180,16 @@ int depth;
 	s->s_cmap[0][255] = s->s_cmap[1][255] = s->s_cmap[2][255] = 0;
 }
 
-#ifdef DS_ATARI
+#ifdef DS_AMIGA
+#define HWCLUT 1
+static void
+ds_clutload(s, lo, hi)
+struct dssess *s;
+int lo, hi;
+{
+	am_dsclut(s, lo, hi);
+}
+#elif defined(DS_ATARI)
 #define HWCLUT	1
 #define FAL_PAL(i)	(*(VOL unsigned long *)(0xFFFF9800 + 4 * (i)))
 #define ST_PAL(i)	(*(VOL unsigned short *)(0xFFFF8240 + 2 * (i)))
@@ -297,7 +316,9 @@ ds_vbl()
 void
 ds_vblintr()
 {
+#ifndef DS_AMIGA
 	*(VOL unsigned long *)(DAFB_REG + DAFB_INTCLEAR) = 0;
+#endif
 	if (!ds_disp.d_on)
 		return;
 	ds_nhwvbl++;
@@ -305,6 +326,17 @@ ds_vblintr()
 	ds_disp.d_info.fi_flags |= FBF_VBL;
 	ds_vbl();
 }
+
+#ifdef DS_AMIGA
+void
+ds_am_console()
+{
+	if (ds_disp.d_on) {
+		ds_pend = 0;
+		qenable(&ds_q);
+	}
+}
+#endif
 
 /* every tick: VBL when DAFB gives none, and deferred switches */
 static void
@@ -339,7 +371,7 @@ long *secp, *usecp;
 	x = DS_SPL(7);
 	sec = hrestime.tv_sec;
 	us = hrestime.tv_nsec / 1000;
-#ifdef DS_ATARI
+#if defined(DS_ATARI) || defined(DS_AMIGA)
 	hi = ifr = 0;		/* tick resolution */
 #else
 	hi = *(VOL unsigned char *)(VIA1 + VIA_T1CH);
@@ -467,6 +499,9 @@ static void
 ds_unshadow(s)
 register struct dssess *s;
 {
+#ifdef DS_ATARI
+	s->s_gtop = 0;
+#endif
 	if (s->s_mem == 0)
 		return;
 	kmem_free((caddr_t)s->s_pfn, (s->s_size >> DS_PGSHIFT) * 4);
@@ -983,13 +1018,21 @@ ds_init()
 
 	if (ds_disp.d_on)
 		return 0;
+#ifdef DS_AMIGA
+	if ((i = am_dsinit()) != 0)
+		return i;
+#endif
 	if (!fbcons.fc_on)
 		return ENXIO;
 	bzero((caddr_t)fi, sizeof *fi);
 	d = m->fm_depth;
 	ds_disp.d_base = m->fm_base;
 	ds_disp.d_page = m->fm_base & ~DS_PGOFF;
-#ifdef DS_ATARI
+#ifdef DS_AMIGA
+	ds_disp.d_dafb = 0;
+	fi->fi_type = FBT_AMIGA;
+	fi->fi_layout = FBL_PACKED;
+#elif defined(DS_ATARI)
 	ds_disp.d_dafb = 0;
 	fi->fi_type = DS_SV ? FBT_SVIDEL : ata_tt ? FBT_TTSHIFT : FBT_VIDEL;
 	fi->fi_layout = d == 1 || d > 8 || DS_SV ? FBL_PACKED : FBL_IPLAN2;
@@ -1044,7 +1087,12 @@ ds_init()
 	fi->fi_cmapsize = d <= 8 ? 1 << d : 0;
 	fi->fi_cmapbits = 8;
 	fi->fi_mode = (fbp_cur >= 0 && fbp_cur < fbp_nmode) ? fbp_mode[fbp_cur].pm_id : 0x80;
-#ifdef DS_ATARI
+#ifdef DS_AMIGA
+	fi->fi_cmapbits = 4;
+	fi->fi_flags = FBF_BLANK | FBF_CMAP;
+	for (i = 0; "Amiga ECS"[i]; i++)
+		fi->fi_name[i] = "Amiga ECS"[i];
+#elif defined(DS_ATARI)
 	fi->fi_cmapbits = DS_SV ? 8 : ata_tt ? 4 : 6;
 	fi->fi_flags = d <= 8 ? FBF_BLANK | FBF_CMAP : 0;
 #ifdef ATA_SV
@@ -1126,103 +1174,38 @@ ds_init()
 #ifdef DS_ATARI
 /* ---------------------------------------------------- guest ST-RAM */
 
-/*
- * A passthrough guest's ST-RAM: one run of free physical pages, so its
- * DMA (sound, the Videl) reaches guest address g at ds_gpa + g.  One
- * guest at a time.  The block outlives the guest for the next one:
- * freed, the next processes would take its pages and split the run.
- */
-extern int availrmem;
-extern u_int pages_pp_kernel;
-extern struct tune tune;
-static page_t *ds_gpp;			/* the block's first page */
-static unsigned long ds_gpa, ds_gsize;
-static pid_t ds_gpid;			/* the process that took it, 0 while idle */
+/* RAM and DMA spans are supplied by the active environment module. */
+unsigned long (*ds_ramsize_hook)();
+int (*ds_ramphys_hook)();
 
-/* size bytes of ST-RAM for the caller, zeroed; errno */
-int
-ds_gralloc(size)
-unsigned long size;
-{
-	register page_t *pp, *lo;
-	register unsigned long i, n;
-
-	n = (size + DS_PGOFF) >> DS_PGSHIFT;
-	if (ds_gpid)
-		return EBUSY;
-	if (n == 0 || size > 0xE00000L)
-		return EINVAL;
-	if (ds_gsize >= n << DS_PGSHIFT)
-		goto zero;		/* the last guest's */
-	ds_grdrop();
-	if (availrmem - (int)n < tune.t_minarmem)
-		return ENOMEM;
-	availrmem -= n;
-	pages_pp_kernel += n;
-	if ((pp = page_get(n << DS_PGSHIFT, P_NOSLEEP | P_PHYSCONTIG)) == 0) {
-		availrmem += n;
-		pages_pp_kernel -= n;
-		return ENOMEM;
-	}
-	/* the run comes as a list in no set order */
-	for (lo = pp, i = 1; i < n; i++)
-		if ((pp = pp->p_next) < lo)
-			lo = pp;
-	ds_gpp = lo;
-	ds_gpa = (pages_base + (lo - pages)) << DS_PGSHIFT;
-	ds_gsize = n << DS_PGSHIFT;
-	if (ds_gpa + ds_gsize > 0xE00000L) {
-		ds_grdrop();
-		return ENOMEM;
-	}
-zero:
-	ds_gpid = curproc->p_pid;
-	bzero((caddr_t)ds_gpa, ds_gsize);
-	DS_CPUSHA();
-	return 0;
-}
-
-/* the guest is done; the block stays */
+/* Stop every hardware reference before returning the owner's pages. */
 void
-ds_grfree()
+ds_ramdetach(pid)
+pid_t pid;
 {
-	register unsigned long i;
+	int i;
+	struct dssess *s;
 
-	if (ds_gpp == 0)
-		return;
-	for (i = 1; i <= DS_NSESS; i++)
-		if (ds_sess[i].s_gpa == ds_gpa)
-			ds_sess[i].s_gtop = 0;
-	ds_gpid = 0;
-}
-
-/* frees the block */
-void
-ds_grdrop()
-{
-	register page_t *pp;
-	register unsigned long i, n = ds_gsize >> DS_PGSHIFT;
-
-	if (ds_gpp == 0)
-		return;
-	ds_grfree();
-	for (i = 0, pp = ds_gpp; i < n; i++, pp++)
-		if (--pp->p_keepcnt == 0)
-			page_abort(pp);
-	availrmem += n;
-	pages_pp_kernel -= n;
-	ds_gpp = 0;
-	ds_gpa = ds_gsize = 0;
-}
-
-/* the page frame at offset off of the block, -1 if none */
-int
-ds_grmmap(off)
-off_t off;
-{
-	if (ds_gpid == 0 || off < 0 || (unsigned long)off >= ds_gsize)
-		return -1;
-	return (ds_gpa + off) >> DS_PGSHIFT;
+	for (i = 1; i <= DS_NSESS; i++) {
+		s = &ds_sess[i];
+		if (!s->s_gtop || s->s_vpid != pid)
+			continue;
+		s->s_gtop = 0;
+		if (!s->s_vid)
+			continue;
+		/* A later switch restores this shadow after the RAM is gone. */
+		s->s_vid->v_reg[0x01] = ds_disp.d_page >> 16;
+		s->s_vid->v_reg[0x03] = ds_disp.d_page >> 8;
+		s->s_vid->v_reg[0x0D] = ds_disp.d_page;
+		if (s == ds_front) {
+			ds_sndsave(s);
+			ata_vput(0xFF8201L, 1, ds_disp.d_page >> 16);
+			ata_vput(0xFF8203L, 1, ds_disp.d_page >> 8);
+			ata_vput(0xFF820DL, 1, ds_disp.d_page);
+		}
+		s->s_vid->v_spb = s->s_vid->v_spos = 0;
+		s->s_vid->v_snd[1] &= ~3;
+	}
 }
 
 /* ---------------------------------------------------- Videl passthrough */
@@ -1244,9 +1227,9 @@ unsigned long win;
 	s->s_vpid = curproc->p_pid;
 	s->s_vwin = win;
 	s->s_gtop = 0;
-	if (ds_gpp && ds_gpid == curproc->p_pid) {
-		s->s_gpa = ds_gpa;
-		s->s_gtop = win < ds_gsize ? win : ds_gsize;
+	if (ds_ramsize_hook) {
+		unsigned long size = (*ds_ramsize_hook)(curproc->p_pid);
+		s->s_gtop = win < size ? win : size;
 	}
 	return 0;
 }
@@ -1346,7 +1329,8 @@ int sz;
 	register struct dssess *s;
 	register struct dsvid *d;
 	register unsigned char *p;
-	register unsigned long o, g;
+	unsigned long o;
+	register unsigned long g;
 	register int i, base = 0, other = 0;
 
 	a &= 0xFFFFFF;
@@ -1378,8 +1362,9 @@ int sz;
 		g = s->s_vgbase;
 		if (g - s->s_vwin < s->s_size)
 			o = ds_disp.d_page + (g - s->s_vwin);
-		else if (g + s->s_size <= s->s_gtop)
-			o = s->s_gpa + g;
+		else if (g < s->s_gtop && s->s_size <= s->s_gtop - g &&
+		    ds_ramphys_hook && (*ds_ramphys_hook)(s->s_vpid, g, s->s_size, &o) == 0)
+			;
 		else
 			o = ds_disp.d_page;
 		d->v_reg[0x01] = o >> 16;
@@ -1454,8 +1439,8 @@ unsigned long g, e, *pb, *pe;
 	if (e <= g)
 		return;
 	if (e <= s->s_gtop) {
-		*pb = s->s_gpa + g;
-		*pe = s->s_gpa + e;
+		if (ds_ramphys_hook && (*ds_ramphys_hook)(s->s_vpid, g, e - g, pb) == 0)
+			*pe = *pb + e - g;
 	} else if (g >= s->s_vwin && e - s->s_vwin <= s->s_size) {
 		*pb = ds_disp.d_page + (g - s->s_vwin);
 		*pe = ds_disp.d_page + (e - s->s_vwin);
@@ -1949,3 +1934,68 @@ out:
 		b[0x3c] &= 0x7F;
 }
 #endif
+
+struct dsfbh ds_fbh[DS_NFBH];
+struct dsevh ds_evh[DS_NEVH];
+int (*ds_evpost_hook)();
+int (*ds_unloadsess_hook)();
+int (*ds_segcount_hook)();
+
+void
+ds_evpost(s, mouse, type, code, value, sec, usec)
+struct dssess *s;
+int mouse, type, code;
+long value, sec, usec;
+{
+	if (ds_evpost_hook)
+		(*ds_evpost_hook)(s, mouse, type, code, value, sec, usec);
+}
+
+void
+ds_unloadsess(s)
+struct dssess *s;
+{
+	if (ds_unloadsess_hook)
+		(*ds_unloadsess_hook)(s);
+}
+
+int
+ds_segcount(s)
+struct dssess *s;
+{
+	return ds_segcount_hook ? (*ds_segcount_hook)(s) : 0;
+}
+
+void
+ds_modinit()
+{
+	extern int dlm_creg();
+	int i, e;
+
+	for (i = 51; i <= 53; i++)
+		if ((e = dlm_creg("dsuser", i)) != 0)
+			printf("display: module registration %d: %d\n", i, e);
+}
+int
+ds_owns(s)
+struct dssess *s;
+{
+	register struct cred *cr = curproc->p_cred;
+
+	return s->s_uid == cr->cr_uid || drv_priv(cr) == 0;
+}
+
+int
+ds_mayfront(cr)
+struct cred *cr;
+{
+	dev_t d;
+
+	if (drv_priv(cr) == 0)
+		return 1;
+	if (ds_front != &ds_sess[0] && ds_front->s_uid == cr->cr_uid)
+		return 1;
+	d = cttydev(curproc);
+	return d != NODEV && getmajor(d) < cdevcnt &&
+	    cdevsw[getmajor(d)].d_str == &coinfo && getminor(d) == 0;
+}

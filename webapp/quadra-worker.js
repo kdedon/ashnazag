@@ -6,7 +6,7 @@ self.onmessage = async ({ data }) => {
   self.onmessage = null;
   let rootOutput, diskOutput;
   try {
-    const { tape, kernel, donor, rootMiB, swapMiB, temporaryNames } = data;
+    const { tape, kernel, dsuser, donor, rootMiB, swapMiB, temporaryNames } = data;
     let { archives } = data, tapeParts;
     if (tape !== undefined) {
       if (!Array.isArray(tape) || !tape.length || tape.length > 64 || tape.some(file => !(file instanceof Blob) || !file.size || file.size > 8 * 1073741824)) throw new Error('Choose the AMIX 2.1 tape archive: 1–64 parts, each up to 8 GiB.');
@@ -14,6 +14,7 @@ self.onmessage = async ({ data }) => {
       throw new Error('Choose the AMIX 2.1 tape archive.');
     }
     if (!(kernel instanceof Blob) || kernel.size < 52 || kernel.size > 32 * 1048576) throw new Error('Choose a prebuilt Quadra kernel ELF up to 32 MiB.');
+    if (dsuser !== undefined && (!(dsuser instanceof Blob) || dsuser.size < 52 || dsuser.size > 2 * 1048576)) throw new Error('Choose a dsuser display module up to 2 MiB.');
     if (!(donor instanceof Blob) || donor.size < 1024 || donor.size > 8 * 1073741824) throw new Error('Choose an A/UX boot donor disk up to 8 GiB.');
     if (!Number.isInteger(rootMiB) || rootMiB < 64 || rootMiB > 2048 || rootMiB % 4) throw new Error('Root size must be 64–2048 MiB in multiples of 4.');
     if (!Number.isInteger(swapMiB) || swapMiB < 4 || swapMiB > 2048) throw new Error('Swap size must be 4–2048 MiB.');
@@ -50,8 +51,8 @@ self.onmessage = async ({ data }) => {
     if (data.selection) {
       postMessage({ type: 'status', message: 'Hashing inputs for the build recipe…' });
       const { preset, machine, settings } = data.selection;
-      const selection = { preset, machine, settings: { ...settings, rootMiB, swapMiB }, provision: provision.map(({ kind, family, id }) => ({ kind, family, id })) };
-      const files = [...archives.map(source => source.file), kernel, donor, ...provision.map(item => item.file)];
+      const selection = { preset, machine, dsuser: !!dsuser, settings: { ...settings, rootMiB, swapMiB }, provision: provision.map(({ kind, family, id }) => ({ kind, family, id })) };
+      const files = [...archives.map(source => source.file), kernel, donor, ...(dsuser ? [dsuser] : []), ...provision.map(item => item.file)];
       const made = JSON.parse(auxForgeRecipe(JSON.stringify({ selection, sizes: files.map(file => file.size), expect: data.expect ?? '', tapeParts }), files.map(read)));
       if (!made.ok) throw new Error(made.error);
       recipe = made.recipe; mismatches = made.mismatches ?? [];
@@ -67,9 +68,9 @@ self.onmessage = async ({ data }) => {
     rootOutput = await createImageOutput(rootMiB * 1048576, temporaryNames[0]);
     diskOutput = await createImageOutput(total, temporaryNames[1]);
     postMessage({ type: 'status', message: 'Layering AMIX media and applying Quadra console patches…' });
-    const metadata = { mode: 'quadra-console', sizeMiB: rootMiB, sources: archives.map(source => ({ name: source.name, size: source.file.size })), kernelSize: kernel.size, provision: packageMetadata, ...(recipe ? { recipe } : {}) };
+    const metadata = { mode: 'quadra-console', sizeMiB: rootMiB, sources: archives.map(source => ({ name: source.name, size: source.file.size })), kernelSize: kernel.size, dsuserSize: dsuser?.size ?? 0, provision: packageMetadata, ...(recipe ? { recipe } : {}) };
     let rootWritten = 0, rootReported = 0;
-    const rootResult = JSON.parse(auxRootFilesystem(JSON.stringify(metadata), [...archives.map(source => read(source.file)), read(kernel), ...provision.map(item => read(item.file))], (offset, chunk) => {
+    const rootResult = JSON.parse(auxRootFilesystem(JSON.stringify(metadata), [...archives.map(source => read(source.file)), read(kernel), ...(dsuser ? [read(dsuser)] : []), ...provision.map(item => read(item.file))], (offset, chunk) => {
       rootOutput.write(offset, chunk);
       rootWritten += chunk.byteLength;
       if (rootWritten - rootReported >= 1048576) {

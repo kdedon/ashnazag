@@ -17,7 +17,8 @@
  * and mouse to the IKBD.  The parent enters the ROM's reset code.
  * With -P the session owns the video hardware: TOS sets its own modes
  * and draws at the top of ST-RAM, which is the session's region.  Its
- * ST-RAM is then one contiguous block of the machine's, for the DMA.
+ * ST-RAM is fault-allocated in pages; DMA spans get contiguous backing.
+ * -A contiguous uses one physical block instead.
  * -S keeps GEM on the ST screen: fVDI gets no frame buffer, for
  * programs that also write and read that screen themselves.  Files a -C
  * folder lacks, such as AUTO, come from the system's fVDI folder, so
@@ -41,8 +42,10 @@
 #include <pwd.h>
 #include "dsio.h"
 #include "tosio.h"
+#include "tosram.h"
 #include "tosfb.h"
 #include "../include/envroot.h"
+#include "../include/envmem.h"
 #include <stropts.h>
 
 #define	CART	0xfa0000
@@ -59,7 +62,8 @@ static char *xdrv[26];			/* -D */
 static char *tab[26];			/* drive -> host directory */
 static char tro[26];			/* read-only */
 static long ramsize = 4L << 20;
-static int mono, stscreen, verbose, pass, romarg, cfold;
+static int mono, stscreen, verbose, pass, romarg, ramarg, cfold;
+static int ramcontig;
 static int tfd;
 static struct fbinfo hfi;		/* -P: the host screen */
 extern int fbpipe, vpass;
@@ -99,13 +103,8 @@ region(a, n, shared)
 	unsigned long a, n;
 	int shared;
 {
-	static int zfd = -1;
-
-	if (zfd < 0 && (zfd = open("/dev/zero", O_RDWR)) < 0)
-		die("/dev/zero");
-	if (mmap((caddr_t)a, n, PROT_READ | PROT_WRITE | PROT_EXEC,
-	    (shared ? MAP_SHARED : MAP_PRIVATE) | MAP_FIXED, zfd, 0) == (caddr_t)-1)
-		die("mmap");
+	if (envmem_region(a, n, shared, -1) < 0)
+		die("guest memory");
 }
 
 static long
@@ -403,7 +402,7 @@ main(argc, argv)
 			argv[c] = "-r";
 		else if (argv[c][0] == '-' && strchr("rcCdDemu", argv[c][1]) && argv[c][2] == 0)
 			c++;		/* skip the option's argument */
-	while ((c = getopt(argc, argv, "r:c:C:d:D:e:u:Um:MPSv")) != -1)
+	while ((c = getopt(argc, argv, "r:c:C:d:D:e:u:Um:MPSvA:")) != -1)
 		switch (c) {
 		case 'r': rom = optarg; romarg = 1; break;
 		case 'c': cart = optarg; break;
@@ -420,13 +419,23 @@ main(argc, argv)
 			break;
 		case 'u': udir = optarg; break;
 		case 'U': udir = 0; break;
-		case 'm': ramsize = atol(optarg) << 20; break;
+		case 'A':
+			if (!strcmp(optarg, "contiguous"))
+				ramcontig = 1;
+			else if (!strcmp(optarg, "paged"))
+				ramcontig = 0;
+			else {
+				fprintf(stderr, "starttos: -A is paged or contiguous\n");
+				return 2;
+			}
+			break;
+		case 'm': ramsize = atol(optarg) << 20; ramarg = 1; break;
 		case 'M': mono = 1; break;
 		case 'P': pass = 1; break;
 		case 'S': stscreen = 1; break;
 		case 'v': verbose = 1; break;
 		default:
-			fprintf(stderr, "usage: starttos [-rom file | -P] [-c cartridge] [-e env | -C dir | -d disk] [-D L=dir] [-u dir | -U] [-m MB] [-M] [-S] [-v]\n");
+			fprintf(stderr, "usage: starttos [-rom file | -P] [-c cartridge] [-e env | -C dir | -d disk] [-D L=dir] [-u dir | -U] [-m MB] [-A paged|contiguous] [-M] [-S] [-v]\n");
 			return 2;
 		}
 	if (env && (cdir || disk)) {
@@ -471,15 +480,25 @@ main(argc, argv)
 		return 1;
 	}
 	if (pass) {
-		if (ioctl(tfd, TOSIOC_STRAM, ramsize) < 0) {
+		if (tos_ramalloc(tfd, &ramsize, ramarg,
+		    ramcontig ? TOSIOC_STRAM : TOSIOC_RAM) < 0) {
 			if (errno != ENOMEM)
 				die("ST-RAM");
-			fprintf(stderr, "starttos: no %ld MB of contiguous ST-RAM free; -m asks for less\n",
-			    ramsize >> 20);
+			if (ramarg)
+				fprintf(stderr, "starttos: no %ld MB of %sST-RAM free; -m asks for less\n",
+				    ramsize >> 20, ramcontig ? "contiguous " : "");
+			else
+				fprintf(stderr, "starttos: no %sST-RAM free\n",
+				    ramcontig ? "contiguous " : "");
 			return 1;
 		}
-		if (mmap((caddr_t)0, (size_t)ramsize, PROT_READ | PROT_WRITE | PROT_EXEC,
-		    MAP_SHARED | MAP_FIXED, tfd, 0) == (caddr_t)-1)
+		if (!ramarg && ramsize < (4L << 20))
+			fprintf(stderr, "starttos: using %ld MB of ST-RAM (4 MB default unavailable)\n",
+			    ramsize >> 20);
+		if (verbose)
+			fprintf(stderr, "starttos: %ld MB %s ST-RAM\n",
+			    ramsize >> 20, ramcontig ? "contiguous" : "paged");
+		if (envmem_region(0, (unsigned long)ramsize, 1, tfd) < 0)
 			die("ST-RAM");
 	} else
 		region(0L, (unsigned long)ramsize, 1);

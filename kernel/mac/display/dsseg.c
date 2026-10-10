@@ -26,6 +26,8 @@
 #include "vm/seg_dev.h"
 #include "vm/page.h"
 #include "ds.h"
+#include "sys/moddefs.h"
+extern struct modwrapper dsuser_wrapper;
 
 extern int segdev_create(), as_map(), as_unmap();
 extern page_t *page_numtookpp();
@@ -93,7 +95,7 @@ ds_claim()
 }
 
 int
-ds_segcount(s)
+dsuser_segcount(s)
 struct dssess *s;
 {
 	register int i, n = 0;
@@ -106,7 +108,7 @@ struct dssess *s;
 
 /* drop every user translation of s; safe context only */
 void
-ds_unloadsess(s)
+dsuser_unloadsess(s)
 struct dssess *s;
 {
 	register struct seg *seg;
@@ -143,6 +145,7 @@ struct dscrargs *a;
 		ds_segops.free = ds_sfree;
 		ds_segops.fault = ds_sfault;
 	}
+	mod_hold(&dsuser_wrapper);
 	seg->s_ops = &ds_segops;
 	t->t_sess = a->c_sess;
 	t->t_cache = a->c_sess->s_cache;
@@ -202,6 +205,7 @@ struct seg *seg, *nseg;
 		n->t_seg = 0;
 		return err;
 	}
+	mod_hold(&dsuser_wrapper);
 	nseg->s_ops = &ds_segops;
 	n->t_sess = t->t_sess;
 	n->t_cache = t->t_cache;
@@ -232,8 +236,10 @@ struct seg *seg;
 		t->t_seg = 0;
 	}
 	(*ds_devops->free)(seg);
-	if (s)
+	if (s) {
 		ds_sessgc(s);
+		mod_rele(&dsuser_wrapper);
+	}
 }
 
 /* the leaf entries of [addr, addr + len) that map VRAM: write-through */
@@ -339,5 +345,16 @@ enum seg_rw rw;
 	}
 	if (t->t_cache == FBC_WT && t->t_sess == ds_front)
 		ds_setwt(seg, addr, len);
+	return 0;
+}
+
+int
+ds_segheld()
+{
+	int i;
+
+	for (i = 0; i < DS_NSEG; i++)
+		if (ds_seg[i].t_seg)
+			return 1;
 	return 0;
 }

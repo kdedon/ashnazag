@@ -602,7 +602,9 @@ char **argv;
 			pf[n].fd = c->c_fd;
 			pf[n++].events = POLLIN;
 		}
-		if (poll(pf, (unsigned long)n, tmo) < 0 && errno != EINTR) {
+		if (poll(pf, (unsigned long)n, tmo) < 0) {
+			if (errno == EINTR)
+				continue;
 			perror("sndd: poll");
 			exit(1);
 		}

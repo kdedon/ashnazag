@@ -1,0 +1,3 @@
+# ne: RTL8029 (NE2000) Ethernet behind a PCI bridge, /dev/ne0
+$depend opci
+ne	ne	m	0	0	0

@@ -89,6 +89,7 @@ func rootFilesystemJS(_ js.Value, args []js.Value) (result any) {
 			Name string `json:"name"`
 			Size int64  `json:"size"`
 		} `json:"sources"`
+		DSUserSize int64                `json:"dsuserSize,omitempty"`
 		KernelSize int64                `json:"kernelSize"`
 		Provision  []provision.Artifact `json:"provision,omitempty"`
 		Recipe     string               `json:"recipe,omitempty"`
@@ -122,6 +123,12 @@ func rootFilesystemJS(_ js.Value, args []js.Value) (result any) {
 	}
 	if len(request.Provision) > 64 {
 		return fail("too many provisioning packages")
+	}
+	if request.DSUserSize != 0 {
+		if request.Mode != "quadra-console" || request.DSUserSize < 52 || request.DSUserSize > 2<<20 || request.Recipe == "" {
+			return fail("invalid dsuser module metadata")
+		}
+		expectedReaders++
 	}
 	expectedReaders += len(request.Provision)
 	if args[1].Length() != expectedReaders {
@@ -162,6 +169,13 @@ func rootFilesystemJS(_ js.Value, args []js.Value) (result any) {
 		}
 		var packages []forge.Media
 		start := len(request.Sources) + 1
+		if s.DSUser != (request.DSUserSize != 0) {
+			return fail("dsuser module differs from the recipe")
+		}
+		if s.DSUser {
+			packages = append(packages, forge.Media{Reader: jsReader{args[1].Index(start), request.DSUserSize}, Size: request.DSUserSize})
+			start++
+		}
 		for i, a := range request.Provision {
 			packages = append(packages, forge.Media{Reader: jsReader{args[1].Index(start + i), a.Size}, Size: a.Size})
 		}
@@ -172,6 +186,9 @@ func rootFilesystemJS(_ js.Value, args []js.Value) (result any) {
 		request.Provision = nil
 		options.Timestamp = forge.QuadraTimestamp
 	} else if request.Mode == "quadra-console" {
+		if err := forge.ValidateDisplay(forge.Media{Reader: jsReader{args[1].Index(len(request.Sources)), request.KernelSize}, Size: request.KernelSize}, nil); err != nil {
+			return fail(err)
+		}
 		entries, err = recipes.QuadraRoot(entries, jsReader{args[1].Index(len(request.Sources)), request.KernelSize}, request.KernelSize)
 		if err != nil {
 			return fail(err)

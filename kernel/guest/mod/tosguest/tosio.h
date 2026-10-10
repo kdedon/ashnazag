@@ -24,6 +24,7 @@
 #define	TOSIOC_MAPROM	TOSIOC(8)	/* the machine's ROM, read-only at TOS_ROMBASE; returns its size */
 #define	TOSIOC_HALT	TOSIOC(9)	/* the guest: halt the machine, root only */
 #define	TOSIOC_SND	TOSIOC(10)	/* in/out struct tossndio: the sound pump */
+#define TOSIOC_RAM	TOSIOC(14)	/* value: bytes of scattered, fault-allocated RAM */
 #define	TOSIOC_STRAM	TOSIOC(11)	/* value: bytes of contiguous ST-RAM, then mmap at 0 */
 
 #define	TOS_ROMBASE	0xe00000L

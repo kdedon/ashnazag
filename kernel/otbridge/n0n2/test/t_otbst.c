@@ -359,7 +359,7 @@ main(argc, argv)
 		return t_done();
 	}
 	if (access(STDEV, 0) < 0)
-		mknod(STDEV, S_IFCHR | 0660, makedev(55, 1));
+		mknod(STDEV, S_IFCHR | 0660, makedev(55, 64));
 	chown(STDEV, 0, 25);
 	chmod(STDEV, 0660);
 	r = tryuser(100, 25);
@@ -379,8 +379,8 @@ main(argc, argv)
 	t_check("write_unattached", write(bfd, frame(bcast, bmac, 0x88b5, 60), 60) < 0 &&
 	    errno == EINVAL, "%s", T_ERR);
 	memset(&st, 0, sizeof st);
-	st.st_mode = 2;
-	t_check("mode_anchor_refused", ioctl(bfd, OTB_STATION, &st) < 0 && errno == EINVAL,
+	st.st_mode = 3;
+	t_check("mode_invalid_refused", ioctl(bfd, OTB_STATION, &st) < 0 && errno == EINVAL,
 	    "%s", T_ERR);
 	memcpy(st.st_mac, bmac, 6);
 	st.st_mode = OTB_ST_BRIDGE;

@@ -23,6 +23,9 @@ rm -rf "$P"
 mkdir -p "$P/bin" "$P/fonts/misc" "$P/fonts/75dpi" "$P/lib"
 cp "$XC/programs/Xserver/Xamix" "$P/bin/Xamix"
 "$STRIP" "$P/bin/Xamix"
+if [ "$PLATFORM" = atari ]; then
+	python3 "$D/check-falcon.py" seal "$XC/programs/Xserver/Xamix" "$P"
+fi
 for f in $MISC; do cp "$XC/fonts/bdf/misc/$f.bdf" "$P/fonts/misc/"; done
 for f in $DPI75; do cp "$XC/fonts/bdf/75dpi/$f.bdf" "$P/fonts/75dpi/"; done
 cp "$XC/fonts/bdf/misc/fonts.alias" "$P/fonts/misc/"

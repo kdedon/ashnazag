@@ -9,7 +9,7 @@
 
 #include "auxcore.h"
 
-extern int aux_open(), aux_fcntl(), aux_ioctl(), aux_wait();
+extern int aux_access(), aux_open(), aux_fcntl(), aux_ioctl(), aux_wait();
 extern int aux_stat(), aux_lstat(), aux_fstat();
 extern int aux_xstat(), aux_xlstat(), aux_xfstat();
 extern int aux_getdirentries(), aux_utssys(), aux_gethostname();
@@ -26,7 +26,7 @@ extern int aux_read(), aux_select(), aux_waitpid(), aux_flock();
 extern int aux_statfs(), aux_fstatfs(), aux_truncate(), aux_ftruncate();
 extern int aux_utimes(), aux_getitimer(), aux_setitimer(), aux_alarm();
 extern int aux_setreuid(), aux_setregid(), aux_shmsys(), aux_sigpending();
-extern int aux_fidop(), aux_csop(), aux_setxinfo(), aux_fsetxinfo();
+extern int aux_rename(), aux_fidop(), aux_csop(), aux_setxinfo(), aux_fsetxinfo();
 
 #define	S	AE_SETJMP
 #define	T	AE_TODO
@@ -59,7 +59,7 @@ struct auxent auxcalls[] = {
 	{ 27, 1, S, 0, aux_alarm },
 	{ 29, 0, S, 29, 0 },		/* pause */
 	{ 30, 2, S, 30, 0 },		/* utime */
-	{ 33, 2, S, 33, 0 },		/* access */
+	{ 33, 2, S, 0, aux_access },		/* access */
 	{ 34, 1, S, 34, 0 },		/* nice */
 	{ 36, 0, S, 36, 0 },		/* sync */
 	{ 37, 2, S, 0, aux_kill },
@@ -134,7 +134,7 @@ struct auxent auxcalls[] = {
 	{ 116, 1, S, 58, 0 },		/* fsync */
 	{ 117, 2, S, 0, aux_statfs },
 	{ 118, 2, S, 0, aux_fstatfs },
-	{ 123, 2, S, 134, 0 },		/* rename */
+	{ 123, 2, S, 0, aux_rename },		/* rename */
 	{ 124, 2, S, 0, aux_fstat },
 	{ 125, 2, S, 0, aux_stat },
 	{ 127, 0, S, 0, aux_getcompat },

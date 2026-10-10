@@ -12,6 +12,11 @@ may be given as its archive parts (`.tar.bz2`, `.tar.gz`, `.tar`, `.zip`), a SIM
 (`amixtape/segments.json`, shared with `tools/amixtape.py`), and missing ones are named.
 Go/WASM creates a new HFS boot volume, patches and builds the UFS root, and adds
 swap and the Apple partition map. The donor supplies only its map and disk driver.
+
+Kernels with loadable display support also need their matching `dsuser` module.
+Choose it in the Quadra form or pass `-dsuser dsuser` to `ashforge build` for
+Quadra or Falcon. The recipe records its digest and installs it under
+`/etc/conf/mod.d`. Older kernels remain usable without this input.
 No native commands or uploads are involved in this browser path.
 
 Choose the default Quadra devices without packages, guests, desktop or animation,

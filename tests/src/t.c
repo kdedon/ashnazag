@@ -72,6 +72,7 @@ t_init(char *area, int secs)
 {
 	struct rlimit rl;
 
+	setbuf(stdout, (char *)0);
 	/* children killed on purpose must not fill the small root with core files */
 	rl.rlim_cur = rl.rlim_max = 0;
 	setrlimit(RLIMIT_CORE, &rl);

@@ -34,6 +34,7 @@ struct nu_softc {
 	unsigned char	ea[6];
 	unsigned char	prom[6];
 	unsigned char	rcr;		/* RCR_AB, RCR_AM, RCR_PRO */
+	unsigned char	imr;		/* interrupts enabled while running */
 	unsigned char	mar[8];
 	int		nmc;
 	unsigned char	mc[NU_NMC][6];
@@ -67,6 +68,15 @@ unsigned char	sim_bus();
 #define NU_YIELD()
 extern int sim_clkdue;
 #define NU_CLKDUE()	sim_clkdue
+#elif defined(NU_PCI)
+/* an NE2000 in PCI I/O space, byte-wide, with its interrupt */
+extern __volatile__ unsigned char *nu_io;
+#define NU_RD(r)	(nu_io[r])
+#define NU_WR(r, v)	(nu_io[r] = (v))
+extern int delayus();
+#define NU_DELAY(n)	delayus(n)
+#define NU_YIELD()
+#define NU_CLKDUE()	0
 #else
 #define VOL		__volatile__
 #define NU_RD(r)	(*(VOL unsigned char *)(NU_RDBASE + ((r) << NU_REGSHIFT)))

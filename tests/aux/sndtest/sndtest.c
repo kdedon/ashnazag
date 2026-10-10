@@ -10,7 +10,7 @@
  * /tmp/sndtest.trace and the test is given half a second to count the
  * chip's frames so far.
  */
-#define TESTF	"/tmp/sndtest"
+#define TESTF	"/tmp/sndinit"
 #define CHIPHZ	22254
 #define CHANSIZE 1060		/* SndChannel with a 128-command queue */
 #define ASC_RATE 0x56EE8BA3
@@ -18,13 +18,16 @@
 #define G16(p)	(*(unsigned short *)(p))
 #define G32(p)	(*(unsigned long *)(p))
 
-extern long auxsysr(), sndnew(), sndplay(), snddo();
+extern long auxsysr(), sndnew(), sndplay(), snddo(), sndversion(), snddispatch();
 extern char **newhandlesys();
 extern char *newptr();
 extern unsigned long ticks();
+extern long auxsleep();
 extern void sysbeep(), t_cb();
 
-static unsigned long t0;
+static unsigned long t0, waitcalls, waitintr, waitbad;
+static unsigned long soundversion, sounddispatch;
+static short soundprobe;
 
 static char *
 put(q, k, v)
@@ -64,10 +67,17 @@ static void
 wait(n)
 unsigned long n;
 {
-	long t = auxsysr(13L, 0L, 0L, 0L);
+	long t = auxsysr(13L, 0L, 0L, 0L), e;
 
 	while (auxsysr(13L, 0L, 0L, 0L) - t < (long)(n + 59) / 60 + 1)
-		;
+	{
+		e = auxsleep(1L);
+		waitcalls++;
+		if (e == -4)
+			waitintr++;
+		else if (e < 0)
+			waitbad++;
+	}
 }
 
 static void
@@ -110,12 +120,19 @@ void
 cb_run(p2)
 long p2;
 {
-	char line[64], *q = line;
+	char line[192], *q = line;
 
 	if (p2 != 0x5A5AL)
 		return;
 	q = put(q, "cb=", 1L);
 	q = put(q, "cb_ticks=", ticks() - t0);
+	q = put(q, "wait_calls=", waitcalls);
+	q = put(q, "wait_intr=", waitintr);
+	q = put(q, "wait_bad=", waitbad);
+	if (soundprobe) {
+		q = put(q, "sound_version=", soundversion);
+		q = put(q, "sound_dispatch=", sounddispatch);
+	}
 	q[-1] = '\n';
 	out(line, q, 0);
 }
@@ -148,6 +165,12 @@ st_main()
 	q = put(q, "sync_err=", (unsigned long)-e);
 	q = put(q, "sync_ticks=", t1 - t0);
 
+	/* Capture trap metadata before playback can enter its interrupt callback. */
+	soundprobe = auxsysr(33L, (long)"/tmp/sndpath", 0L, 0L) >= 0;
+	if (soundprobe) {
+		soundversion = (unsigned long)sndversion();
+		sounddispatch = (unsigned long)snddispatch();
+	}
 	e = sndnew(&chan, 5L, 0L, t_cb);	/* sampledSynth */
 	t0 = ticks();
 	if (e == 0)

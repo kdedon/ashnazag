@@ -1,11 +1,11 @@
 /*
  * hostfs.c -- CP/M drives as host directories.
  *
- * Drive X: is the directory X (or x) under the environment's root;
- * user N > 0 is its subdirectory N.  A host name shows as 8.3 in upper
- * case when it fits (a leading dot makes the file SYS); other names
- * and anything not a regular file are left out.  Attributes and
- * protection are the file's mode:
+ * Each drive is a host directory; on drives with user areas, user N > 0
+ * is its subdirectory N.  A host name shows as 8.3 in upper case when it
+ * fits (a leading dot makes the file SYS), mangled otherwise; anything
+ * not a regular file is left out.  Attributes and protection are the
+ * file's mode:
  *	R/O	no write permission for us
  *	archive	others' execute bit, cleared by every write
  *	READ	no read bits for group and others (only the owner gets in)
@@ -16,6 +16,7 @@
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -26,6 +27,7 @@
 
 char b3_root[1024];
 static char drvpath[NDRV][1100];
+static int drvflag[NDRV];
 
 #define	NFD	4
 static struct {
@@ -110,24 +112,48 @@ hostname(n, sys, s)
 	*s = 0;
 }
 
-/* drives present now; A: is made when missing */
+/* drive d is path; HF_AREAS: user N > 0 is its subdirectory N; HF_RO: read-only */
+void
+hf_setdrive(d, path, flags)
+	int d, flags;
+	char *path;
+{
+	if (d < 0 || d >= NDRV || strlen(path) >= sizeof drvpath[d])
+		return;
+	strcpy(drvpath[d], path);
+	drvflag[d] = flags;
+	lcclear();
+}
+
+char *
+hf_drive(d, flags)
+	int d, *flags;
+{
+	*flags = drvflag[d];
+	return drvpath[d];
+}
+
+/* drives whose directory is there now */
 int
 hf_drives()
 {
 	struct stat sb;
-	int d, v = 0, up;
+	int d, v = 0;
 
-	for (d = 0; d < NDRV; d++) {
-		drvpath[d][0] = 0;
-		for (up = 1; up >= 0; up--) {
-			sprintf(drvpath[d], "%s/%c", b3_root, (up ? 'A' : 'a') + d);
-			if (stat(drvpath[d], &sb) == 0 && (sb.st_mode & S_IFMT) == S_IFDIR)
-				break;
-			drvpath[d][0] = 0;
-		}
-		if (drvpath[d][0])
+	for (d = 0; d < NDRV; d++)
+		if (drvpath[d][0] && stat(drvpath[d], &sb) == 0 && (sb.st_mode & S_IFMT) == S_IFDIR)
 			v |= 1 << d;
-	}
+	return v;
+}
+
+int
+hf_rodrives()
+{
+	int d, v = 0;
+
+	for (d = 0; d < NDRV; d++)
+		if (drvpath[d][0] && (drvflag[d] & HF_RO))
+			v |= 1 << d;
 	return v;
 }
 
@@ -143,8 +169,10 @@ hf_dir(drv, user, path, mk)
 		return -1;
 	if (user == 0)
 		strcpy(path, drvpath[drv]);
-	else
+	else if (drvflag[drv] & HF_AREAS)
 		sprintf(path, "%s/%d", drvpath[drv], user);
+	else
+		return -1;
 	if (stat(path, &sb) == 0)
 		return (sb.st_mode & S_IFMT) == S_IFDIR ? 0 : -1;
 	if (!mk || mkdir(path, 0777) < 0)
@@ -153,20 +181,129 @@ hf_dir(drv, user, path, mk)
 }
 
 static int
-fill(path, sb, h)
+fill(drv, path, sb, h)
+	int drv;
 	char *path;
 	struct stat *sb;
 	struct hfile *h;
 {
 	int m = sb->st_mode;
 
-	h->ro = sb->st_uid == geteuid() ? !(m & 0200) : access(path, W_OK) < 0;
+	/* access() walks the path again, through any link */
+	if (drvflag[drv] & HF_RO)
+		h->ro = 1;
+	else if (sb->st_uid == geteuid())
+		h->ro = !(m & 0200);
+	else
+		h->ro = (!(m & 022) && geteuid() != 0) || access(path, W_OK) < 0;
 	h->arc = (m & S_IXOTH) != 0;
 	h->pwmode = !(m & 044) ? XP_READ : !(m & 022) ? XP_WRITE : 0;
 	h->size = sb->st_size;
 	h->atime = sb->st_atime;
 	h->mtime = sb->st_mtime;
 	return 0;
+}
+
+/* the 8.3 names one directory scan has handed out */
+#define	NHASH	64
+static struct nm {
+	char	n[11];
+	int	next;
+} *nms;
+static int nnm, maxnm, nhead[NHASH];
+
+static int
+nmhash(n)
+	char *n;
+{
+	unsigned h = 0;
+	int i;
+
+	for (i = 0; i < 11; i++)
+		h = h * 31 + (unsigned char)n[i];
+	return h % NHASH;
+}
+
+static int
+nmused(n)
+	char *n;
+{
+	int i;
+
+	for (i = nhead[nmhash(n)]; i >= 0; i = nms[i].next)
+		if (memcmp(nms[i].n, n, 11) == 0)
+			return 1;
+	return 0;
+}
+
+static int
+nmadd(n)
+	char *n;
+{
+	struct nm *p;
+	int h = nmhash(n);
+
+	if (nnm == maxnm) {
+		if ((p = realloc(nms, (maxnm + 256) * sizeof *nms)) == 0)
+			return -1;
+		nms = p;
+		maxnm += 256;
+	}
+	memcpy(nms[nnm].n, n, 11);
+	nms[nnm].next = nhead[h];
+	nhead[h] = nnm++;
+	return 0;
+}
+
+static int
+okchar(c)
+	int c;
+{
+	return c > ' ' && c <= '~' && !strchr("<>.,;:=?*[]|/\\\"", c);
+}
+
+/*
+ * A name with no 8.3 form, or whose form is taken, becomes six
+ * characters, ~ and a base-36 digit from a hash of the whole name,
+ * then three of its last suffix: Makefile.linux -> MAKEFI~7.LIN.
+ * A taken digit moves to the next free one.
+ */
+static int
+cpmname(s, n, sys)
+	char *s, *n;
+	int *sys;
+{
+	static char b36[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+	unsigned h = 0;
+	char *t, *dot;
+	int i, k;
+
+	if (hf_name(s, n, sys) == 0 && !nmused(n))
+		return nmadd(n);
+	if (strcmp(s, ".") == 0 || strcmp(s, "..") == 0)
+		return -1;
+	for (t = s; *t; t++)
+		h = h * 31 + (unsigned char)*t;
+	t = *sys ? s + 1 : s;
+	dot = strrchr(t, '.');
+	if (dot == t)
+		dot = 0;
+	memset(n, ' ', 11);
+	for (k = 0; *t && t != dot && k < 6; t++)
+		if (okchar(*t))
+			n[k++] = *t >= 'a' && *t <= 'z' ? *t - 32 : *t;
+	if (k == 0)
+		n[k++] = '_';
+	n[k++] = '~';
+	for (i = 8; dot && *++dot && i < 11; )
+		if (okchar(*dot))
+			n[i++] = *dot >= 'a' && *dot <= 'z' ? *dot - 32 : *dot;
+	for (i = 0; i < 36; i++) {
+		n[k] = b36[(h + i) % 36];
+		if (!nmused(n))
+			return nmadd(n);
+	}
+	return -1;
 }
 
 /* fn(h, arg) on each file of a user area, or those named want; stops when fn returns nonzero */
@@ -185,16 +322,18 @@ scan(drv, user, fn, arg, want)
 
 	if (hf_dir(drv, user, dir, 0) < 0 || (dp = opendir(dir)) == 0)
 		return 0;
+	nnm = 0;
+	memset((char *)nhead, -1, sizeof nhead);
 	while (r == 0 && (de = readdir(dp)) != 0) {
 		if (strlen(de->d_name) >= sizeof h.host ||
-		    hf_name(de->d_name, h.name, &h.sys) < 0 || (want && memcmp(want, h.name, 11)))
+		    cpmname(de->d_name, h.name, &h.sys) < 0 || (want && memcmp(want, h.name, 11)))
 			continue;
 		sprintf(path, "%s/%s", dir, de->d_name);
 		if (stat(path, &sb) < 0 || (sb.st_mode & S_IFMT) != S_IFREG)
 			continue;
 		strcpy(h.host, de->d_name);
 		h.user = user;
-		fill(path, &sb, &h);
+		fill(drv, path, &sb, &h);
 		r = (*fn)(&h, arg);
 	}
 	closedir(dp);
@@ -266,7 +405,7 @@ hf_find(drv, user, n, h)
 			strcpy(h->host, lc[i].host);
 			h->user = user;
 			h->sys = lc[i].sys;
-			return fill(path, &sb, h);
+			return fill(drv, path, &sb, h);
 		}
 	memcpy(f.n, n, 11);
 	if (scan(drv, user, findone, (char *)&f, n) == 0)
@@ -316,7 +455,7 @@ hf_create(drv, user, n, h)
 	lcclear();
 	fstat(fd, &sb);
 	close(fd);
-	return fill(path, &sb, h);
+	return fill(drv, path, &sb, h);
 }
 
 /* a descriptor for the file, kept open for later calls */
@@ -385,7 +524,7 @@ hf_setattr(drv, h, ro, sys, arc)
 	int drv, ro, sys, arc;
 	struct hfile *h;
 {
-	char path[1500], to[1500];
+	char path[1500], to[1500], *t;
 	struct stat sb;
 	int m;
 
@@ -401,7 +540,11 @@ hf_setattr(drv, h, ro, sys, arc)
 	if (sys != h->sys) {
 		lcclear();
 		strcpy(to, path);
-		hostname(h->name, sys, strrchr(to, '/') + 1);
+		t = strrchr(to, '/') + 1;
+		if (sys)
+			sprintf(t, ".%s", h->host);
+		else
+			strcpy(t, h->host + 1);
 		if (access(to, 0) == 0 || rename(path, to) < 0)
 			return -1;
 	}
@@ -478,47 +621,4 @@ hf_stamp(t, b)
 	b[1] = days >> 8;
 	b[2] = (tm->tm_hour / 10) << 4 | tm->tm_hour % 10;
 	b[3] = (tm->tm_min / 10) << 4 | tm->tm_min % 10;
-}
-
-/*
- * A new A: holding the distribution: links to its files (read-only to
- * users), X.68K for each X.REL, and the program given.
- */
-int
-hf_mkdist(dir, dist, prg, prgname, prglen)
-	char *dir, *dist, *prg, *prgname;
-	int prglen;
-{
-	char path[1500], to[1500], n[11], host[16];
-	struct dirent *de;
-	DIR *dp;
-	int sys, fd;
-
-	if (mkdir(dir, 0777) < 0)
-		return -1;
-	if ((dp = opendir(dist)) != 0) {
-		while ((de = readdir(dp)) != 0) {
-			if (strlen(de->d_name) > 100 || hf_name(de->d_name, n, &sys) < 0 || sys)
-				continue;
-			sprintf(path, "%s/%s", dist, de->d_name);
-			hostname(n, 0, host);
-			sprintf(to, "%s/%s", dir, host);
-			symlink(path, to);
-			if (memcmp(n + 8, "REL", 3) == 0) {
-				memcpy(n + 8, "68K", 3);
-				hostname(n, 0, host);
-				sprintf(to, "%s/%s", dir, host);
-				symlink(path, to);
-			}
-		}
-		closedir(dp);
-	}
-	sprintf(path, "%s/%s", dir, prgname);
-	if ((fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666)) < 0)
-		return -1;
-	if (write(fd, prg, prglen) != prglen) {
-		close(fd);
-		return -1;
-	}
-	return close(fd);
 }

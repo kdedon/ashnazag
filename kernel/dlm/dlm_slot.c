@@ -378,7 +378,6 @@ struct mod_operations mod_hookops = { hook_install, hook_remove, hook_info };
 
 /* ---- character-driver linkage ---- */
 
-#define	CDEV_SLOTS	8
 #define	CDEV_NOPEN	32
 #define	SDEV_MAX	4		/* majors of one STREAMS driver */
 #define	DRVSZ		100		/* struct mod_drv_data */
@@ -392,7 +391,8 @@ struct mod_operations mod_hookops = { hook_install, hook_remove, hook_info };
 #define	CD_FLAG		48
 
 struct dlm_cslot {
-	char		cs_name[MODMAXNAMELEN];	/* "" = free */
+	struct dlm_cslot *cs_next;
+	char		cs_name[MODMAXNAMELEN];
 	int		cs_major;
 	struct dlm_mod	*cs_mod;		/* installed module */
 	unsigned long	cs_open, cs_close;	/* its entries */
@@ -403,7 +403,7 @@ struct dlm_cslot {
 	} cs_set[CDEV_NOPEN];
 };
 
-struct dlm_cslot dlm_cslot[CDEV_SLOTS];
+static struct dlm_cslot *dlm_cslot;
 int dlm_cflag[1];		/* the placeholder's d_flag */
 int dlm_stale_close;		/* closes of keys never opened */
 
@@ -433,11 +433,11 @@ static struct dlm_cslot *
 cslot(mj)
 	int mj;
 {
-	int k;
+	struct dlm_cslot *cs;
 
-	for (k = 0; k < CDEV_SLOTS; k++)
-		if (dlm_cslot[k].cs_name[0] && dlm_cslot[k].cs_major == mj)
-			return &dlm_cslot[k];
+	for (cs = dlm_cslot; cs; cs = cs->cs_next)
+		if (cs->cs_major == mj)
+			return cs;
 	return 0;
 }
 
@@ -489,8 +489,8 @@ dlm_creg(name, mj)
 	char *name;
 	int mj;
 {
-	struct dlm_cslot *cs, *fr = 0;
-	int k, s;
+	struct dlm_cslot *cs, *fr;
+	int s, error;
 
 	if (mj < 0 || mj >= cdevcnt)
 		return ECONFIG;
@@ -498,18 +498,29 @@ dlm_creg(name, mj)
 		return strcmp(cs->cs_name, name) == 0 ? 0 : EEXIST;
 	if (!cempty(&cdevsw[mj]))
 		return EEXIST;
-	for (k = 0; k < CDEV_SLOTS && fr == 0; k++)
-		if (dlm_cslot[k].cs_name[0] == 0)
-			fr = &dlm_cslot[k];
-	if (fr == 0)
-		return ECONFIG;
-	bzero((caddr_t)fr, sizeof *fr);
+	fr = (struct dlm_cslot *)dlm_zalloc((long)sizeof *fr);
+	if (!fr)
+		return ENOMEM;
 	strcpy(fr->cs_name, name);
 	fr->cs_major = mj;
+	/* Allocation may sleep while another caller registers this major. */
 	s = dlm_splhi();
-	cplace(&cdevsw[mj]);
+	if (mj < 0 || mj >= cdevcnt)
+		error = ECONFIG;
+	else if ((cs = cslot(mj)) != 0)
+		error = strcmp(cs->cs_name, name) == 0 ? 0 : EEXIST;
+	else if (!cempty(&cdevsw[mj]))
+		error = EEXIST;
+	else {
+		fr->cs_next = dlm_cslot;
+		dlm_cslot = fr;
+		cplace(&cdevsw[mj]);
+		dlm_splx(s);
+		return 0;
+	}
 	dlm_splx(s);
-	return 0;
+	dlm_free((char *)fr, (long)sizeof *fr);
+	return error;
 }
 
 static int
@@ -658,7 +669,8 @@ drv_install(m, td)
 	c = d + DRV_CDEVSW;
 	mj = (int)S32(G32(r + DRV_CMAJOR));
 	n = (int)S32(G32(r + DRV_CCOUNT));
-	if (G32(r + DRV_BCOUNT) != 0 || n < 1 || n > CDEV_SLOTS)
+	if (G32(r + DRV_BCOUNT) != 0 || mj < 0 || mj >= cdevcnt ||
+	    n < 1 || n > cdevcnt - mj)
 		return EINVAL;
 	if (G32(DLM_RP(m, c) + CD_TTYS))
 		return EINVAL;
@@ -708,18 +720,19 @@ drv_remove(m, td)
 	struct dlm_mod *m;
 	unsigned long td;
 {
-	int k, s;
+	struct dlm_cslot *cs;
+	int s;
 
 #ifndef DLM_HOST
 	dlm_sdev_remove(m);
 #endif
-	for (k = 0; k < CDEV_SLOTS; k++)
-		if (dlm_cslot[k].cs_name[0] && dlm_cslot[k].cs_mod == m) {
+	for (cs = dlm_cslot; cs; cs = cs->cs_next)
+		if (cs->cs_mod == m) {
 			s = dlm_splhi();
-			cplace(&cdevsw[dlm_cslot[k].cs_major]);
-			dlm_cslot[k].cs_mod = 0;
-			dlm_cslot[k].cs_open = dlm_cslot[k].cs_close = 0;
-			dlm_cslot[k].cs_nopen = 0;
+			cplace(&cdevsw[cs->cs_major]);
+			cs->cs_mod = 0;
+			cs->cs_open = cs->cs_close = 0;
+			cs->cs_nopen = 0;
 			dlm_splx(s);
 		}
 	return 0;
@@ -731,16 +744,16 @@ drv_info(m, td, st)
 	unsigned long td;
 	struct modspecific_stat *st;
 {
-	int k;
+	struct dlm_cslot *cs;
 
 	st->mss_type = MOD_TY_CDEV;
 	st->mss_p0[0] = st->mss_p0[1] = -1;
 	st->mss_p1[0] = -1;
 	st->mss_p1[1] = 0;
-	for (k = 0; k < CDEV_SLOTS; k++)
-		if (dlm_cslot[k].cs_name[0] && dlm_cslot[k].cs_mod == m) {
-			if (st->mss_p1[0] < 0 || dlm_cslot[k].cs_major < st->mss_p1[0])
-				st->mss_p1[0] = dlm_cslot[k].cs_major;
+	for (cs = dlm_cslot; cs; cs = cs->cs_next)
+		if (cs->cs_mod == m) {
+			if (st->mss_p1[0] < 0 || cs->cs_major < st->mss_p1[0])
+				st->mss_p1[0] = cs->cs_major;
 			st->mss_p1[1]++;
 		}
 #ifndef DLM_HOST

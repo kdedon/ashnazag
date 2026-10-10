@@ -84,8 +84,7 @@ extern unsigned long plat_vtop(), plat_pagesize();
 extern int plat_winrange(), plat_remap(), plat_faulthook();
 extern void plat_unfaulthook();
 extern void delayus();
-extern long hrestime[2];		/* timestruc_t: seconds, nanoseconds */
-extern long cputype;			/* 30, 40, 60: the 040/060 port */
+extern void printf();
 extern void dlm_cacheflush();
 
 /* through volatile pointers, so no compiler takes a weak symbol for set */
@@ -101,8 +100,8 @@ static int (*volatile p_remap)() = plat_remap;
 static int (*volatile p_faulthook)() = plat_faulthook;
 static void (*volatile p_unfaulthook)() = plat_unfaulthook;
 static void (*volatile p_delayus)() = delayus;
-static long *volatile p_hrestime = hrestime;
-static long *volatile p_cputype = &cputype;
+static timestruc_t *volatile p_hrestime = &hrestime;
+static short *volatile p_cputype = &cputype;
 
 extern long amilib_loops_us;		/* Space.c: busy loops per microsecond */
 
@@ -171,8 +170,8 @@ amx_time(tv)
 	unsigned long *tv;
 {
 	if (p_hrestime) {
-		tv[0] = p_hrestime[0];
-		tv[1] = p_hrestime[1] / 1000;
+		tv[0] = p_hrestime->tv_sec;
+		tv[1] = p_hrestime->tv_nsec / 1000;
 	} else
 		tv[0] = tv[1] = 0;
 }
@@ -355,7 +354,7 @@ amx_readfile(path, bufp, lenp, max)
 {
 	struct vnode *vp;
 	struct vattr va;
-	char *b;
+	char *b = 0;
 	unsigned long size;
 	int e, resid = 0;
 

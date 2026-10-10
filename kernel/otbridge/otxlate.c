@@ -279,6 +279,10 @@ otx_xup(ctl, len, out, max, res)
 	if ((n = xcommon(p, ctl, len, out, max, res, 0)) < 0)
 		return n;
 	switch (p->p_ot) {
+	case OT_INFO_ACK:
+		v = OB_S32(OB_G32(ctl + 36));
+		OB_P32(out + 36, v >= 0 && v < 17 ? v + 1 : 19);
+		break;
 	case OT_ERROR_ACK:
 		v = OB_S32(OB_G32(ctl + 4));
 		q = otx_pfind(otx_down, v, 1);

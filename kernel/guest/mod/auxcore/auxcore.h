@@ -36,10 +36,12 @@ struct aux_proc {
 	u_int	ap_mac;		/* APM_* */
 	int	ap_alid;	/* alarm callout, 0 = none */
 	long	ap_alexp;	/* its expiry, lbolt */
+	long	ap_envp, ap_envc, ap_envlo, ap_envhi;
 };
 #define	APF_AUX2	0x01	/* an A/UX 2 image: COFF flag F_AR16WR */
 #define	APM_TASK	0x01	/* a task of the Mac environment's layer */
 #define	APM_UIP		0x02	/* holds the ui page */
+#define	APM_COFF	0x04	/* registered Unix application */
 #define	AUXP(gp)	((struct aux_proc *)GUEST_PRIV(gp))
 
 /* a call: class N has ae_amix and no ae_fn */
@@ -69,6 +71,8 @@ extern struct auxent auxcalls[];
 extern struct guest_profile aux_profile;
 extern struct modwrapper auxcore_wrapper;
 extern int aux_trace;
+extern int (*aux_alwatch)();	/* (gp, regs): an A-line under GPF_AWATCH, 1 if it took it */
+extern void (*aux_macgfd)();
 extern void (*aux_macdetach)();	/* (gp): the layer's, while loaded */
 extern int (*aux_slotmgr)();	/* (selector, SpBlock, &result): errno */
 extern void (*aux_uitick)();	/* (gp): a Mac task takes its tick */
@@ -91,7 +95,7 @@ extern void aux_alstop();
 extern int aux_fcntl_lk(), aux_tiocpkt(), aux_waitcom();
 
 /* auxfid.c */
-extern void aux_fidfree();
+extern void aux_fidfree(), aux_fidexit();
 
 /* auxsig.c */
 extern int aux_sendsig();

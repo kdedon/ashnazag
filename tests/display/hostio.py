@@ -16,6 +16,7 @@
 #   clicks N HOLD GAP   N left clicks, HOLD and GAP in ms
 #   shot NAME           screen dump -> display/NAME.ppm, .png; "W H"
 #   cmp A B             "same" or "diff N" (pixels)
+#   glyph A B X0 Y0 X1 Y1   changed dark-pixel rows and pixels inside bounds
 #   box A B [Y0]        "X0 Y0 X1 Y1" bounding the pixels that differ (in
 #                       rows Y0 and below), or "none"
 #   lit NAME            pixels of dump NAME that are not black
@@ -93,6 +94,46 @@ def diff(a, b):
     return sum(1 for i in range(0, len(a), 3) if a[i:i + 3] != b[i:i + 3])
 
 
+def glyphdelta(w, h, before, after, x0, y0, x1, y1):
+    if len(before) != 3 * w * h or len(after) != 3 * w * h or not (
+            0 <= x0 < x1 <= w and 0 <= y0 < y1 <= h):
+        return -1, -1
+    rows = pixels = 0
+    for y in range(y0, y1):
+        changed = 0
+        for x in range(x0, x1):
+            i = 3 * (y * w + x)
+            new = after[i:i + 3]
+            if before[i:i + 3] != new and max(new) < 128:
+                changed += 1
+        pixels += changed
+        rows += changed >= 32
+    return rows, pixels
+
+
+def desktile(w, h, px):
+    x0, y0, x1, y1 = 32, 32, w - 150, h - 50
+    if len(px) != 3 * w * h or x1 - x0 <= 128 or y1 - y0 <= 128:
+        return 0, 0, 1000
+    colors = {}
+    same = [0, 0]
+    total = [0, 0]
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            i = 3 * (y * w + x)
+            p = px[i:i + 3]
+            colors[p] = colors.get(p, 0) + 1
+            if x + 128 < x1:
+                total[0] += 1
+                same[0] += p == px[i + 384:i + 387]
+            if y + 128 < y1:
+                total[1] += 1
+                j = i + 384 * w
+                same[1] += p == px[j:j + 3]
+    return (1000 * same[0] // total[0], 1000 * same[1] // total[1],
+            1000 * max(colors.values()) // ((x1 - x0) * (y1 - y0)))
+
+
 # dspat.h, in Python
 def macscreen(w, h, px, x0=0, y0=0, x1=None, y1=None):
     # per mille: 50% dither (pixel differs from its right and lower
@@ -114,8 +155,9 @@ def macscreen(w, h, px, x0=0, y0=0, x1=None, y1=None):
                     p != px[o + row + 3 * x:o + row + 3 * x + 3]:
                 chk += 1
     n = max(1, (x1 - x0) * (y1 - y0))
-    return 'checker %d white %d top %d' % (1000 * chk // n, 1000 * white // n,
-                                           1000 * top // max(1, 19 * (x1 - x0)))
+    return ('checker %d white %d top %d tilex %d tiley %d dominant %d' %
+            ((1000 * chk // n, 1000 * white // n,
+              1000 * top // max(1, 19 * (x1 - x0))) + desktile(w, h, px)))
 
 
 def tosscreen(w, h, px):
@@ -315,6 +357,14 @@ def serve(q, cmd, a):
         w2, h2, p2 = readppm(os.path.join(D, os.path.basename(a[1]) + '.ppm'))
         n = diff(p1, p2) if (w1, h1) == (w2, h2) else -1
         return 'same' if n == 0 else 'diff %d' % n
+    if cmd == 'glyph':
+        if len(a) != 6:
+            return 'glyph -1 -1'
+        w1, h1, p1 = readppm(os.path.join(D, os.path.basename(a[0]) + '.ppm'))
+        w2, h2, p2 = readppm(os.path.join(D, os.path.basename(a[1]) + '.ppm'))
+        rows, pixels = glyphdelta(w1, h1, p1, p2, *map(int, a[2:])) if (
+            w1, h1) == (w2, h2) else (-1, -1)
+        return 'glyph %d %d' % (rows, pixels)
     if cmd == 'box':
         w1, h1, p1 = readppm(os.path.join(D, os.path.basename(a[0]) + '.ppm'))
         w2, h2, p2 = readppm(os.path.join(D, os.path.basename(a[1]) + '.ppm'))

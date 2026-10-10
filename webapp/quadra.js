@@ -8,6 +8,7 @@
       <div class="media-fields">
         <label class="media-field">AMIX 2.1 tape<input id="quadra-tape" type="file" multiple required><span class="field-help">Choose the whole tape: a <code>.tap</code> image, or both <code>.tar.bz2</code> parts together. They are joined here. Missing segments are named.</span></label>
         <label class="media-field">Prebuilt Quadra kernel (m68k ELF)<input id="quadra-kernel" type="file" required></label>
+        <label class="media-field">Display module (dsuser)<input id="quadra-dsuser" type="file"><span class="field-help">Required for kernels with loadable display support. Choose the dsuser file built with your kernel.</span></label>
         <label class="media-field">A/UX boot donor disk<input id="quadra-donor" type="file" accept=".img,.dsk,application/octet-stream" required><span class="field-help">Supplies the Apple partition map and disk drivers. The builder creates a new HFS boot partition for the selected kernel.</span></label>
       </div>
       <p class="field-help">All media stays on your computer.</p>
@@ -28,7 +29,8 @@
   const form = get('form'), button = get('build'), cancel = get('cancel');
   const status = get('status'), progress = get('progress'), download = get('download'), recipeLink = get('recipe');
   const tape = get('tape'), kernel = get('kernel'), donor = get('donor'), root = get('root'), swap = get('swap');
-  const inputs = [tape, kernel, donor, root, swap];
+  const dsuser = get('dsuser');
+  const inputs = [tape, kernel, dsuser, donor, root, swap];
   let worker = null, leases = [], url = null, recipeURL = null, generation = 0, imported = '';
   const abandoned = cleanAbandonedImages().catch(() => {});
   const controls = busy => {
@@ -85,7 +87,7 @@
       };
       worker.onerror = event => { event.preventDefault(); if (run === generation) void fail(`Quadra worker failed: ${event.message}`); };
       worker.onmessageerror = () => { if (run === generation) void fail('The Quadra worker returned unreadable data.'); };
-      worker.postMessage({ type: 'quadra', tape: Array.from(tape.files), kernel: kernel.files[0], donor: donor.files[0], rootMiB: Number(root.value), swapMiB: Number(swap.value), temporaryNames: leases.map(lease => lease.name), selection: { preset: 'quadra800', machine: 'q800', settings: { devices: window.forgeDevices?.('q800') ?? ['adb', 'framebuffer', 'scc', 'scsi53c96'] } }, expect: imported });
+      worker.postMessage({ type: 'quadra', tape: Array.from(tape.files), kernel: kernel.files[0], dsuser: dsuser.files[0], donor: donor.files[0], rootMiB: Number(root.value), swapMiB: Number(swap.value), temporaryNames: leases.map(lease => lease.name), selection: { preset: 'quadra800', machine: 'q800', settings: { devices: window.forgeDevices?.('q800') ?? ['adb', 'framebuffer', 'scc', 'scsi53c96'] } }, expect: imported });
     } catch (error) { if (run === generation) await fail(`Quadra build failed: ${error.message}`); }
   });
   cancel.addEventListener('click', () => { void fail('Quadra build cancelled.'); });

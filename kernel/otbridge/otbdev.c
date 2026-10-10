@@ -390,6 +390,10 @@ otbioctl(dev, cmd, arg, mode, cr, rvalp)
 		return ENXIO;
 	otb_incall++;
 	switch (cmd) {
+	case OTB_SETIDENT: case OTB_GETIDENT:
+		e = otbst_identity(cmd, arg, cr);
+		*rvalp = 0;
+		break;
 	case OTB_GETID:
 		*rvalp = s->s_id;
 		break;

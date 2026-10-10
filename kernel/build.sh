@@ -56,6 +56,12 @@ if [ "${PLATFORM:-mac}" = atari060 ]; then
 	exit 0
 fi
 
+if [ "${PLATFORM:-mac}" = amiga ]; then
+	sh "$K/amiga/relink-amiga.sh" > "$LOG/amiga.log" 2>&1 || fail amiga "relink-amiga.sh failed"
+	pass amiga
+	exit 0
+fi
+
 # 3. RAM-disk root image (linked in by stage 4 when present)
 IMG="$K/mac/ramdisk/build/root.img"
 : > "$LOG/root.log"

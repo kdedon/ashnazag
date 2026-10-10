@@ -14,7 +14,7 @@
 import sys, os, struct
 from macbin2ad import ad_header
 
-STORED = b'\x01\x08\x02\xa6'
+STORED = (b'\x01\x08\x02\xa6', b'\x01\x6c\x65\x20', b'\x01\x3d\x00\x08')
 CHUNK = 0x10000
 
 def macbinary(path):
@@ -40,8 +40,10 @@ def fork(d, f):
     ln, off, stored = f
     out = bytearray()
     end = off + stored
+    if off < 0 or end > len(d) or stored != ln + 4 * ((ln + CHUNK - 1) // CHUNK):
+        raise ValueError('invalid stored fork bounds')
     while len(out) < ln:
-        if d[off:off + 4] != STORED:
+        if d[off:off + 4] not in STORED:
             raise ValueError('unknown chunk header %s at 0x%x'
                              % (d[off:off + 4].hex(), off))
         n = min(CHUNK, ln - len(out))

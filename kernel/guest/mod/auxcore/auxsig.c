@@ -15,7 +15,7 @@
  * BSD frame (sigvec handlers, COMPAT_BSDSIGNALS), 0x40 bytes from F:
  *
  *	+0x00 return address F+0x24   +0x04 signal   +0x08 code
- *	+0x0c &sigcontext (F+0x2c)    +0x10 Mac levels, flag word (0)
+ *	+0x0c &sigcontext (F+0x2c)    +0x10 Mac levels, deferred flag
  *	+0x14 d0, d1, a0, a1          +0x24 move.l #150,d0; trap #15
  *	+0x2c sigcontext { onstack, mask, sp, pc, ps }
  *
@@ -44,10 +44,11 @@ extern k_sigset_t cantmask;
 #define	BSDFR		0x40
 
 static int
-bsdframe(ap, asig, hdlr)
+bsdframe(ap, asig, hdlr, deferred)
 	struct aux_proc *ap;
 	int asig;
 	int (*hdlr)();
+	int deferred;
 {
 	char *r = (char *)u.u_ar0, b[BSDFR];
 	long usp = GR_USP(r), f;
@@ -63,6 +64,8 @@ bsdframe(ap, asig, hdlr)
 	P32(b, f + 0x24);
 	P32(b + 0x04, asig);
 	P32(b + 0x0c, f + 0x2c);
+	/* The tick handler drains deferred tasks only with this eligibility byte. */
+	b[0x11] = deferred != 0;
 	P32(b + 0x14, GR_D(r, 0));
 	P32(b + 0x18, GR_D(r, 1));
 	P32(b + 0x1c, GR_A(r, 0));
@@ -116,6 +119,52 @@ aux_sigcleanup(ap, r)
 long aux_nsig[32];
 long aux_xsig, aux_xvec, aux_xpc;
 
+int aux_defertrace;
+long aux_deferticks, aux_deferqueued, aux_deferprints;
+long aux_deferfirst[11], aux_deferlast[11];
+
+static void
+aux_deferrecord(gp, sig, hdlr)
+	struct guest_proc *gp;
+	int sig;
+	int (*hdlr)();
+{
+	unsigned char q[10];
+	long v[11];
+	int i;
+
+	if (!aux_defertrace || sig != SIGIOT)
+		return;
+	v[0] = u.u_procp->p_pid;
+	v[1] = AUXP(gp)->ap_mac;
+	v[2] = AUXP(gp)->ap_compat;
+	v[3] = gp->gp_vsr;
+	v[4] = (AUXP(gp)->ap_mac & APM_TASK) && aux_uitick &&
+	    !(gp->gp_vsr & 0x0700);
+	v[5] = aux_mask_out((u_long)u.u_sigoldmask);
+	v[6] = v[7] = v[8] = -1;
+	if (copyin((caddr_t)0xd92, (caddr_t)q, sizeof q) == 0) {
+		v[6] = G16(q);
+		v[7] = G32(q + 2);
+		v[8] = G32(q + 6);
+	}
+	v[9] = (long)hdlr;
+	v[10] = GR_USP(u.u_ar0);
+	if (!aux_deferticks)
+		for (i = 0; i < 11; i++) aux_deferfirst[i] = v[i];
+	aux_deferticks++;
+	for (i = 0; i < 11; i++) aux_deferlast[i] = v[i];
+	if (v[7] != 0 && v[7] != -1) aux_deferqueued++;
+	if (aux_deferticks <= 4 ||
+	    (v[7] != 0 && v[7] != -1 && aux_deferprints < 36)) {
+		aux_deferprints++;
+		printf("aux DT pid %d mac %x compat %x vsr %x eligible %d mask %x\n",
+		    (int)v[0], (int)v[1], (int)v[2], (int)v[3], (int)v[4], (int)v[5]);
+		printf("aux DT queue flags %x head %x tail %x handler %x usp %x\n",
+		    (int)v[6], (int)v[7], (int)v[8], (int)v[9], (int)v[10]);
+	}
+}
+
 #define	XSIGS	(sigmask(SIGILL) | sigmask(SIGTRAP) | sigmask(SIGEMT) | \
 		 sigmask(SIGFPE) | sigmask(SIGBUS) | sigmask(SIGSEGV))
 
@@ -139,8 +188,11 @@ aux_sendsig(gp, sig, sip, hdlr)
 	}
 	if (sig == SIGIOT && AUXP(gp)->ap_mac && aux_uitick)
 		(*aux_uitick)(gp);
+	aux_deferrecord(gp, sig, hdlr);
 	if (AUXP(gp)->ap_compat & COMPAT_BSDSIGNALS)
-		return bsdframe(AUXP(gp), aux_sig_out(sig), hdlr);
+		return bsdframe(AUXP(gp), aux_sig_out(sig), hdlr,
+		    sig == SIGIOT && (AUXP(gp)->ap_mac & APM_TASK) &&
+		    aux_uitick && !(gp->gp_vsr & 0x0700));
 
 	P32(b, aux_sig_out(sig));
 	P32(b + 4, aux_mask_out((u_long)u.u_sigoldmask));
@@ -162,6 +214,7 @@ aux_sendsig(gp, sig, sip, hdlr)
  * reads and clears the File Manager's change flags; 0x6b-0x6d report
  * buffer-cache use and size.
  */
+int (*aux_macpoll)() = 0;
 u_long aux_fmgrflag;
 static long aux_lread0, aux_bread0;
 
@@ -175,6 +228,13 @@ aux_sysm68k(ap, a, rv, r)
 	long usp, fs, b[4];
 
 	switch (a[0]) {
+	case 0x6e:
+        {
+            int (*volatile fn)()=aux_macpoll;
+            struct guest_proc *gp=GUESTP(u.u_procp);
+            if(!fn || !gp || !ap->ap_mac) return EINVAL;
+            return (*fn)(gp,r,(int)a[1]);
+        }
 	case 0x69:
 		dlm_cacheflush();
 		return 0;

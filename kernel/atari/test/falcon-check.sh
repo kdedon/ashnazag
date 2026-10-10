@@ -96,11 +96,11 @@ for s in $STAGES; do
 		python3 "$T/tospass.py" "$OUT/tos-1-desktop.png" "$OUT/tos-2-console.png" "$OUT/tos.log.out" || fail=1 ;;
 	x)	run x vga
 		check "$OUT/x.log.out" 'x-2-up' 'key-42-ok' 'x-7-ended' 'fb: /dev/fb0 Videl 640x480 depth 8' \
-			'x-4-up' 'x-11-ended' 'fb: /dev/fb0 Videl 640x480 depth 1' 'x-9-done'
-		! grep -q 'Fatal\|PANIC\|panic' "$OUT/x.log.out" || { echo "[FAIL] x: server or kernel error"; fail=1; } ;;
+			'x-4-up' 'keyz' 'x-11-ended' 'fb: /dev/fb0 Videl 640x480 depth 1' 'x-9-done'
+		! grep -q 'BUS ERROR\|Fatal\|PANIC\|panic' "$OUT/x.log.out" || { echo "[FAIL] x: client, server or kernel error"; fail=1; } ;;
 	xtos)	run xtos vga
-		check "$OUT/xtos.log.out" 'x-2-up' 'tos-left=0' 'x-7-ended' 'xtos-9-done'
-		! grep -q 'Fatal\|PANIC\|panic' "$OUT/xtos.log.out" || { echo "[FAIL] xtos: server or kernel error"; fail=1; }
+		check "$OUT/xtos.log.out" 'x-2-up' 'typed-in-xterm' 'tos-left=0' 'x-7-ended' 'xtos-9-done'
+		! grep -q 'BUS ERROR\|Fatal\|PANIC\|panic' "$OUT/xtos.log.out" || { echo "[FAIL] xtos: client, server or kernel error"; fail=1; }
 		python3 "$T/tosshot.py" desktop "$OUT/xtos-3-tos.png" || fail=1
 		python3 "$T/tosshot.py" same "$OUT/xtos-1-x.png" "$OUT/xtos-4-x.png" || fail=1
 		python3 "$T/tosshot.py" same "$OUT/xtos-3-tos.png" "$OUT/xtos-5-tos.png" || fail=1 ;;

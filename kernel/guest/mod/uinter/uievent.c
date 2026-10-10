@@ -84,6 +84,223 @@ extern int ui_scrgeom();
 #define	KEY(c)	(in_keys[(c) >> 3] & (1 << ((c) & 7)))
 #define	RAW(c)	(in_raw[(c) >> 3] & (1 << ((c) & 7)))
 
+static int forceheld, forcepending, forceenabled, forceescape;
+static long forceuntil;
+static int forcewatching;
+extern long uin_forceentry;
+long uin_forceadmit, uin_forcedispatch, uin_forceretry, uin_forceexpire;
+long uin_forcearm, uin_forceoff, uin_forcewne, uin_forcescan;
+long uin_forceactive, uin_forceflags, uin_forcepublish, uin_forcefailed;
+
+/* Match the native keyboard chord before posting an Escape event. */
+static void
+ui_forcekey()
+{
+	int held = forceenabled && KEY(0x37) && KEY(0x3a) && KEY(0x35) && !KEY(0x38) && !KEY(0x3b);
+	int i, j;
+
+	if (held && !forceheld) {
+		forcepending = forceescape = 1;
+		if (in_down == 0x35)
+			in_down = -1;
+		for (i = 0; i < ev_n;) {
+			struct uiev *e = &ev_q[(ev_first + i) % NEV];
+			if (e->what >= 3 && e->what <= 5 && ((e->msg >> 8) & 255) == 0x35) {
+				for (j = i; j + 1 < ev_n; j++)
+					ev_q[(ev_first + j) % NEV] = ev_q[(ev_first + j + 1) % NEV];
+				ev_n--;
+			} else
+				i++;
+		}
+		if (ev_wait)
+			wakeup((caddr_t)ev_q);
+		forceuntil = lbolt + 5 * HZ;
+		uin_forceadmit++;
+		uin_forceactive = ui.l_active != 0;
+		uin_forceflags = ui.l_active ? ui.l_active->gp_flags : 0;
+		ui_forcewatch();
+	}
+	forceheld = held;
+}
+
+int
+ui_forceget()
+{
+	if (forcepending && (long)(lbolt - forceuntil) >= 0) {
+		forcepending = 0;
+		uin_forceexpire++;
+	}
+	return forceenabled && forcepending;
+}
+
+void
+ui_forceconsume()
+{
+	forcepending = 0;
+}
+
+void
+ui_forceretry()
+{
+	int s = DS_SPL(DS_HI);
+
+	if (forceenabled && (long)(lbolt - forceuntil) < 0) {
+		forcepending = 1;
+		uin_forceretry++;
+		ui_forcewatch();
+		if (ev_wait)
+			wakeup((caddr_t)ev_q);
+	}
+	DS_SPLX(s);
+}
+
+void
+ui_forcereserve(a)
+	long a;
+{
+	struct uitask *t = ui_task(ui.l_active);
+
+	if (t && t->t_proc == u.u_procp)
+		t->t_forceentry = a;
+}
+
+void
+ui_forcepublish(gp)
+	struct guest_proc *gp;
+{
+	struct uitask *t;
+	long admit;
+	int result;
+
+	if (!ui_forceget() || gp != ui.l_active)
+		return;
+	admit = uin_forceadmit;
+	t = ui_task(gp);
+	result = t && t->t_proc == u.u_procp ? ui_forceentry(t->t_forceentry) : 0;
+	if (result == 1) { t->t_forceentry = uin_forceentry; uin_forcepublish++; }
+	if (!result) uin_forcefailed++;
+	if (admit == uin_forceadmit) ui_forceconsume();
+	ui_forcewatch();
+}
+
+/* A chord temporarily watches only the task running Mac code. */
+void
+ui_forcewatch()
+{
+	struct uitask *t;
+	struct guest_proc *gp;
+	int pending, owned = 0, s;
+
+	if (!forcepending && !forcewatching)
+		return;
+	s = DS_SPL(DS_HI);
+	uin_forcescan++;
+	pending = ui_forceget();
+	for (t = ui.l_task; t < ui.l_task + UI_NTASK; t++) {
+		gp = t->t_gp;
+		if (!gp) { t->t_force = 0; continue; }
+		if ((t->t_force & 1) && !(t->t_force & 6) &&
+		    (!pending || gp != ui.l_active)) {
+			if (gp && !(gp->gp_flags & GPF_STUB)) {
+				if(!ui_watchneeded(gp))gp->gp_flags &= ~GPF_AWATCH;
+				t->t_force &= ~1;
+				uin_forceoff++;
+			} else if (!gp)
+				t->t_force = 0;
+		}
+		if (pending && gp && gp == ui.l_active &&
+		    (gp->gp_flags & GPF_ALINE) && !(gp->gp_flags & GPF_AWATCH)) {
+			gp->gp_flags |= GPF_AWATCH;
+			t->t_force |= 1;
+			uin_forcearm++;
+		}
+		owned |= t->t_force;
+	}
+	forcewatching = owned != 0;
+	DS_SPLX(s);
+}
+
+int
+ui_forcepollowned(gp)
+    struct guest_proc *gp;
+{
+    struct uitask *t=ui_task(gp);
+    return t && (t->t_force & 4);
+}
+
+/* Keep the native exit visible while a modal dialog owns the polling hooks. */
+void
+ui_forcepollwatch(gp,on)
+    struct guest_proc *gp;
+    int on;
+{
+    struct uitask *t=ui_task(gp);
+    int s=DS_SPL(DS_HI);
+    if(t && t->t_proc==u.u_procp) {
+        if(on) {
+            t->t_force|=4;
+            if(!(gp->gp_flags & GPF_AWATCH)) {
+                gp->gp_flags|=GPF_AWATCH;
+                t->t_force|=1;
+            }
+            forcewatching=1;
+        } else t->t_force &= ~4;
+        ui_forcewatch();
+    }
+    DS_SPLX(s);
+}
+
+void
+ui_forcestub(gp)
+	struct guest_proc *gp;
+{
+	struct uitask *t = ui_task(gp);
+	int s = DS_SPL(DS_HI);
+
+	if (t) { t->t_force |= 2; forcewatching = 1; }
+	gp->gp_flags |= GPF_STUB;
+	uin_forcedispatch++;
+	DS_SPLX(s);
+}
+
+void
+ui_forceend(gp)
+	struct guest_proc *gp;
+{
+	struct uitask *t = ui_task(gp);
+	int s = DS_SPL(DS_HI);
+
+	if (t && (t->t_force & 2)) {
+		t->t_force &= ~2;
+		gp->gp_flags &= ~GPF_STUB;
+	}
+	ui_forcewatch();
+	DS_SPLX(s);
+}
+
+static void
+ui_forceclear()
+{
+	forceheld = forcepending = forceenabled = forceescape = 0;
+	forceuntil = 0;
+	ui_forcewatch();
+}
+
+void
+ui_forceenable(on)
+	int on;
+{
+	int s;
+
+	if (on == forceenabled)
+		return;
+	s = DS_SPL(DS_HI);
+	if (!on)
+		ui_forceclear();
+	forceenabled = on;
+	DS_SPLX(s);
+}
+
 static int
 ui_mods()
 {
@@ -118,6 +335,21 @@ ui_char(c, m)
 	return k[260 + 128 * t + c];
 }
 
+extern int uin_evdiag;
+long uin_evbuttoncount,uin_evbuttons[8][10];
+
+static void
+ui_evbutton(kind,what,mask)
+int kind,what,mask;
+{
+    long *v;
+    if(!uin_evdiag || uin_evbuttoncount<0 || uin_evbuttoncount>=8)return;
+    v=uin_evbuttons[uin_evbuttoncount++];
+    v[0]=kind;v[1]=what;v[2]=in_flags;v[3]=ui.l_evmask;
+    v[4]=ev_n;v[5]=lbolt;v[6]=kind==1 || kind==4 ? 0 : GR_PC(u.u_ar0);
+    v[7]=mask;v[8]=in_btn;v[9]=in_btnw;
+}
+
 /* append; a full queue loses its oldest event.  Interrupts off. */
 static void
 ev_add(what, msg, when, where, mods)
@@ -127,6 +359,7 @@ ev_add(what, msg, when, where, mods)
 	struct uiev *e;
 
 	if (ev_n == NEV) {
+        ui_evbutton(4,ev_q[ev_first].what,0);
 		ev_first = (ev_first + 1) % NEV;
 		ev_n--;
 		uin_nlost++;
@@ -148,6 +381,8 @@ ev_input(what, msg)
 	int what;
 	long msg;
 {
+	if(what==1 || what==2)ui_evbutton(1,what,
+        (in_flags & IN_DEV) && (ui.l_evmask & (1 << what)));
 	if ((in_flags & IN_DEV) && (ui.l_evmask & (1 << what)))
 		ev_add(what, msg, (long)lbolt, uin_mouse, ui_mods());
 }
@@ -164,6 +399,8 @@ static void
 ui_key(c, down)
 	int c, down;
 {
+	int eat = c == 0x35 && forceescape;
+
 	if (c == 0x7f)			/* power */
 		return;
 	if (c == 0x38)			/* left and right share a code */
@@ -177,6 +414,11 @@ ui_key(c, down)
 	else
 		in_keys[c >> 3] &= ~(1 << (c & 7));
 	in_flags |= IN_KEYS;
+	ui_forcekey();
+	if (c == 0x35 && (eat || forceescape)) {
+		if (!down) forceescape = 0;
+		return;
+	}
 	if (c >= 0x37 && c <= 0x3b)
 		return;			/* modifiers post nothing */
 	if (down) {
@@ -301,6 +543,7 @@ ui_inreset()
 	int s = DS_SPL(DS_HI);
 
 	ev_first = ev_n = 0;
+	ui_forceclear();
 	in_flags = 0;
 	bzero((caddr_t)in_keys, sizeof in_keys);
 	bzero((caddr_t)in_raw, sizeof in_raw);
@@ -356,6 +599,38 @@ ev_put(b, e)
 	P16(b + 14, e->mods);
 }
 
+int uin_evdiag;
+long uin_evstats[8], uin_evlast[8];
+
+long uin_evtracecount, uin_evtrace[4][32];
+
+static void
+ui_evtrace()
+{
+    unsigned char b[32]; long *v,usp,fp,next; int row,i,j;
+    if(uin_evtracecount<0 || uin_evtracecount>=4)return;
+    row=(int)uin_evtracecount++;v=uin_evtrace[row];
+    bzero((caddr_t)v,32*sizeof(long));
+    usp=GR_USP(u.u_ar0);fp=GR_A(u.u_ar0,6);
+    v[0]=GR_PC(u.u_ar0);v[1]=usp;v[2]=fp;
+    v[3]=fubyte((caddr_t)LM_MBSTATE);v[4]=in_btn;v[5]=in_btnw;
+    v[6]=ev_n;v[7]=lbolt;v[30]=in_flags;v[31]=ui.l_evmask;
+    if(usp>=0x1000L && (unsigned long)usp<=0x1000000UL-sizeof b &&
+        !copyin((caddr_t)usp,(caddr_t)b,sizeof b)) {
+        for(i=0;i<8;i++)v[8+i]=G32(b+i*4);
+        v[28]=1;
+    }
+    for(j=0;j<3;j++) {
+        if(fp<0x1000L || (fp&1) || (unsigned long)fp>0x1000000UL-16 ||
+            copyin((caddr_t)fp,(caddr_t)b,16))break;
+        for(i=0;i<4;i++)v[16+j*4+i]=G32(b+i*4);
+        v[29]++;
+        next=G32(b);if(next<=fp)break;fp=next;
+    }
+    for(i=0;i<32;i++)printf("uinter idlecaller row %d field %d value %x\n",
+        row,i,(int)v[i]);
+}
+
 /* UI_GETOSEVENT {blocking, aux, mask, EventRecord, timeOut, mouseRect} */
 int
 ui_getosevent(b)
@@ -364,17 +639,30 @@ ui_getosevent(b)
 	struct uiev *e, n;
 	int blk = b[0], mask = G16(b + 2), s, i, j;
 	long end = lbolt + (long)G32(b + 20);
+	if (uin_evdiag) {
+		if(blk==2 && mask==4)ui_evtrace();
+		uin_evstats[0]++; uin_evlast[0]=blk; uin_evlast[1]=mask;
+		uin_evlast[2]=G32(b+20); uin_evlast[3]=lbolt;
+		uin_evlast[4]=end; uin_evlast[5]=ev_n;
+		uin_evlast[6]=G32(b+24); uin_evlast[7]=G32(b+28);
+	}
 
 	s = DS_SPL(DS_HI);
 	for (;;) {
+		if (ui_forceget()) {
+			if (uin_evdiag) uin_evstats[1]++;
+			break;
+		}
 		for (i = 0; i < ev_n; i++) {
 			e = &ev_q[(ev_first + i) % NEV];
 			if (mask & (1 << e->what))
 				break;
 		}
 		if (i < ev_n) {
+			if (uin_evdiag) uin_evstats[2]++;
 			ev_put(b + 4, e);
 			if (!(blk & 2)) {
+                if(e->what==1 || e->what==2)ui_evbutton(2,e->what,mask);
 				if (e->what >= 3 && e->what <= 5)
 					uin_nkey++;
 				else if (e->what == 1 || e->what == 2)
@@ -393,13 +681,19 @@ ui_getosevent(b)
 			return 0;
 		}
 		bcopy(b + 24, (caddr_t)ev_rect, sizeof ev_rect);
-		if (!(blk & 1) || (long)(lbolt - end) >= 0 || ui_isnew(ev_rect))
+		if (!(blk & 1) || (long)(lbolt - end) >= 0 || ui_isnew(ev_rect)) {
+			if (uin_evdiag) uin_evstats[!(blk&1) ? 3 :
+			    (long)(lbolt-end)>=0 ? 4 : 5]++;
 			break;
+		}
 		ev_wait = 1;
+		if (uin_evdiag) uin_evstats[6]++;
 		i = sleep((caddr_t)ev_q, (PZERO + 1) | PCATCH);
 		ev_wait = 0;
-		if (i)
+		if (i) {
+			if (uin_evdiag) uin_evstats[7]++;
 			break;
+		}
 	}
 	n.what = 0;
 	n.msg = 0;
@@ -432,6 +726,7 @@ ui_flushevents(b)
 		}
 		if (!(w & mask))
 			ev_q[(ev_first + k++) % NEV] = *e;
+        else if(e->what==1 || e->what==2)ui_evbutton(3,e->what,mask);
 	}
 	ev_n = k;
 	DS_SPLX(s);
@@ -811,6 +1106,8 @@ ui_update(gp)
 
 	if (gp != ui.l_active)
 		return;
+	ui_forcewatch();
+	ui_fronttick(gp);
 	ui_ntaken++;
 	ui_tickpc = GR_PC(u.u_ar0);
 	P32(b, lbolt);
@@ -845,4 +1142,80 @@ ui_update(gp)
 		(void)copyout((caddr_t)k, (caddr_t)LM_KEYMAP, 16);
 	if ((f & IN_CUR) && up && (moved || lm[2] || !lm[0]))
 		ui_cursor(up, lm);
+}
+
+long uin_pmidlesleeps,uin_pmidleinterrupts,uin_pmidleticks,uin_pmidlezero;
+long uin_pmidleclockfaults;
+long uin_pmidletracecount,uin_pmidletrace[8][12];
+
+/* One tick returns control to native deadlines and deferred work. */
+void
+ui_pmidlewait(gp)
+struct guest_proc *gp;
+{
+    int s,i;long until=lbolt+1,started,*v=0;unsigned long ticks;
+    s=DS_SPL(DS_HI);
+    if(ui.l_tid && gp==ui.l_active && !ev_n && !ui_forceget() &&
+        !(in_flags&(IN_MOVED|IN_KEYS|IN_BTN)) && in_btn==in_btnw &&
+        (long)(lbolt-until)<0) {
+        if(uin_evdiag && uin_pmidletracecount>=0 && uin_pmidletracecount<8) {
+            v=uin_pmidletrace[uin_pmidletracecount++];
+            v[0]=lbolt;v[3]=u.u_procp->p_cursig;v[5]=u.u_procp->p_sig;
+            v[7]=u.u_procp->p_hold;v[9]=u.u_procp->p_pid;
+            v[10]=GR_PC(u.u_ar0);v[11]=ev_n;
+        }
+        started=lbolt;ev_wait=1;uin_pmidlesleeps++;
+        i=sleep((caddr_t)ev_q,(PZERO+1)|PCATCH);
+        ev_wait=0;if(i)uin_pmidleinterrupts++;
+        ticks=(unsigned long)lbolt-(unsigned long)started;
+        uin_pmidleticks+=ticks;if(!ticks)uin_pmidlezero++;
+        if(v) {
+            v[1]=lbolt;v[2]=i;v[4]=u.u_procp->p_cursig;
+            v[6]=u.u_procp->p_sig;v[8]=u.u_procp->p_hold;
+        }
+    }
+    DS_SPLX(s);
+    /* Sleep can return before the native clock signal is delivered. */
+    if(gp==ui.l_gp && gp==ui.l_active && gp->gp_proc==u.u_procp &&
+        ui.l_state==LS_INUSE && ui.l_tid) {
+        unsigned char clock[4];
+        P32(clock,lbolt);
+        if(copyout((caddr_t)clock,(caddr_t)LM_TICKS,4))uin_pmidleclockfaults++;
+    }
+}
+
+long uin_pollmouse,uin_pollhost,uin_pollmb,uin_pollcursor;
+long uin_polldownmouse,uin_polldownhost,uin_polldowncursor,uin_polldownmb;
+long uin_polldown,uin_pollup,uin_polledges,uin_pollfault;
+long uin_pollbutton=-1;
+
+int
+ui_inputpoll(gp)
+struct guest_proc *gp;
+{
+    long until=lbolt+1;
+    int interrupted=0,s,btn;
+    unsigned char b[4];
+    while(ui.l_tid && gp==ui.l_active && (long)(lbolt-until)<0)
+        if(sleep((caddr_t)&ui.l_tid,(PZERO+1)|PCATCH)) { interrupted=1; break; }
+    if(!ui.l_tid || gp!=ui.l_active) return EINVAL;
+    ui_update(gp);
+    s=DS_SPL(DS_HI);
+    btn=in_btn;
+    uin_pollhost=(long)in_mv<<16 | (in_mh & 0xffff);
+    DS_SPLX(s);
+    if(btn!=uin_pollbutton) uin_polledges++;
+    uin_pollbutton=btn;
+    if(btn) uin_polldown++; else uin_pollup++;
+    if(copyin((caddr_t)(LM_MTEMP+8),(caddr_t)b,4)) uin_pollfault++;
+    else uin_pollmouse=G32(b);
+    if(copyin((caddr_t)LM_MBSTATE,(caddr_t)b,1)) uin_pollfault++;
+    else uin_pollmb=b[0];
+    if(copyin((caddr_t)LM_CRSRVIS,(caddr_t)b,4)) uin_pollfault++;
+    else uin_pollcursor=G32(b);
+    if(btn) {
+        uin_polldownmouse=uin_pollmouse; uin_polldownhost=uin_pollhost;
+        uin_polldowncursor=uin_pollcursor; uin_polldownmb=uin_pollmb;
+    }
+    return interrupted ? EINTR : 0;
 }

@@ -59,7 +59,8 @@ idle:
 	btst	&1,%d0
 	bne.s	Lid_spin
 	movel	&1,diag_instop
-	stop	&0x2000
+	| clock accounts STOP at the native waitloc return PC.
+	jsr	waitloc-4
 	clrl	diag_instop
 	addql	&1,diag_nstopret
 	rts

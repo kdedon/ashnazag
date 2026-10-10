@@ -107,6 +107,13 @@ func Quadra(ctx context.Context, r Recipe, media []Media, root interface {
 	if n, err := kernel.Reader.ReadAt(elf, 0); n != len(elf) {
 		return fmt.Errorf("read kernel: %v", err)
 	}
+	var display *Media
+	if s.DSUser {
+		display = &media[5]
+	}
+	if err = ValidateDisplay(kernel, display); err != nil {
+		return err
+	}
 	boot, err := bootimage.Build(ctx, media[4].Reader, media[4].Size, elf, bootimage.Options{CommandLine: "root=c0d0s1"})
 	if err != nil {
 		return err
@@ -126,8 +133,8 @@ func Quadra(ctx context.Context, r Recipe, media []Media, root interface {
 	return err
 }
 
-// Root applies the console recipe, packages and the recipe file to the
-// layered AMIX tree.
+// Root configures the layered tree. Extra inputs are the selected display
+// module, followed by provisioning packages.
 func Root(ctx context.Context, recipe []byte, entries []ufs.Entry, kernel Media, packages []Media) ([]ufs.Entry, error) {
 	r, err := Decode(recipe)
 	if err != nil {
@@ -143,8 +150,28 @@ func Root(ctx context.Context, recipe []byte, entries []ufs.Entry, kernel Media,
 	if len(r.Inputs) != len(Roles(s)) {
 		return nil, fmt.Errorf("recipe lists no input digests")
 	}
-	if len(packages) != len(s.Provision) {
-		return nil, fmt.Errorf("expected %d packages, got %d", len(s.Provision), len(packages))
+	moduleCount := 0
+	if s.DSUser {
+		moduleCount = 1
+	}
+	if len(packages) != len(s.Provision)+moduleCount {
+		return nil, fmt.Errorf("expected %d extra inputs, got %d", len(s.Provision)+moduleCount, len(packages))
+	}
+	var module *Media
+	if s.DSUser {
+		module = &packages[0]
+		in, err := Digest(ctx, "dsuser", module.Reader, module.Size)
+		if err != nil {
+			return nil, err
+		}
+		want := r.Inputs[len(Roles(s))-len(s.Provision)-1]
+		if len(Mismatches([]Input{want}, []Input{in})) != 0 {
+			return nil, fmt.Errorf("dsuser differs from the recipe")
+		}
+		packages = packages[1:]
+	}
+	if err = ValidateDisplay(kernel, module); err != nil {
+		return nil, err
 	}
 	entries, err = recipes.QuadraRoot(entries, kernel.Reader, kernel.Size)
 	if err != nil {
@@ -152,6 +179,11 @@ func Root(ctx context.Context, recipe []byte, entries []ufs.Entry, kernel Media,
 	}
 	if p, _ := Lookup(s.Preset); p.Recipe == "falcon-console" {
 		if entries, err = recipes.AtariRoot(entries, DefaultZone); err != nil {
+			return nil, err
+		}
+	}
+	if module != nil {
+		if entries, err = stageDisplay(entries, *module); err != nil {
 			return nil, err
 		}
 	}

@@ -51,7 +51,9 @@ case $HOME in ""|/) d=/.mac ;; *) d=$HOME/.mac ;; esac
 # the session locks the environment's metadata file, or the legacy
 # folder's stamp; a missing stamp comes with the refresh below
 F="$S/.stamp"
+P="/mac/lib/System Folder"
 if [ -n "$e" ]; then
+	[ ! -d "/mac/lib/env/$e/System Folder" ] || P="/mac/lib/env/$e/System Folder"
 	# the layout policy is data: KEY=value lines, never run
 	R=`sed -n 's/^ENVIRONMENT_ROOT=//p' /etc/default/mac 2> /dev/null | sed 1q`
 	case ${R:="~/Mac"} in
@@ -66,7 +68,7 @@ if [ -n "$e" ]; then
 fi
 envlock -t "$F" || exit 1
 # a new or outdated copy of the template
-[ -f "$S/System" ] && cmp -s "/mac/lib/System Folder/.stamp" "$S/.stamp" || {
+[ -f "$S/System" ] && cmp -s "$P/.stamp" "$S/.stamp" || {
 	[ ! -f "$S/System" ] || echo "startmac: updating $S"
 	if [ -n "$e" ]; then
 		makemac -f -e "$e" > /dev/null

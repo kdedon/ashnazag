@@ -49,12 +49,12 @@ mkdir -p "$OUT"
 # GROUP: a named set of test programs (ONLY= lists them explicitly)
 case ${GROUP:-} in
 "") ;;
-smoke)	G="t_sys t_file t_proc t_pipe t_dlm t_gate t_vtop" ;;
-core)	G="t_arith t_file t_mem t_pipe t_proc t_sig t_streams t_sys t_time t_tty t_vtop t_dlm t_gate t_page t_moddemo t_stress t_env t_ufs" ;;
+smoke)	G="t_sys t_file t_proc t_pipe t_dlm t_guestdlm t_envram t_gate t_vtop" ;;
+core)	G="t_arith t_file t_mem t_pipe t_proc t_sig t_streams t_sys t_time t_tty t_vtop t_dlm t_guestdlm t_envram t_gate t_page t_moddemo t_stress t_env t_ufs" ;;
 mac)	G="t_aux t_mac t_mac6 t_mac76 t_mac81 t_env" ;;
 tos)	G="t_tos t_env" ;;
 mint)	G="t_mint" ;;
-cpm)	G="t_cpm" ;;
+cpm)	G="t_cpm"; CPM_NO_TOS=1; export CPM_NO_TOS ;;
 smsqe)	G="t_smsqe" ;;
 amiga)	G="t_amiga t_env" ;;
 display) G="t_display" ;;
@@ -108,7 +108,7 @@ QEMU="$Q/usr/bin/qemu-system-m68k -L $Q/usr/share/qemu -M q800 -display none"
 if [ $MODE = direct ]; then
 	MEM=${MEM:-128}
 	set -- -m "$MEM" -kernel "$KERNEL" -initrd "$T/build/testroot.img"
-	[ -z "$AMIGANET" ] || set -- -m "$MEM" -kernel "$KERNEL" -initrd "$T/build/amiganetroot.img" -nic user
+	[ -z "$AMIGANET" ] || set -- -m "$MEM" -kernel "$KERNEL" -initrd "$T/build/amiganetroot.img" -nic user,guestfwd=tcp:10.0.2.100:7-cmd:cat
 	# t_ufs's volume, writes discarded
 	[ -f "$T/build/ufs/ufs.img" ] && set -- "$@" \
 		-drive file="$T/build/ufs/ufs.img",format=raw,if=none,id=hd2,snapshot=on \

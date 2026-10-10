@@ -25,6 +25,8 @@
 #include "sys/stropts.h"
 #include "sys/strsubr.h"
 #include "sys/var.h"
+#include "sys/ptms.h"
+#include "../../../mac/scc/consroute.h"
 
 extern int aux_amix();
 extern int grow(), waitid(), strioctl(), ttimeout();
@@ -930,6 +932,205 @@ strbottom(fp)
 	for (q = st->sd_wrq; q->q_next; q = q->q_next)
 		;
 	return q->q_qinfo->qi_minfo->mi_idname;
+}
+
+/* Named pairs retain the clone driver's allocation and Unix file lifetime. */
+static int
+ptyname(path, master)
+	char *path;
+	int *master;
+{
+	int n;
+
+	if (strncmp(path, "/dev/", 5) != 0 ||
+	    (path[5] != 'p' && path[5] != 't') || path[6] != 't' ||
+	    path[7] != 'y' || path[8] != 'C' || !path[9] || path[10])
+		return -1;
+	n = path[9];
+	if (n >= '0' && n <= '9')
+		n -= '0';
+	else if (n >= 'a' && n <= 'f')
+		n = n - 'a' + 10;
+	else
+		return -1;
+	*master = path[5] == 'p';
+	return n;
+}
+
+static int
+ptydevice(vp, major, minor)
+	struct vnode *vp;
+	int major, minor;
+{
+	return vp->v_type == VCHR && getmajor(vp->v_rdev) == major &&
+	    getminor(vp->v_rdev) == minor;
+}
+
+static int
+ptyfile(path, flags, fpp, fd)
+	char *path;
+	int flags, *fd;
+	file_t **fpp;
+{
+	struct vnode *vp;
+	int e;
+
+	e = vn_open(path, UIO_SYSSPACE, flags, 0, &vp, 0);
+	if (e)
+		return e;
+	e = falloc(vp, flags & 0xff, fpp, fd);
+	if (e) {
+		VOP_CLOSE(vp, flags, 1, (off_t)0, u.u_cred);
+		VN_RELE(vp);
+	}
+	return e;
+}
+
+int
+aux_namedaccess(path, mode)
+    char *path;
+    int mode;
+{
+    struct vnode *vp;
+    cred_t *cr;
+    char slave[20];
+    int n, master, e;
+    n=ptyname(path,&master);
+    if(n<0)return -1;
+    if(mode & ~15)return EINVAL;
+    bcopy("/dev/pts/",slave,10);
+    if(n<10){slave[9]='0'+n;slave[10]=0;}
+    else {slave[9]='1';slave[10]='0'+n-10;slave[11]=0;}
+    e=lookupname(master ? "/dev/ptmx" : slave,UIO_SYSSPACE,
+        NO_FOLLOW,NULLVPP,&vp);
+    if(e)return e;
+    e=ptydevice(vp,master ? 27 : 14,master ? 15 : n) ? 0 : ENXIO;
+    if(!e && (mode & 7)) {
+        cr=u.u_cred;
+        if(!(mode & 8)) {
+            cr=crdup(cr);
+            cr->cr_uid=u.u_cred->cr_ruid;cr->cr_gid=u.u_cred->cr_rgid;
+            cr->cr_ruid=u.u_cred->cr_uid;cr->cr_rgid=u.u_cred->cr_gid;
+        }
+        e=VOP_ACCESS(vp,(mode & 7)<<6,0,cr);
+        if(!(mode & 8))crfree(cr);
+    }
+    VN_RELE(vp);return e;
+}
+
+int
+aux_namedpty(path, oflags, rv)
+	char *path;
+	int oflags;
+	rval_t *rv;
+{
+	struct vnode *vp;
+	struct vattr va;
+	cred_t *cr;
+	file_t *fp;
+	char slave[20];
+	static char *mods[] = { "auxcons", "ptem", "ldterm", "ttcompat" };
+	int n, master, e, fd, flags, i, result;
+
+	n = ptyname(path, &master);
+	if (n < 0)
+		return -1;
+	if ((oflags & 3) != 2 || (oflags & ~(3 | FNDELAY | FNONBLOCK | FNOCTTY)))
+		return EINVAL;
+	flags = FREAD | FWRITE | (oflags & (FNDELAY | FNONBLOCK | FNOCTTY));
+	bcopy("/dev/pts/", slave, 10);
+	if (n < 10) {
+		slave[9] = '0' + n;
+		slave[10] = 0;
+	} else {
+		slave[9] = '1';
+		slave[10] = '0' + n - 10;
+		slave[11] = 0;
+	}
+	e = lookupname(master ? "/dev/ptmx" : slave, UIO_SYSSPACE,
+	    NO_FOLLOW, NULLVPP, &vp);
+	if (e)
+		return e;
+	/* These device numbers define the installed STREAMS PTY namespace. */
+	e = ptydevice(vp, master ? 27 : 14, master ? 15 : n) ? 0 : ENXIO;
+	VN_RELE(vp);
+	if (e)
+		return e;
+	e = ptyfile(master ? "/dev/ptmx" : slave, flags, &fp, &fd);
+	if (e)
+		return e;
+	if (!ptydevice(fp->f_vnode, master ? 15 : 14, n) ||
+	    strcmp(strbottom(fp), master ? "ptm" : "pts") != 0) {
+		e = EBUSY;
+		goto bad;
+	}
+	if (master) {
+		e = lookupname(slave, UIO_SYSSPACE, NO_FOLLOW, NULLVPP, &vp);
+		if (e)
+			goto bad;
+		if (!ptydevice(vp, 14, n))
+			e = ENXIO;
+		else {
+			bzero((caddr_t)&va, sizeof va);
+			va.va_mask = AT_UID | AT_MODE;
+			va.va_uid = u.u_cred->cr_uid;
+			va.va_mode = 0620;
+			cr = crget();
+			e = VOP_SETATTR(vp, &va, 0, cr);
+			crfree(cr);
+		}
+		VN_RELE(vp);
+		if (!e)
+			e = strioctl(fp->f_vnode, UNLKPT, 0, fp->f_flag,
+			    K_TO_K, fp->f_cred, &result);
+	} else {
+		for (i = 0, e = 0; i < 4 && !e; i++) {
+			e = strioctl(fp->f_vnode, I_FIND, (int)mods[i], fp->f_flag,
+			    K_TO_K, fp->f_cred, &result);
+			if (!e && !result)
+				e = strioctl(fp->f_vnode, I_PUSH, (int)mods[i], fp->f_flag,
+				    K_TO_K, fp->f_cred, &result);
+		}
+	}
+	if (!e) {
+		rv->r_val1 = fd;
+		return 0;
+	}
+bad:
+	setf(fd, (file_t *)0);
+	closef(fp);
+	return e;
+}
+
+long aux_constage, aux_conerror;
+
+int
+aux_console(fd, cmd, arg)
+	int fd, cmd;
+	caddr_t arg;
+{
+	struct guest_proc *gp = GUESTP(u.u_procp);
+	file_t *fp;
+	int e, dev;
+	extern int aux_conscontrol();
+
+	aux_constage=1;aux_conerror=0;
+	if (!gp || gp->gp_prof != &aux_profile || !(AUXP(gp)->ap_mac & APM_TASK))
+		return aux_conerror=EPERM;
+	aux_constage=2;
+	if ((e = getf(fd, &fp))) return aux_conerror=e;
+	aux_constage=3;
+	if (fp->f_vnode->v_type != VCHR || getmajor(fp->f_vnode->v_rdev) != 14 ||
+	    strcmp(strbottom(fp), "pts")) return aux_conerror=ENOTTY;
+	if (cmd == AUXCROUTE) {
+		aux_constage=4;
+		if (copyin(arg, (caddr_t)&dev, sizeof dev)) return aux_conerror=EFAULT;
+		aux_constage=5;
+		if (dev != 0) return aux_conerror=ENXIO;
+	}
+	aux_constage=6;
+	e = aux_conscontrol(fp->f_vnode, cmd, u.u_procp->p_pid, u.u_cred);
+	aux_constage=7;aux_conerror=e;return e;
 }
 
 /* TIOCPKT: on a pty master, push or pop pckt; one message per read */

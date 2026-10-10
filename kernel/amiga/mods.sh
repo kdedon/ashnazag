@@ -3,7 +3,7 @@
 #
 #   sh amiga/mods.sh kernel.elf outdir
 #
-# Out: outdir/mod.d/{amilib,opci}, built for that kernel's CPU; amilib is
+# Out: outdir/mod.d/{amilib,opci,pci,ne}, built for that kernel's CPU; amilib is
 # checked against the kernel's exports (it must carry DLM: dlm_cacheflush),
 # opci against those and amilib's.  Install them in /etc/conf/mod.d;
 # /etc/conf/pci gets openpci.library (the openpci archive's
@@ -29,8 +29,8 @@ $HCC -o "$O/tools/modfix" "$DLM/tools/modfix.c"
 "$O/tools/mkksym" -x "$KERNEL" > "$O/exports"
 grep -qw dlm_cacheflush "$O/exports" ||
 	{ echo "mods.sh: $KERNEL has no DLM" >&2; exit 1; }
-CC="$NICE m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -Wall -Wno-comment"
-CC="$CC -I$DLM/include -I$A/include -I$A/amilib"
+CC="$NICE m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -fno-common -Wall -Wno-comment"
+CC="$CC -I$DLM/include -I$A/include -I$A/amilib -I$K/atari/netusbee -DNU_PCI"
 
 srcs() {
 	case $1 in
@@ -38,10 +38,12 @@ srcs() {
 		    "$A/amilib/amdos.c $A/amilib/ammmu.c $A/amilib/amglue.s" \
 		    "$A/amilib/amxplat.c $A/mod/amilib/amilibmod.c" ;;
 	opci)	echo "$A/opci/opci.c $A/mod/opci/opcimod.c" ;;
+	pci)	echo "$A/pci/pcidev.c" ;;
+	ne)	echo "$K/atari/netusbee/nuchip.c $K/atari/netusbee/nudlpi.c $A/mod/ne/nemod.c" ;;
 	esac
 }
 rm -rf "$O/mod.d"
-for m in amilib opci; do	# amilib first: opci depends on it
+for m in amilib opci pci ne; do	# each after the module it depends on
 	d=$O/src/$m
 	rm -rf "$d"; mkdir -p "$d"
 	objs=
@@ -54,7 +56,8 @@ for m in amilib opci; do	# amilib first: opci depends on it
 		objs="$objs $o"
 	done
 	m68k-cbm-sysv4-ld -r -o "$d/Driver.o" $objs
-	cp "$A/mod/$m/Master" "$A/mod/$m/Space.c" "$d/"
+	cp "$A/mod/$m/Master" "$d/"
+	[ ! -f "$A/mod/$m/Space.c" ] || cp "$A/mod/$m/Space.c" "$d/"
 	DLM_TOOLS=$O/tools sh "$DLM/tools/mkmod" -e "$O/exports" -o "$O" "$d"
 done
 echo "[OK] $O/mod.d: $(ls "$O/mod.d" | tr '\n' ' ')"

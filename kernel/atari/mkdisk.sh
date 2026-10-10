@@ -48,6 +48,8 @@ GEM=${GEM:-0}
 ZONE=${ZONE:-CST6CDT}
 PY="nice -n 19 python3"
 
+[ -z "$X11" ] || [ "$X11" = 1 ] || $PY "$K/../x11/check-falcon.py" "$X11"
+
 case $KERNEL in /*) ;; *) KERNEL=$PWD/$KERNEL ;; esac
 mkdir -p "$W/src/build"
 ln -sfn "$DR/etc" "$W/src/etc"
@@ -104,6 +106,7 @@ if [ "$X11" = 1 ]; then
 	done
 	PLATFORM=atari X11W=$X11W sh "$K/../x11/package.sh"
 	X11=$X11W/pkg
+	$PY "$K/../x11/check-falcon.py" "$X11"
 fi
 if [ -n "$X11" ]; then
 	ln -sfn "$(cd "$X11" && pwd)" "$W/src/x11pkg"
@@ -144,13 +147,14 @@ if [ -n "$TOSENV$MACENV" ]; then
 	{ echo 'd /usr/aux 755 0 3'
 	  echo 'd /usr/aux/lib 755 0 3'
 	  echo 'd /usr/aux/lib/mod.d 755 0 3'
-	  for m in guestcore auxcore auxexec uinter tosguest; do
+	  for m in guestcore auxcore auxexec uinter tosguest cpmguest; do
 		echo "f /usr/aux/lib/mod.d/$m 644 0 3 $E/guest/mod.d/$m"
 	  done
 	  echo 'f /usr/aux/lib/auxreg 755 0 3 build/auxreg'
 	  echo 'f /etc/rc2.d/S05aux 744 0 3 atari/S05aux'
 	  echo 'c /dev/uinter0 660 0 25 54 0'
-	  echo 'c /dev/tos 660 0 25 56 0'; } >> "$W/root.manifest"
+	  echo 'c /dev/tos 660 0 25 56 0'
+	  echo 'c /dev/cpm 660 0 25 59 0'; } >> "$W/root.manifest"
 fi
 if [ "$TOSENV" = 1 ]; then
 	sh "$K/../images/tosenv/mktos.sh" "$E/tos" > "$E/tos.log" 2>&1 ||
@@ -161,8 +165,8 @@ if [ "$TOSENV" = 1 ]; then
 		{ tail "$E/win.log"; exit 1; }
 	# guest's folders go on /home, which is mounted over the root's
 	mkdir -p "$E/gt"
-	for a in tos cpm win; do (cd "$E/gt" && cpio -id --quiet < "$E/$a/guest.cpio"); done
-	(cd "$E/gt/home" && find guest/TOS guest/CPM guest/WIN16 2> /dev/null |
+	for a in tos win; do (cd "$E/gt" && cpio -id --quiet < "$E/$a/guest.cpio"); done
+	(cd "$E/gt/home" && find guest/TOS guest/WIN16 2> /dev/null |
 		cpio -o -H newc -R 100:1 --quiet) > "$E/homeguest.cpio"
 	rm -rf "$E/gt"
 	{ echo 'd /etc/tos 755 0 3'
@@ -232,7 +236,7 @@ fi
   [ "$TOSENV" != 1 ] || { echo ' TOS    starttos        EmuTOS and TeraDesk; -P this machine'"'"'s TOS, -M mono'
 	cpio -it < "$E/cpm/cpm.cpio" 2> /dev/null | grep -q CPM.SYS &&
 		printf '%s\n' ' CP/M   startcpm        CP/M-68K in this terminal; EXIT ends it' \
-		'                        drives A: to P: are ~/CPM/A to ~/CPM/P'
+		"                        A: ~/CPM, H: home, M: temp, O: /, P: DRI's programs"
 	cpio -it < "$E/win/win.cpio" 2> /dev/null | grep -q startwin &&
 		printf '%s\n' ' Win16  startwin        Windows 3.x programs; startwin -install your disks first'
 	:; }

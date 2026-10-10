@@ -75,7 +75,7 @@
 +f /usr/x11r6/lib/X11/fonts/75dpi/helvR14.bdf 444 0 3 x11pkg/fonts/75dpi/helvR14.bdf
 --- a/kernel/mac/diskroot/mkdiskroot.sh
 +++ b/kernel/mac/diskroot/mkdiskroot.sh
-@@ -28,7 +28,7 @@
+@@ -29,7 +29,7 @@
  PY="nice -n 19 python3"
  
  mkdir -p "$B/tape"

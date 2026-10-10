@@ -73,6 +73,7 @@ struct ch {
 	int		c_closed;	/* playing out */
 	long		c_pid, c_uid;
 	int		c_fd;		/* the stream, -1 until needed */
+	long		c_retry;	/* next open after a lost service */
 	unsigned char	*c_q;		/* ring of records */
 	long		c_qget, c_qn, c_wleft;	/* c_wleft: bytes of the record being sent */
 	unsigned char	*c_p;		/* samples or wavetable waiting for their command */
@@ -427,6 +428,18 @@ struct sareq *q;
 	return 0;
 }
 
+/* Reserve callback storage before accepting a drain command. */
+static int
+cbfull(c)
+struct ch *c;
+{
+	int i, n = c->c_cbn;
+
+	for (i = 0; i < c->c_tn; i++)
+		n += c->c_tag[i].t_cb != 0;
+	return n >= NCB || c->c_tn >= NTAG;
+}
+
 /* the request's reply: its result and out bytes */
 static long
 ioc(c, q, b, out)
@@ -444,7 +457,7 @@ int *out;
 	case SND_RESET:
 		return 0;
 	case SND_QFULL:
-		return qfree(c) < QSZ / 4;
+		return qfree(c) < QSZ / 4 || cbfull(c);
 	case SND_BUSY:
 		return busy(c);
 	case SND_CALLBACK:
@@ -478,6 +491,8 @@ int *out;
 	case SND_CMD_Q:
 		if (q->q_len < 8)
 			return -EINVAL;
+		if (G16(b) == 13 && (cbfull(c) || qfree(c) < sizeof (struct sndrec)))
+			return -EAGAIN;
 		command(c, b);
 		return 0;
 	}
@@ -557,20 +572,76 @@ request()
 	answer(&q, r, (char *)d, out);
 }
 
+static void
+space(c)
+struct ch *c;
+{
+	struct sarep p;
+
+	if (!c->c_wait || qfree(c) < QSZ / 2)
+		return;
+	c->c_wait = 0;
+	p.p_seq = 0;
+	p.p_ch = c->c_minor;
+	p.p_ret = SAP_SPACE;
+	p.p_len = 0;
+	(void)write(srv, (char *)&p, sizeof p);
+}
+
+/* Dropped audio completes its callbacks and releases blocked writers. */
+static void
+lost(c)
+struct ch *c;
+{
+	int i, cb = 0;
+
+	if (c->c_fd >= 0) {
+		struct timeval now;
+		close(c->c_fd);
+		gettimeofday(&now, (void *)0);
+		c->c_retry = now.tv_sec + 1;
+	}
+	c->c_fd = -1;
+	c->c_qn = c->c_wleft = c->c_qget = c->c_inn = 0;
+	c->c_fmt.f_rate = 0;
+	for (i = 0; i < c->c_tn; i++)
+		if (c->c_tag[i].t_cb && c->c_cbn < NCB) {
+			memcpy((char *)c->c_cb[c->c_cbn++], (char *)c->c_tag[i].t_cmd, 8);
+			cb = 1;
+		}
+	c->c_tn = c->c_tsent = 0;
+	space(c);
+	if (c->c_closed)
+		release(c);
+	else if (cb)
+		sig(c, SIGPOLL);
+}
+
 /* the stream, opened as the caller so the service binds it as the caller */
 static int
 stream(c)
 struct ch *c;
 {
+	struct timeval now;
+	long n;
+
 	if (c->c_fd >= 0)
 		return 0;
+	gettimeofday(&now, (void *)0);
+	if (now.tv_sec < c->c_retry)
+		return -1;
+	c->c_retry = now.tv_sec + 1;
 	if (seteuid((uid_t)c->c_uid) < 0)
 		return -1;
-	c->c_fd = open(SNDPATH, O_RDWR);
+	c->c_fd = open(SNDPATH, O_RDWR | O_NDELAY);
 	(void)seteuid((uid_t)0);
 	if (c->c_fd < 0)
 		return -1;
-	fcntl(c->c_fd, F_SETFL, O_NDELAY);
+	if (ioctl(c->c_fd, I_NREAD, &n) < 0) {
+		close(c->c_fd);
+		c->c_fd = -1;
+		return -1;
+	}
 	return 0;
 }
 
@@ -583,16 +654,7 @@ register struct ch *c;
 	long k, i;
 
 	if (c->c_qn > 0 && stream(c) < 0) {
-		/* no service: dropped, the callbacks still come */
-		c->c_qn = c->c_wleft = 0;
-		for (i = c->c_tsent; i < c->c_tn; i++)
-			if (c->c_tag[i].t_cb && c->c_cbn < NCB)
-				memcpy((char *)c->c_cb[c->c_cbn++], (char *)c->c_tag[i].t_cmd, 8);
-		if (c->c_tn > c->c_tsent && !c->c_closed)
-			sig(c, SIGPOLL);
-		c->c_tn = c->c_tsent;
-		if (c->c_closed && c->c_tn == 0)
-			release(c);
+		lost(c);
 		return;
 	}
 	while (c->c_qn > 0) {
@@ -606,22 +668,17 @@ register struct ch *c;
 		k = QSZ - c->c_qget;
 		if (k > c->c_wleft)
 			k = c->c_wleft;
-		if ((k = write(c->c_fd, (char *)c->c_q + c->c_qget, (unsigned)k)) <= 0)
+		if ((k = write(c->c_fd, (char *)c->c_q + c->c_qget, (unsigned)k)) <= 0) {
+			if (k < 0 && errno != EAGAIN && errno != EINTR)
+				lost(c);
 			break;
+		}
 		c->c_qget = (c->c_qget + k) % QSZ;
 		c->c_qn -= k;
 		c->c_wleft -= k;
 	}
-	if (c->c_wait && qfree(c) >= QSZ / 2) {
-		struct sarep p;
-
-		c->c_wait = 0;
-		p.p_seq = 0;
-		p.p_ch = c->c_minor;
-		p.p_ret = SAP_SPACE;
-		p.p_len = 0;
-		(void)write(srv, (char *)&p, sizeof p);
-	}
+	if (c->c_used)
+		space(c);
 }
 
 /* DRAIN replies: callbacks, or a closed channel's end */
@@ -633,19 +690,17 @@ register struct ch *c;
 	int k, cb = 0;
 
 	if ((k = read(c->c_fd, (char *)c->c_in + c->c_inn, sizeof c->c_in - c->c_inn)) <= 0) {
-		if (k == 0 || errno != EAGAIN) {
-			close(c->c_fd);
-			c->c_fd = -1;
-			c->c_qn = c->c_wleft = 0;
-			c->c_tn = c->c_tsent = 0;
-			if (c->c_closed)
-				release(c);
-		}
+		if (k == 0 || (errno != EAGAIN && errno != EINTR))
+			lost(c);
 		return;
 	}
 	c->c_inn += k;
 	while (c->c_inn >= sizeof r) {
 		memcpy((char *)&r, (char *)c->c_in, sizeof r);
+		if (r.r_cmd != SNDR_DRAIN || r.r_len != 0) {
+			lost(c);
+			return;
+		}
 		if (c->c_inn < sizeof r + r.r_len)
 			break;
 		c->c_inn -= sizeof r + r.r_len;

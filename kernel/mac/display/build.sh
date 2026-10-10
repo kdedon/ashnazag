@@ -3,8 +3,8 @@
 #
 #   sh kernel/mac/display/build.sh [outdir]
 #
-# outdir defaults to kernel/build/mac/display.  Produces ds.o (ds.c,
-# dsdev.c, dsseg.c linked -r) for the kernel and dstest, an AMIX
+# outdir defaults to kernel/build/mac/display. Produces the console ds.o
+# for the kernel and dstest, an AMIX
 # program linked against the shared libc.  Fails on compiler warnings,
 # common symbols and sections the AMIX loader does not bind.
 set -e
@@ -21,7 +21,7 @@ mkdir -p "$OUT"
 INC="-I$D -I$K/mac/video -I$K/mac/adb"
 
 objs=
-for f in ds dsdev dsseg; do
+for f in ds; do
 	nice -n 19 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS $AMIX_DIAG_CFLAGS -m68040 -fno-common -Wall -Wno-comment $INC \
 		-c "$D/$f.c" -o "$OUT/$f.o" 2> "$OUT/$f.warn" || {
 		cat "$OUT/$f.warn"; echo "[FAIL] $f.c"; exit 1; }

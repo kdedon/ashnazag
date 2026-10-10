@@ -148,12 +148,18 @@ main(argc, argv)
 		return 1;
 	memset(b3_mem, 0, MEMSZ);
 	strcpy(b3_root, argv[1]);
-	sprintf(dir, "%s/A", b3_root);
 	mkdir(b3_root, 0755);
-	if (hf_mkdist(dir, "/nonexistent", "\x60\x1a", "exit.68k", 2) < 0) {
-		printf("FAIL mkdist\n");
-		return 1;
-	}
+	sprintf(dir, "%s/P", b3_root);
+	mkdir(dir, 0755);
+	hput("EXIT.68K", 2L);
+	hput("NOTE.TXT", 2L);
+	hf_setdrive('P' - 'A', dir, HF_RO | HF_SYS);
+	sprintf(dir, "%s/H", b3_root);
+	mkdir(dir, 0755);
+	hf_setdrive('H' - 'A', dir, 0);
+	sprintf(dir, "%s/A", b3_root);
+	mkdir(dir, 0755);
+	hf_setdrive(0, dir, HF_AREAS);
 	hput("Mixed.Doc", 10L);
 	hput("toolongname.txt", 10L);
 	hput(".hid.txt", 10L);
@@ -162,7 +168,8 @@ main(argc, argv)
 
 	check("version", bdos(12L, 0L) == 0x2031);
 	bdos(13L, 0L);
-	check("drive_a", bdos(25L, 0L) == 0 && bdos(24L, 0L) == 1);
+	check("drives", bdos(25L, 0L) == 0 && bdos(24L, 0L) == (1 | 1 << 7 | 1 << 15) &&
+	    bdos(29L, 0L) == 1 << 15);
 
 	/* make, write, read */
 	fcb(F, 0, "TEST    TXT");
@@ -184,12 +191,23 @@ main(argc, argv)
 	check("size", bdos(35L, F) == 0 && B3MEM(F)[33] == 3);
 
 	/* names */
-	check("search_txt", nsearch("????????TXT", 0, e) == 2);
+	check("search_txt", nsearch("????????TXT", 0, e) == 3);
 	check("search_entry", nsearch("TEST    TXT", 0, e) == 1 && e[15] == 3 && e[12] == 0 &&
 	    e[0] == 0 && (e[16] | e[17]));
 	check("sfcb", B3MEM(DMA)[96] == 0x21);
 	check("mixed_case", nsearch("MIXED   DOC", 0, 0) == 1);
-	check("long_hidden", nsearch("????????TXT", 0, 0) == 2);
+	check("long_mangled", nsearch("????????TXT", 0, 0) == 3 && nsearch("TOOLON~?TXT", 0, 0) == 1);
+	hput("Makefile.linux", 10L);
+	hput("readme.txt", 10L);
+	hput("README.TXT", 10L);
+	hput("a.b.c", 10L);
+	check("mangle_suffix", nsearch("MAKEFI~?LIN", 0, e) == 1 && e[7] != '?');
+	check("mangle_case", nsearch("README  TXT", 0, 0) == 1 && nsearch("README~?TXT", 0, 0) == 1);
+	check("mangle_dots", nsearch("AB~?    C  ", 0, 0) == 1);
+	nsearch("MAKEFI~?LIN", 0, e);
+	fcb(F, 0, "           ");
+	memcpy(B3MEM(F + 1), e + 1, 11);
+	check("mangle_open", bdos(15L, F) == 0 && bdos(20L, F) == 0 && B3MEM(DMA)[0] == 9);
 	check("sys", nsearch("HID     TXT", 0, e) == 1 && (e[10] & 0x80));
 	fcb(F, 0, "TEST    TXT");
 	memcpy(B3MEM(F + 17), "NEW     TXT", 11);
@@ -342,7 +360,27 @@ main(argc, argv)
 	nout = 0;
 	fcb(F, 3, "X       Y  ");
 	check("err_drive", booted(15L, F) && strstr(out, "Invalid Drive") != 0);
-	check("exit_link", nsearch("EXIT    68K", 0, 0) == 1);
+	bdos(45L, 0xffL);
+
+	/* drives: areas only on A:, P: read-only and searched for programs */
+	fcb(F, 'H' - 'A' + 1, "AREA    TXT");
+	bdos(32L, 5L);
+	check("h_no_areas", bdos(22L, F) != 0 && nsearch("???????????", 'H' - 'A' + 1, 0) == 0);
+	bdos(32L, 0L);
+	check("h_make", bdos(22L, F) == 0 && nsearch("AREA    TXT", 'H' - 'A' + 1, 0) == 1);
+	fcb(F, 'P' - 'A' + 1, "NEW     TXT");
+	check("s_readonly", (bdos(22L, F) & 0xff) == 0xff && nsearch("NEW     TXT", 'P' - 'A' + 1, 0) == 0);
+	fcb(F, 'P' - 'A' + 1, "EXIT    68K");
+	check("s_file_ro", bdos(15L, F) == 0 && (B3MEM(F)[9] & 0x80));
+	fcb(F, 0, "EXIT    68K");
+	check("s_search", bdos(15L, F) == 0 && B3MEM(F)[0] == 'P' - 'A' + 1);
+	fcb(F, 1, "NOTE    TXT");
+	check("s_programs_only", bdos(15L, F) == 0xff);
+	fcb(F2, '?', "EXIT       ");
+	for (r = bdos(17L, F2); r == 0 && (memcmp(B3MEM(DMA + 1), "EXIT    ", 8) || (B3MEM(DMA)[9] & 0x7f) != '6');
+	    r = bdos(18L, 0L))
+		;
+	check("s_ccp_lookup", r == 0 && B3MEM(DMA)[0] == 0);
 
 	printf("bdostest: %d checks, %d failed\n", checks, fails);
 	return fails != 0;

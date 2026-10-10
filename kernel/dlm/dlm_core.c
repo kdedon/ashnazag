@@ -1128,5 +1128,16 @@ dlm_init()
 	dlm_ktab = dlm_ksym;
 	strcpy(dlm_path, dlm_defpath);
 	dlm_inited = 1;
+#ifndef DLM_HOST
+	if (dlm_creg("cpmguest", 59) != 0)
+		printf("dlm: cpmguest registration failed\n");
+	{
+		extern void ds_modinit();
+		void (*volatile init)() = ds_modinit;
+		__asm__(".weak ds_modinit");
+		if (init)
+			(*init)();
+	}
+#endif
 	printf("dlm: %d kernel symbols\n", (int)G32(dlm_ksym + KH_NSYM) - 1);
 }

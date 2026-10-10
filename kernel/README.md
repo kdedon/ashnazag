@@ -32,6 +32,32 @@ binutils and gcc in `linux/`, `m68k-elf` binutils in `bin/`), the tape link kit 
 `toolchain/amix-root/usr/sys`, the patch-disk sources in `patch/payload/`, NetBSD 10.1
 `syssrc.tgz` in `toolchain/dl/`, and the port clone with its `config.sh`.
 
+## Amiga host overlay
+
+After preparing the same `unix-040` base:
+
+```sh
+sh kernel/amiga/relink-amiga.sh
+sh kernel/amiga/stage.sh
+```
+
+`build/unix-amiga` is the relocatable boot artifact. The companion
+`build/unix-amiga.elf` supplies module checks and must not be used as the boot
+artifact. Staging produces eight DLM modules and an additive device manifest;
+merge it into the host root while preserving the stock `/dev/amiga` node.
+The guest node is `/dev/amigaguest`. Physical Amiga boot and display/input
+qualification remain pending.
+
+## Guest RAM
+
+The launchers share demand-paged VM region setup; Mac allocations use host VM.
+For Atari TOS passthrough, `starttos -P` defaults to scattered resident pages
+with contiguous backing requested only for DMA spans. `-A contiguous` selects
+a whole physical block; `-m MB` sets its exact size. The shared guestcore API in
+`guest/include/guest_mem.h` owns pages through mapping/fork lifetimes and
+returns them after the final close. It reserves nothing at boot. Session creation admits a RAM budget; faults
+allocate resident pages and can reclaim ordinary VM. DMA backing remains resident and is not swappable.
+
 ## Notes
 
 - The 2.1p2a patch disk ships kernel sources only (`c0.c`, `aen.c`, `master.d/kernel.c`),

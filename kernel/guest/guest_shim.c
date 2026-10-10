@@ -33,6 +33,10 @@ extern struct proc *curproc;
 struct proc		*guest_loading;
 struct guest_profile	*guest_loadprof;
 
+int	(*guest_gate_c_hook)();
+int	(*guest_linea_hook)();
+int	(*guest_ftrap_hook)();
+int	(*guest_fpriv_hook)();
 int	(*guest_trap_hook)();
 void	(*guest_exec_hook)();
 int	(*guest_fork_hook)();
@@ -44,7 +48,16 @@ int	(*guest_unote_hook)();
 long	guest_nlinea, guest_lineapc;
 long	guest_nftrap, guest_nfpriv;	/* taken by the gates' fast paths */
 
+extern int (*ds_evpost_hook)(), (*ds_unloadsess_hook)(), (*ds_segcount_hook)();
+
 struct hooksw hooksw[] = {
+	{ "ds_evpost",		(char **)&ds_evpost_hook,	0, 0 },
+	{ "ds_unloadsess",	(char **)&ds_unloadsess_hook,	0, 0 },
+	{ "ds_segcount",		(char **)&ds_segcount_hook,	0, 0 },
+	{ "guest_gate_c",	(char **)&guest_gate_c_hook,	0, 0 },
+	{ "guest_linea",		(char **)&guest_linea_hook,	0, 0 },
+	{ "guest_ftrap",		(char **)&guest_ftrap_hook,	0, 0 },
+	{ "guest_fpriv",		(char **)&guest_fpriv_hook,	0, 0 },
 	{ "guest_trap",		(char **)&guest_trap_hook,	0, 0 },
 	{ "guest_exec",		(char **)&guest_exec_hook,	0, 0 },
 	{ "guest_fork",		(char **)&guest_fork_hook,	0, 0 },

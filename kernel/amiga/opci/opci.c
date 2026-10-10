@@ -450,7 +450,7 @@ opci_start(buf, len)
 		    0L, 0L);
 		goto fail;
 	}
-	amx_log("opci: %s", (long)AP(res, RT_IDSTRING), 0L, 0L, 0L);
+	amx_log("opci: %s\n", (long)AP(res, RT_IDSTRING), 0L, 0L, 0L);
 	opci_lib = am_initres(res, opci_seg);
 	if (opci_lib == 0) {
 		amx_log("opci: openpci.library did not initialise\n", 0L, 0L, 0L,

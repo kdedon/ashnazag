@@ -119,6 +119,20 @@ function kernelFixture() {
   return bytes;
 }
 
+function displayELFFixture(name, type) {
+  const bytes = Buffer.alloc(1024); kernelFixture().copy(bytes);
+  bytes.writeUInt16BE(type, 16); bytes.writeUInt32BE(512, 32);
+  bytes.writeUInt16BE(40, 46); bytes.writeUInt16BE(4, 48);
+  const section = (index, type, offset, size, link, entrySize) => {
+    const at = 512 + index * 40;
+    for (const [field, value] of [[4, type], [16, offset], [20, size], [24, link], [36, entrySize]]) bytes.writeUInt32BE(value, at + field);
+  };
+  section(1, 2, 672, 32, 2, 16); section(2, 3, 800, name.length + 2, 0, 0); section(3, 13, 960, 4, 0, 0);
+  bytes.writeUInt32BE(2, 512 + 3 * 40 + 8); bytes.writeUInt32BE(1, 688);
+  bytes[700] = 0x11; bytes.writeUInt16BE(3, 702); bytes.write(name, 801);
+  return bytes;
+}
+
 function donorFixture() {
   const bytes = Buffer.alloc(128 * 512);
   bytes.write('ER'); bytes.writeUInt16BE(512, 2); bytes.writeUInt32BE(128, 4);
@@ -186,11 +200,12 @@ async function recipeRoundTrip(base) {
   const recipe = JSON.parse(first.recipe);
   assert.equal(recipe.formatVersion, 2);
   assert.deepEqual(recipe.preset, { id: 'quadra800', revision: 1 });
-  assert.deepEqual(recipe.changes, { swapMiB: 4, provision: [{ kind: 'app', family: 'amiga', id: 'test-1' }] });
-  assert.deepEqual(recipe.inputs.map(input => input.role), ['amix-tape', 'kernel', 'boot-donor', 'package:test-1']);
+  assert.deepEqual(recipe.changes, { ...(base.dsuser ? { dsuser: true } : {}), swapMiB: 4, provision: [{ kind: 'app', family: 'amiga', id: 'test-1' }] });
+  assert.deepEqual(recipe.inputs.map(input => input.role), ['amix-tape', 'kernel', 'boot-donor', ...(base.dsuser ? ['dsuser'] : []), 'package:test-1']);
   assert.deepEqual(recipe.inputs[0].parts.map(part => part.size), base.archives.map(source => source.file.size));
   delete recipe.inputs[0].parts;
   assert(first.image.includes(Buffer.from(JSON.stringify(recipe, null, 2) + '\n')), 'image does not carry its recipe without tape parts');
+  if (base.dsuser) assert(first.image.includes(Buffer.from(base.dsuser.read())), 'image does not carry dsuser bytes');
   const second = await build(first.recipe);
   assert.equal(second.recipe, first.recipe);
   assert.equal(second.mismatches.length, 0);
@@ -202,7 +217,7 @@ async function recipeRoundTrip(base) {
     for (const source of base.archives) file(path.join('tapes', source.name), source.file);
     const output = path.join(directory, 'native.img');
     const native = spawnSync(path.join(__dirname, 'build/ashforge'), ['build', '-recipe', file('recipe.json', new InputFile(Buffer.from(first.recipe))), '-tapes', path.join(directory, 'tapes'),
-      '-kernel', file('kernel', base.kernel), '-donor', file('donor', base.donor), '-package', `app:amiga:test-1=${file('package', base.provision[0].file)}`, '-output', output], { encoding: 'utf8', timeout: 120000 });
+      '-kernel', file('kernel', base.kernel), ...(base.dsuser ? ['-dsuser', file('dsuser', base.dsuser)] : []), '-donor', file('donor', base.donor), '-package', `app:amiga:test-1=${file('package', base.provision[0].file)}`, '-output', output], { encoding: 'utf8', timeout: 120000 });
     assert.equal(native.status, 0, native.stderr);
     assert(fs.readFileSync(output).equals(first.image), 'native rebuild differs from WASM');
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
@@ -230,10 +245,15 @@ async function main() {
     checkImage(success.result.file, request.rootMiB, request.swapMiB, success.directory, kernel, !tapeDir);
     if (outputPath) fs.copyFileSync(success.result.file.source, outputPath, fs.constants.COPYFILE_EXCL);
   } finally { success.cleanup(); }
-  if (!tapeDir) await recipeRoundTrip(request);
+  if (!tapeDir) {
+    await recipeRoundTrip(request);
+    await recipeRoundTrip({ ...request, kernel: new InputFile(displayELFFixture('ds_modinit', 2)), dsuser: new InputFile(displayELFFixture('dsuser_wrapper', 1)) });
+  }
   for (const [label, changes, options, expected] of [
     ['invalid package', { provision: [{kind:'app'}] }, {}, /provisioning/i],
     ['incomplete tape', { archives: undefined, tape: [Object.assign(new InputFile(Buffer.alloc(8192)), { name: 'tape.img' })] }, {}, /segments 02, 03, 10 not found/],
+    ['missing display module', { kernel: new InputFile(displayELFFixture('ds_modinit', 2)) }, {}, /requires its matching dsuser/],
+    ['invalid display module', { dsuser: new InputFile(Buffer.alloc(10)) }, {}, /dsuser display module/],
     ['invalid kernel', { kernel: new InputFile(Buffer.alloc(52)) }, {}, /kernel|ELF|executable/i],
     ['storage quota', {}, { quota: 1 }, /space|quota/i],
     ['write failure', {}, { failWrite: true }, /Injected storage failure/],

@@ -23,7 +23,7 @@ const usage = `usage:
   ashforge tape part...
   ashforge build (-preset quadra800 | -recipe recipe.json) [-root MiB] [-swap MiB]
                  [-package kind:family:id=file ...] -tape part [-tape part ...]
-                 -kernel unix.elf [-donor disk.img, Quadra] -output new.img [-export recipe.json]
+                 -kernel unix.elf [-dsuser dsuser] [-donor disk.img, Quadra] -output new.img [-export recipe.json]
 
 A tape part is an archive (.tar.bz2, .tar.gz, .tar, .zip), a SIMH .tap image,
 a segment file, a raw image or a directory of these.`
@@ -186,7 +186,8 @@ func build(ctx context.Context, args []string) error {
 	var tape list
 	fs.Var(&tape, "tape", "AMIX 2.1 tape part; repeat for each part")
 	tapes := fs.String("tapes", "", "directory of split segments 02, 03 and 10, not checked against the AMIX table")
-	kernel := fs.String("kernel", "", "prebuilt Quadra kernel ELF")
+	kernel := fs.String("kernel", "", "prebuilt m68k kernel ELF")
+	dsuser := fs.String("dsuser", "", "display module matching the kernel")
 	donor := fs.String("donor", "", "A/UX boot donor disk")
 	output := fs.String("output", "", "new disk image")
 	export := fs.String("export", "", "write the recipe here")
@@ -225,12 +226,21 @@ func build(ctx context.Context, args []string) error {
 	if len(pkgs) != 0 {
 		s.Provision = nil
 	}
+	if *dsuser != "" {
+		s.DSUser = true
+	}
+	if s.DSUser && *dsuser == "" {
+		return fmt.Errorf("recipe requires -dsuser")
+	}
 	files := []string{*kernel}
-	if roles := forge.Roles(s); roles[2] == "boot-donor" {
+	if roles := forge.Roles(s); len(roles) > 2 && roles[2] == "boot-donor" {
 		if *donor == "" {
 			return fmt.Errorf("%s", usage)
 		}
 		files = append(files, *donor)
+	}
+	if s.DSUser {
+		files = append(files, *dsuser)
 	}
 	for _, p := range pkgs {
 		spec, file, ok := strings.Cut(p, "=")

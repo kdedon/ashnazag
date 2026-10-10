@@ -9,6 +9,9 @@
 | go through the glue table after the 'AUXG' mark, one 8-byte slot each,
 | so a test harness can point them at its own code.
 
+	.ifndef ENET_MODE
+	.equ ENET_MODE,1
+	.endif
 	.text
 hdr:
 	.short	0x4400			| dNeedLock, dCtlEnable
@@ -121,10 +124,10 @@ dopen:
 	tst.l	%d0
 	bmi.s	open_free
 	move.l	%d0,G_FD(%a3)
-	lea	G_ARG(%a3),%a0		| derived address, bridge mode
+	lea	G_ARG(%a3),%a0		| derived station address
 	clr.l	(%a0)
 	clr.w	4(%a0)
-	move.w	#1,6(%a0)
+	move.w	#ENET_MODE,6(%a0)
 	pea	(%a0)
 	pea	OTB_STATION
 	move.l	G_FD(%a3),-(%sp)

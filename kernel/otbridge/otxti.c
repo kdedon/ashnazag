@@ -57,6 +57,7 @@ struct streamtab otxtiinfo = { &otx_rinit, &otx_winit, 0, 0 };
 
 #define	RAWNEXT(mp)	(mp)->b_next
 
+static unsigned long otx_generation;
 static int	otx_upmsg();
 static void	otx_orun();
 
@@ -133,6 +134,12 @@ otxopen(q, devp, flag, sflag, cr)
 	x->x_rq = q;
 	x->x_ringidx = -1;
 	OTB_SPLSTR(s);
+	if (otx_generation == 0xffffffffUL) {
+		OTB_SPLX(s);
+		otb_free((char *)x, sizeof *x); freeb(mp);
+		otb_incall--; return ENOSR;
+	}
+	x->x_generation = ++otx_generation;
 	x->x_next = otb_eps;
 	otb_eps = x;
 	otb_st.st_endpoints++;
@@ -226,6 +233,7 @@ proterr(q, x)
 		freemsg(x->x_part);
 		x->x_part = 0;
 	}
+	x->x_accept_pending = 0;
 	(void)putctl1(RD(q)->q_next, M_ERROR, EPROTO);
 	otb_post(x, OTB_EV_ERR);
 }
@@ -428,6 +436,67 @@ bycookie(x, cookie)
 	return 0;
 }
 
+static int
+acceptstart(x, a, seq)
+	struct otx *x, *a;
+	long seq;
+{
+	int i;
+
+	if (x->x_accept_pending) return OT_TOUTSTATE;
+	for (i = 0; i < OTB_NIND; i++)
+		if (x->x_ind[i].valid && x->x_ind[i].seq == seq) break;
+	x->x_accept_cookie = a->x_cookie;
+	x->x_accept_generation = a->x_generation;
+	x->x_accept_seq = seq;
+	x->x_accept_lalen = x->x_lalen;
+	bcopy((caddr_t)x->x_la, (caddr_t)x->x_accept_la, OT_INETADDR_LEN);
+	x->x_accept_ralen = i < OTB_NIND ? x->x_ind[i].alen : 0;
+	bzero((caddr_t)x->x_accept_ra, OT_INETADDR_LEN);
+	if (i < OTB_NIND)
+		bcopy((caddr_t)x->x_ind[i].a, (caddr_t)x->x_accept_ra, OT_INETADDR_LEN);
+	x->x_accept_pending = 1;
+	return 0;
+}
+
+static void
+acceptreply(x, prim, eprim, seq)
+	struct otx *x;
+	long prim, eprim, seq;
+{
+	struct otx *a;
+	int i;
+
+	if (prim == OT_DISCON_IND) {
+		for (i = 0; i < OTB_NIND; i++)
+			if (seq == -1 || (x->x_ind[i].valid && x->x_ind[i].seq == seq))
+				x->x_ind[i].valid = 0;
+		if (seq == -1 || seq == x->x_accept_seq) x->x_accept_pending = 0;
+		return;
+	}
+	if (prim == OT_OK_ACK && eprim == OT_UNBIND_REQ) {
+		for (i = 0; i < OTB_NIND; i++) x->x_ind[i].valid = 0;
+		x->x_accept_pending = x->x_nind = 0;
+		return;
+	}
+	if (!x->x_accept_pending || eprim != OT_CONN_RES ||
+	    (prim != OT_OK_ACK && prim != OT_ERROR_ACK)) return;
+	if (prim == OT_OK_ACK) {
+		a = bycookie(x, x->x_accept_cookie);
+		/* A reused cookie must not acquire an earlier endpoint's addresses. */
+		if (a && a->x_proto == OTX_TCP && a->x_generation == x->x_accept_generation) {
+			bcopy((caddr_t)x->x_accept_la, (caddr_t)a->x_la, OT_INETADDR_LEN);
+			bcopy((caddr_t)x->x_accept_ra, (caddr_t)a->x_ra, OT_INETADDR_LEN);
+			a->x_lalen = x->x_accept_lalen;
+			a->x_ralen = x->x_accept_ralen;
+		}
+		for (i = 0; i < OTB_NIND; i++)
+			if (x->x_ind[i].valid && x->x_ind[i].seq == x->x_accept_seq)
+				x->x_ind[i].valid = 0;
+	}
+	x->x_accept_pending = 0;
+}
+
 /* bytes for the engine's copy of len option bytes and its reply */
 #define	OEBUFSZ(len)	((len) + otx_oe_repsize(len))
 
@@ -555,13 +624,10 @@ wrec(q, x, mp)
 		for (aq = WR(a->x_rq); aq->q_next; aq = aq->q_next)
 			;
 		OB_P32(o + 4, (long)RD(aq));
-		for (i = 0; i < OTB_NIND; i++)
-			if (x->x_ind[i].seq == res.r_seq) {
-				bcopy((caddr_t)x->x_ind[i].a, (caddr_t)a->x_ra, OT_INETADDR_LEN);
-				a->x_ralen = OT_INETADDR_LEN;
-			}
-		bcopy((caddr_t)x->x_la, (caddr_t)a->x_la, OT_INETADDR_LEN);
-		a->x_lalen = x->x_lalen;
+		if ((i = acceptstart(x, a, res.r_seq)) != 0) {
+			uperr(q, x, res.r_prim, (long)i, 0L);
+			goto drop;
+		}
 		break;
 	case OX_PASS:
 		if (res.r_prim == OT_CONN_REQ && res.r_addrlen) {
@@ -577,6 +643,7 @@ wrec(q, x, mp)
 		/* options first, then the primitive without them */
 		if ((i = oestart(x, (long)OT_NEGOTIATE, ctl + res.r_optoff,
 		    res.r_optlen, &ob)) < 0) {
+			if (res.r_prim == OT_CONN_RES) x->x_accept_pending = 0;
 			uperr(q, x, res.r_prim, (long)-i, 0L);
 			goto drop;
 		}
@@ -709,6 +776,8 @@ otx_upmsg(q, x, mp)
 		n = len;
 		res.r_prim = 0;
 	}
+	acceptreply(x, res.r_prim, res.r_eprim,
+	    res.r_prim == OT_DISCON_IND && n >= 12 ? OB_S32(OB_G32(o + 8)) : 0L);
 	switch (res.r_prim) {
 	case OT_BIND_ACK:
 		if (res.r_addrlen == OT_INETADDR_LEN) {
@@ -728,6 +797,8 @@ otx_upmsg(q, x, mp)
 	case OT_CONN_IND:
 		i = x->x_nind++ % OTB_NIND;
 		x->x_ind[i].seq = res.r_seq;
+		x->x_ind[i].valid = 1;
+		x->x_ind[i].alen = res.r_addrlen == OT_INETADDR_LEN ? OT_INETADDR_LEN : 0;
 		bzero((caddr_t)x->x_ind[i].a, OT_INETADDR_LEN);
 		if (res.r_addrlen == OT_INETADDR_LEN)
 			bcopy((caddr_t)o + res.r_addroff, (caddr_t)x->x_ind[i].a,
@@ -805,9 +876,11 @@ otxrput(q, mp)
 			flushq(q, FLUSHDATA);
 		break;
 	case M_HANGUP:
+		x->x_accept_pending = 0;
 		otb_post(x, OTB_EV_HUP);
 		break;
 	case M_ERROR:
+		x->x_accept_pending = 0;
 		otb_post(x, OTB_EV_ERR);
 		break;
 	}

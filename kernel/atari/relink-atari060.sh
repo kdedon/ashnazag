@@ -66,7 +66,7 @@ for c in "$A/ataconf.c" "$MAC/video/fbcons.c"; do
 done
 cc_nobss "$A/atacons.c"
 DSINC="-DDS_ATARI -I$MAC/display -I$MAC/video -I$MAC/adb"
-for c in "$MAC/display/ds.c" "$MAC/display/dsdev.c" "$MAC/display/dsseg.c" "$A/atads.c"; do
+for c in "$MAC/display/ds.c" "$A/atads.c"; do
 	cc_nobss "$c" "-fno-common $DSINC $SOFTMUL"
 done
 for c in ataide ahdi; do
@@ -95,8 +95,8 @@ sh "$K/dlm/build.sh" -k "$W/dlm"
 sh "$K/guest/build.sh" -k "$BASE" "$W/guest"
 
 OBJS="$W/dlm/dlm.o $W/guest/guest.o $W/ataentry.o $W/ataintr.o $W/pstartata.o $W/ata060math.o $W/cfgorig.o
-$W/ataconf.o $W/ikbd.o $W/fbcons.o $W/fbfont.o $W/atadevsw.o $W/atacons.o $W/ds.o $W/dsdev.o
-$W/dsseg.o $W/atads.o $W/ataide.o $W/ahdi.o $W/atartc.o $W/rd.o $RDB/rdimage.o
+$W/ataconf.o $W/ikbd.o $W/fbcons.o $W/fbfont.o $W/atadevsw.o $W/atacons.o $W/ds.o
+$W/atads.o $W/ataide.o $W/ahdi.o $W/atartc.o $W/rd.o $RDB/rdimage.o
 $W/uiomod.o $W/vtop.o $W/ptalloc.o"
 
 OVR="pstart config config_orig putchar getchar callrom sysdump haltsys rtnfirm
@@ -142,7 +142,7 @@ python3 "$MAC/patch_kvmpages.py" "$W/base.weak"
 echo "[*] no 64-bit multiply or divide in the Atari objects"
 python3 "$A/chk64.py" $W/ataentry.o $W/ataintr.o $W/pstartata.o $W/ata060math.o $W/cfgorig.o \
 	$W/ataconf.o $W/ikbd.o $W/fbcons.o $W/fbfont.o $W/atadevsw.o $W/atacons.o \
-	$W/ds.o $W/dsdev.o $W/dsseg.o $W/atads.o $W/ataide.o $W/ahdi.o $W/atartc.o \
+	$W/ds.o $W/atads.o $W/ataide.o $W/ahdi.o $W/atartc.o \
 	$W/uiomod.o $W/vtop.o $W/ptalloc.o $W/rd.o
 
 echo "[*] linking the Atari overrides over the base"

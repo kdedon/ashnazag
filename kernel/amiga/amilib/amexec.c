@@ -200,10 +200,10 @@ am_enqueue(l, n)
 	char *l, *n;
 {
 	char *x;
-	int pri = (signed char)AB(n, LN_PRI);
+	int pri = (__signed__ char)AB(n, LN_PRI);
 
 	for (x = AP(l, LH_HEAD); AP(x, LN_SUCC); x = AP(x, LN_SUCC))
-		if ((signed char)AB(x, LN_PRI) < pri)
+		if ((__signed__ char)AB(x, LN_PRI) < pri)
 			break;
 	AP(n, LN_SUCC) = x;
 	AP(n, LN_PRED) = AP(x, LN_PRED);
@@ -764,7 +764,7 @@ static void
 x_allocsignal(r)
 	unsigned long *r;
 {
-	r[D0] = am_allocsignal((long)(signed char)r[D0]);
+	r[D0] = am_allocsignal((long)(__signed__ char)r[D0]);
 }
 
 static void
@@ -1349,7 +1349,7 @@ x_opendevice(r)
 	AP(io, IO_DEVICE) = d;
 	AB(io, IO_ERROR) = 0;
 	(void)am_lvo(d, LVO_OPEN, c);
-	r[D0] = (unsigned long)(long)(signed char)AB(io, IO_ERROR);
+	r[D0] = (unsigned long)(long)(__signed__ char)AB(io, IO_ERROR);
 	if (AB(io, IO_ERROR))
 		AL(io, IO_DEVICE) = 0xffffffff;
 }
@@ -1389,7 +1389,7 @@ x_doio(r)
 
 	AB(io, IO_FLAGS) |= IOF_QUICK;
 	am_beginio(io);
-	r[D0] = (unsigned long)(long)(signed char)AB(io, IO_ERROR);
+	r[D0] = (unsigned long)(long)(__signed__ char)AB(io, IO_ERROR);
 }
 
 static void
@@ -1420,7 +1420,7 @@ x_waitio(r)
 
 	if (!(AB(io, IO_FLAGS) & IOF_QUICK) && AB(io, LN_TYPE) == NT_REPLYMSG)
 		am_remove(io);
-	r[D0] = (unsigned long)(long)(signed char)AB(io, IO_ERROR);
+	r[D0] = (unsigned long)(long)(__signed__ char)AB(io, IO_ERROR);
 }
 
 static void

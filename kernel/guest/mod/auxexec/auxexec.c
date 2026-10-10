@@ -16,7 +16,7 @@
  * K&R C.
  */
 
-#include "kinc.h"
+#include "auxcore.h"
 #include "sys/vnode.h"
 #include "sys/uio.h"
 #include "sys/exec.h"
@@ -39,7 +39,7 @@ struct auxlib {
 	u_long		al_daddr, al_dsize, al_doff, al_bsize;
 };
 
-extern int coffexec(), execmap();
+extern int coffexec(), execmap(), valid_usr_range();
 extern void dlm_cacheflush();
 extern struct guest_profile aux_profile;
 extern int aux_execaux2;
@@ -228,6 +228,58 @@ libmap(al, n)
 	return e;
 }
 
+long aux_envdiag[14];
+
+/* The loader has mapped the argument stack before setregs publishes its SP. */
+static void
+aux_envsave(args)
+	struct uarg *args;
+{
+	struct guest_proc *gp = GUESTP(u.u_procp);
+	struct aux_proc *ap;
+	unsigned long count, bytes, sp, env;
+	unsigned char b[4];
+
+	aux_envdiag[0] = u.u_procp->p_pid;
+	aux_envdiag[1] = 1;
+	aux_envdiag[2] = args->argc; aux_envdiag[3] = args->prefixc;
+	aux_envdiag[4] = args->envc; aux_envdiag[5] = args->stringsize;
+	aux_envdiag[6] = args->auxsize; aux_envdiag[7] = (long)args->stackend;
+	aux_envdiag[8] = (long)args->estkstart; aux_envdiag[9] = args->estksize;
+	aux_envdiag[10] = (long)args->stacklow;
+	aux_envdiag[11] = aux_envdiag[12] = aux_envdiag[13] = 0;
+	if (!gp || gp->gp_prof != &aux_profile)
+		return;
+	ap = AUXP(gp);
+	ap->ap_envp = ap->ap_envc = ap->ap_envlo = ap->ap_envhi = 0;
+	aux_envdiag[1] = 2;
+	if (args->argc < 0 || args->prefixc < 0 || args->envc < 0 ||
+	    args->argc > 16384 || args->prefixc > 16384 || args->envc > 16384 ||
+	    args->stringsize < 0 || args->auxsize < 0 ||
+	    args->stringsize > 1048576 || args->auxsize > 1048576)
+		return;
+	count = args->argc + args->prefixc + args->envc + 3;
+	bytes = args->stringsize + args->auxsize + 4 * count;
+	aux_envdiag[1] = 3; aux_envdiag[11] = bytes;
+	if (bytes > 1048576 || (unsigned long)args->stackend <= bytes)
+		return;
+	sp = (unsigned long)args->stackend - bytes;
+	env = sp + 4 * (args->argc + args->prefixc + 2);
+	aux_envdiag[12] = sp; aux_envdiag[13] = env; aux_envdiag[1] = 4;
+	if (!valid_usr_range((caddr_t)sp, bytes))return;
+	aux_envdiag[1] = 5;
+	if (copyin((caddr_t)sp, (caddr_t)b, 4) ||
+	    G32(b) != args->argc + args->prefixc ||
+	    copyin((caddr_t)(env - 4), (caddr_t)b, 4) || G32(b) ||
+	    copyin((caddr_t)(env + 4 * args->envc), (caddr_t)b, 4) || G32(b))
+		return;
+	ap->ap_envp = env;
+	ap->ap_envc = args->envc;
+	ap->ap_envlo = sp;
+	ap->ap_envhi = (long)args->stackend;
+	aux_envdiag[1] = 6;
+}
+
 int
 aux_coffexec(a0, a1, a2, a3, a4, a5, a6, a7)
 	long a0, a1, a2, a3, a4, a5, a6, a7;
@@ -251,8 +303,10 @@ aux_coffexec(a0, a1, a2, a3, a4, a5, a6, a7)
 	if ((e = aux_classify((struct vnode *)a0, al, &n)) == 0) {
 		guest_loadprof = &aux_profile;
 		e = coffexec(a0, a1, a2, a3, a4, a5, a6, a7);
-		if (e == 0)
+		if (e == 0) {
 			e = libmap(al, n);
+			if (!e) aux_envsave((struct uarg *)a1);
+		}
 	}
 	librele(al, AUX_NSHLIB);
 	guest_loading = 0;

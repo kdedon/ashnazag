@@ -30,6 +30,9 @@ CD201=${CD201:-$AUX/media/AUX_2.0.1_CD_Image.iso}
 AUXROM6=${AUXROM6:-$AUX/368CADFE - Mac IIci.ROM}
 TC=$AUX/toolchain/amix
 SYS=$TC/m68k-cbm-sysv4/sysroot
+CD81=${CD81:-$AUX/media/MacOS8_1.iso}
+MACNETWORK=${MACNETWORK:-1}
+case $MACNETWORK in 0|1) ;; *) echo "[FAIL] MACNETWORK must be 0 or 1"; exit 1 ;; esac
 
 # the A/UX copies go with the build tree, whatever the outcome
 trap 'rm -rf "$P" "$X11W/auxtree"' EXIT
@@ -38,6 +41,13 @@ mkdir -p "$P"
 sh "$AUX/kernel/guest/build.sh" -m "$KERNEL" "$P/guest" > "$P/guest.log" 2>&1 ||
 	{ tail "$P/guest.log"; exit 1; }
 mv "$P/guest/mod.d" "$P/mod.d"
+if [ "$MACNETWORK" = 1 ] && [ -f "$CD81" ]; then
+	sh "$D/network/build.sh" "$P/network"
+	sh "$AUX/kernel/otbridge/build.sh" -k "$KERNEL" "$P/otbridge" > "$P/otbridge.log" 2>&1 ||
+		{ tail "$P/otbridge.log"; exit 1; }
+	[ -s "$P/otbridge/mod.d/otbridge" ] || { echo "[FAIL] missing otbridge module"; exit 1; }
+	cp "$P/otbridge/mod.d/otbridge" "$P/mod.d/"
+fi
 for s in "$AUX"/kernel/dlm/libmod/*.s; do
 	"$TC/bin/m68k-cbm-sysv4-as" -o "$P/lm_$(basename "$s" .s).o" "$s"
 done
@@ -46,6 +56,21 @@ nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -w -D__STDC__=0 -I"$AUX/kernel/dlm/in
 "$TC/bin/m68k-cbm-sysv4-ld" -o "$P/auxreg" "$SYS/usr/ccs/lib/crt1.o" \
 	"$SYS/usr/ccs/lib/crti.o" "$P/auxreg.o" "$P"/lm_*.o "$SYS/usr/lib/libc.so.1" \
 	"$SYS/usr/ccs/lib/crtn.o"
+if [ -d "$P/network/Extensions" ]; then
+	nice -n19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -w -D__STDC__=0 -I"$AUX/kernel/dlm/include" \
+		-c "$D/network/otreg.c" -o "$P/otreg.o"
+	"$TC/bin/m68k-cbm-sysv4-ld" -o "$P/otreg" "$SYS/usr/ccs/lib/crt1.o" \
+		"$SYS/usr/ccs/lib/crti.o" "$P/otreg.o" "$P"/lm_*.o "$SYS/usr/lib/libc.so.1" \
+		"$SYS/usr/ccs/lib/crtn.o"
+	cat > "$P/network.manifest" <<'EOF'
+f /usr/sbin/otreg 755 0 3 macpkg/otreg
+f /usr/aux/lib/mod.d/otbridge 644 0 3 macpkg/mod.d/otbridge
+c /dev/otbridge 660 0 25 55 0
+c /dev/otbstation 660 0 25 55 1
+c /dev/tcp 666 0 3 33 0
+c /dev/udp 666 0 3 34 0
+EOF
+fi
 nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -w -D__STDC__=0 -c "$D/macdiag.c" -o "$P/macdiag.o"
 "$TC/bin/m68k-cbm-sysv4-ld" -o "$P/macdiag" "$SYS/usr/ccs/lib/crt1.o" \
 	"$SYS/usr/ccs/lib/crti.o" "$P/macdiag.o" "$P"/lm_*.o "$SYS/usr/lib/libc.so.1" \
@@ -115,6 +140,10 @@ M=$P/macroot
 mkdir -p "$M/usr/bin" "$M/usr/lib" "$M/.mac/localhost/Desktop Folder" "$M/.mac/localhost/Trash"
 (cd "$AUXROOT" && tar cf - mac " Applications" " Documentation" " Shared Data" \
 	" System Folder alias") | (cd "$M" && tar xf -)
+COFFRSRC="$AUXROOT/mac/bin/%CommandShell" sh "$AUX/tests/aux/coffcarrier/build.sh" "$P/coffcarrier"
+python3 "$AUX/tests/aux/coffcarrier/install.py" "$AUXROOT/mac/bin/CommandShell" \
+    "$AUXROOT/mac/bin/%CommandShell" "$P/coffcarrier/COFFCarrier" "$M"
+rm -rf "$P/coffcarrier"
 cp "$AUXROOT/usr/bin/systemfolder" "$M/usr/bin/"
 cp "$AUXROOT/usr/lib/updtsysfldr" "$M/usr/lib/"
 find "$M" -name '.fs_*' -o -name '%.fs_*' | while read f; do rm -f "$f"; done
@@ -134,6 +163,18 @@ sh "$D/mksys76.sh" "$CD761" "$M/mac/lib/System Folder" "$AUXROOT"
 cp -rp "$M/mac/lib/System Folder" "$M/mac/sys/"
 # users' Special menu: Log Out in place of Restart and Shut Down
 python3 "$D/userfinder.py" "$M/mac/lib/System Folder/%Finder"
+# Mac OS 8.1, environment 8.1's template (makemac -e 8.1)
+CD81=${CD81:-$AUX/media/MacOS8_1.iso}
+if [ -f "$CD81" ]; then
+	S81="$M/mac/lib/env/8.1/System Folder"
+	FULL=1 sh "$D/mksys81.sh" "$CD81" "$S81" "$AUXROOT"
+	[ ! -d "$P/network/Extensions" ] || cp -rp "$P/network/Extensions/." "$S81/Extensions/"
+	cp "$S81/Finder" "$S81/../RootFinder"
+	cp "$S81/%Finder" "$S81/../%RootFinder"
+	python3 "$D/userfinder.py" "$S81/%Finder"
+	(cd "$S81" && find . -type f ! -name .stamp -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) |
+		sha256sum | cut -c1-16 > "$S81/.stamp"
+fi
 find "$M" -type d -exec chmod 755 {} +
 chmod 700 "$M/.mac"
 find "$M" -type f -perm -u+x -exec chmod 755 {} +

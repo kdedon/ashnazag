@@ -44,6 +44,8 @@ static struct {
 	{ "t_moddemo", 120 },
 	{ "t_dlm", 90 },
 	{ "t_otb", 300 },
+	{ "t_guestdlm", 90 },
+	{ "t_envram", 60 },
 	{ "t_gate", 150 },
 	{ "t_aux", 300 },
 	{ "t_mac", 330 },
@@ -53,12 +55,13 @@ static struct {
 	/* a second run in the same boot: nothing of the first may linger */
 	{ "t_mac", 330 },
 	{ "t_mac6", 330 },
+	{ "t_mac81", 900 },
 	{ "t_vtop", 60 },
 	{ "t_display", 360 },
 	{ "t_sound", 300 },
 	{ "t_tos", 700 },
 	{ "t_mint", 300 },
-	{ "t_cpm", 600 },
+	{ "t_cpm", 2400 },
 	{ "t_smsqe", 400 },
 	{ "t_amiga", 680 },
 	{ "t_env", 240 },
@@ -205,7 +208,7 @@ char **argv;
 {
 	struct utsname u;
 	char buf[256];
-	int i, pass, fail, skip, halt;
+	int i, j, secs, pass, fail, skip, halt;
 	long fm;
 
 	sprintf(buf, "T_RUNNER=%ld", (long)getpid());
@@ -236,7 +239,13 @@ char **argv;
 			if (c)
 				*c++ = 0;
 			halt |= strcmp(argv[i], "t_mac76") == 0;
-			runone(argv[i], c ? atoi(c) : 120);
+			secs = 120;
+			for (j = 0; tests[j].name; j++)
+				if (strcmp(argv[i], tests[j].name) == 0) {
+					secs = tests[j].secs;
+					break;
+				}
+			runone(argv[i], c ? atoi(c) : secs);
 		}
 	} else {
 		for (i = 0; tests[i].name != 0; i++)

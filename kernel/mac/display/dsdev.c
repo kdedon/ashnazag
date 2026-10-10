@@ -29,8 +29,6 @@ extern int fbp_nmode, fbp_cur;
 extern int getf();
 extern struct streamtab coinfo;
 
-struct dsfbh ds_fbh[DS_NFBH];
-struct dsevh ds_evh[DS_NEVH];
 static struct pollhead ds_noph;
 
 #define PRI	((PZERO + 1) | PCATCH)
@@ -69,15 +67,6 @@ dev_t dev;
 /* ------------------------------------------------------------ /dev/fb */
 
 /* by the calling process: fds are inherited and passed */
-int
-ds_owns(s)
-struct dssess *s;
-{
-	register struct cred *cr = curproc->p_cred;
-
-	return s->s_uid == cr->cr_uid || drv_priv(cr) == 0;
-}
-
 int
 ds_fbopen(devp, flag, otyp, cr)
 dev_t *devp;
@@ -202,21 +191,6 @@ int prot;
  * front session, or the person at the machine (controlling terminal
  * the console, whose output is the screen).
  */
-int
-ds_mayfront(cr)
-struct cred *cr;
-{
-	dev_t d;
-
-	if (drv_priv(cr) == 0)
-		return 1;
-	if (ds_front != &ds_sess[0] && ds_front->s_uid == cr->cr_uid)
-		return 1;
-	d = cttydev(curproc);
-	return d != NODEV && getmajor(d) < cdevcnt &&
-	    cdevsw[getmajor(d)].d_str == &coinfo && getminor(d) == 0;
-}
-
 static int
 ds_gmodes(arg)
 caddr_t arg;
@@ -504,7 +478,7 @@ struct cred *cr;
  * The console's keys go only to its tty.
  */
 void
-ds_evpost(s, mouse, type, code, value, sec, usec)
+dsuser_evpost(s, mouse, type, code, value, sec, usec)
 struct dssess *s;
 int mouse, type, code;
 long value, sec, usec;

@@ -14,6 +14,7 @@
 #include "kinc.h"
 
 extern int guest_fsig(), guest_unote();
+extern int gc_gate_c(), gc_linea(), gc_ftrap(), gc_fpriv();
 
 static struct guest_profile *gc_profiles;
 static int gc_nproc;
@@ -281,6 +282,10 @@ guestcore_unload()
 }
 
 struct mod_hook_data guestcore_hookdata[] = {
+	{ "guest_gate_c",		gc_gate_c },
+	{ "guest_linea",		gc_linea },
+	{ "guest_ftrap",		gc_ftrap },
+	{ "guest_fpriv",		gc_fpriv },
 	{ "guest_trap",		gc_trap },
 	{ "guest_exec",		(int (*)())gc_exec },
 	{ "guest_fork",		gc_fork },

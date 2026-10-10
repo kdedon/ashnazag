@@ -33,7 +33,10 @@ extern struct vnode *makespecvp();
 #define	UV_SLOT		0xE
 #define	UV_SLOTVA	0xE0000000
 #define	UV_PRAM		(0x46 + 8 * (UV_SLOT - 9))	/* its XPRAM record; slot $9's is at $46 */
-#define	UV_DECLSIZE	0x100
+#define	UV_DECLSIZE	0x800
+#define	UV_NET		0x81
+#include "uinet-image.h"
+int uinter_netport = 0;
 #define	UV_DECLVA	(0xFF000000 - UV_DECLSIZE)
 #define	UV_BOARDID	0x7F00
 #define	UV_MODE		0x80
@@ -78,6 +81,8 @@ struct uivideo {
 	unsigned char	v_decl[UV_DECLSIZE];
 };
 static struct uivideo uv;
+static unsigned long uv_status_count[33];
+static int uv_status_error[33];
 
 /* ---- declaration ROM ---- */
 
@@ -118,7 +123,11 @@ uv_mkdecl(fi)
 	bzero((caddr_t)d, UV_DECLSIZE);
 	uv_off(0x00, 0x01, 0x10);		/* directory */
 	uv_off(0x04, UV_MODE, 0x40);
-	uv_ent(0x08, 0xff, 0L);
+	if (uinter_netport) {
+		uv_off(0x08, UV_NET, 0xd0);
+		uv_ent(0x0c, 0xff, 0L);
+	} else
+		uv_ent(0x08, 0xff, 0L);
 	uv_off(0x10, 1, 0x20);			/* board: type, name, id */
 	uv_off(0x14, 2, 0x28);
 	uv_ent(0x18, 0x20, (long)UV_BOARDID);
@@ -154,6 +163,23 @@ uv_mkdecl(fi)
 	P16(d + 0xbc, fi->fi_depth);
 	P16(d + 0xbe, direct ? 3 : 1);
 	P16(d + 0xc0, direct ? (fi->fi_depth == 16 ? 5 : 8) : fi->fi_depth);
+	if (uinter_netport) {
+		uv_off(0xd0, 1, 0x100);
+		uv_off(0xd4, 2, 0x108);
+		uv_off(0xd8, 4, 0x110);
+		uv_ent(0xdc, 7, 0L);
+		uv_ent(0xe0, 8, 2L);
+		uv_ent(0xe4, 0xff, 0L);
+		P16(d + 0x100, 4);
+		P16(d + 0x102, 1);
+		P16(d + 0x104, 1);
+		P16(d + 0x106, UV_BOARDID);
+		uv_str(0x108, "ENET");
+		uv_off(0x110, 2, 0x120);
+		uv_ent(0x114, 0xff, 0L);
+		P32(d + 0x120, 4 + sizeof uv_enet);
+		bcopy((caddr_t)uv_enet, (caddr_t)d + 0x124, sizeof uv_enet);
+	}
 	/* format block: directory offset, length, revision, format, test pattern, lanes */
 	P32(d + fh, (0 - fh) & 0xffffff);
 	P32(d + fh + 4, UV_DECLSIZE);
@@ -194,7 +220,11 @@ static int
 uv_tgt(e)
 	int e;
 {
-	long o = uv_data(e);
+	long o;
+
+	if (e < 0 || e + 4 > UV_DECLSIZE)
+		return -1;
+	o = uv_data(e);
 
 	if (o & 0x800000)
 		o -= 0x1000000;
@@ -253,12 +283,12 @@ uv_next(b, typed)
 	char *b;
 	int typed;
 {
-	static int ids[] = { 1, UV_MODE };
+	static int ids[] = { 1, UV_MODE, UV_NET };
 	char want[8];
 	int i, k, l, m = G8(b + SP_TBMASK);
 
 	bcopy(b + SP_CAT, want, 8);
-	for (i = 0; i < 2; i++) {
+	for (i = 0; i < 3; i++) {
 		if (G8(b + SP_SLOT) > UV_SLOT ||
 		    (G8(b + SP_SLOT) == UV_SLOT && G8(b + SP_ID) >= ids[i]))
 			continue;
@@ -494,6 +524,8 @@ ui_screens(b)
 	uv.v_rowbytes = fi->fi_rowbytes;
 	uv.v_gray = 0;
 	uv.v_refnum = uv.v_iores = 0;
+	bzero((caddr_t)uv_status_count, sizeof uv_status_count);
+	bzero((caddr_t)uv_status_error, sizeof uv_status_error);
 	uv_mkdecl(fi);
 	ui_inscreen(uv.v_width, uv.v_height);
 	s->s_kin = ui_kin;
@@ -510,6 +542,31 @@ out:
 	(void)VOP_CLOSE(vp, FREAD | FWRITE, 1, (off_t)0, u.u_cred);
 	VN_RELE(vp);
 	return e;
+}
+
+/* Joined tasks draw through the existing session's framebuffer mapping. */
+int
+ui_attachscreen(gp)
+    struct guest_proc *gp;
+{
+    addr_t a=(addr_t)UV_SLOTVA;
+    if(!gp || gp->gp_proc!=u.u_procp || gp==ui.l_gp ||
+        ui.l_state!=LS_INUSE || u.u_procp==ui.l_proc)return EINVAL;
+    if(!uv.v_on)return 0;
+    if(uv.v_proc!=ui.l_proc || !uv.v_vp || !uv.v_sess ||
+        uv.v_sess->s_dead || !uv.v_len)return ENODEV;
+    return VOP_MAP(uv.v_vp,(off_t)0,u.u_procp->p_as,&a,uv.v_len,
+        PROT_READ|PROT_WRITE|PROT_USER,PROT_ALL,MAP_SHARED|MAP_FIXED,u.u_cred);
+}
+
+/* A failed admission removes only the current child's map. */
+void
+ui_detachscreen(gp)
+    struct guest_proc *gp;
+{
+    if(uv.v_on && uv.v_proc==ui.l_proc && gp && gp->gp_proc==u.u_procp &&
+        gp!=ui.l_gp && u.u_procp!=uv.v_proc)
+        (void)as_unmap(u.u_procp->p_as,(addr_t)UV_SLOTVA,uv.v_len);
 }
 
 /* the session ends; the mapping, and the file with it, go now (unmap) or with the address space */
@@ -630,6 +687,8 @@ uv_pageinfo(p)
 	return copyout(r, p, sizeof r) ? EFAULT : 0;
 }
 
+long uinter_video_gray, uinter_video_graysets;
+
 static int
 uv_control(code, p)
 	int code;
@@ -658,6 +717,8 @@ uv_control(code, p)
 		if (copyin(p, r, 1))
 			return EFAULT;
 		uv.v_gray = r[0] != 0;
+		uinter_video_gray = uv.v_gray;
+		uinter_video_graysets++;
 		return 0;
 	}
 	return -17;
@@ -668,7 +729,8 @@ uv_status(code, p)
 	int code;
 	caddr_t p;
 {
-	char r[4];
+	char r[30];
+	long mode, vp;
 
 	switch (code) {
 	case 2:				/* GetMode */
@@ -692,6 +754,67 @@ uv_status(code, p)
 	case 9:				/* GetDefaultMode: the video sRsrc */
 		r[0] = UV_MODE;
 		return copyout(r, p, 1) ? EFAULT : 0;
+	case 10:
+	case 16:
+		bzero(r, 16);
+		P16(r, UV_MODE);
+		P32(r + 2, UV_MODE);
+		P32(r + 8, uv.v_base);
+		return copyout(r, p, 16) ? EFAULT : 0;
+	case 12:
+		bzero(r, 12);
+		P16(r, 8);
+		P32(r + 4, 0x43L | (uv.v_depth == 1 ? 0x10L : 0L));
+		return copyout(r, p, 12) ? EFAULT : 0;
+	case 13:
+		if (copyin(p, r, 4))
+			return EFAULT;
+		if (G32(r) != UV_MODE)
+			return -50;
+		bzero(r, 20);
+		P32(r, UV_MODE);
+		P32(r + 8, 0x6465636cL);
+		P32(r + 16, 0x0fL);
+		return copyout(r, p, 20) ? EFAULT : 0;
+	case 28:
+		if (copyin(p, r, 4))
+			return EFAULT;
+		mode = G32(r);
+		if ((unsigned long)mode == 0xffffffffUL) {
+			P32(r, 1);
+			return copyout(r, p, 4) ? EFAULT : 0;
+		}
+		if (mode != 1)
+			return -50;
+		bzero(r + 4, 12);
+		P16(r + 4, 8);
+		P32(r + 8, 0x43L | (uv.v_depth == 1 ? 0x10L : 0L));
+		return copyout(r, p, 16) ? EFAULT : 0;
+	case 17:
+		if (copyin(p, r, 4))
+			return EFAULT;
+		mode = G32(r);
+		if (mode != 0 && mode != UV_MODE && (unsigned long)mode != 0xfffffffeUL)
+			return -50;
+		bzero(r + 4, 26);
+		P32(r + 4, mode == UV_MODE ? 0xfffffffdUL : UV_MODE);
+		if (mode != UV_MODE) {
+			P32(r + 8, uv.v_width);
+			P32(r + 12, uv.v_height);
+			P16(r + 20, UV_MODE);
+		}
+		return copyout(r, p, 30) ? EFAULT : 0;
+	case 18:
+		if (copyin(p, r, 22))
+			return EFAULT;
+		if ((G32(r) && G32(r) != UV_MODE) || G16(r + 4) != UV_MODE || !(vp = G32(r + 6)))
+			return -50;
+		if (copyout((caddr_t)uv.v_decl + 0x9c, (caddr_t)vp, 0x2a))
+			return EFAULT;
+		P32(r + 10, 1);
+		P32(r + 14, G32(uv.v_decl + 0x90) & 0xffffffL);
+		P32(r + 18, 0);
+		return copyout(r, p, 22) ? EFAULT : 0;
 	}
 	return -18;
 }
@@ -702,7 +825,9 @@ ui_video(ctl, b)
 	int ctl;
 	char *b;
 {
-	int r;
+	int r, code = (int)G16(b + 0x1a), k;
+	unsigned long n;
+	unsigned char request[12];
 
 	if (!uv.v_on || G16(b + 4) != UV_SLOT)
 		r = -17;
@@ -710,6 +835,21 @@ ui_video(ctl, b)
 		r = uv_control((int)G16(b + 0x1a), (caddr_t)G32(b + 0x1c));
 	else
 		r = uv_status((int)G16(b + 0x1a), (caddr_t)G32(b + 0x1c));
+	if (!ctl) {
+		k = code < 32 ? code : 32;
+		n = uv_status_count[k];
+		if (n != 0xffffffffUL)
+			n = ++uv_status_count[k];
+		if (uinter_trace && (n == 1 || uv_status_error[k] != r ||
+		    (n && !(n & (n - 1))))) {
+			printf("uivideo: status %d count %d error %d\n", code, (int)n, r);
+		}
+		if (uinter_trace && code == 14 && n == 1 &&
+		    !copyin((caddr_t)G32(b + 0x1c), (caddr_t)request, sizeof request))
+			printf("uivideo: status14 request %x %x %x\n",
+			    (int)G32(request), (int)G32(request + 4), (int)G32(request + 8));
+		uv_status_error[k] = r;
+	}
 	if (r == EFAULT)
 		return EFAULT;
 	P16(b + 4, r);

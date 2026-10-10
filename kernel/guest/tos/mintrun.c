@@ -34,6 +34,7 @@
 #include <dirent.h>
 #include <termio.h>
 #include "tosio.h"
+#include "../include/envmem.h"
 
 #define	BP	0x10000L		/* the basepage */
 #define	JAR	0x700L			/* the cookie jar */
@@ -1324,12 +1325,8 @@ main(argc, argv)
 	if ((tfd = open("/dev/tos", O_RDWR)) < 0)
 		die("/dev/tos");
 	fcntl(tfd, F_SETFD, 1);
-	if ((zfd = open("/dev/zero", O_RDWR)) < 0)
-		die("/dev/zero");
-	if (mmap((caddr_t)0, mem, PROT_READ | PROT_WRITE | PROT_EXEC,
-	    MAP_PRIVATE | MAP_FIXED, zfd, 0) == (caddr_t)-1)
-		die("mmap");
-	close(zfd);
+	if (envmem_region(0, mem, 0, -1) < 0)
+		die("guest memory");
 	/* a host path, unless it has a drive or backslashes; Pexec passes host paths */
 	pc = loadprg(strchr(argv[1], '\\') || (argv[1][0] && argv[1][1] == ':') ?
 	    hpath(argv[1], h) : argv[1]);

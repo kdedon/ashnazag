@@ -77,6 +77,13 @@ func Falcon(ctx context.Context, r Recipe, media []Media, root, home Scratch, ou
 	if m, err := kernel.Reader.ReadAt(elf, 0); m != len(elf) {
 		return fmt.Errorf("read kernel: %v", err)
 	}
+	var display *Media
+	if s.DSUser {
+		display = &media[n+1]
+	}
+	if err = ValidateDisplay(kernel, display); err != nil {
+		return err
+	}
 	_, noSV := FalconVariant(s)
 	rootMiB, homeMiB, err := FalconSizes(s, kernel.Size)
 	if err != nil {

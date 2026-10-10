@@ -22,6 +22,8 @@
 #include "vm/hat.h"
 #include "vm/seg_dev.h"
 #include "vm/page.h"
+#include "guest_mem.h"
+#include "guest_lone.h"
 #include "hsock.h"
 
 extern int nodev(), ttimeout(), untimeout();
@@ -39,27 +41,16 @@ static void (*volatile sndexit_p)() = ds_sndexit;
 __asm__(".weak ds_sndcb");
 extern void (*ds_sndcb)();
 static void (*volatile *volatile sndcb_p)() = &ds_sndcb;
-__asm__(".weak ds_gralloc");
-extern int ds_gralloc();
-static int (*volatile gralloc_p)() = ds_gralloc;
-__asm__(".weak ds_grfree");
-extern void ds_grfree();
-static void (*volatile grfree_p)() = ds_grfree;
-__asm__(".weak ds_grdrop");
-extern void ds_grdrop();
-static void (*volatile grdrop_p)() = ds_grdrop;
-__asm__(".weak ds_grmmap");
-extern int ds_grmmap();
-static int (*volatile grmmap_p)() = ds_grmmap;
+__asm__(".weak ds_ramdetach");
+extern void ds_ramdetach();
+static void (*volatile ramdetach_p)() = ds_ramdetach;
+__asm__(".weak ds_ramsize_hook");
+extern unsigned long (*ds_ramsize_hook)();
+static unsigned long (*volatile *volatile ramsize_p)() = &ds_ramsize_hook;
+__asm__(".weak ds_ramphys_hook");
+extern int (*ds_ramphys_hook)();
+static int (*volatile *volatile ramphys_p)() = &ds_ramphys_hook;
 /* the weak ones above are absent on the Mac; the compiler would take their addresses as nonzero */
-extern int spec_segmap();
-extern struct seg *as_segat();
-extern page_t *page_numtookpp();
-#if defined(DS_ATARI) && !defined(ATA060)
-#define ST_PGSIZE	0x800		/* the block's page frames, as ds_grmmap counts them */
-#else
-#define ST_PGSIZE	0x1000
-#endif
 
 struct tosctr tosc;
 int	tos_trace = 0;		/* 1: console lines for bus errors and odd accesses */
@@ -68,6 +59,7 @@ static struct guest_profile tos_profile;
 static int tos_nopen;
 static struct proc *tos_stproc;	/* allocated the ST-RAM block; only it maps it */
 static pid_t tos_stpid;
+static struct guest_ram *tos_ram;
 static int tosdevflag[1] = { 0 };
 
 int
@@ -311,35 +303,7 @@ tos_sendsig(gp, sig, sip, hdlr)
 static struct tosstat solost;
 #define	TST(gp)	((gp)->gp_flags & TGF_SOLO ? &solost : &tosc.t_st)
 
-/* a lone guest's empty vector: the Unix signal instead */
-static int
-solonull(gp, v)
-	struct guest_proc *gp;
-	int v;
-{
-	return (gp->gp_flags & TGF_SOLO) && fuword((caddr_t)(gp->gp_vvbr + (v << 2))) == 0;
-}
-
 static int tos_refl0();
-
-/*
- * A lone guest's empty vector: a trap or line A/F takes the illegal
- * instruction vector, and the Unix signal when that is empty too.
- */
-static int
-solotrap(gp, r, v)
-	struct guest_proc *gp;
-	char *r;
-	int v;
-{
-	if (v < 10 || v == 32 || (v > 11 && v < 32))
-		return 1;
-	if (fuword((caddr_t)(gp->gp_vvbr + 16)) != 0)
-		return tos_refl0(gp, r, 4, v > 32 ? GR_PC(r) - 2 : GR_PC(r));
-	psignal(curproc, SIGILL);
-	guest_trapret();
-	return 0;
-}
 
 /* the CPU's own frame, through the guest's vector */
 static int
@@ -350,8 +314,8 @@ tos_refl(gp, r, v)
 {
 	int n;
 
-	if (solonull(gp, v))
-		return solotrap(gp, r, v);
+	if (gp->gp_flags & TGF_SOLO)
+		return guest_lone_trap(gp, r, v);
 	switch (GR_FV(r) >> 12) {
 	case 0: n = 0; break;
 	case 2: case 3: n = 4; break;
@@ -379,8 +343,6 @@ tos_refl0(gp, r, v, pc)
 	int v;
 	long pc;
 {
-	if (solonull(gp, v))
-		return 1;
 	if (v < 64)
 		TST(gp)->ts_refl[v]++;
 	if (guest_reflect(gp, r, pc, v << 2, (char *)0, 2, -1) < 0) {
@@ -414,6 +376,9 @@ tos_priv(gp, r, v)
 	int v;
 {
 	char sr[2];
+
+	if (gp->gp_flags & TGF_SOLO)
+		return guest_lone_trap(gp, r, v);
 
 	TST(gp)->ts_lastpc = GR_PC(r);
 	if (!(gp->gp_vsr & SR_S))
@@ -455,6 +420,9 @@ tos_fline(gp, r, v)
 	int op = opword(r), n, sr;
 	char save[64];
 
+	if (gp->gp_flags & TGF_SOLO)
+		return guest_lone_trap(gp, r, v);
+
 	TST(gp)->ts_lastpc = GR_PC(r);
 	if ((op & 0xffc0) == 0xf000 && !(gp->gp_flags & TGF_SOLO)) {
 		if (!(gp->gp_vsr & SR_S))
@@ -485,6 +453,9 @@ tos_sys(gp, r, v)
 	char *r;
 	int v;
 {
+	if (gp->gp_flags & TGF_SOLO)
+		return guest_lone_trap(gp, r, v);
+
 	if (!(gp->gp_flags & TGF_SOLO) && ((unsigned long)GR_PC(r) < 0xfa0000 ||
 	    (unsigned long)GR_PC(r) >= 0xfc0000))
 		return tos_refl(gp, r, v);
@@ -574,8 +545,10 @@ tosclose(dev, flag, otyp, cr)
 	struct cred *cr;
 {
 	tos_nopen = 0;			/* called on the last close only */
-	if (grfree_p)
-		grfree_p();		/* after the last mapping too */
+	if (ramdetach_p)
+		ramdetach_p(tos_stpid);
+	guest_ram_free(tos_ram);
+	tos_ram = 0;
 	tos_stproc = 0;
 	return 0;
 }
@@ -587,121 +560,52 @@ tosmmap(dev, off, prot)
 	off_t off;
 	int prot;
 {
-	return grmmap_p ? grmmap_p(off) : -1;
-}
-
-/*
- * The block is managed memory: its faults load it with its page
- * structures, so that the mapping lists the exit's teardown walks hold
- * every translation.  segdev would load it as device memory.
- */
-static struct seg_ops st_segops, *st_devops;
-
-static faultcode_t
-st_fault(seg, addr, len, type, rw)
-	struct seg *seg;
-	addr_t addr;
-	u_int len;
-	enum fault_type type;
-	enum seg_rw rw;
-{
-	struct segdev_data *sd = (struct segdev_data *)seg->s_data;
-	unsigned long va;
-	page_t *pp;
-	u_int pv[1];
-	int pf;
-
-	if (type != F_INVAL && type != F_SOFTLOCK)
-		return (*st_devops->fault)(seg, addr, len, type, rw);
-	for (va = (unsigned long)addr & ~(ST_PGSIZE - 1); va < (unsigned long)addr + len;
-	    va += ST_PGSIZE) {
-		pv[0] = 0;
-		(void)(*st_devops->getprot)(seg, (addr_t)va, 0, pv);
-		if ((pv[0] & (PROT_READ | PROT_WRITE | PROT_EXEC)) == 0 ||
-		    (rw == S_WRITE && !(pv[0] & PROT_WRITE)))
-			return FC_PROT;
-		pf = tosmmap(sd->vp->v_rdev, (off_t)(sd->offset + (va - (unsigned long)seg->s_base)), (int)pv[0]);
-		if (pf == -1 || (pp = page_numtookpp((u_int)pf)) == 0)
-			return FC_MAKE_ERR(EFAULT);
-		hat_memload(seg, (addr_t)va, pp, pv[0], type == F_SOFTLOCK ? HAT_LOCK : HAT_NOFLAGS);
-	}
-	return 0;
-}
-
-static int
-st_dup(seg, nseg)
-	struct seg *seg, *nseg;
-{
-	int e;
-
-	if ((e = (*st_devops->dup)(seg, nseg)) == 0)
-		nseg->s_ops = &st_segops;
-	return e;
-}
-
-/* a hole in the middle leaves a second segment, made with the device's operations */
-static int
-st_unmap(seg, addr, len)
-	struct seg *seg;
-	addr_t addr;
-	u_int len;
-{
-	struct as *as = seg->s_as;
-	struct seg *n;
-	int mid = addr > seg->s_base && addr + len < seg->s_base + seg->s_size;
-	int e;
-
-	if ((e = (*st_devops->unmap)(seg, addr, len)) == 0 && mid &&
-	    (n = as_segat(as, addr + len)) != 0 && n->s_ops == st_devops)
-		n->s_ops = &st_segops;
-	return e;
-}
-
-static void
-st_wrap(seg)
-	struct seg *seg;
-{
-	if (st_devops == 0) {
-		st_devops = seg->s_ops;
-		st_segops = *st_devops;
-		st_segops.fault = st_fault;
-		st_segops.dup = st_dup;
-		st_segops.unmap = st_unmap;
-	}
-	seg->s_ops = &st_segops;
+	return off < 0 ? -1 : guest_ram_frame(tos_ram, (unsigned long)off);
 }
 
 int
 tossegmap(dev, off, as, addrp, len, prot, maxprot, flags, cr)
-	dev_t dev;
-	off_t off;
-	struct as *as;
-	addr_t *addrp;
-	u_int len, prot, maxprot, flags;
-	struct cred *cr;
+dev_t dev;
+off_t off;
+struct as *as;
+addr_t *addrp;
+u_int len, prot, maxprot, flags;
+struct cred *cr;
 {
-	struct seg *seg;
-	int e;
-
 	if (curproc != tos_stproc || curproc->p_pid != tos_stpid)
 		return EACCES;
-	if ((e = spec_segmap(dev, off, as, addrp, len, prot, maxprot, flags, cr)) == 0 &&
-	    (seg = as_segat(as, *addrp)) != 0)
-		st_wrap(seg);
-	return e;
+	return guest_ram_map(tos_ram, dev, off, as, addrp, len, prot, maxprot, flags);
+}
+
+static unsigned long
+ram_size(pid)
+pid_t pid;
+{
+	return tos_ram && pid == tos_stpid ? guest_ram_size(tos_ram) : 0;
 }
 
 static int
-stram(size)
-	unsigned long size;
+ram_phys(pid, off, len, out)
+pid_t pid;
+unsigned long off, len, *out;
+{
+	if (pid != tos_stpid)
+		return EACCES;
+	return guest_ram_phys(tos_ram, off, len, 0xE00000UL, out);
+}
+
+static int
+stram(size, flags)
+unsigned long size;
+int flags;
 {
 	int e;
 
-	if (!gralloc_p)
-		return ENXIO;
 	if (GUESTP(curproc))
 		return EPERM;
-	if ((e = gralloc_p(size)) == 0) {
+	if (tos_ram)
+		return EBUSY;
+	if ((e = guest_ram_new(size, flags, 0xE00000UL, &tos_ram)) == 0) {
 		tos_stproc = curproc;
 		tos_stpid = curproc->p_pid;
 	}
@@ -771,17 +675,10 @@ enter(arg, cr)
 static int
 solo()
 {
-	struct guest_proc *gp;
-	int e;
-
-	if ((e = guest_attach(&tos_profile)) != 0)
-		return e;
-	gp = GUESTP(curproc);
-	gp->gp_flags |= GPF_PRIV | GPF_FTRAP | TGF_SOLO;
-	gp->gp_vsr = 0x2700;
-	gp->gp_vpend = 0;
-	gp->gp_vusp = gp->gp_vvbr = gp->gp_vcacr = 0;
-	return 0;
+	int e = guest_lone_enter(&tos_profile);
+	if (!e)
+		GUESTP(curproc)->gp_flags |= TGF_SOLO;
+	return e;
 }
 
 /* a socket call of the container's (struct tossock); it may block as the descriptor says */
@@ -880,7 +777,9 @@ tosioctl(dev, cmd, arg, mode, cr, rvp)
 		return GUESTP(curproc) && GUESTP(curproc)->gp_prof != &tos_profile ?
 		    EPERM : tos_maprom(dev, rvp);
 	if (cmd == TOSIOC_STRAM)
-		return stram((unsigned long)arg);
+		return stram((unsigned long)arg, GMR_CONTIG);
+	if (cmd == TOSIOC_RAM)
+		return stram((unsigned long)arg, 0);
 	if (cmd == TOSIOC_SOCK && GUESTP(curproc) &&
 	    GUESTP(curproc)->gp_prof == &tos_profile && (GUESTP(curproc)->gp_flags & TGF_SOLO))
 		return tsock(arg);
@@ -959,6 +858,10 @@ tosguest_load()
 	tos_profile.gpf_name = "tos";
 	if (sndcb_p)
 		*sndcb_p = tos_sndend;
+	if (ramsize_p)
+		*ramsize_p = ram_size;
+	if (ramphys_p)
+		*ramphys_p = ram_phys;
 	tos_profile.gpf_wrapper = &tosguest_wrapper;
 	tos_profile.gpf_exit = tos_pexit;
 	tos_profile.gpf_fork = tos_pfork;
@@ -988,8 +891,10 @@ tosguest_unload()
 	guest_profile_del(&tos_profile);
 	if (sndcb_p)
 		*sndcb_p = 0;
-	if (grdrop_p)
-		grdrop_p();
+	if (ramsize_p)
+		*ramsize_p = 0;
+	if (ramphys_p)
+		*ramphys_p = 0;
 	return 0;
 }
 

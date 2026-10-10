@@ -112,12 +112,9 @@ struct cdevsw cdevsw[70] = {
 	C_NONE,						/* 46 audio */
 	C_NONE, C_NONE, C_NONE,				/* 47-49 */
 	C_STR(&sadinfo, nullflag),			/* 50 sad */
-	{ ds_fbopen, ds_fbclose, ds_fbread, ND, ds_fbioctl,
-		ds_fbmmap, ds_segmap, ds_fbpoll, ND, ND, notty, nostr, nullflag }, /* 51 fb */
-	{ ds_evopen, ds_evclose, ds_evread, ND, ds_evioctl,
-		ND, ND, ds_evpoll, ND, ND, notty, nostr, nullflag },	/* 52 kbd */
-	{ ds_evopen, ds_evclose, ds_evread, ND, ds_evioctl,
-		ND, ND, ds_evpoll, ND, ND, notty, nostr, nullflag },	/* 53 mouse */
+	C_NONE,	/* 51 fb: dsuser */
+	C_NONE,	/* 52 kbd: dsuser */
+	C_NONE,	/* 53 mouse: dsuser */
 	C_NONE,						/* 54 */
 	C_NONE, C_NONE, C_NONE,				/* 55-57 */
 	C_NONE,						/* 58 dpn */

@@ -30,6 +30,41 @@ c /dev/mem	640 0 3 3 0
 c /dev/kmem	640 0 3 3 1
 c /dev/null	666 0 3 3 2
 c /dev/zero	666 0 3 3 3
+# STREAMS PTY clone and its 32 configured slave devices
+c /dev/ptmx	666 0 3 27 15
+d /dev/pts	755 0 3
+c /dev/pts/0	620 0 7 14 0
+c /dev/pts/1	620 0 7 14 1
+c /dev/pts/2	620 0 7 14 2
+c /dev/pts/3	620 0 7 14 3
+c /dev/pts/4	620 0 7 14 4
+c /dev/pts/5	620 0 7 14 5
+c /dev/pts/6	620 0 7 14 6
+c /dev/pts/7	620 0 7 14 7
+c /dev/pts/8	620 0 7 14 8
+c /dev/pts/9	620 0 7 14 9
+c /dev/pts/10	620 0 7 14 10
+c /dev/pts/11	620 0 7 14 11
+c /dev/pts/12	620 0 7 14 12
+c /dev/pts/13	620 0 7 14 13
+c /dev/pts/14	620 0 7 14 14
+c /dev/pts/15	620 0 7 14 15
+c /dev/pts/16	620 0 7 14 16
+c /dev/pts/17	620 0 7 14 17
+c /dev/pts/18	620 0 7 14 18
+c /dev/pts/19	620 0 7 14 19
+c /dev/pts/20	620 0 7 14 20
+c /dev/pts/21	620 0 7 14 21
+c /dev/pts/22	620 0 7 14 22
+c /dev/pts/23	620 0 7 14 23
+c /dev/pts/24	620 0 7 14 24
+c /dev/pts/25	620 0 7 14 25
+c /dev/pts/26	620 0 7 14 26
+c /dev/pts/27	620 0 7 14 27
+c /dev/pts/28	620 0 7 14 28
+c /dev/pts/29	620 0 7 14 29
+c /dev/pts/30	620 0 7 14 30
+c /dev/pts/31	620 0 7 14 31
 # RAM disk: block 20, raw 42; unit 1 is swap
 b /dev/dsk/rd0	600 0 3 20 0
 b /dev/dsk/rd1	600 0 3 20 1

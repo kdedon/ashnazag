@@ -26,6 +26,7 @@
 #include "sys/poll.h"
 #include "otbridge.h"
 #include "vstation.h"
+#include "anchor.h"
 
 asm(".weak vst_ops");
 
@@ -35,6 +36,7 @@ asm(".weak vst_ops");
 
 struct otbst {
 	int		t_inuse;
+	int		t_mode;
 	int		t_vst;		/* NIC station, -1 before OTB_STATION */
 	struct proc	*t_proc;
 	pid_t		t_pid;
@@ -57,6 +59,32 @@ extern struct proc *curproc;
 extern int copyin(), copyout(), bcmp(), sleep(), uiomove(), groupmember();
 extern void delay();
 extern void bcopy(), bzero(), wakeup(), psignal(), pollwakeup(), freemsg();
+
+static struct otb_identity identity;
+
+int
+otbst_identity(cmd, arg, cr)
+	int cmd; caddr_t arg; cred_t *cr;
+{
+	struct otb_identity i; int sp;
+	if (cmd == OTB_SETIDENT) {
+		if (cr->cr_uid) return EPERM;
+		if (copyin(arg, (caddr_t)&i, sizeof i)) return EFAULT;
+		if (!otb_identity_valid(&i)) return EINVAL;
+		OTB_SPLSTR(sp); identity = i; OTB_SPLX(sp);
+		return 0;
+	}
+	OTB_SPLSTR(sp); i = identity; OTB_SPLX(sp);
+	if (!otb_identity_valid(&i)) return ENXIO;
+	return copyout((caddr_t)&i, arg, sizeof i) ? EFAULT : 0;
+}
+
+static struct vst_ops *
+stops()
+{
+	struct vst_ops **volatile p = &vst_ops;
+	return p ? *p : 0;
+}
 
 static struct otbst *
 stfind(dev)
@@ -111,8 +139,6 @@ otbst_open(devp, cr)
 
 	if (cr->cr_uid != 0 && !otb_stuser && !groupmember(otb_stgid, cr))
 		return EPERM;
-	if (&vst_ops == 0 || vst_ops == 0)
-		return ENXIO;
 	OTB_SPLSTR(sp);
 	for (i = 0; cr->cr_uid != 0 && i < OTB_NST; i++)
 		if (otb_st_[i].t_inuse && otb_st_[i].t_uid == cr->cr_uid) {
@@ -175,7 +201,7 @@ otbst_read(dev, uiop)
 		return ENXIO;
 	OTB_SPLSTR(sp);
 	while ((mp = t->t_head) == 0) {
-		if (t->t_vst < 0 || uiop->uio_fmode & (FNDELAY | FNONBLOCK)) {
+		if (!t->t_mode || uiop->uio_fmode & (FNDELAY | FNONBLOCK)) {
 			OTB_SPLX(sp);
 			return uiop->uio_fmode & FNONBLOCK ? EAGAIN : 0;
 		}
@@ -208,12 +234,26 @@ otbst_write(dev, uiop)
 
 	if (t == 0)
 		return ENXIO;
-	if (t->t_vst < 0)
+	if (!t->t_mode)
 		return EINVAL;
 	if (n < VST_MINFRAME || n > VST_MAXFRAME)
 		return EINVAL;
 	if ((mp = allocb(n, BPRI_MED)) == 0)
 		return ENOSR;
+	if (t->t_mode == OTB_ST_ANCHOR) {
+		struct otb_identity i; mblk_t *reply; int sp, len;
+		e = uiomove((caddr_t)mp->b_rptr, (long)n, UIO_WRITE, uiop);
+		if (!e && (reply = allocb(450, BPRI_MED)) != 0) {
+			OTB_SPLSTR(sp); i = identity; OTB_SPLX(sp);
+			len = otb_anchor_reply(&i, t->t_mac, mp->b_rptr, n, reply->b_wptr, 450);
+			if (len > 0) strx((char *)t, reply->b_wptr, len);
+			else t->t_st.ss_drop++;
+			if (len < 0) e = EINVAL;
+			freemsg(reply);
+		} else if (!e) e = ENOSR;
+		if (!e) t->t_st.ss_tx++;
+		freemsg(mp); return e;
+	}
 	/* a blocking write waits a few ticks for transmit room */
 	if ((e = uiomove((caddr_t)mp->b_rptr, (long)n, UIO_WRITE, uiop)) == 0)
 		for (w = 0; (e = (*vst_ops->vs_xmit)(t->t_vst, mp->b_rptr, n)) == EAGAIN &&
@@ -232,14 +272,21 @@ attach(t, st, cr)
 	cred_t *cr;
 {
 	unsigned char h[6];
+	struct vst_ops *ops = stops();
 	int v;
 
-	if (t->t_vst >= 0)
+	if (t->t_mode)
 		return EBUSY;
-	if (st->st_mode != OTB_ST_BRIDGE)
+	if (st->st_mode != OTB_ST_BRIDGE && st->st_mode != OTB_ST_ANCHOR)
 		return EINVAL;
+	if (st->st_mode == OTB_ST_ANCHOR) {
+		if (!otb_identity_valid(&identity)) return ENXIO;
+		bcopy((caddr_t)identity.address, (caddr_t)h + 2, 4);
+	} else {
+		if (!ops) return ENXIO;
+		(*ops->vs_hwaddr)(h);
+	}
 	if (bcmp((caddr_t)st->st_mac, "\0\0\0\0\0\0", 6) == 0) {
-		(*vst_ops->vs_hwaddr)(h);
 		st->st_mac[0] = 0x02;
 		st->st_mac[1] = h[3];
 		st->st_mac[2] = h[4];
@@ -248,10 +295,13 @@ attach(t, st, cr)
 		st->st_mac[5] = t->t_uid;
 	} else if (cr->cr_uid != 0)
 		return EPERM;
-	if ((v = (*vst_ops->vs_attach)(st->st_mac, strx, (char *)t)) < 0)
-		return -v;
+	if (st->st_mode == OTB_ST_BRIDGE) {
+		if ((v = (*ops->vs_attach)(st->st_mac, strx, (char *)t)) < 0)
+			return -v;
+		t->t_vst = v;
+	}
 	bcopy((caddr_t)st->st_mac, (caddr_t)t->t_mac, 6);
-	t->t_vst = v;
+	t->t_mode = st->st_mode;
 	return 0;
 }
 
@@ -288,10 +338,12 @@ otbst_ioctl(dev, cmd, arg, cr, rvalp)
 		t->t_pid = curproc->p_pid;
 		return 0;
 	case OTB_STMULTI:
-		if (t->t_vst < 0)
+		if (!t->t_mode)
 			return EINVAL;
 		if (copyin(arg, (caddr_t)&sm, sizeof sm))
 			return EFAULT;
+		if (t->t_mode == OTB_ST_ANCHOR)
+			return sm.sm_addr[0] & 1 ? 0 : EINVAL;
 		return (*vst_ops->vs_mcast)(t->t_vst, sm.sm_addr, sm.sm_on != 0);
 	case OTB_STSTATS:
 		ss = t->t_st;
@@ -316,7 +368,7 @@ otbst_poll(dev, events, anyyet, reventsp, phpp)
 		return ENXIO;
 	if (events & (POLLIN | POLLRDNORM) && t->t_head)
 		r |= events & (POLLIN | POLLRDNORM);
-	if (t->t_vst >= 0 && (*vst_ops->vs_room)())
+	if (t->t_mode == OTB_ST_ANCHOR || (t->t_vst >= 0 && (*vst_ops->vs_room)()))
 		r |= events & POLLOUT;
 	*reventsp = r;
 	if (r == 0 && !anyyet)

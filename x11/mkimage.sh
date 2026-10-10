@@ -49,6 +49,7 @@ if [ -n "$MACPKG" ]; then
 	(cd "$R" && patch -s -p4 < "$AUX/images/macenv/mac-diskroot.diff")
 	[ -f "$MACPKG/rom" ] || sed -i '\|^f /etc/aux/rom	|d' "$R/root.manifest"
 	[ -f "$MACPKG/a201.cpio" ] || sed -i '/a201\|mac6/d' "$R/root.manifest"
+	[ ! -f "$MACPKG/network.manifest" ] || cat "$MACPKG/network.manifest" >> "$R/root.manifest"
 fi
 pk=
 for p in $XPKGS; do
@@ -78,4 +79,4 @@ if [ "$BOOTX" = 1 ]; then
 	echo "f /etc/default/x 644 0 3 default-x" >> "$R/root.manifest"
 fi
 : "${AMIX_TAPE:?AMIX_TAPE: tape segments 13 and 14}"
-AMIX_TAPE=$AMIX_TAPE ROOTMB=${ROOTMB:-96} nice -n 19 sh "$R/mkdiskimage.sh" "$KERNEL" "$OUT"
+DSSOURCE=${DSSOURCE:-$AUX/kernel/mac/display} AMIX_TAPE=$AMIX_TAPE ROOTMB=${ROOTMB:-96} nice -n 19 sh "$R/mkdiskimage.sh" "$KERNEL" "$OUT"

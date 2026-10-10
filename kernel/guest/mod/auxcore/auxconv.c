@@ -14,8 +14,11 @@
 #include "sys/procset.h"
 #include "sys/conf.h"
 #include "sys/var.h"
+#include "sys/stropts.h"
+#include "../../../mac/scc/consroute.h"
+#include "../../../otbridge/otwire.h"
 
-extern int aux_amix(), aux_sockctl();
+extern int aux_amix(), aux_sockctl(), aux_namedpty(), aux_namedaccess(), aux_console();
 
 /* ---- errno ---- */
 
@@ -162,6 +165,24 @@ aux_oflags_out(f, ap)
 }
 
 int
+aux_access(ap, a, rv, r)
+    struct aux_proc *ap;
+    long *a;
+    rval_t *rv;
+    char *r;
+{
+    char path[80];
+    u_int n;
+    int e=-1;
+    if(!copyinstr((caddr_t)a[0],path,sizeof path,&n))
+        e=aux_namedaccess(path,(int)a[1]);
+    if(e==-1)e=aux_amix(33,a,rv);
+    else if(!e)rv->r_val1=0;
+    if(aux_trace & 4)aux_tlog((int)u.u_procp->p_pid,"access",e ? -e : 0);
+    return e;
+}
+
+int
 aux_open(ap, a, rv, r)
 	struct aux_proc *ap;
 	long *a;
@@ -175,7 +196,11 @@ aux_open(ap, a, rv, r)
 	rval_t dv;
 
 	a[1] = aux_oflags_in((int)a[1], ap);
-	e = aux_amix(5, a, rv);
+	e = -1;
+	if (copyinstr((caddr_t)a[0], b, sizeof b, &n) == 0)
+		e = aux_namedpty(b, (int)a[1], rv);
+	if (e == -1)
+		e = aux_amix(5, a, rv);
 	/*
 	 * O_GLOBAL: from fd 128 on, as the Mac side's shared files; else
 	 * where it is.  Closed on exec: a new image leaves the layer.
@@ -338,6 +363,86 @@ otbdev(fd)
 	return vp->v_type == VCHR && getmajor(vp->v_rdev) == 55;
 }
 
+static int
+otstream(fd)
+	int fd;
+{
+	file_t *fp;
+	struct vnode *vp;
+	int major;
+
+	if (getf(fd, &fp))
+		return 0;
+	vp = fp->f_vnode;
+	if (vp->v_type != VCHR)
+		return 0;
+	major = getmajor(vp->v_rdev);
+	if ((major != 33 && major != 34) || major >= cdevcnt ||
+	    cdevsw[major].d_str == 0)
+		return 0;
+	return major == 33 ? OTX_TCP : OTX_UDP;
+}
+
+static int
+aux_otstream(a, rv, r)
+	long *a;
+	rval_t *rv;
+	char *r;
+{
+	struct strioctl ioc;
+	struct otx_attach at;
+	caddr_t g;
+	char name[6];
+	int protocol;
+
+	protocol = otstream((int)a[0]);
+	if (!protocol)
+		return EINVAL;
+	switch (a[1]) {
+	case I_PUSH:
+		if (copyin((caddr_t)a[2], name, sizeof name))
+			return EFAULT;
+		if (name[0] != 'o' || name[1] != 't' || name[2] != 'x' ||
+		    name[3] != 't' || name[4] != 'i' || name[5] != 0)
+			return EINVAL;
+		g = aux_gap(r, sizeof name);
+		if (copyout(name, g, sizeof name))
+			return EFAULT;
+		a[2] = (long)g;
+		break;
+	case I_SRDOPT:
+		if (a[2] != RMSGN)
+			return EINVAL;
+		break;
+	case I_FLUSH:
+		if (a[2] == 0 || (a[2] & ~(FLUSHR | FLUSHW)))
+			return EINVAL;
+		break;
+	case I_STR:
+		if (copyin((caddr_t)a[2], (caddr_t)&ioc, sizeof ioc))
+			return EFAULT;
+		if (ioc.ic_cmd != OTX_ATTACH || ioc.ic_timout != 0 ||
+		    ioc.ic_len != sizeof at)
+			return EINVAL;
+		if (copyin(ioc.ic_dp, (caddr_t)&at, sizeof at))
+			return EFAULT;
+		if (at.at_session <= 0 || at.at_cookie == 0 ||
+		    at.at_proto != protocol)
+			return EINVAL;
+		/* Freeze nested input before STREAMS can sleep. */
+		g = aux_gap(r, sizeof ioc + sizeof at);
+		ioc.ic_dp = g + sizeof ioc;
+		if (copyout((caddr_t)&at, ioc.ic_dp, sizeof at) ||
+		    copyout((caddr_t)&ioc, g, sizeof ioc))
+			return EFAULT;
+		a[2] = (long)g;
+		break;
+	default:
+		return EINVAL;
+	}
+	return aux_amix(54, a, rv);
+}
+
 int
 aux_ioctl(ap, a, rv, r)
 	struct aux_proc *ap;
@@ -351,6 +456,9 @@ aux_ioctl(ap, a, rv, r)
 	long cmd = a[1];
 	int e, i, v;
 
+	if (cmd == I_PUSH || cmd == I_SRDOPT || cmd == I_STR ||
+	    cmd == I_FLUSH)
+		return aux_otstream(a, rv, r);
 	if (aux_sockctl(a, rv, r, &e))
 		return e;
 	switch (cmd) {
@@ -376,6 +484,10 @@ aux_ioctl(ap, a, rv, r)
 		a[1] = 2;
 		a[2] = cmd == 0x20006601;
 		return aux_amix(62, a, rv);
+	case 0x80047469:
+		return aux_console((int)a[0], AUXCROUTE, (caddr_t)a[2]);
+	case 0x2000746a:
+		return aux_console((int)a[0], AUXCRDSIG, (caddr_t)a[2]);
 	case 0x80047470:			/* TIOCPKT */
 		return aux_tiocpkt((int)a[0], (caddr_t)a[2]);
 	case 0x8004667e:			/* FIONBIO */

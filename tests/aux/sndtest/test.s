@@ -40,10 +40,32 @@ auxsysr:
 	negl	%d0
 1:	rts
 
+| auxsleep(seconds): select with no descriptors
+	.globl	auxsleep
+auxsleep:
+	movel	4(%sp),%d0
+	subql	#8,%sp
+	movel	%d0,(%sp)
+	clrl	4(%sp)
+	movel	%sp,%a0
+	movel	%a0,-(%sp)
+	clrl	-(%sp)
+	clrl	-(%sp)
+	clrl	-(%sp)
+	clrl	-(%sp)
+	clrl	-(%sp)
+	moveq	#82,%d0
+	trap	#0
+	lea	32(%sp),%sp
+	bccs	1f
+	negl	%d0
+1:	rts
+
 | newhandlesys(size) -> handle in the system heap, locked; 0 if none
 	.globl	newhandlesys
 newhandlesys:
-	movel	4(%sp),%d0
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
+	movel	48(%sp),%d0
 	.short	0xa722
 	tstw	%d0
 	beqs	1f
@@ -53,14 +75,17 @@ newhandlesys:
 	.short	0xa029			| _HLock
 	moveal	(%sp)+,%a0
 2:	movel	%a0,%d0
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 | newptr(size) -> pointer in the system heap, cleared
 	.globl	newptr
 newptr:
-	movel	4(%sp),%d0
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
+	movel	48(%sp),%d0
 	.short	0xa71e
 	movel	%a0,%d0
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 	.globl	ticks
@@ -71,47 +96,55 @@ ticks:
 | sysbeep(ticks)
 	.globl	sysbeep
 sysbeep:
-	movew	6(%sp),-(%sp)
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
+	movew	50(%sp),-(%sp)
 	.short	0xa9c8
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 | sndnew(&chan, synth, init, proc)
 	.globl	sndnew
 sndnew:
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
 	clrw	-(%sp)
-	movel	6(%sp),-(%sp)
-	movew	16(%sp),-(%sp)
-	movel	20(%sp),-(%sp)
-	movel	28(%sp),-(%sp)
+	movel	50(%sp),-(%sp)
+	movew	60(%sp),-(%sp)
+	movel	64(%sp),-(%sp)
+	movel	72(%sp),-(%sp)
 	.short	0xa807
 	movew	(%sp)+,%d0
 	extl	%d0
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 | sndplay(chan, h, async)
 	.globl	sndplay
 sndplay:
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
 	clrw	-(%sp)
-	movel	6(%sp),-(%sp)
-	movel	14(%sp),-(%sp)
-	movew	24(%sp),%d0
+	movel	50(%sp),-(%sp)
+	movel	58(%sp),-(%sp)
+	movew	68(%sp),%d0
 	lslw	#8,%d0
 	movew	%d0,-(%sp)
 	.short	0xa805
 	movew	(%sp)+,%d0
 	extl	%d0
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 | snddo(chan, cmd): SndDoCommand, waiting for room
 	.globl	snddo
 snddo:
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
 	clrw	-(%sp)
-	movel	6(%sp),-(%sp)
-	movel	14(%sp),-(%sp)
+	movel	50(%sp),-(%sp)
+	movel	58(%sp),-(%sp)
 	clrw	-(%sp)
 	.short	0xa803
 	movew	(%sp)+,%d0
 	extl	%d0
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 | the callBackCmd routine: (chan, var cmd)
@@ -126,3 +159,23 @@ t_cb:
 	moveal	(%sp)+,%a1
 	addql	#8,%sp
 	jmp	(%a1)
+
+    .text
+    .globl sndversion
+sndversion:
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
+    clrl -(%sp)
+    movel #0x000c0008,%d0
+    .short 0xa800
+    movel (%sp)+,%d0
+    moveml	(%sp)+,%d2-%d7/%a2-%a6
+    rts
+
+    .globl snddispatch
+snddispatch:
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
+    movel #0xa800,%d0
+    .short 0xa746
+    movel %a0,%d0
+    moveml	(%sp)+,%d2-%d7/%a2-%a6
+    rts

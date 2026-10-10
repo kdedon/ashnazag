@@ -25,10 +25,15 @@
 #include "sys/ipc.h"
 #include "sys/shm.h"
 #include "sys/resource.h"
+#include "sys/file.h"
+#include "vm/as.h"
+#include "vm/seg.h"
+#include "vm/seg_vn.h"
 
 extern int nodev(), ttimeout(), untimeout();
 extern k_sigset_t cantmask;
 extern void (*aux_macdetach)(), (*aux_uitick)();
+extern int (*aux_macpoll)();
 extern struct shminfo shminfo;
 extern struct shmid_ds shmem[];
 extern int shmsys(), sync(), uadmin();
@@ -44,9 +49,95 @@ int	uinter_adcall = 0;	/* the uadmin call recorded: cmd << 8 | fcn */
 int	uinter_lapchk = 1;	/* 0: leave Patch.067C's AppleTalk queue calls alone */
 char	uinter_pram[64] = "/etc/aux/pram";	/* XPRAM across sessions */
 static int ui_pramdirty;
+static unsigned char ui_pramsaved[256];
 struct uicall ui_calls[UI_NCALL];
 long	ui_ncalls;		/* entries ever made */
 long	ui_nposted;		/* ticks posted */
+
+/* Retained global files survive an application exec, then join its fd table. */
+static file_t *ui_gfiles[AUX_GNOFILE];
+static int ui_gfderr;
+
+static void
+ui_gfdclear()
+{
+    int i;
+    file_t *fp;
+
+    ui_gfderr=0;
+    for (i=0;i<AUX_GNOFILE;i++) {
+        fp=ui_gfiles[i];ui_gfiles[i]=0;
+        if(fp)closef(fp);
+    }
+}
+
+static void
+ui_gfdrefresh(gp)
+    struct guest_proc *gp;
+{
+    int i;
+    file_t *fp,*old;
+
+    if(ui.l_state!=LS_INUSE || gp!=ui.l_gp ||
+       gp->gp_proc!=u.u_procp || ui.l_proc!=u.u_procp)return;
+    ui_gfderr=0;
+    for(i=0;i<AUX_GNOFILE;i++) {
+        fp=0;
+        if(getf(AUX_GFD+i,&fp)!=0)fp=0;
+        old=ui_gfiles[i];
+        if(fp==old)continue;
+        if(fp && fp->f_count>=32767) {ui_gfderr=ENFILE;continue;}
+        if(fp)fp->f_count++;
+        ui_gfiles[i]=fp;
+        if(old)closef(old);
+    }
+}
+
+static void
+ui_gfdrollback(made)
+    unsigned char *made;
+{
+    int i;
+    file_t *fp;
+
+    for(i=0;i<AUX_GNOFILE;i++)if(made[i]) {
+        if(getf(AUX_GFD+i,&fp)==0) {
+            setf(AUX_GFD+i,0);setpof(AUX_GFD+i,0);closef(fp);
+        }
+        made[i]=0;
+    }
+}
+
+static int
+ui_gfdjoin(gp,made)
+    struct guest_proc *gp;
+    unsigned char *made;
+{
+    int i,fd,e;
+    file_t *fp;
+
+    bzero((caddr_t)made,AUX_GNOFILE);
+    if(!gp || gp==ui.l_gp || gp->gp_proc!=u.u_procp ||
+       ui.l_state!=LS_INUSE || !ui.l_proc || !ui.l_gp ||
+       ui.l_gp->gp_proc!=ui.l_proc)return EINVAL;
+    if(ui_gfderr)return ui_gfderr;
+    for(i=0;i<AUX_GNOFILE;i++)if(ui_gfiles[i]) {
+        if(getf(AUX_GFD+i,&fp)==0) {
+            if(fp==ui_gfiles[i])continue;
+            e=EBUSY;goto fail;
+        }
+        if(ui_gfiles[i]->f_count>=32767) {e=ENFILE;goto fail;}
+        e=ufalloc(AUX_GFD+i,&fd);
+        if(e)goto fail;
+        if(fd!=AUX_GFD+i) {setf(fd,0);e=EBUSY;goto fail;}
+        ui_gfiles[i]->f_count++;
+        setf(fd,ui_gfiles[i]);setpof(fd,FCLOSEXEC);made[i]=1;
+    }
+    return 0;
+fail:
+    ui_gfdrollback(made);
+    return e;
+}
 
 void
 ui_note(kind, num, res)
@@ -135,6 +226,7 @@ pramreset()
 	bcopy((caddr_t)pram_76, (caddr_t)ui.l_pram + 0x76, sizeof pram_76);
 	/* 32-bit addressing: 24-bit mode needs the low 16 MB mirrored across the space */
 	ui.l_pram[0x8a] = 5;
+	bcopy((caddr_t)ui.l_pram, (caddr_t)ui_pramsaved, sizeof ui_pramsaved);
 }
 
 /* no file, or a short one: the reset contents */
@@ -152,6 +244,7 @@ prampin()
 	    UIO_SYSSPACE, 0, 0x7fffffffL, u.u_cred, &resid) == 0 && resid == 0) {
 		bcopy((caddr_t)b, (caddr_t)ui.l_pram, sizeof b);
 		ui.l_pram[0x8a] |= 5;
+		bcopy((caddr_t)ui.l_pram, (caddr_t)ui_pramsaved, sizeof ui_pramsaved);
 	}
 	VN_RELE(vp);
 }
@@ -180,7 +273,7 @@ pramout()
 		if (vp->v_type != VREG)
 			e = EINVAL;
 		else
-			e = vn_rdwr(UIO_WRITE, vp, (caddr_t)ui.l_pram, (int)sizeof ui.l_pram,
+			e = vn_rdwr(UIO_WRITE, vp, (caddr_t)ui_pramsaved, (int)sizeof ui.l_pram,
 			    (off_t)0, UIO_SYSSPACE, 0, 0x7fffffffL, cr, &resid);
 		VOP_CLOSE(vp, FWRITE, 1, (off_t)0, cr);
 		VN_RELE(vp);
@@ -188,6 +281,35 @@ pramout()
 	crfree(cr);
 	if (e || resid)
 		printf("uinter: cannot write %s (%d)\n", uinter_pram, e);
+}
+
+/* Session memory must name the owning shared object in the current address space. */
+int
+ui_macrange(gp,a,n)
+struct guest_proc *gp;
+unsigned long a,n;
+{
+    struct seg *seg;struct segvn_data *sv;struct shmid_ds *sp;
+    unsigned long off;int i;
+    if(!gp || gp->gp_proc!=u.u_procp || ui.l_state!=LS_INUSE || !ui.l_proc ||
+        !ui_task(gp) || a<0x3000UL || (a&1) || !n || n>0xffffffffUL-a)return 0;
+    seg=as_segat(u.u_procp->p_as,(caddr_t)a);
+    if(!seg || seg->s_ops!=&segvn_ops || !seg->s_data ||
+        a<(unsigned long)seg->s_base || a-(unsigned long)seg->s_base>=seg->s_size ||
+        n>seg->s_size-(a-(unsigned long)seg->s_base))return 0;
+    sv=(struct segvn_data *)seg->s_data;
+    if(sv->anon_index>btop(0xffffffffUL))return 0;
+    off=ctob(sv->anon_index);
+    if(off>0xffffffffUL-(a-(unsigned long)seg->s_base))return 0;
+    off+=a-(unsigned long)seg->s_base;
+    for(i=0;i<shminfo.shmmni;i++) {
+        sp=shmem+i;
+        if((sp->shm_perm.mode&IPC_ALLOC) && sp->shm_perm.key==0x744c4f57 &&
+            sp->shm_cpid==ui.l_proc->p_pid && sp->shm_amp && sp->shm_amp==sv->amp &&
+            off<(unsigned long)sp->shm_segsz && n<=(unsigned long)sp->shm_segsz-off)
+            return valid_usr_range((caddr_t)a,n);
+    }
+    return 0;
 }
 
 /*
@@ -232,6 +354,20 @@ ui_task(gp)
 	return 0;
 }
 
+/* Accepted joins share the owner's installed File Manager callbacks. */
+int
+ui_patchshared(gp)
+	struct guest_proc *gp;
+{
+	struct uitask *t = ui_task(gp);
+
+	return t && t != ui.l_task && ui.l_proc && ui.l_gp &&
+	    ui.l_task[0].t_proc == ui.l_proc &&
+	    ui.l_task[0].t_gp == ui.l_gp && ui.l_gp->gp_proc == ui.l_proc &&
+	    t->t_proc == gp->gp_proc && t->t_proc == u.u_procp &&
+	    (AUXP(gp)->ap_mac & APM_TASK);
+}
+
 /* the ui page for p: it lies in the shared Mac memory, so every task has it */
 caddr_t
 ui_uipof(p)
@@ -254,6 +390,149 @@ uimay()
 	return c->cr_uid == ui.l_proc->p_cred->cr_uid || suser(c);
 }
 
+/* Pending applications retain their process identity through attach and exec. */
+struct uicoff {
+    struct uicoff *c_next;
+    struct proc *c_proc;
+    struct guest_proc *c_gp;
+    long c_pid;
+    struct proc *c_owner;
+    struct guest_proc *c_ownergp;
+    long c_psn[2], c_a5;
+    short c_token;
+    short c_len;
+    char c_name[128];
+};
+static struct uicoff *ui_coffs;
+static int ui_ncoff;
+static unsigned short ui_coffseq;
+static int coffbind();
+
+static void
+coffdrop(gp,all)
+struct guest_proc *gp;
+int all;
+{
+    struct uicoff **link=&ui_coffs,*c;
+    if(all) ui_coffseq=0;
+    while((c=*link)!=0) {
+        if(all || c->c_gp==gp) {
+            *link=c->c_next; ui_ncoff--;
+            if(prfind(c->c_pid)==c->c_proc && GUESTP(c->c_proc)==c->c_gp) {
+                AUXP(c->c_gp)->ap_mac &= ~APM_COFF;
+                if(all && c->c_proc!=ui.l_proc && !ui_task(c->c_gp))
+                    psignal(c->c_proc,SIGKILL);
+            }
+            kmem_free((caddr_t)c,sizeof *c);
+        } else link=&c->c_next;
+    }
+}
+
+static int
+coffname(gp,b,set)
+struct guest_proc *gp;
+char *b;
+int set;
+{
+    struct uicoff *c;
+    struct proc *p=u.u_procp;
+    char name[128];
+    long pid=G32(b);
+    int n=(short)G16(b+8),i;
+    if(ui.l_state!=LS_INUSE || !ui.l_proc) return EINVAL;
+    if(u.u_cred->cr_uid!=ui.l_proc->p_cred->cr_uid && u.u_cred->cr_uid!=0)
+        return EPERM;
+    for(c=ui_coffs;c && c->c_pid!=pid;c=c->c_next);
+    if(set) {
+        if(pid!=p->p_pid || gp->gp_proc!=p) return EPERM;
+        if(n<0 || n>=sizeof name) return EINVAL;
+        if(!n) { coffdrop(gp,0); return 0; }
+        if(copyin((caddr_t)G32(b+4),name,n)) return EFAULT;
+        if(!name[n-1]) n--;
+        if(!n) { coffdrop(gp,0); return 0; }
+        for(i=0;i<n;i++) if(!name[i]) return EINVAL;
+        name[n]=0;
+        if(!c) {
+            if(ui_ncoff>=UI_NTASK) return EAGAIN;
+            c=(struct uicoff *)kmem_alloc(sizeof *c,KM_NOSLEEP);
+            if(!c) return ENOMEM;
+            c->c_owner=0;c->c_ownergp=0;c->c_token=0;
+            c->c_psn[0]=c->c_psn[1]=c->c_a5=0;
+            c->c_next=ui_coffs; ui_coffs=c; ui_ncoff++;
+        } else if(c->c_proc!=p || c->c_gp!=gp) return ESRCH;
+        c->c_proc=p; c->c_gp=gp; c->c_pid=pid; c->c_len=n;
+        bcopy(name,c->c_name,n+1);
+        AUXP(gp)->ap_mac |= APM_COFF;
+        return 0;
+    }
+    if(!ui_task(gp)) return EPERM;
+    if(!c || prfind(pid)!=c->c_proc || GUESTP(c->c_proc)!=c->c_gp)
+        return ESRCH;
+    if(c->c_proc!=p &&
+       (gp!=ui.l_gp || (c->c_proc->p_parent!=p && !ui_task(c->c_gp))))
+        return EPERM;
+    if(c->c_proc->p_cred->cr_uid!=ui.l_proc->p_cred->cr_uid &&
+       c->c_proc->p_cred->cr_uid!=0) return EPERM;
+    if(n<0) return EINVAL;
+    /* A zero-sized legacy request receives the complete C pathname. */
+    if(!n) n=c->c_len+1;
+    else if(n>c->c_len) n=c->c_len;
+    bcopy(c->c_name,name,n);
+    if(copyout(name,(caddr_t)G32(b+4),n)) return EFAULT;
+    P16(b+8,n);
+    return 0;
+}
+
+long uin_envdiag[8];
+
+static int
+coffenv(gp, b)
+	struct guest_proc *gp;
+	char *b;
+{
+	struct aux_proc *ap = AUXP(gp);
+	unsigned char p[4];
+	unsigned long a, v, bytes = 0;
+	int i;
+	unsigned char c;
+
+	uin_envdiag[0] = u.u_procp->p_pid; uin_envdiag[1] = 1;
+	uin_envdiag[6] = uin_envdiag[7] = 0;
+	uin_envdiag[2] = ap->ap_envp; uin_envdiag[3] = ap->ap_envc;
+	uin_envdiag[4] = ap->ap_envlo; uin_envdiag[5] = ap->ap_envhi;
+	if (!UIACT(gp) || !ui_task(gp) || gp->gp_proc != u.u_procp)
+		return EPERM;
+	a = ap->ap_envp; uin_envdiag[1] = 2;
+	if (!a || (a & 3) || ap->ap_envc < 0 || ap->ap_envc > 16384 ||
+	    !ap->ap_envlo || (unsigned long)ap->ap_envhi <= (unsigned long)ap->ap_envlo ||
+	    a < (unsigned long)ap->ap_envlo || a >= (unsigned long)ap->ap_envhi ||
+	    (unsigned long)(ap->ap_envc + 1) * 4 > (unsigned long)ap->ap_envhi - a)
+		return EINVAL;
+	for (i = 0; i <= ap->ap_envc; i++) {
+		uin_envdiag[1] = 3;
+		if (copyin((caddr_t)(a + i * 4), (caddr_t)p, 4))
+			return EFAULT;
+		v = G32(p); uin_envdiag[1] = 4;
+		uin_envdiag[6] = i; uin_envdiag[7] = v;
+		if (i == ap->ap_envc) {
+			if (v) return EINVAL;
+			break;
+		}
+		if (!v) return EINVAL;
+		uin_envdiag[1] = 6;
+		do {
+			if (bytes++ == 1048576) return EINVAL;
+			if (!valid_usr_range((caddr_t)v, 1) ||
+			    copyin((caddr_t)v, (caddr_t)&c, 1)) return EFAULT;
+			if (v++ == 0xffffffffUL && c) return EINVAL;
+		} while (c);
+	}
+	P32(b, a);
+	P32(b + 4, ap->ap_envc);
+	uin_envdiag[1] = 5;
+	return 0;
+}
+
 /*
  * A task that joined leaves (exit, exec, kill, UI_KILLMYLAYER): if it
  * was running, the first task runs again.
@@ -264,19 +543,72 @@ uileave(t)
 {
 	struct guest_proc *gp = t->t_gp;
 
-	gp->gp_flags &= ~(GPF_ALINE | GPF_PRIV | GPF_SPIN | GPF_VPEND | GPF_FAULT);
+    coffdrop(gp,0);
+	gp->gp_flags &= ~(GPF_ALINE | GPF_PRIV | GPF_SPIN | GPF_VPEND | GPF_FAULT | GPF_AWATCH);
 	AUXP(gp)->ap_mac = 0;
 	if (t->t_held && gp->gp_proc == u.u_procp)
 		u.u_procp->p_hold = t->t_hold;
 	t->t_proc = 0;
 	t->t_gp = 0;
+	t->t_force = 0;
+	t->t_forceentry = 0;
 	t->t_held = 0;
 	t->t_tick = 0;
 	t->t_left = 0;
 	if (ui.l_active == gp) {
 		ui.l_active = ui.l_gp;
+		ui_forcewatch();
 		wakeup((caddr_t)&ui.l_active);
 	}
+}
+
+/* A carrier binds only its own admitted child to its public native world. */
+static int
+coffbind(gp,b)
+struct guest_proc *gp;
+char *b;
+{
+    struct uicoff *c;
+    unsigned char low[4];
+    long pid=G32(b),hi=G32(b+4),lo=G32(b+8),a5=G32(b+12);
+    if(ui.l_state!=LS_INUSE || gp!=ui.l_gp || gp->gp_proc!=u.u_procp ||
+        ui.l_proc!=u.u_procp || !ui_task(gp)) return EPERM;
+    if((!hi && (unsigned long)lo<=2UL) || !ui_macrange(gp,(unsigned long)a5,4)) return EINVAL;
+    if(copyin((caddr_t)a5,(caddr_t)low,4) ||
+        copyin((caddr_t)0x904,(caddr_t)low,4)) return EFAULT;
+    if(G32(low)!=a5) return EINVAL;
+    for(c=ui_coffs;c && c->c_pid!=pid;c=c->c_next);
+    if(!c || prfind(pid)!=c->c_proc || GUESTP(c->c_proc)!=c->c_gp)
+        return ESRCH;
+    if(c->c_proc->p_parent!=u.u_procp || c->c_gp->gp_proc!=c->c_proc ||
+        !ui_task(c->c_gp) || !(AUXP(c->c_gp)->ap_mac & APM_COFF)) return EPERM;
+    if(c->c_owner) {
+        if(c->c_owner!=u.u_procp || c->c_ownergp!=gp || c->c_psn[0]!=hi ||
+            c->c_psn[1]!=lo || c->c_a5!=a5) return EBUSY;
+    } else {
+        if(ui_coffseq>=32767) return EAGAIN;
+        c->c_owner=u.u_procp;c->c_ownergp=gp;c->c_psn[0]=hi;c->c_psn[1]=lo;
+        c->c_a5=a5;c->c_token=++ui_coffseq;
+    }
+    c->c_gp->gp_flags |= GPF_AWATCH;
+    P32(b+16,c->c_token);
+    return 0;
+}
+
+int
+ui_coffworld(gp,b)
+struct guest_proc *gp;
+char *b;
+{
+    struct uicoff *c;
+    if(!ui_patchshared(gp) || !(AUXP(gp)->ap_mac & APM_COFF)) return 0;
+    for(c=ui_coffs;c && c->c_gp!=gp;c=c->c_next);
+    if(!c || !c->c_owner || prfind(c->c_pid)!=c->c_proc ||
+        GUESTP(c->c_proc)!=gp || gp->gp_proc!=c->c_proc ||
+        c->c_owner!=ui.l_proc || c->c_ownergp!=ui.l_gp ||
+        c->c_owner!=c->c_proc->p_parent || !ui_task(gp)) return 0;
+    P32(b,c->c_token);P32(b+4,c->c_psn[0]);P32(b+8,c->c_psn[1]);P32(b+12,c->c_a5);
+    return 1;
 }
 
 /*
@@ -319,6 +651,19 @@ uidetach(gp)
 {
 	struct uitask *t;
 
+    if(ui_stackspaceclear(gp))psignal(gp->gp_proc,SIGKILL);
+    {
+        int pe = ui_pmidleclear(gp);
+        if(pe) {
+            psignal(gp->gp_proc,SIGKILL);
+            if(pe!=1)ui_pmidleforget(gp);
+        }
+    }
+    if(ui_otrouteclear(gp)) {
+        psignal(gp->gp_proc,SIGKILL);
+        ui_otrouteforget(gp);
+    }
+    coffdrop(gp,gp==ui.l_gp);
 	if (ui.l_uiproc == gp->gp_proc) {
 		ui.l_uip = 0;
 		ui.l_uiproc = 0;
@@ -345,10 +690,13 @@ uidetach(gp)
 	uitickstop();
 	ui_unscreen(0);
 	ui_inreset();
-	gp->gp_flags &= ~(GPF_ALINE | GPF_PRIV | GPF_SPIN | GPF_VPEND | GPF_FAULT);
+	gp->gp_flags &= ~(GPF_ALINE | GPF_PRIV | GPF_SPIN | GPF_VPEND | GPF_FAULT | GPF_AWATCH);
 	AUXP(gp)->ap_mac = 0;
 	pramout();
+	ui_frontclear();
+	ui_aslmclear(gp);
 	ui_rmram(gp->gp_proc);
+	ui_gfdclear();
 	ui.l_state = LS_EMPTY;
 	ui.l_proc = 0;
 	ui.l_gp = 0;
@@ -424,6 +772,8 @@ uisetup(gp, cmd, arg, b, rvp)
 		gp->gp_vsr = 0x2000;
 		gp->gp_vvbr = 0;
 		gp->gp_flags |= GPF_ALINE | GPF_PRIV | GPF_SPIN;
+		ui_forcereserve(0);
+		ui_patcharm(gp);
 		/* A/UX 2's Mac ran on 68030s only */
 		if (AUXP(gp)->ap_flags & APF_AUX2)
 			gp->gp_flags |= GPF_CPU030;
@@ -431,7 +781,9 @@ uisetup(gp, cmd, arg, b, rvp)
 	case 2:				/* UI_CLEAR */
 		if (!UIACT(gp))
 			return EINVAL;
-		gp->gp_flags &= ~(GPF_ALINE | GPF_PRIV | GPF_SPIN | GPF_VPEND | GPF_FAULT);
+		if (ui_pmidleclose(gp))
+			return EFAULT;
+		gp->gp_flags &= ~(GPF_ALINE | GPF_PRIV | GPF_SPIN | GPF_VPEND | GPF_FAULT | GPF_AWATCH);
 		gp->gp_vsr = 0;
 		return 0;
 	case 5:				/* UI_ROM(addr) */
@@ -480,13 +832,17 @@ uisetup(gp, cmd, arg, b, rvp)
 		ui.l_task[0].t_proc = p;
 		ui.l_task[0].t_gp = gp;
 		ui.l_active = gp;
+		ui.l_task[0].t_force = 0;
+		ui.l_task[0].t_forceentry = 0;
 		wakeup((caddr_t)&ui.l_state);
 		ui.l_shmid = -1;
 		ui.l_evmask = 0xffef;
 		ui.l_lapchk = 0;
 		ui.l_sdchk = 0;
 		ui.l_dmchk = 0;
+		ui.l_fsqchk = 0;
 		AUXP(gp)->ap_mac |= APM_TASK;
+		ui_gfdrefresh(gp);
 		prampin();
 		*rvp = 0;
 		return 0;
@@ -632,6 +988,57 @@ ui_lapchk()
 }
 
 /*
+ * Patch.067C hooks the File Manager queue at the first _AUXDispatch after
+ * boot and ends its hook in a jump through the FSQueueHook it found.
+ * 7.x's File Manager patches leave a hook there; 8.1's (HFS Plus) are kept
+ * out, so it finds A/UX's -1 (none) and Log Out's first _Close jumps to
+ * -1.  Until it hooks in, a -1 FSQueueHook becomes an rts of its own; once
+ * hooked, a -1 it kept does.
+ */
+#define	FSQRTS	0x13644			/* ExtFSHookRts */
+#define	FSQSTATE 0x52f12		/* hookstate: 2 once hooked */
+#define	FSQREAL	0x87d28			/* the hook it found */
+static unsigned char fsqsig[] = {
+	0x20, 0x39, 0x00, 0x05, 0x2f, 0x12,	/* cAUXDispatch: hookstate */
+	0x4e, 0xf0, 0x01, 0xf1, 0x00, 0x08, 0x7d, 0x28	/* jmp ([realFSQueueHook]) */
+};
+
+/* once, with Patch.067C loaded */
+static void
+ui_fsqsig()
+{
+	unsigned char b[8];
+
+	if (ui.l_fsqchk)
+		return;
+	ui.l_fsqchk = -1;
+	if (copyin((caddr_t)0x40f8, b, 6) || bcmp(b, fsqsig, 6) ||
+	    copyin((caddr_t)0x135da, b, 8) || bcmp(b, fsqsig + 6, 8) ||
+	    copyin((caddr_t)FSQRTS, b, 2) || G16(b) != 0x4e75)
+		return;
+	ui.l_fsqchk = 1;
+}
+
+static void
+ui_fsqchk()
+{
+	unsigned char b[4];
+	long a;
+
+	if (ui.l_fsqchk != 1 || copyin((caddr_t)FSQSTATE, b, 4))
+		return;
+	if (G32(b) >= 2) {
+		ui.l_fsqchk = 2;
+		a = FSQREAL;
+	} else
+		a = 0x3e2;
+	if (copyin((caddr_t)a, b, 4) || G32(b) != 0xffffffff)
+		return;
+	P32(b, FSQRTS);
+	(void)copyout(b, (caddr_t)a, 4);
+}
+
+/*
  * A user's Shut Down and Restart log out without A/UX's dialog, which
  * offers a Shut Down with root's password: in ShutDwnPower and
  * ShutDwnStart the call of shutDownDialog becomes moveq #0, its result
@@ -723,6 +1130,8 @@ uiattach(gp, rvp)
 	struct rlimit *lim;
 	caddr_t rom = ui.l_romaddr ? ui.l_romaddr : (caddr_t)UI_ROMBASE;
 	char w[4];
+	unsigned char made[AUX_GNOFILE];
+	rlim_t oldlimit;
 	int e;
 
 	if (ui.l_state != LS_INUSE || ui.l_uip == 0 || ui_task(gp))
@@ -735,10 +1144,25 @@ uiattach(gp, rvp)
 		return EAGAIN;
 	if (copyin(ui.l_uip, w, sizeof w))
 		return EFAULT;
-	if ((e = ui_rommap(rom, AUXP(gp)->ap_flags & APF_AUX2)) != 0)
+    lim=&u.u_rlimit[RLIMIT_NOFILE];oldlimit=lim->rlim_cur;
+    if(lim->rlim_cur<AUX_GFD+AUX_GNOFILE)
+        lim->rlim_cur=lim->rlim_max<AUX_GFD+AUX_GNOFILE ?
+            lim->rlim_max:AUX_GFD+AUX_GNOFILE;
+    if((e=ui_gfdjoin(gp,made))!=0) {
+        lim->rlim_cur=oldlimit;return e;
+    }
+    if ((e = ui_attachscreen(gp)) != 0) {
+        ui_gfdrollback(made);lim->rlim_cur=oldlimit;return e;
+    }
+	if ((e = ui_rommap(rom, AUXP(gp)->ap_flags & APF_AUX2)) != 0) {
+		ui_detachscreen(gp);
+        ui_gfdrollback(made);lim->rlim_cur=oldlimit;
 		return e;
+	}
 	t->t_proc = u.u_procp;
 	t->t_gp = gp;
+	t->t_force = 0;
+	t->t_forceentry = 0;
 	t->t_held = 0;
 	t->t_tick = 0;
 	t->t_left = 0;
@@ -755,6 +1179,31 @@ uiattach(gp, rvp)
  * Everything else startmac and Patch.067C issue: events; no drives,
  * SCSI or VM; PRAM in memory.
  */
+/* Session preferences stay volatile unless a privileged task writes them. */
+static int
+pramwrite(gp, addr, off, n)
+	struct guest_proc *gp;
+	long addr, off, n;
+{
+	unsigned char bytes[sizeof ui.l_pram];
+	int root;
+
+	if (off < 0 || n < 0 || off > sizeof bytes || n > sizeof bytes - off)
+		return EINVAL;
+	if (ui.l_state != LS_INUSE || !ui.l_proc || !ui_task(gp))
+		return EPERM;
+	root = u.u_cred->cr_uid == 0;
+	if (!root && u.u_cred->cr_uid != ui.l_proc->p_cred->cr_uid)
+		return EPERM;
+	if (copyin((caddr_t)addr, (caddr_t)bytes, n)) return EFAULT;
+	bcopy((caddr_t)bytes, (caddr_t)ui.l_pram + off, n);
+	if (root && n) {
+		bcopy((caddr_t)bytes, (caddr_t)ui_pramsaved + off, n);
+		ui_pramdirty = 1;
+	}
+	return 0;
+}
+
 static int
 uimisc(gp, cmd, arg, b, rvp)
 	struct guest_proc *gp;
@@ -767,6 +1216,8 @@ uimisc(gp, cmd, arg, b, rvp)
 	long off, n;
 	int i;
 
+	if (UIACT(gp))
+		ui_fsqchk();
 	switch (UIOC_NUM(cmd)) {
 	case 4:				/* UI_UNSCREEN */
 		if (ui.l_gp == gp)
@@ -811,7 +1262,9 @@ uimisc(gp, cmd, arg, b, rvp)
 		if (!UIACT(gp))
 			return EINVAL;
 		*rvp = 0;
-		return ui_getosevent(b);
+		i = ui_getosevent(b);
+		ui_forcepublish(gp);
+		return i;
 	case 28: case 29:		/* UI_READPRAM, UI_WRITEPRAM */
 		off = G32(b + 4) & 0xffff;
 		n = (G32(b + 4) >> 16) & 0xffff;
@@ -820,10 +1273,7 @@ uimisc(gp, cmd, arg, b, rvp)
 		if (UIOC_NUM(cmd) == 28)
 			return copyout((caddr_t)ui.l_pram + off, (caddr_t)G32(b), n) ?
 			    EFAULT : 0;
-		if (!suser(u.u_cred))
-			return EPERM;
-		ui_pramdirty = 1;
-		return copyin((caddr_t)G32(b), (caddr_t)ui.l_pram + off, n) ? EFAULT : 0;
+		return pramwrite(gp, G32(b), off, n);
 	case 34:			/* UI_PHYS_SCREENS */
 		if (ui.l_state != LS_INUSE)
 			return EINVAL;
@@ -849,6 +1299,7 @@ uimisc(gp, cmd, arg, b, rvp)
 		} else
 			t->t_tick = 1;
 		ui_lapchk();
+		ui_fsqsig();
 		ui_sdchk();
 		ui_dmchk();
 		if (ui.l_tid == 0 && (ui.l_tid = ttimeout(uitick, (caddr_t)0, 1L)) == -1) {
@@ -876,6 +1327,7 @@ uimisc(gp, cmd, arg, b, rvp)
 			uileave(t);
 			if (o < ui.l_task + UI_NTASK && o != t && o->t_gp != ui.l_active) {
 				ui.l_active = o->t_gp;
+			ui_forcewatch();
 				wakeup((caddr_t)&ui.l_active);
 			}
 			psignal(u.u_procp, SIGKILL);
@@ -883,6 +1335,7 @@ uimisc(gp, cmd, arg, b, rvp)
 		}
 		if (o != t) {
 			ui.l_active = o->t_gp;
+			ui_forcewatch();
 			wakeup((caddr_t)&ui.l_active);
 		}
 		return uiwait(t);
@@ -930,23 +1383,33 @@ uimisc(gp, cmd, arg, b, rvp)
 	case 62:			/* UI_VM_GETPHYS */
 		return EINVAL;
 	case 63:			/* UI_SETCOFFNAME {id, path, len} */
-		n = (short)G16(b + 8);
-		if (n < 0 || n >= sizeof ui.l_coffname)
-			return EINVAL;
-		if (copyin((caddr_t)G32(b + 4), ui.l_coffname, n))
-			return EFAULT;
-		ui.l_coffname[n] = 0;
-		ui.l_coffnamelen = n;
-		ui.l_coffid = G32(b);
-		return 0;
+        return coffname(gp,b,1);
+    case 0x95:
+        if(UIOC_SIZE(cmd)!=8 || (cmd & (UIOC_IN|UIOC_OUT))!=UIOC_OUT)
+            return EINVAL;
+        return coffenv(gp,b);
+    case 0x94:
+        if(UIOC_SIZE(cmd)!=16 || (cmd & (UIOC_IN|UIOC_OUT))!=(UIOC_IN|UIOC_OUT))
+            return EINVAL;
+        return ui_otacceptdiag(gp,b);
+    case 0x93:
+        if(UIOC_SIZE(cmd)!=12 || (cmd & (UIOC_IN|UIOC_OUT))!=UIOC_IN)
+            return EINVAL;
+        return ui_otprobearm(gp,b);
+    case 0x92:
+        if(UIOC_SIZE(cmd)!=8 || (cmd & (UIOC_IN|UIOC_OUT))!=(UIOC_IN|UIOC_OUT))
+            return EINVAL;
+        return ui_otroutecontext(gp,b);
+    case 0x91:
+        if(UIOC_SIZE(cmd)!=20 || (cmd & (UIOC_IN|UIOC_OUT))!=UIOC_IN)
+            return EINVAL;
+        return ui_otroute(gp,b);
+    case 0x90:
+        if(UIOC_SIZE(cmd)!=20 || (cmd & (UIOC_IN|UIOC_OUT))!=(UIOC_IN|UIOC_OUT))
+            return EINVAL;
+        return coffbind(gp,b);
 	case 64:			/* UI_GETCOFFNAME */
-		n = (short)G16(b + 8);
-		if (n > ui.l_coffnamelen)
-			n = ui.l_coffnamelen;
-		if (n < 0 || copyout(ui.l_coffname, (caddr_t)G32(b + 4), n))
-			return EFAULT;
-		P16(b + 8, n);
-		return 0;
+        return coffname(gp,b,0);
 	case 68:			/* UI_GET_INTERR_VECTORS: none saved */
 		*rvp = 1;
 		return 0;
@@ -966,6 +1429,8 @@ uimisc(gp, cmd, arg, b, rvp)
 			uidetach(gp);
 		return 0;
 	case 44: case 45:		/* UI_REBOOT, UI_SHUTDOWN */
+		if (UIACT(gp) && ui_pmidleclose(gp))
+			return EFAULT;
 		return uiadmin(UIOC_NUM(cmd) == 45 ? 0 : 1);
 	case 37:			/* UI_ATTACHLAYER {id, size, flags} */
 		return uiattach(gp, rvp);
@@ -1030,8 +1495,11 @@ uinter_load()
 	if (shminfo.shmmax < 0x2400000)
 		shminfo.shmmax = 0x2400000;
 	aux_macdetach = uidetach;
+	aux_macgfd = ui_gfdrefresh;
 	aux_uitick = ui_update;
+	aux_macpoll = ui_forcepoll;
 	aux_slotmgr = ui_slotmgr;
+	aux_alwatch = ui_alwatch;
 	ui.l_shmid = -1;
 	pramreset();
 	return 0;
@@ -1040,11 +1508,14 @@ uinter_load()
 static int
 uinter_unload()
 {
-	if (ui.l_state != LS_EMPTY || ui_nopen || ui_rombusy())
+	if (ui.l_state != LS_EMPTY || ui_nopen || ui_ncoff || ui_rombusy())
 		return EBUSY;
 	aux_macdetach = 0;
+	aux_macgfd = 0;
 	aux_uitick = 0;
+	aux_macpoll = 0;
 	aux_slotmgr = 0;
+	aux_alwatch = 0;
 	ui_romfree();
 	return 0;
 }

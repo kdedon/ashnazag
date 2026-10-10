@@ -18,7 +18,10 @@ def convert(data, dir, name=None):
         name = data[2:2 + data[1]]
     if isinstance(name, str):
         name = name.encode('mac_roman')
-    if not name or b'/' in name or b'\0' in name or name in (b'.', b'..'):
+    # A/UX stores a Mac name's '/' as ':' (which a Mac name cannot hold) and
+    # its bytes $80-$FF unchanged
+    name = name.replace(b'/', b':')
+    if not name or b'\0' in name or name in (b'.', b'..'):
         raise ValueError('bad file name')
     # Finder flags: high byte at 73, low at 101; drop "inited" so the Finder
     # places the icon itself

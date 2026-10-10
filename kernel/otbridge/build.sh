@@ -37,10 +37,10 @@ $NICE ${HOSTCC:-cc} -std=gnu89 -O -w -DDLM_TOOL -I"$DLM" -I"$DLM/include" \
 	-o "$W/tools/mkksym" "$DLM/tools/mkksym.c" "$DLM/dlm_sym.c"
 $NICE ${HOSTCC:-cc} -std=gnu89 -O -w -o "$W/tools/modfix" "$DLM/tools/modfix.c"
 CC="$NICE m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -Wall -I$DLM/include -I$O"
-for f in otxlate otxti otbdev otbst; do
+for f in otxlate otxti otbdev otbst anchor; do
 	$CC -c "$O/$f.c" -o "$W/$f.o" 2> "$W/$f.warn" || { cat "$W/$f.warn"; exit 1; }
 	! grep -v 'types.h:182\|In file included\|^ *from ' "$W/$f.warn" | grep . || exit 1
 done
 cp "$O/Master" "$W/src/"
-m68k-cbm-sysv4-ld -r -o "$W/src/Driver.o" "$W/otxlate.o" "$W/otxti.o" "$W/otbdev.o" "$W/otbst.o"
+m68k-cbm-sysv4-ld -r -o "$W/src/Driver.o" "$W/otxlate.o" "$W/otxti.o" "$W/otbdev.o" "$W/otbst.o" "$W/anchor.o"
 DLM_TOOLS=$W/tools sh "$DLM/tools/mkmod" -k "$KERNEL" -o "$OUT" "$W/src"

@@ -22,11 +22,146 @@ extern int preempt(), issig();
 extern void psig();
 extern int runrun;
 
+int aux_lstatdiag;
+long aux_lstatpid,aux_lstatcount;
+long aux_lstatrows[32][36],aux_lstatmeta[32][52],aux_lstatrequest[32][40];
+extern timestruc_t hrestime;
+static int aux_vur();
+
+static void
+lstatdiag(gp,num,a,e,value,r)
+struct guest_proc *gp;
+int num,e;
+long *a,value;
+char *r;
+{
+    long *v,*m,*q;char *name;unsigned long sp,cache;int i;unsigned char sig[10],caller[16],request[32];
+    if(!aux_lstatdiag || num!=111 || gp->gp_proc->p_pid!=aux_lstatpid ||
+        !(AUXP(gp)->ap_mac & APM_TASK) || aux_lstatcount<0 || aux_lstatcount>=32)return;
+    v=aux_lstatrows[aux_lstatcount];m=aux_lstatmeta[aux_lstatcount];
+    q=aux_lstatrequest[aux_lstatcount++];bzero((caddr_t)q,40*4);
+    bzero((caddr_t)v,36*4);bzero((caddr_t)m,52*4);
+    sp=GR_USP(r);
+    v[0]=gp->gp_proc->p_pid;v[1]=GR_PC(r);v[2]=sp;v[3]=e;
+    v[4]=value;v[5]=lbolt;v[6]=u.u_procp->p_cursig;
+    v[7]=a[0];v[8]=a[1];
+    v[10]=copyin((caddr_t)sp,(caddr_t)(v+12),32)?-1:0;
+    m[1]=a[1];m[3]=v[18];m[4]=hrestime.tv_sec;m[5]=hrestime.tv_nsec;
+    if(!e && aux_vur(gp,(caddr_t)a[1],58) &&
+        !copyin((caddr_t)a[1],(caddr_t)(m+8),58))m[0]|=1;
+    if(!v[10] && v[12]==0x17b80 && v[18]==0x2145a &&
+        GR_PC(r)==0x4578c &&
+        !copyin((caddr_t)0x17b7a,(caddr_t)sig,6) &&
+        sig[0]==0x61 && sig[1]==0xff && G32(sig+2)==0x0002dc04 &&
+        !copyin((caddr_t)0x21454,(caddr_t)sig,6) &&
+        sig[0]==0x61 && sig[1]==0xff && G32(sig+2)==0xffff670c &&
+        !copyin((caddr_t)0x2150e,(caddr_t)sig,10) &&
+        G32(sig)==0x202b0012 && G16(sig+4)==0xb0b9 && G32(sig+6)==0x0008aa64) {
+        cache=(unsigned long)v[17];m[2]=cache;m[0]|=2;
+        if(cache<=~0UL-96 && aux_vur(gp,(caddr_t)cache,96) &&
+            !copyin((caddr_t)cache,(caddr_t)(m+23),96))m[0]|=4;
+        if(!copyin((caddr_t)0x8aa64,(caddr_t)(m+6),4))m[0]|=8;
+        if(sp<=~0UL-576 && aux_vur(gp,(caddr_t)(sp+568),8) &&
+            !copyin((caddr_t)(sp+568),(caddr_t)(m+47),8))m[0]|=16;
+        if(sp<=~0UL-576 && aux_vur(gp,(caddr_t)(sp+552),16) &&
+            !copyin((caddr_t)(sp+552),(caddr_t)caller,16)) {
+            m[7]=G32(caller);m[49]=G32(caller+4);
+            m[50]=G32(caller+8);m[51]=G32(caller+12);m[0]|=32;
+            if(m[7]==0x217c0 &&
+                !copyin((caddr_t)0x2175e,(caddr_t)sig,8) &&
+                G32(sig)==0x48e73f30 && G32(sig+4)==0x9efc00fc &&
+                !copyin((caddr_t)0x217bc,(caddr_t)sig,6) &&
+                G32(sig)==0x6100fc10 && G16(sig+4)==0x2f40 &&
+                sp<=~0UL-892 && aux_vur(gp,(caddr_t)(sp+852),40) &&
+                !copyin((caddr_t)(sp+852),(caddr_t)caller,16) &&
+                !copyin((caddr_t)(sp+860),(caddr_t)request,32)) {
+                q[0]=1;q[1]=G32(request);q[2]=G32(request+4);
+                q[3]=G32(request+8);q[4]=G32(caller);
+                for(i=0;i<8;i++)q[6+i]=G32(request+i*4);
+                if(q[1]==0x287d4 &&
+                    !copyin((caddr_t)0x287ce,(caddr_t)sig,6) &&
+                    G32(sig)==0x61ffffff && G16(sig+4)==0x8f8e &&
+                    (unsigned long)q[4]<=~0UL-96 &&
+                    aux_vur(gp,(caddr_t)q[4],96) &&
+                    !copyin((caddr_t)q[4],(caddr_t)(q+14),96))q[0]|=2;
+            }
+        }
+    }
+    name=(char *)(v+20);v[9]=-2;
+    for(i=0;i<63;i++) {
+        if((unsigned long)a[0]+i<(unsigned long)a[0] ||
+            copyin((caddr_t)((unsigned long)a[0]+i),name+i,1)) {
+            name[i]=0;v[9]=-1;break;
+        }
+        if(!name[i]) {v[9]=i;break;}
+    }
+}
+
+int aux_filediag;
+long aux_filecalls[2],aux_fileerrors[2],aux_filecount,aux_filefailedcount,aux_filebad;
+long aux_filelast[32][8],aux_filefailed[16][8];
+long aux_openfailed[16][23],aux_openfailedcount;
+
+static void
+filediag(gp,num,a,e,value,pc)
+    struct guest_proc *gp;
+    int num,e;
+    long *a,value,pc;
+{
+    struct aux_proc *ap=AUXP(gp);
+    file_t *fp;
+    long row[8];
+    int k,i;
+    if((ap->ap_mac & (APM_TASK|APM_COFF)) != (APM_TASK|APM_COFF) ||
+        (num!=3 && num!=19 && num!=5))return;
+    if(aux_filediag==2) {
+        bzero((caddr_t)aux_filecalls,sizeof aux_filecalls);
+        bzero((caddr_t)aux_fileerrors,sizeof aux_fileerrors);
+        bzero((caddr_t)aux_filelast,sizeof aux_filelast);
+        bzero((caddr_t)aux_filefailed,sizeof aux_filefailed);
+        aux_filecount=aux_filefailedcount=aux_filebad=aux_openfailedcount=0;
+        bzero((caddr_t)aux_openfailed,sizeof aux_openfailed);aux_filediag=1;
+    }
+    if(num==5) {
+        if(e && aux_openfailedcount<16) {
+            long *record=aux_openfailed[aux_openfailedcount++];
+            char *name=(char *)(record+7);
+            record[0]=gp->gp_proc->p_pid;record[1]=e;record[2]=a[1];
+            record[3]=a[2];record[4]=a[0];record[5]=pc;
+            for(i=0;i<63;i++) {
+                if(copyin((caddr_t)(a[0]+i),name+i,1)){name[i]=0;record[6]=-1;break;}
+                record[6]=i+1;
+                if(!name[i])break;
+            }
+        }
+        return;
+    }
+    if(aux_filecount>=4096){aux_filediag=0;return;}
+    k=num==19;aux_filecalls[k]++;
+    row[0]=gp->gp_proc->p_pid;row[1]=num;row[2]=a[0];row[3]=e;
+    row[4]=value;row[5]=row[6]=row[7]=0;
+    if(!getf((int)a[0],&fp)) {
+        row[5]=(long)fp;row[6]=(long)fp->f_vnode;row[7]=fp->f_offset;
+    }
+    for(i=0;i<8;i++)aux_filelast[aux_filecount&31][i]=row[i];
+    aux_filecount++;
+    if(e) {
+        aux_fileerrors[k]++;aux_filebad++;
+        if(aux_filefailedcount<16) {
+            for(i=0;i<8;i++)aux_filefailed[aux_filefailedcount][i]=row[i];
+            aux_filefailedcount++;
+        }
+    }
+}
+
+int aux_polldiag;
+long aux_pollintr,aux_pollretry,aux_polllast[4];
 long aux_nsys, aux_lastsys;	/* Mac task's calls; the last: number << 16 | errno */
 int aux_trace = 0;	/* 1: every call, 2: results, 4: open paths, 8: failures, name changes,
 			   16: keep the first AUX_TBUF bytes */
 int aux_execaux2 = 0;	/* the image being exec'd is an A/UX 2 one */
 void (*aux_macdetach)() = 0;
+void (*aux_macgfd)() = 0;
 int (*aux_slotmgr)() = 0;
 void (*aux_uitick)() = 0;
 
@@ -295,13 +430,26 @@ aux_systrap(gp, r, vec)
 		e = (*ae->ae_fn)(ap, a, &rv, r);
 	else
 		e = aux_amix(ae->ae_amix, a, &rv);
+	if(aux_lstatdiag)lstatdiag(gp,num,a,e,rv.r_val1,r);
+	if(aux_filediag)filediag(gp,num,a,e,rv.r_val1,GR_PC(r));
+	if (!e && aux_macgfd && (num==5 || num==6 || num==41 || num==62))
+		(*aux_macgfd)(gp);
 	if (aux_trace & 2)
 		printf("aux %d: %d -> %d %x %x\n", (int)p->p_pid, num, e, rv.r_val1,
 		    rv.r_val2);
 	if (mac_socktrace && num >= 70 && num <= 93)
 		socktrace(num, a, e ? (long)-e : (long)rv.r_val1);
 	if (e == EINTR || e == ERESTART) {
-		if ((ap->ap_compat & COMPAT_BSDSIGNALS) && p->p_cursig &&
+        if(aux_polldiag && (num==38 || num==50) && a[0]==0x6e) {
+            aux_pollintr++;aux_polllast[0]=ap->ap_compat;aux_polllast[1]=p->p_cursig;
+            aux_polllast[2]=u.u_sigrestart;aux_polllast[3]=GR_PC(r);
+            if((ap->ap_compat & COMPAT_BSDSIGNALS) && p->p_cursig &&
+               (u.u_sigrestart & 1L << (p->p_cursig-1)) &&
+               ((ap->ap_compat & COMPAT_SYSCALLS) || aux_restartable(num)))aux_pollretry++;
+        }
+		/* Polling must return to the button loop after a timer signal. */
+		if (num != 82 && !((num==38 || num==50) && a[0]==0x6e) &&
+            (ap->ap_compat & COMPAT_BSDSIGNALS) && p->p_cursig &&
 		    (u.u_sigrestart & 1L << (p->p_cursig - 1)) &&
 		    ((ap->ap_compat & COMPAT_SYSCALLS) || aux_restartable(num))) {
 			GR_PC(r) -= 2;
@@ -349,6 +497,7 @@ aux_pexec(gp)
 	if (ap->ap_mac && aux_macdetach)
 		(*aux_macdetach)(gp);
 	ap->ap_mac = 0;
+	ap->ap_envp = ap->ap_envc = ap->ap_envlo = ap->ap_envhi = 0;
 	if (!(ap->ap_compat & COMPAT_EXEC))
 		ap->ap_compat = COMPAT_DEFAULT;
 	ap->ap_flags = aux_execaux2 ? APF_AUX2 : 0;
@@ -373,6 +522,9 @@ static void
 aux_pexit(gp)
 	struct guest_proc *gp;
 {
+	AUXP(gp)->ap_envp = AUXP(gp)->ap_envc = 0;
+	AUXP(gp)->ap_envlo = AUXP(gp)->ap_envhi = 0;
+	aux_fidexit(gp->gp_proc);
 	aux_itstop(AUXP(gp));
 	aux_alstop(AUXP(gp), gp->gp_flags & GPF_EXEC);
 	if (AUXP(gp)->ap_mac && aux_macdetach)
@@ -400,6 +552,21 @@ aux_vur(gp, a, len)
 }
 
 struct guest_profile aux_profile = { "aux" };
+int	(*aux_alwatch)() = 0;
+
+/* vector 10: the layer sees a watched task's A-line first */
+static int
+aux_aline(gp, r, v)
+	struct guest_proc *gp;
+	char *r;
+	int v;
+{
+	if ((gp->gp_flags & GPF_AWATCH) && aux_alwatch && (*aux_alwatch)(gp, r)) {
+		guest_trapret();
+		return 0;
+	}
+	return guest_aline(gp, r, v);
+}
 
 static int
 auxcore_load()
@@ -435,7 +602,7 @@ auxcore_load()
 	d = &aux_profile.gpf_disp[10];
 	d->gd_kind = GD_REFLECT;
 	d->gd_flags = GDF_USER;
-	d->gd_fn = guest_aline;
+	d->gd_fn = aux_aline;
 	d = &aux_profile.gpf_disp[2];
 	d->gd_kind = GD_REFLECT;
 	d->gd_flags = GDF_USER;
@@ -451,4 +618,4 @@ auxcore_unload()
 	return 0;
 }
 
-MOD_MISC_WRAPPER(auxcore, auxcore_load, auxcore_unload, "A/UX system calls");
+MOD_STR_WRAPPER(auxcore, auxcore_load, auxcore_unload, "A/UX system calls");

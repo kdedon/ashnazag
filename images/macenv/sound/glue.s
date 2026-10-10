@@ -153,57 +153,67 @@ auxsys:
 | settrap(trap, addr): _SetToolTrapAddress
 	.globl	settrap
 settrap:
-	movel	4(%sp),%d0
-	moveal	8(%sp),%a0
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
+	movel	48(%sp),%d0
+	moveal	52(%sp),%a0
 	.short	0xa647
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 | newptr(size) -> system-heap block, cleared; 0 if none
 	.globl	newptr
 newptr:
-	movel	4(%sp),%d0
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
+	movel	48(%sp),%d0
 	.short	0xa71e
 	tstl	%d0
 	beqs	1f
 	subal	%a0,%a0
 1:	movel	%a0,%d0
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 	.globl	disposeptr
 disposeptr:
-	moveal	4(%sp),%a0
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
+	moveal	48(%sp),%a0
 	.short	0xa01f
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 | callback(proc, chan, cmd): a Pascal procedure (chan; var cmd)
 	.globl	callback
 callback:
-	movel	%d2,-(%sp)
-	movel	12(%sp),-(%sp)
-	movel	20(%sp),-(%sp)
-	moveal	16(%sp),%a0
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
+	movel	52(%sp),-(%sp)
+	movel	60(%sp),-(%sp)
+	moveal	56(%sp),%a0
 	jsr	(%a0)
-	movel	(%sp)+,%d2
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 | hlock(h): state, then _HLock
 	.globl	hlock
 hlock:
-	moveal	4(%sp),%a0
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
+	moveal	48(%sp),%a0
 	.short	0xa069			| _HGetState
 	movel	%d0,-(%sp)
-	moveal	8(%sp),%a0
+	moveal	52(%sp),%a0
 	.short	0xa029			| _HLock
 	movel	(%sp)+,%d0
 	andl	#0xff,%d0
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 | hsetstate(h, state)
 	.globl	hsetstate
 hsetstate:
-	moveal	4(%sp),%a0
-	movel	8(%sp),%d0
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
+	moveal	48(%sp),%a0
+	movel	52(%sp),%d0
 	.short	0xa06a			| _HSetState
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 | auxsysr(n, a, b, c) -> d0, or -errno
@@ -223,26 +233,32 @@ auxsysr:
 | gettrap(trap): _GetToolTrapAddress
 	.globl	gettrap
 gettrap:
-	movel	4(%sp),%d0
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
+	movel	48(%sp),%d0
 	.short	0xa746
 	movel	%a0,%d0
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 | newhandlesys(size) -> handle in the system heap, cleared; 0 if none
 	.globl	newhandlesys
 newhandlesys:
-	movel	4(%sp),%d0
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
+	movel	48(%sp),%d0
 	.short	0xa722
 	tstw	%d0
 	beqs	1f
 	subal	%a0,%a0
 1:	movel	%a0,%d0
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 	.globl	disposehandle
 disposehandle:
-	moveal	4(%sp),%a0
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
+	moveal	48(%sp),%a0
 	.short	0xa023
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 | ticks(): Ticks
@@ -265,19 +281,25 @@ splx:
 | instime(task), primetime(task, ms), dtinstall(task)
 	.globl	instime
 instime:
-	moveal	4(%sp),%a0
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
+	moveal	48(%sp),%a0
 	.short	0xa058
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 	.globl	primetime
 primetime:
-	moveal	4(%sp),%a0
-	movel	8(%sp),%d0
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
+	moveal	48(%sp),%a0
+	movel	52(%sp),%d0
 	.short	0xa05a
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 	.globl	dtinstall
 dtinstall:
-	moveal	4(%sp),%a0
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
+	moveal	48(%sp),%a0
 	.short	0xa082
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 | Time Manager and deferred task entries; A1 is the task
@@ -309,156 +331,182 @@ p_sdev:
 | delegate(params, ci): DelegateComponentCall
 	.globl	delegate
 delegate:
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
 	clrl	-(%sp)
-	movel	8(%sp),-(%sp)
-	movel	16(%sp),-(%sp)
+	movel	52(%sp),-(%sp)
+	movel	60(%sp),-(%sp)
 	moveq	#0x24,%d0
 	.short	0xa82a
 	movel	(%sp)+,%d0
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 | registercomp(desc, entry, name): RegisterComponent, global
 	.globl	registercomp
 registercomp:
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
 	clrl	-(%sp)
-	movel	8(%sp),-(%sp)
-	movel	16(%sp),-(%sp)
+	movel	52(%sp),-(%sp)
+	movel	60(%sp),-(%sp)
 	movew	#1,-(%sp)
-	movel	26(%sp),-(%sp)
+	movel	70(%sp),-(%sp)
 	clrl	-(%sp)
 	clrl	-(%sp)
 	moveq	#0x01,%d0
 	.short	0xa82a
 	movel	(%sp)+,%d0
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 | findnext(comp, desc): FindNextComponent
 	.globl	findnext
 findnext:
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
 	clrl	-(%sp)
-	movel	8(%sp),-(%sp)
-	movel	16(%sp),-(%sp)
+	movel	52(%sp),-(%sp)
+	movel	60(%sp),-(%sp)
 	moveq	#0x04,%d0
 	.short	0xa82a
 	movel	(%sp)+,%d0
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 | capture(comp, by): CaptureComponent
 	.globl	capture
 capture:
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
 	clrl	-(%sp)
-	movel	8(%sp),-(%sp)
-	movel	16(%sp),-(%sp)
+	movel	52(%sp),-(%sp)
+	movel	60(%sp),-(%sp)
 	moveq	#0x1c,%d0
 	.short	0xa82a
 	movel	(%sp)+,%d0
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 | setdefault(comp, flags): SetDefaultComponent
 	.globl	setdefault
 setdefault:
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
 	clrw	-(%sp)
-	movel	6(%sp),-(%sp)
-	movew	16(%sp),-(%sp)
+	movel	50(%sp),-(%sp)
+	movew	60(%sp),-(%sp)
 	moveq	#0x1e,%d0
 	.short	0xa82a
 	movew	(%sp)+,%d0
 	extl	%d0
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 | getsrc(ci, &data): SoundComponentGetSourceData
 	.globl	getsrc
 getsrc:
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
 	clrl	-(%sp)
-	movel	8(%sp),-(%sp)
-	movel	16(%sp),-(%sp)
+	movel	52(%sp),-(%sp)
+	movel	60(%sp),-(%sp)
 	movel	#0x00040004,-(%sp)
 	moveq	#0,%d0
 	.short	0xa82a
 	movel	(%sp)+,%d0
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 | openmixer(desc, flags, &ci): OpenMixerSoundComponent
 	.globl	openmixer
 openmixer:
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
 	clrw	-(%sp)
-	movel	6(%sp),-(%sp)
-	movel	14(%sp),-(%sp)
-	movel	22(%sp),-(%sp)
+	movel	50(%sp),-(%sp)
+	movel	58(%sp),-(%sp)
+	movel	66(%sp),-(%sp)
 	movel	#0x06140018,%d0
 	.short	0xa800
 	movew	(%sp)+,%d0
 	extl	%d0
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 | closemixer(ci): CloseMixerSoundComponent
 	.globl	closemixer
 closemixer:
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
 	clrw	-(%sp)
-	movel	6(%sp),-(%sp)
+	movel	50(%sp),-(%sp)
 	movel	#0x02180018,%d0
 	.short	0xa800
 	movew	(%sp)+,%d0
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 | smversion(): SndSoundManagerVersion
 	.globl	smversion
 smversion:
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
 	clrl	-(%sp)
 	movel	#0x000c0008,%d0
 	.short	0xa800
 	movel	(%sp)+,%d0
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 | Sound Manager calls for the self-test, through the trap table
 | sndnew(&chan, synth, init, proc)
 	.globl	sndnew
 sndnew:
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
 	clrw	-(%sp)
-	movel	6(%sp),-(%sp)
-	movew	16(%sp),-(%sp)
-	movel	20(%sp),-(%sp)
-	movel	28(%sp),-(%sp)
+	movel	50(%sp),-(%sp)
+	movew	60(%sp),-(%sp)
+	movel	64(%sp),-(%sp)
+	movel	72(%sp),-(%sp)
 	.short	0xa807
 	movew	(%sp)+,%d0
 	extl	%d0
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 | sndplay(chan, h, async)
 	.globl	sndplay
 sndplay:
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
 	clrw	-(%sp)
-	movel	6(%sp),-(%sp)
-	movel	14(%sp),-(%sp)
-	movew	24(%sp),%d0
+	movel	50(%sp),-(%sp)
+	movel	58(%sp),-(%sp)
+	movew	68(%sp),%d0
 	lslw	#8,%d0
 	movew	%d0,-(%sp)
 	.short	0xa805
 	movew	(%sp)+,%d0
 	extl	%d0
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 | snddo(chan, cmd): SndDoCommand, waiting for room
 	.globl	snddo
 snddo:
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
 	clrw	-(%sp)
-	movel	6(%sp),-(%sp)
-	movel	14(%sp),-(%sp)
+	movel	50(%sp),-(%sp)
+	movel	58(%sp),-(%sp)
 	clrw	-(%sp)
 	.short	0xa803
 	movew	(%sp)+,%d0
 	extl	%d0
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 | snddispose(chan): SndDisposeChannel, quiet
 	.globl	snddispose
 snddispose:
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
 	clrw	-(%sp)
-	movel	6(%sp),-(%sp)
+	movel	50(%sp),-(%sp)
 	movew	#0x0100,-(%sp)
 	.short	0xa801
 	movew	(%sp)+,%d0
 	extl	%d0
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
 | the self-test's callBackCmd routine: (chan, var cmd)
@@ -473,3 +521,69 @@ t_cb:
 	moveal	(%sp)+,%a1
 	addql	#8,%sp
 	jmp	(%a1)
+
+| Task-level component and SoundDispatch observations.
+    .globl probe_opencomp
+probe_opencomp:
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
+    clrl -(%sp)
+    movel 52(%sp),-(%sp)
+    moveq #7,%d0
+    .short 0xa82a
+    movel (%sp)+,%d0
+    moveml	(%sp)+,%d2-%d7/%a2-%a6
+    rts
+    .globl probe_closecomp
+probe_closecomp:
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
+    clrw -(%sp)
+    movel 50(%sp),-(%sp)
+    moveq #8,%d0
+    .short 0xa82a
+    movew (%sp)+,%d0
+    extl %d0
+    moveml	(%sp)+,%d2-%d7/%a2-%a6
+    rts
+    .globl probe_soundtool
+probe_soundtool:
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
+    clrl -(%sp)
+    movew 54(%sp),-(%sp)
+    movel #0x000c0000,%d0
+    .short 0xa800
+    movel (%sp)+,%d0
+    moveml	(%sp)+,%d2-%d7/%a2-%a6
+    rts
+    .globl probe_gestalt
+probe_gestalt:
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
+    movel 48(%sp),%d0
+    .short 0xa1ad
+    moveal 52(%sp),%a1
+    movel %a0,(%a1)
+    extl %d0
+    moveml	(%sp)+,%d2-%d7/%a2-%a6
+    rts
+
+| Native GetDefaultSoundOutput(Component *).
+    .globl probe_defaultout
+probe_defaultout:
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
+    clrw -(%sp)
+    movel 50(%sp),-(%sp)
+    movel #0x021c0018,%d0
+    .short 0xa800
+    movew (%sp)+,%d0
+    extl %d0
+    moveml	(%sp)+,%d2-%d7/%a2-%a6
+    rts
+
+    .globl probe_memtop
+probe_memtop:
+    movel 0x108,%d0
+    rts
+
+    .globl probe_rombase
+probe_rombase:
+    movel 0x2ae,%d0
+    rts

@@ -50,6 +50,8 @@ nm "$KERNEL" | awk '$3 ~ /^(freemem|availrmem|availsmem|lbolt|fpu_present|anonin
 	> "$B/ksyms"
 # t_dlm's modules, built against this kernel (none without module support)
 KDIR=$KDIR sh "$T/dlm/build.sh" "$KERNEL" "$B/dlm"
+DSPB=$B/display
+sh "$KDIR/mac/display/mods.sh" "$KERNEL" "$DSPB"
 # t_otb's module (none without otbridge or its kernel linkages)
 KDIR=$KDIR sh "$T/otb/build.sh" "$KERNEL" "$B/otb"
 # t_aux's modules and A/UX programs (none without guest support)
@@ -95,7 +97,7 @@ if [ -z "$TESTKB" ]; then
 	[ -d "$TOSB/root" ] && TESTKB=$((TESTKB + 1152 + $(du -sk "$TOSB/root" | cut -f1)))
 	[ -d "$AMIB/root" ] && TESTKB=$((TESTKB + 64 + $(du -sk "$AMIB/root" | cut -f1)))
 	[ -d "$SMQB/root" ] && TESTKB=$((TESTKB + 64 + 2 * $(du -sk "$SMQB/root" | cut -f1)))
-	# t_cpm's A: holds the distribution twice
+	# t_cpm: S: and its scratch drives
 	[ -d "$CPMB/root" ] && TESTKB=$((TESTKB + 128 + 3 * $(du -sk "$CPMB/root" | cut -f1)))
 fi
 
@@ -113,14 +115,16 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 	grep -q '^d /dev/term' "$M" || echo "d /dev/term 755 0 3"
 	grep -q '^c /dev/term/b' "$M" || echo "c /dev/term/b 620 0 7 0 1"
 	# clone is major 27; ptmx 15, pts 14, ticlts 30
-	echo "c /dev/ptmx 666 0 3 27 15"
+	grep -q '^c /dev/ptmx[[:space:]]' "$M" || echo "c /dev/ptmx 666 0 3 27 15"
 	if [ -f "$UFSB/ufs.img" ]; then
 		echo "b /dev/dsk/c2d0s0 600 0 3 18 2"
 		echo "d /ufs 755 0 3"
 	fi
 	echo "c /dev/ticlts 666 0 3 27 30"
 	grep -q '^d /dev/pts' "$M" || echo "d /dev/pts 755 0 3"
-	for i in 0 1 2 3 4 5 6 7; do echo "c /dev/pts/$i 620 0 7 14 $i"; done
+	for i in 0 1 2 3 4 5 6 7; do
+		grep -q "^c /dev/pts/$i[[:space:]]" "$M" || echo "c /dev/pts/$i 620 0 7 14 $i"
+	done
 	echo "d /tests 755 0 3"
 	echo "f /tests/ksyms 444 0 3 $B/ksyms"
 	# t_arith's FP through awk
@@ -144,6 +148,7 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 		echo "d /tests/aux 755 0 3"
 		echo "d /tests/aux/mod.d 755 0 3"
 		for f in "$AUXB"/mod.d/*; do
+			[ -z "$CPM_NO_TOS" ] || [ "$(basename "$f")" != tosguest ] || continue
 			echo "f /tests/aux/mod.d/$(basename "$f") 644 0 3 $f"
 		done
 	fi
@@ -197,8 +202,8 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 			echo "f $f 755 0 3 $MINTB/root$f"
 		done
 	fi
-	if [ -d "$CPMB/root" ] && [ -f "$AUXB/mod.d/tosguest" ]; then
-		[ -d "$TOSB/root" ] || [ -d "$MINTB/root" ] || echo "c /dev/tos 660 0 25 56 0"
+	if [ -d "$CPMB/root" ] && [ -f "$AUXB/mod.d/cpmguest" ]; then
+		echo "c /dev/cpm 660 0 25 59 0"
 		(cd "$CPMB/root" && find . -type d | sed 's#^\.##' | sort) | while read -r d; do
 			if [ -n "$d" ] && ! grep -q "^d $d[ 	]" "$M"; then
 				echo "d $d 755 0 3"
@@ -207,6 +212,7 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 		(cd "$CPMB/root" && find . -type f | sed 's#^\.##' | sort) | while read -r f; do
 			echo "f $f 755 0 3 $CPMB/root$f"
 		done
+		[ -z "$CPM_NO_TOS" ] || echo "f /tests/cpm/no-tos 444 0 3 $T/cpm/no-tos"
 	fi
 	if [ -d "$SMQB/root" ] && [ -d "$TOSB/root" ] && [ -f "$AUXB/mod.d/tosguest" ]; then
 		(cd "$SMQB/root" && find . -type d | sed 's#^\.##' | sort) | while read -r d; do
@@ -218,7 +224,7 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 			echo "f $f 755 0 3 $SMQB/root$f"
 		done
 	fi
-	if [ -d "$TOSB/root" ] && [ -f "$AUXB/mod.d/tosguest" ]; then
+	if [ -z "$CPM_NO_TOS" ] && [ -d "$TOSB/root" ] && [ -f "$AUXB/mod.d/tosguest" ]; then
 		echo "c /dev/tos 660 0 25 56 0"
 		# maketos's tools
 		for c in cpio find expr; do
@@ -261,9 +267,14 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 		grep -q '^c /dev/otbridge' "$M" || echo "c /dev/otbridge 666 0 3 55 0"
 	fi
 	# t_sound's drivers, built with the kernel; the default module path
-	if [ -f "$KDIR/build/mac/sound/mod.d/asc" ]; then
+	if [ -f "$DSPB/mod.d/dsuser" ] || [ -f "$KDIR/build/mac/sound/mod.d/asc" ]; then
 		echo "d /etc/conf 755 0 3"
 		echo "d /etc/conf/mod.d 755 0 3"
+	fi
+	if [ -f "$DSPB/mod.d/dsuser" ]; then
+		echo "f /etc/conf/mod.d/dsuser 644 0 3 $DSPB/mod.d/dsuser"
+	fi
+	if [ -f "$KDIR/build/mac/sound/mod.d/asc" ]; then
 		for f in asc auxsnd; do
 			echo "f /etc/conf/mod.d/$f 644 0 3 $KDIR/build/mac/sound/mod.d/$f"
 		done
@@ -276,7 +287,7 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 	fi
 } >> "$M"
 
-python3 "$RD/mks5fs.py" -s "$TESTKB" -i 512 -b 1024 -t 723000000 "$M" "$IMG"
+python3 "$RD/mks5fs.py" -s "$TESTKB" -i 1024 -b 1024 -t 723000000 "$M" "$IMG"
 L=${IMG%.img}.lst
 python3 "$RD/s5check.py" "$IMG" -l > "$L" || { cat "$L"; exit 1; }
 tail -2 "$L"

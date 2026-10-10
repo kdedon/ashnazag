@@ -18,6 +18,7 @@
 set -e
 
 D=$(cd "$(dirname "$0")" && pwd)
+AUX=$(cd "$D/../../.." && pwd)
 TAPE="${1:-$AMIX_TAPE}"
 B="${DISKROOT_BUILD:-$D/build}"
 KERNEL="${KERNEL:-$D/../../build/unix-mac.elf}"
@@ -74,13 +75,35 @@ EOF
 grep -q 'TERM=vt100' "$B/profile" && grep -q '^	if false$' "$B/profile" &&
 	grep -q '^if false &&' "$B/shutdown" || { echo "[FAIL] tape scripts changed"; exit 1; }
 
+MANIFEST=${DISKROOT_MANIFEST:-$D/root.manifest}
+DSSOURCE=${DSSOURCE:-$D/../display}
+NM=$AUX/toolchain/linux/bin/m68k-linux-gnu-nm
+[ -x "$NM" ] || { echo "[FAIL] no symbol reader $NM"; exit 1; }
+SYMBOLS=$("$NM" "$KERNEL") || { echo "[FAIL] cannot read kernel symbols"; exit 1; }
+if printf '%s\n' "$SYMBOLS" | grep ' T ds_modinit$' >/dev/null; then
+	if [ -z "$DSUSERMODULE" ]; then
+		sh "$DSSOURCE/mods.sh" "$KERNEL" "$B/display"
+		DSUSERMODULE=$B/display/mod.d/dsuser
+	fi
+	[ -f "$DSUSERMODULE" ] || { echo "[FAIL] no display module $DSUSERMODULE"; exit 1; }
+	$PY "$DSSOURCE/checkmod.py" "$KERNEL" "$DSUSERMODULE"
+	DSSTAGE=$(cd "$B" && pwd)/dsuser
+	case $DSSTAGE in *[[:space:]]*) echo "[FAIL] display staging directory contains whitespace"; exit 1 ;; esac
+	if ! cmp -s "$DSUSERMODULE" "$DSSTAGE"; then
+		cp "$DSUSERMODULE" "$DSSTAGE"
+	fi
+	cp "$MANIFEST" "$B/display.manifest"
+	printf 'f /etc/conf/mod.d/dsuser 644 0 3 %s\n' "$DSSTAGE" >> "$B/display.manifest"
+	MANIFEST=$B/display.manifest
+fi
+
 if [ "$ROOTFS" = ufs ]; then
-	$PY "$D/mkufs.py" -s "$ROOTMB" -t "$STAMP" -r "${DISKROOT_SRCDIR:-$D}" "${DISKROOT_MANIFEST:-$D/root.manifest}" "$B/root.img.new"
+	$PY "$D/mkufs.py" -s "$ROOTMB" -t "$STAMP" -r "${DISKROOT_SRCDIR:-$D}" "$MANIFEST" "$B/root.img.new"
 	$PY "$D/ufscheck.py" "$B/root.img.new" -l > "$B/root.lst" || {
 		tail -20 "$B/root.lst"; exit 1; }
 else
 	$PY "$D/mks5fs.py" -s $((ROOTMB * 1024)) -i "$ROOTINODES" -b 1024 -t "$STAMP" \
-		-n root -p c0d0s1 -r "${DISKROOT_SRCDIR:-$D}" "${DISKROOT_MANIFEST:-$D/root.manifest}" "$B/root.img.new"
+		-n root -p c0d0s1 -r "${DISKROOT_SRCDIR:-$D}" "$MANIFEST" "$B/root.img.new"
 	$PY "$D/s5check.py" "$B/root.img.new" -l > "$B/root.lst" || {
 		tail -20 "$B/root.lst"; exit 1; }
 fi

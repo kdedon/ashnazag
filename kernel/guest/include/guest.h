@@ -92,7 +92,18 @@ struct guest_proc {
 #define	GPF_ETAIL	0x800	/* in the tail of an emulated instruction or reflected exception */
 #define	GPF_IDROP	0x1000	/* the IPL dropped since the last such tail */
 #define	GPF_QUIET	0x2000	/* in a host call that must not be interrupted: only termination signals pass */
+#define	GPF_AWATCH	0x4000	/* A-line: profile callback before reflection */
 #define	GPF_PROFILE	0xffff0000	/* profile's own bits */
+/* a sum equals the OR only if no two flags share a bit */
+#define	GPF_ALL	(GPF_ALINE + GPF_PRIV + GPF_SPIN + GPF_VPEND + GPF_FAULT + \
+	GPF_PRIVBAD + GPF_EXEC + GPF_UNOTE + GPF_FTRAP + GPF_FTRAP13 + \
+	GPF_CPU030 + GPF_ETAIL + GPF_IDROP + GPF_QUIET + GPF_AWATCH)
+#define	GPF_ANY	(GPF_ALINE | GPF_PRIV | GPF_SPIN | GPF_VPEND | GPF_FAULT | \
+	GPF_PRIVBAD | GPF_EXEC | GPF_UNOTE | GPF_FTRAP | GPF_FTRAP13 | \
+	GPF_CPU030 | GPF_ETAIL | GPF_IDROP | GPF_QUIET | GPF_AWATCH)
+typedef char gpf_distinct[GPF_ALL == GPF_ANY && !(GPF_ANY & GPF_PROFILE) ? 1 : -1];
+typedef char gpf_gatebits[GPF_SPIN == 1 << 2 && GPF_VPEND == 1 << 3 &&
+	GPF_AWATCH == 1 << 14 ? 1 : -1];
 #define	GUEST_PRIV(gp)	((char *)((gp) + 1))	/* profile state */
 #define	GUESTP(p)	((struct guest_proc *)(p)->p_evpdp)
 

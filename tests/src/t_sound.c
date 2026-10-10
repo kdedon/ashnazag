@@ -40,13 +40,14 @@ static pid_t sndd = -1, sndaux = -1;
 
 #define STARTMAC "/mac/bin/startmac"
 #define MACSYS	"/macsys/S761"
+#define MACSYS81 "/macsys/S81"
 #define ROOT6	"/a201"
 #define SYS6	ROOT6 "/mac/sys/Sys6"
 #define SYS6DIR	ROOT6 "/mac/sys/System Folder"
 #define SNDTEST	"/mac/lib/SndTest"
 #define SNDAUX	"/usr/lib/sndaux"
 #define MACDEV	"/dev/dsk/c1d0s0"
-#define TESTF	"/tmp/sndtest"
+#define TESTF	"/tmp/sndinit"
 #define TLOW	0x744c4f57		/* 'tLOW', the Mac RAM segment */
 #define MD	"/tests/aux/mod.d"
 #define MACLOG	"/tmp/sndmac.log"
@@ -83,8 +84,9 @@ kget(char *name, long off)
 	return v;
 }
 
-/* SoundOut's self-test in a 7.6.1 session, as a Quadra 800 */
+/* Sound Manager playback through a startup INIT. */
 static int sstat(int, struct sndstat *);
+static long cpu(pid_t);
 
 /* every fidd: it forks into a process group of its own */
 static void
@@ -383,11 +385,15 @@ sys6links(int on)
  * callBackCmd runs after it.  sys6: A/UX 2.0.1's System 6 in /a201.
  */
 static void
-macsnd(int a, int sys6)
+macsnd(int a, int version)
 {
+	int sys6 = version == 1, sys81 = version == 2;
+	char *sysdir = sys81 ? MACSYS81 : MACSYS;
 	static char *av[] = { STARTMAC, 0 };
 	static char *env7[] = { "PATH=/aux/bin:/usr/bin:/sbin", "HOME=/tmp",
 		"TBSYSTEM=" MACSYS, "TBMEMORY=16M", "TBVERBOSE=1", "TBWARN=1", 0 };
+	static char *env81[] = { "PATH=/aux/bin:/usr/bin:/sbin", "HOME=/tmp",
+		"TBSYSTEM=" MACSYS81, "TBMEMORY=16M", "TBVERBOSE=1", "TBWARN=1", 0 };
 	static char *env6[] = { "PATH=/aux/bin:/usr/bin:/sbin", "HOME=/tmp",
 		"TBSYSTEM=/mac/sys/System Folder", "TBMEMORY=4M", "TBVERBOSE=1", "TBWARN=1", 0 };
 	struct sndstat s;
@@ -395,7 +401,7 @@ macsnd(int a, int sys6)
 	char tf[64], tout[64], ttrace[64];
 	unsigned long fed[4], tsync, tasync, tcb;
 	long serr, err, t0, tpart = -1, tdone = -1;
-	int cb, ui, fd, n, st, id, k, lf, nm = 0, p[2];
+	int cb, ui, fd, n, st, id, k, lf, nm = 0, soundready = 0, p[2];
 	off_t tsz = 0;
 	struct stat sb;
 	struct mod_mreg reg;
@@ -403,7 +409,7 @@ macsnd(int a, int sys6)
 	int mj = 54;
 	pid_t pid;
 
-	sprintf(tn, "mac%s_", sys6 ? "6" : "76");
+	sprintf(tn, "mac%s_", sys6 ? "6" : sys81 ? "81" : "76");
 	/* A/UX programs and the Mac's device, unless an earlier test registered them */
 	if (modpath(MD) == 0) {
 		strcpy(reg.md_modname, "auxexec");
@@ -419,7 +425,7 @@ macsnd(int a, int sys6)
 		system("/sbin/mount -F ufs " MACDEV " /macsys");
 	sprintf(line, "%s%s", root, STARTMAC);
 	if (stat(line, &sb) < 0 || stat(sys6 ? ROOT6 "/etc/aux/rom" : "/etc/aux/rom", &sb) < 0 ||
-	    stat(sys6 ? SYS6 "/System" : MACSYS "/System", &sb) < 0 ||
+	    (sprintf(line, "%s/System", sys6 ? SYS6 : sysdir), stat(line, &sb)) < 0 ||
 	    stat(SNDTEST "/%SndTest", &sb) < 0 || (ui = open("/dev/uinter0", O_RDWR)) < 0) {
 		sprintf(line, "%sasync", tn);
 		t_skip(line, "no startmac, ROM, System, uinter or SndTest");
@@ -431,8 +437,12 @@ macsnd(int a, int sys6)
 		sprintf(init, "%s/SndTest", SYS6DIR);
 		sprintf(inith, "%s/%%SndTest", SYS6DIR);
 	} else {
-		sprintf(init, "%s/Extensions/SndTest", MACSYS);
-		sprintf(inith, "%s/Extensions/%%SndTest", MACSYS);
+        if(sys81){
+            sprintf(init,"%s/Extensions/SndTest",sysdir);unlink(init);
+            sprintf(inith,"%s/Extensions/%%SndTest",sysdir);unlink(inith);
+        }
+        sprintf(init,"%s/Extensions/%s",sysdir,sys81?"zzSndTest":"SndTest");
+        sprintf(inith,"%s/Extensions/%%%s",sysdir,sys81?"zzSndTest":"SndTest");
 	}
 	cp(SNDTEST "/SndTest", init);
 	cp(SNDTEST "/%SndTest", inith);
@@ -444,6 +454,12 @@ macsnd(int a, int sys6)
 	unlink(tout);
 	unlink(ttrace);
 	close(creat(tf, 0666));
+    if (sys81) {
+        kset("uin_soundopencount",0L);kset("uin_soundopenrefused",0L);
+        kset("uin_soundopendiag",1L);
+        unlink("/tmp/sndpath.out");
+        close(creat("/tmp/sndpath", 0666));
+    }
 	kset("uinter_boxflag", sys6 ? 5L : 29L);
 	/* as a login starts it: output to a pipe, nothing else inherited */
 	if (pipe(p) < 0)
@@ -456,7 +472,7 @@ macsnd(int a, int sys6)
 			close(fd);
 		if (sys6 && (chroot(ROOT6) < 0 || chdir("/") < 0))
 			_exit(126);
-		execve(av[0], av, sys6 ? env6 : env7);
+		execve(av[0], av, sys6 ? env6 : sys81 ? env81 : env7);
 		_exit(127);
 	}
 	close(p[1]);
@@ -468,6 +484,10 @@ macsnd(int a, int sys6)
 	for (t0 = t_now_ms(); pid > 0 && t_now_ms() - t0 < 120000; poll((struct pollfd *)0, 0UL, 50)) {
 		while ((k = read(p[0], line, sizeof line)) > 0)
 			write(lf, line, k);
+        if(sys81 && !soundready && stat("/tmp/sndpath.out",&sb)==0){
+            soundready=1;
+            t_info("mac81_sound_installed","at %ld ms, playback marks %d",t_now_ms()-t0,nm);
+        }
 		if (nm < 3 && stat(ttrace, &sb) == 0 && sb.st_size > tsz) {
 			s.ss_fed = 0;
 			sstat(a, &s);
@@ -495,6 +515,81 @@ macsnd(int a, int sys6)
 		psdump();
 		macdump(pid);
 	}
+	if (pid > 0 && n > 0 && line[n - 1] == '\n') {
+		long cm, cd, ca, dm, dd, da;
+		struct sndstat idle;
+		poll((struct pollfd *)0, 0UL, 1000);
+		sstat(a, &idle);
+		cm = cpu(pid); cd = cpu(sndd); ca = cpu(sndaux);
+		poll((struct pollfd *)0, 0UL, 3000);
+		sstat(a, &s);
+		dm = cpu(pid) - cm; dd = cpu(sndd) - cd; da = cpu(sndaux) - ca;
+		t_info("mac_sound_idle_cpu", "%s Mac %ld ms, sndd %ld ms, sndaux %ld ms in 3 s",
+		    tn, dm, dd, da);
+        t_check("sound_service_idle_cpu", cd >= 0 && ca >= 0 && dd >= 0 && da >= 0 && dd <= 50 && da <= 50,
+            "sndd %ld ms, sndaux %ld ms in 3 s", dd, da);
+		sprintf(init, "%sidle_audio", tn);
+		t_check(init, s.ss_fed == idle.ss_fed && s.ss_nirq == idle.ss_nirq,
+		    "idle fed %lu frames, %lu interrupts", s.ss_fed - idle.ss_fed, s.ss_nirq - idle.ss_nirq);
+	}
+    if (sys81) {
+        int oi,oj;long opened=kget("uin_soundopencount",0);
+        unsigned long proof[113], finalversion = 0, finaldispatch = 0; int have = 0;
+        char *versionfield;
+        kset("uin_soundopendiag",0L);
+        t_info("mac81_sound_opens","count %ld refused %ld",opened,kget("uin_soundopenrefused",0));
+        t_info("mac81_sound_open_reject","cap %ld selector %ld owner %ld proc %ld state %ld coff %ld auth %ld early %ld",
+            kget("uin_soundopenreject",0),kget("uin_soundopenreject",4),kget("uin_soundopenreject",8),kget("uin_soundopenreject",12),
+            kget("uin_soundopenreject",16),kget("uin_soundopenreject",20),kget("uin_soundopenreject",24),kget("uin_soundopenreject",28));
+        t_info("mac81_sound_open_auth","pc %lx vsr %lx stage %ld expand %lx globals %lx size %ld table %lx manager %lx version %lx d0 %lx",
+            kget("uin_soundopenlast",0),kget("uin_soundopenlast",4),kget("uin_soundopenlast",8),kget("uin_soundopenlast",12),
+            kget("uin_soundopenlast",16),kget("uin_soundopenlast",20),kget("uin_soundopenlast",24),kget("uin_soundopenlast",28),
+            kget("uin_soundopenlast",32),kget("uin_soundopenlast",36));
+        for(oi=0;oi<opened && oi<16;oi++) {long row[22];
+            for(oj=0;oj<22;oj++)row[oj]=kget("uin_soundopen",(oi*22+oj)*4);
+            t_info("mac81_sound_open","row %d pc %lx d0 %lx a0 %lx sp %lx args %lx/%lx/%lx/%lx/%lx sysA5 %lx a5 %lx globals %lx cached %lx flags %lx",
+                oi,row[0],row[1],row[2],row[3],row[4],row[5],row[6],row[7],row[8],row[9],row[10],row[11],row[12],row[13]);
+            t_info("mac81_sound_open_vsr","row %d vsr %lx",oi,(unsigned long)row[13]>>16);
+            t_info("mac81_sound_open_code","row %d before16 %lx/%lx/%lx/%lx/%lx/%lx/%lx/%lx",
+                oi,row[14],row[15],row[16],row[17],row[18],row[19],row[20],row[21]);
+        }
+        line[n > 0 ? n : 0] = 0;
+        versionfield = strstr(line, "sound_version=");
+        if (versionfield) (void)sscanf(versionfield, "sound_version=%lu", &finalversion);
+        versionfield = strstr(line, "sound_dispatch=");
+        if (versionfield) (void)sscanf(versionfield, "sound_dispatch=%lu", &finaldispatch);
+        memset(proof, 0, sizeof proof);
+        fd = open("/tmp/sndpath.out", O_RDONLY);
+        if (fd >= 0) {have = read(fd, proof, sizeof proof) == sizeof proof; close(fd);}
+        t_info("mac81_sound_path", "final %lx before %lx after %lx mixer_found %lu component %lu mixer_open %lu frames %lu timer %lu running %lu",
+            finalversion,proof[0],proof[1],proof[2],proof[3],proof[4],proof[5],proof[6],proof[7]);
+        t_info("mac81_sound_dispatch", "before %lx after %lx final %lx unimplemented %lx",
+            proof[8],proof[9],finaldispatch,proof[10]);
+        t_info("mac81_sound_component_calls", "calls %lu last %ld opens %lu init %lu mixer_error %ld delegate_error %ld selector %ld cando %ld info %lx params %lu storage %lu",
+            proof[11],(long)proof[12],proof[13],proof[14],(long)proof[15],(long)proof[16],(long)proof[17],(long)proof[18],proof[19],proof[20],proof[21]);
+        t_info("mac81_sound_selection", "registered %lx chosen %lx opened %lx close %ld captures %lu capture_error %ld default_error %ld snd %lx snhw %lx hdwr %lx sifter %lx gestalt_errors %ld/%ld/%ld native_before %lx native_after %lx",
+            proof[22],proof[23],proof[24],(long)proof[25],proof[26],(long)proof[27],(long)proof[28],proof[29],proof[30],proof[31],proof[32],(long)proof[33],(long)proof[34],(long)proof[35],proof[36],proof[37]);
+        t_info("mac81_sound_default", "before_error %ld before %lx after_error %ld after %lx",
+            (long)proof[38],proof[39],(long)proof[40],proof[41]);
+        t_info("mac81_sound_setter", "handler %lx target %lx fingerprint %lu",
+            proof[42],proof[43],proof[44]);
+        {int phase,ti;unsigned long *r;
+            for(phase=0;phase<2;phase++)for(ti=0;ti<2;ti++){
+                r=proof+45+phase*18+ti*9;
+                t_info("mac81_sound_trap","phase %d trap %lx raw %lx resolved %lx prefix %lx/%lx/%lx/%lx/%lx/%lx native %lu",phase,ti?0xa805L:0xa807L,r[0],r[1],r[2],r[3],r[4],r[5],r[6],r[7],r[8]);
+            }
+            for(ti=0;ti<4;ti++){
+                r=proof+81+ti*8;
+                t_info("mac81_sound_import","row %d site %lx opcode %lx target %lx native %lu prefix %lx/%lx/%lx/%lx",ti,r[0],r[1],r[2],r[3],r[4],r[5],r[6],r[7]);
+            }
+        }
+        t_check("mac81_sound_component", have && (finalversion >> 24) >= 3 && (proof[0] >> 24) >= 3 && (proof[1] >> 24) >= 3 &&
+            proof[2] == 1 && proof[3] == 1 && proof[4] == 1 && proof[5] > 0,
+            "native mixer component admission and frames");
+        t_check("mac81_sound_timer_idle", have && proof[5] > 0 && !proof[6] && !proof[7],
+            "component timer %lu running %lu", proof[6], proof[7]);
+        unlink("/tmp/sndpath"); unlink("/tmp/sndpath.out");
+    }
 	if (pid > 0) {
 		kill(-pid, SIGKILL);
 		t_waitchild(pid, &st, 20);
@@ -512,9 +607,16 @@ macsnd(int a, int sys6)
 		rename(SYS6DIR, SYS6);
 	}
 	line[n > 0 ? n : 0] = 0;
-	sprintf(tn, "mac%s_", sys6 ? "6" : "76");
+	sprintf(tn, "mac%s_", sys6 ? "6" : sys81 ? "81" : "76");
 #define NM(x)	(sprintf(init, "%s%s", tn, x), init)
 	t_info(NM("selftest"), "%s", line);
+	{
+		unsigned long calls = 0, intr = 0, bad = 1;
+		char *w = strstr(line, "wait_calls=");
+		t_check(NM("select_wait"), w && sscanf(w, "wait_calls=%lu wait_intr=%lu wait_bad=%lu",
+		    &calls, &intr, &bad) == 3 && calls > 0 && bad == 0,
+		    "finite select calls %lu, interrupts %lu, errors %lu", calls, intr, bad);
+	}
 	if (!t_check(NM("selftest"), n > 0 && sscanf(line,
 	    "sync_err=%ld sync_ticks=%lu err=%ld async_ticks=%lu cb=%d cb_ticks=%lu",
 	    &serr, &tsync, &err, &tasync, &cb, &tcb) == 6, "no result in 120 s")) {
@@ -534,6 +636,24 @@ macsnd(int a, int sys6)
 	t_check(NM("heard"), fed[3] - fed[2] >= CHIPHZ * 9 / 10,
 		"chip fed %lu frames", fed[3] - fed[2]);
 #undef NM
+}
+
+static long
+cpu(pid_t pid)
+{
+	char path[32];
+	prstatus_t s;
+	int fd;
+	long ms = -1;
+
+	sprintf(path, "/proc/%d", (int)pid);
+	if ((fd = open(path, O_RDONLY)) >= 0) {
+		if (ioctl(fd, PIOCSTATUS, &s) == 0)
+			ms = (s.pr_utime.tv_sec + s.pr_stime.tv_sec) * 1000L +
+			    (s.pr_utime.tv_nsec + s.pr_stime.tv_nsec) / 1000000;
+		close(fd);
+	}
+	return ms;
 }
 
 static int
@@ -743,6 +863,7 @@ main()
 	auxdev(a);
 	macsnd(a, 0);
 	macsnd(a, 1);
+	macsnd(a, 2);
 
 	/* a session in the back: paced, never at the chip */
 	if ((fb = open("/dev/fb0", O_RDWR)) < 0 || (id = acquire(fb, "sndback")) < 0) {

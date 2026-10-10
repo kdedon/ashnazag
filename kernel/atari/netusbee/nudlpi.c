@@ -25,6 +25,10 @@
  * The card has no interrupt: a timeout polls it every tick while a
  * stream is open.  Everything that touches the chip or the stream table
  * runs at IPL 6, the clock's level.
+ *
+ * NU_PCI builds the same driver for an RTL8029 behind a PCI bridge
+ * (opci): its interrupt drives the poll, and the timeout only watches
+ * for a stuck transmit, once a second.
  */
 #include "sys/types.h"
 #include "sys/param.h"
@@ -39,6 +43,9 @@
 #include "net/if.h"
 #include "amiga/driver/aen/aenuser.h"
 #include "nu.h"
+#ifdef NU_PCI
+#include "sys/opci.h"
+#endif
 
 /* DLPI 2.0 primitives this dlpi.h predates */
 #ifndef DL_ENABMULTI_REQ
@@ -100,7 +107,20 @@ extern char *panicstr;
 extern int timeout(), untimeout();
 extern int bcmp(), printf();
 extern void bcopy(), bzero();
+#ifdef NU_PCI
+#define NU_TICK		HZ
+#define NU_WHERE	"on PCI"
+#define NU_RTL		"RTL8029"
+static struct opci_dev *nu_dev;
+static struct opci_intr nu_oi;
+static int nu_intr();
+__volatile__ unsigned char *nu_io;
+#else
+#define NU_TICK		1
+#define NU_WHERE	"on the cartridge port"
+#define NU_RTL		"RTL8019"
 extern int ata_busprobe();
+#endif
 
 int nuopen(), nuclose(), nuwput(), nuwsrv();
 static void nu_tick(), nu_ioctl(), nu_proto();
@@ -133,7 +153,11 @@ unsigned long nu_couldnt_put, nu_debug;
 
 /* patchable */
 unsigned char nu_eaddr[6] = { 0 };	/* nonzero: use instead of the PROM */
+#ifdef NU_PCI
+char *nu_ifname = "ne";
+#else
 char *nu_ifname = "aen";		/* ifstats name, as netstat shows it */
+#endif
 
 static unsigned char nu_bcast[6] = { 255, 255, 255, 255, 255, 255 };
 
@@ -183,9 +207,24 @@ nu_find()
 	if (nu_found)
 		return nu_found > 0;
 	nu_found = -1;
+#ifdef NU_PCI
+	if ((nu_dev = opci_find((struct opci_dev *)0, 0x10ec, 0x8029)) == 0)
+		return 0;
+	if (opci_obtain(nu_dev) != 0) {
+		nu_dev = 0;
+		return 0;
+	}
+	nu_io = (unsigned char *)opci_attr(nu_dev, OPCI_BARADDR(0));
+	if (nu_probe(&nu_sc) < 0) {
+		opci_release(nu_dev);
+		nu_dev = 0;
+		return 0;
+	}
+#else
 	if (!ata_busprobe(NU_RDBASE) || !ata_busprobe(NU_WRBASE) ||
 	    nu_probe(&nu_sc) < 0)
 		return 0;		/* optional hardware: the open's ENXIO says it */
+#endif
 	if (nu_usable(nu_eaddr))
 		bcopy((caddr_t)nu_eaddr, (caddr_t)nu_sc.ea, 6);
 	else if (nu_usable(nu_sc.prom))
@@ -195,8 +234,8 @@ nu_find()
 		return 0;
 	}
 	nu_found = 1;
-	printf("nu0: %s on the cartridge port, %d KB, Ethernet %x:%x:%x:%x:%x:%x\n",
-	    nu_sc.rtl ? "RTL8019" : "8390",
+	printf("%s0: %s %s, %d KB, Ethernet %x:%x:%x:%x:%x:%x\n", nu_ifname,
+	    nu_sc.rtl ? NU_RTL : "8390", NU_WHERE,
 	    (nu_sc.memhi - nu_sc.memlo) >> 2, nu_sc.ea[0], nu_sc.ea[1],
 	    nu_sc.ea[2], nu_sc.ea[3], nu_sc.ea[4], nu_sc.ea[5]);
 	return 1;
@@ -216,6 +255,19 @@ nu_start()
 		return 0;
 	}
 	nu_sc.rcr = RCR_AB;
+#ifdef NU_PCI
+	if (nu_oi.oi_fn == 0) {
+		nu_oi.oi_fn = nu_intr;
+		if (opci_intr(nu_dev, &nu_oi) != 0) {
+			nu_oi.oi_fn = 0;
+			nu_up = -1;
+			nu_splx(s);
+			printf("%s0: no interrupt\n", nu_ifname);
+			return 0;
+		}
+	}
+	nu_sc.imr = ISR_PRX | ISR_PTX | ISR_RXE | ISR_TXE | ISR_OVW | ISR_CNT;
+#endif
 	nu_bstate = BOARD_IN_INIT_CODE;
 	if (nu_init(&nu_sc) < 0) {
 		nu_stop(&nu_sc);
@@ -227,7 +279,7 @@ nu_start()
 	nu_bstate = BOARD_RUNNING;
 	nu_up = 1;
 	nu_splx(s);
-	nu_tid = timeout(nu_tick, (caddr_t)0, 1);
+	nu_tid = timeout(nu_tick, (caddr_t)0, NU_TICK);
 	return 1;
 }
 
@@ -240,15 +292,31 @@ nu_tick()
 	if (nu_up > 0 && !panicstr) {
 		if (nu_sc.running)
 			(void)nu_poll(&nu_sc);
-		else if (++nu_retry >= 60) {
+		else if (++nu_retry >= 60 / NU_TICK) {
 			nu_retry = 0;
 			(void)nu_init(&nu_sc);
 		}
 	}
 	nu_splx(s);
 	if (nu_up > 0)
-		nu_tid = timeout(nu_tick, (caddr_t)0, 1);
+		nu_tid = timeout(nu_tick, (caddr_t)0, NU_TICK);
 }
+
+#ifdef NU_PCI
+/* level 2 or 6, shared: nonzero when the chip asked */
+static int
+nu_intr()
+{
+	int s, mine;
+
+	s = nu_spl();
+	mine = nu_up > 0 && nu_sc.running && (NU_RD(NU_ISR) & nu_sc.imr);
+	if (mine)
+		(void)nu_poll(&nu_sc);
+	nu_splx(s);
+	return mine;
+}
+#endif
 
 /* the module goes: the statistics leave the interface list */
 int
@@ -264,6 +332,12 @@ nu_unload()
 			break;
 		}
 	nu_splx(s);
+#ifdef NU_PCI
+	if (nu_oi.oi_fn)
+		opci_unintr(&nu_oi);
+	if (nu_dev)
+		opci_release(nu_dev);
+#endif
 	return 0;
 }
 

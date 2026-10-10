@@ -10,6 +10,8 @@
 #include "sys/conf.h"		/* before moddefs.h: struct mod_drv_data */
 #include "auxcore.h"
 
+#define	GPF_STUB	0x80000000UL
+
 #define	UI_MAJOR	54
 #define	UI_VERSION	5
 #define	UI_UIPSIZE	0x1000		/* the ui page */
@@ -33,6 +35,8 @@ struct uitask {
 	struct guest_proc *t_gp;
 	k_sigset_t	t_hold;		/* its own mask, while t_held */
 	int		t_held;
+	int		t_force;
+	long		t_forceentry;
 	int		t_tick;		/* takes the tick (UI_TIMER) */
 	long		t_left;		/* A/UX 2: ticks to its one tick, 0 none */
 };
@@ -51,9 +55,6 @@ struct uilayer {
 	struct proc	*l_uiproc;	/* who mapped it */
 	caddr_t		l_romaddr;	/* 0 = no ROM mapping */
 	struct proc	*l_romproc;
-	long		l_coffid;
-	char		l_coffname[128];
-	short		l_coffnamelen;
 	unsigned char	l_pram[256];	/* XPRAM */
 	unsigned char	l_kchr[0xc00];
 	unsigned short	l_evmask;
@@ -61,6 +62,7 @@ struct uilayer {
 	int		l_lapchk;	/* the AppleTalk queue calls looked at */
 	int		l_sdchk;	/* 1 + (real uid != 0) at the last Shut Down patch */
 	int		l_dmchk;	/* the .mac modes looked at */
+	int		l_fsqchk;	/* the queue hook chain: -1 not Patch.067C's, 1 watched, 2 done */
 };
 #define	LS_EMPTY	0
 #define	LS_INUSE	2
@@ -93,7 +95,21 @@ extern struct uilayer ui;
 extern struct uitask *ui_task();
 extern caddr_t ui_uipof();
 extern int uinter_trace;
-extern int ui_slotmgr(), ui_screens(), ui_video();
+extern void ui_patcharm();
+extern int ui_patchshared();
+extern int ui_coffworld();
+extern int ui_macrange();
+extern int ui_alwatch();
+extern void ui_aslmclear();
+extern int ui_otprobearm();
+extern int ui_otacceptdiag();
+extern void ui_forcewatch(), ui_forcestub(), ui_forceend();
+extern int ui_forceget(), ui_forceentry(), ui_forcepoll(), ui_inputpoll();
+extern void ui_forcereserve(), ui_forcepublish(), ui_forcepollwatch();
+extern int ui_forceexit(), ui_forcepollowned(), ui_watchneeded();
+extern void ui_forceconsume(), ui_forceretry(), ui_forceenable();
+extern int ui_slotmgr(), ui_screens(), ui_video(), ui_attachscreen();
+extern void ui_detachscreen();
 extern void ui_unscreen();
 extern void ui_kin(), ui_evtick(), ui_inscreen(), ui_inreset(), ui_inflags();
 extern void ui_update(), ui_flushevents();
@@ -126,4 +142,14 @@ splx_(s)
 	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (s) : "memory");
 }
 
+extern int ui_otroute(),ui_otrouteclear(),ui_otroutecontext();
+extern void ui_otrouteforget();
+
+extern void ui_fronttick(),ui_frontclear();
+
 #endif	/* _UINTER_H */
+
+extern void ui_pmidlewait();
+extern int ui_pmidleclear(), ui_pmidleclose();
+extern void ui_pmidleforget();
+extern int ui_stackspaceclear();

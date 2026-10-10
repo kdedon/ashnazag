@@ -142,12 +142,16 @@ register struct nu_softc *sc;
 {
 	unsigned char pr[32];
 	register int i, dbl;
+#ifndef NU_PCI
 	int m;
+#endif
 
 	if (NU_RD(NU_CR) == 0xff)
 		return -1;
 	if (nu_reset() < 0)
 		return -1;
+#ifndef NU_PCI
+	/* on PCI the device ID already said what it is */
 	if ((NU_RD(NU_CR) & 0x3f) != (CR_NODMA | CR_STP))
 		return -1;
 	NU_WR(NU_CR, CR_NODMA | CR_STP | CR_PAGE1);
@@ -161,7 +165,10 @@ register struct nu_softc *sc;
 		NU_WR(NU_CR, CR_NODMA | CR_STP);
 		return -1;
 	}
-	sc->rtl = NU_RD(NU_ID0) == 'P' && NU_RD(NU_ID1) == 'p';
+#else
+	NU_WR(NU_CR, CR_NODMA | CR_STP);
+#endif
+	sc->rtl = NU_RD(NU_ID0) == 'P' && (NU_RD(NU_ID1) == 'p' || NU_RD(NU_ID1) == 'C');
 
 	NU_WR(NU_DCR, DCR_LS | DCR_FT1);
 	NU_WR(NU_RCR, RCR_MON);
@@ -235,6 +242,7 @@ register struct nu_softc *sc;
 	(void)nu_filter(sc);
 	NU_WR(NU_CR, CR_NODMA | CR_STA);
 	NU_WR(NU_TCR, 0);
+	NU_WR(NU_IMR, sc->imr);
 	sc->running = 1;
 	return 0;
 }
@@ -382,12 +390,13 @@ register struct nu_softc *sc;
 			nu_setbnry(sc);
 			break;
 		}
-		if (cnt < 4 + NU_MINFRAME + 4 || cnt > 4 + NU_MAXFRAME + 4)
+		/* the count includes the CRC, except on some NE2000 clones */
+		if (cnt < 4 + NU_MINFRAME || cnt > 4 + NU_MAXFRAME + 4)
 			sc->st.ierrors++;
 		else if (h[0] & RSR_PRX) {
 			nu_rdring(sc, sc->rxnext, 4, sc->rxbuf, cnt - 4);
 			sc->st.ipackets++;
-			nu_input(sc, sc->rxbuf, cnt - 8);
+			nu_input(sc, sc->rxbuf, cnt - 4 > NU_MAXFRAME ? NU_MAXFRAME : cnt - 4);
 		} else
 			sc->st.ierrors++;
 		sc->rxnext = nxt;

@@ -4,8 +4,8 @@
 | block there).
 |
 | Entry: long entry(long sel, long a, long b), C convention.
-|   0  a = A5: copy the initial image below A5, zero the rest, add A5
-|      to the pointers the block lists
+|   0  a = A5, b = optional code jump table: initialise data pointers
+|      against A5 and resolve positive code references through the table
 |   1  a = the manager's context for this library
 |   2  clears the context's word at 12; returns Main's first entry
 |   3  registers the exported sets through the context's object
@@ -25,9 +25,9 @@ __aslm_entry:
 	move.l	8(%fp),%d0
 	beq.s	init
 	subq.l	#1,%d0
-	beq.s	setctx
+	beq.w	setctx
 	subq.l	#1,%d0
-	beq.s	anchor
+	beq.w	anchor
 	subq.l	#1,%d0
 	beq.w	exports
 	moveq	#0,%d0
@@ -62,11 +62,28 @@ init:
 	bpl.s	3b
 	bra.s	6f
 5:	move.l	(%a1)+,%d0
-	add.l	%d3,0(%a3,%d0.l)
+	lea	0(%a3,%d0.l),%a0
+	move.l	(%a0),%d2
+	ble.s	datarel
+	tst.l	16(%fp)
+	beq.s	datarel
+	move.l	16(%fp),%a4
+	add.l	%d2,%a4
+	cmp.w	#0x4ef9,(%a4)
+	bne.s	badrel
+	move.l	2(%a4),(%a0)
+	bra.s	6f
+datarel:
+	add.l	%d3,%d2
+	move.l	%d2,(%a0)
 6:	subq.l	#1,%d1
 	bpl.s	5b
 	move.l	%a3,__aslm_base
 	moveq	#0,%d0
+	bra.w	out
+
+badrel:
+	moveq	#-1,%d0
 	bra.w	out
 
 setctx:
@@ -170,5 +187,6 @@ __aslm_main0:
 
 	.bss
 	.even
+	.globl	__aslm_ctx
 __aslm_ctx:	.skip	4
 __aslm_base:	.skip	4

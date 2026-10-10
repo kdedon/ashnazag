@@ -3,6 +3,8 @@
  * SYS: is ~/Amiga, or ~/Amiga/env with -e; one writable session each.
  */
 #include <sys/types.h>
+static char *amiga_device;
+#include "../include/envmem.h"
 #include <sys/mman.h>
 #include <sys/ioctl.h>
 #include <sys/resource.h>
@@ -328,15 +330,10 @@ region(address, size, shared)
 	unsigned long address, size;
 	int shared;
 {
-	int fd = open("/dev/zero", O_RDWR);
 	char what[48];
-	if (fd < 0)
-		fail("/dev/zero");
-	sprintf(what, "mmap %#lx+%#lx", address, size);
-	if (mmap((caddr_t)address, size, PROT_READ | PROT_WRITE | PROT_EXEC,
-	    (shared ? MAP_SHARED : MAP_PRIVATE) | MAP_FIXED, fd, 0) == (caddr_t)-1)
+	sprintf(what, "guest memory %#lx+%#lx", address, size);
+	if (envmem_region(address, size, shared, -1) < 0)
 		fail(what);
-	close(fd);
 }
 
 static void
@@ -942,7 +939,7 @@ main(argc, argv)
 	int readonly = 0, rootreadonly = 0, census = 0, kick = 1, romarg = 0, hostrom = 0;
 	unsigned long fastmb = 64;
 	char envfile[1100];
-	int fastarg = 0, pv = 1, n, dfd, zerofd, direct, go[2], ack[2];
+	int fastarg = 0, pv = 1, n, dfd, direct, go[2], ack[2];
 	stack_t ss;
 	static char altstack[16384];
 	unsigned long w, h;
@@ -1028,17 +1025,22 @@ main(argc, argv)
 	for (i = 3; i < 256; i++)
 		if (i != lockfd && i != miglog_fd)
 			close(i);
-	fd = open("/dev/amiga", O_RDWR);
+	amiga_device = "/dev/amigaguest";
+	fd = open(amiga_device, O_RDWR);
+	if (fd < 0 && errno == ENOENT) {
+		amiga_device = "/dev/amiga";
+		fd = open(amiga_device, O_RDWR);
+	}
 	if (fd < 0 && (errno == ENXIO || errno == ENODEV)) {
-		miglog(1, "/dev/amiga: Amiga module not loaded; as root run /usr/sbin/amigareg /usr/aux/lib/mod.d");
+		miglog(1, "%s: Amiga module not loaded; as root run /usr/sbin/amigareg /usr/aux/lib/mod.d", amiga_device);
 		return 1;
 	}
 	if (fd < 0 && errno == EACCES) {
-		miglog(1, "/dev/amiga: permission denied; the display group may use it");
+		miglog(1, "%s: permission denied; the display group may use it", amiga_device);
 		return 1;
 	}
 	if (fd < 0)
-		fail("/dev/amiga");
+		fail(amiga_device);
 	if (ioctl(fd, AMIGAIOC_INFO, &info) < 0)
 		fail("AMIGAIOC_INFO");
 	if (info.ai_version != AMIGA_ABI_VERSION) {
@@ -1121,15 +1123,12 @@ main(argc, argv)
 	 * Private memory: the kernel reserves memory and swap for all of it
 	 * up front, though pages cost nothing until touched.
 	 */
-	if (fastmb && mmap((caddr_t)FASTBASE, fastmb << 20, PROT_READ | PROT_WRITE | PROT_EXEC,
-	    MAP_PRIVATE | MAP_FIXED, zerofd = open("/dev/zero", O_RDWR), 0) == (caddr_t)-1) {
+	if (fastmb && envmem_region(FASTBASE, fastmb << 20, 0, -1) < 0) {
 		miglog(1, "fast RAM of %lu MB: %s; free memory and swap are too small. "
 		    "Add swap, or choose less with -m, fastmb= in the environment's .env "
 		    "or FAST_MB= in /etc/default/amiga", fastmb, strerror(errno));
 		return 1;
 	}
-	if (fastmb)
-		close(zerofd);
 	if (!probe) {
 		region(BOOTBASE, BOOTSIZE, 0);
 		earlyroot = sysroot;

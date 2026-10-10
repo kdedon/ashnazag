@@ -8,7 +8,9 @@
 # -f copies the template over an existing ~/System Folder, keeping your
 # Preferences, desktop database, MacTCP settings and other files.
 # -e makes environment env, with its own System Folder in ~/Mac/env,
-# instead; --import copies ~/System Folder into a new one.
+# instead; --import copies ~/System Folder into a new one.  An
+# environment with a template of its own, /mac/lib/env/env/System Folder
+# (8.1: Mac OS 8.1), is made from that.
 SYS="/mac/lib/System Folder"
 [ -n "$HOME" ] || { echo "makemac: no HOME" >&2; exit 1; }
 T="$HOME/System Folder"
@@ -49,6 +51,7 @@ if [ -n "$e" ]; then
 	esac
 	[ `expr "x$e" : '.*'` -le 65 ] || { echo "makemac: $e: name too long" >&2; exit 1; }
 	L=$T
+	[ ! -d "/mac/lib/env/$e/System Folder" ] || SYS="/mac/lib/env/$e/System Folder"
 	E=`pol ENVIRONMENT_ROOT "~/Mac"`/$e
 	T="$E/System Folder"
 fi
@@ -96,6 +99,13 @@ cd "$SYS" && find . -print | while read f; do
 		[ -f "$T/$f" ] && continue ;;
 	esac
 	echo "$f"
-done | cpio -pdmu "$T" 2>/dev/null && cp %.stamp .stamp "$T/" ||
+done | cpio -pdmu "$T" 2>/dev/null ||
 	{ echo "makemac: copy to $T failed" >&2; exit 1; }
+case `id` in
+uid=0\(*)
+	if [ -f "$SYS/../RootFinder" -a -f "$SYS/../%RootFinder" ]; then
+		cp "$SYS/../RootFinder" "$T/Finder" && cp "$SYS/../%RootFinder" "$T/%Finder" || exit 1
+	fi ;;
+esac
+cp "$SYS/%.stamp" "$SYS/.stamp" "$T/" || exit 1
 echo "makemac: $T is your System Folder in startmac${e:+ -e $e}"

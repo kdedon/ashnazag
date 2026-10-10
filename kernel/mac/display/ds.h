@@ -48,7 +48,9 @@
 	__t = (__s & 0x700) < ((n) << 8) ? (__s & ~0x700) | ((n) << 8) : __s; \
 	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (__t) : "memory"); __s; })
 #define DS_SPLX(s)	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (s) : "memory")
-#ifdef DS_ATARI
+#ifdef DS_AMIGA
+#define DS_HI 3
+#elif defined(DS_ATARI)
 #define DS_HI		6	/* IKBD and the MFP */
 #else
 #define DS_HI		2	/* ADB and clock (1), VBL (2) */
@@ -117,7 +119,7 @@ struct dssess {
 	pid_t		s_vpid;
 	unsigned long	s_vwin;		/* where s_vproc maps the region */
 	unsigned long	s_vgbase;	/* screen address the guest set */
-	unsigned long	s_gpa, s_gtop;	/* guest addresses [0, s_gtop) are physical s_gpa + address */
+	unsigned long	s_gpa, s_gtop;	/* s_gtop bounds guest DMA addresses */
 	int		s_vmode;	/* FBIOSMODE's mode, index + 1; 0 a guest's or none */
 #endif
 };
@@ -186,10 +188,9 @@ extern void (*ds_sndcb)();	/* (events): bit 0 input 7, bit 2 Timer A */
 extern void (*ds_sndhw)();	/* the DMA sound end with no guest in front */
 extern void (*ds_sndown)();	/* (on): a passthrough guest takes (1) or leaves (0) the sound */
 void	ds_bltgo();		/* (registers) */
-int	ds_gralloc();		/* (bytes) -> errno: the caller's contiguous ST-RAM */
-void	ds_grfree();
-void	ds_grdrop();
-int	ds_grmmap();		/* (offset) -> its page frame, or -1 */
+extern unsigned long (*ds_ramsize_hook)();
+extern int (*ds_ramphys_hook)();
+void ds_ramdetach();
 #endif
 
 /* dsseg.c */

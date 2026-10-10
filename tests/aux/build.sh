@@ -12,7 +12,8 @@
 # /etc/aux/fidd; with the A/UX 2.0.1 CD image, CD201, its System 6
 # environment in /a201).  With the Mac OS 7.6.1 CD image, CD761, or the
 # Mac OS 8.1 one, CD81, outdir/macsys.img: a ufs volume holding their
-# System Folders with SimpleText (S761, S761u with a user's Finder, S81).
+# System Folders with SimpleText (S761, S761u with a user's Finder, S81;
+# with FULL81=1, 8.1's whole System Folder).
 # AUXROOT names the A/UX root, AUXROM the Mac ROM image (default: the
 # Quadra 700 ROM beside the repository); both proprietary, never in the
 # repository.
@@ -22,6 +23,10 @@ set -e
 T=$(cd "$(dirname "$0")/.." && pwd)
 AUX=$(cd "$T/.." && pwd)
 KDIR=${KDIR:-$AUX/kernel}
+if [ -n "${OTDATA:-}${OTLISTEN:-}" ] && [ -z "${OTPROVIDER:-}" ]; then
+	echo "OTDATA/OTLISTEN requires OTPROVIDER" >&2
+	exit 1
+fi
 # A/UX root: $AUXROOT, else the path in tests/aux/auxroot, else /aux
 [ -n "$AUXROOT" ] || [ ! -f "$T/aux/auxroot" ] || AUXROOT=$(cat "$T/aux/auxroot")
 AUXROOT=${AUXROOT:-/aux}
@@ -37,7 +42,7 @@ if ! m68k-elf-nm "$KERNEL" | grep -q ' T guest_trap$'; then
 fi
 sh "$KDIR/guest/build.sh" -m "$KERNEL" "$OUT"
 mkdir -p "$OUT/bin"
-for p in sh ls cp mv rm rmdir awk more sleep; do
+for p in sh ls cp mv rm rmdir awk more sleep touch; do
 	[ -f "$AUXROOT/bin/$p" ] && cp "$AUXROOT/bin/$p" "$OUT/bin/$p"
 done
 [ -f "$AUXROOT/usr/bin/vi" ] && cp "$AUXROOT/usr/bin/vi" "$OUT/bin/vi"
@@ -56,6 +61,7 @@ if [ -f "$OUT/mod.d/uinter" ] && [ -f "$AUXROOT/mac/bin/startmac" ] && [ -f "$SY
 	mkdir -p "$OUT/root/mac/bin" "$OUT/root/mac/lib/Patches" "$OUT/root/mac/sys/Sys7" \
 		"$OUT/root/shlib" "$OUT/root/etc/aux"
 	cp "$AUXROOT/mac/bin/startmac" "$OUT/root/mac/bin/"
+	cp "$AUXROOT/mac/bin/CommandShell" "$AUXROOT/mac/bin/%CommandShell" "$OUT/root/mac/bin/"
 	cp "$AUXROOT/shlib/libmac1_s" "$OUT/root/shlib/"
 	cp "$AUXROOT/mac/lib/Patches/Patch.067C" "$OUT/root/mac/lib/Patches/"
 	# Shut Down's dialog resources; the test root's names have no spaces
@@ -69,6 +75,23 @@ if [ -f "$OUT/mod.d/uinter" ] && [ -f "$AUXROOT/mac/bin/startmac" ] && [ -f "$SY
 	# SysBeep's sound on a Quadra; t_sound's INIT
 	cp "$AUXROOT/mac/lib/Resources/sampledBeep" "$OUT/root/mac/lib/Resources/"
 	sh "$T/aux/sndtest/build.sh" "$OUT/root/mac/lib/SndTest"
+	sh "$T/aux/mac81probe/build.sh" "$OUT/obj/mac81probe"
+	mkdir -p "$OUT/root/mac/lib/Mac81Probe"
+	cp "$OUT/obj/mac81probe/Mac81Probe" "$OUT/root/mac/lib/Mac81Probe/"
+    if [ -n "${COFFCARRIER:-}${COFFADAPTER:-}" ]; then
+        COFFRSRC="$AUXROOT/mac/bin/%CommandShell" sh "$T/aux/coffcarrier/build.sh" "$OUT/obj/coffcarrier"
+        python3 "$T/aux/coffcarrier/check-carrier.py" "$OUT/obj/coffcarrier/COFFCarrier"
+        mkdir -p "$OUT/root/mac/lib/COFFCarrier" "$OUT/root/etc/aux"
+        cp "$OUT/obj/coffcarrier/COFFCarrier" "$OUT/root/mac/lib/COFFCarrier/"
+        touch "$OUT/root/etc/aux/CoffProbe"
+        if [ -n "${COFFADAPTER:-}" ]; then
+            python3 "$T/aux/coffcarrier/install.py" "$AUXROOT/mac/bin/CommandShell" \
+                "$AUXROOT/mac/bin/%CommandShell" "$OUT/obj/coffcarrier/COFFCarrier" "$OUT/root"
+        fi
+    fi
+	sh "$T/net/otprobe/build.sh" "$OUT/obj/otprobe"
+	mkdir -p "$OUT/root/mac/lib/OTProbe"
+	cp "$OUT/obj/otprobe/OTProbe" "$OUT/root/mac/lib/OTProbe/"
 	# the File ID daemon, which the Mac side needs to create folders
 	cp "$AUXROOT/etc/fidd" "$OUT/root/etc/aux/fidd"
 	# Mac OS 7.6.1 and 8.1 from their CDs, when present, on a ufs volume
@@ -76,7 +99,7 @@ if [ -f "$OUT/mod.d/uinter" ] && [ -f "$AUXROOT/mac/bin/startmac" ] && [ -f "$SY
 	V=$OUT/macsys
 	CD761=${CD761:-$AUX/media/Mac OS 7.6.1.iso}
 	if [ -f "$CD761" ]; then
-		sh "$AUX/images/macenv/mksys76.sh" "$CD761" "$V/S761"
+		sh "$AUX/images/macenv/mksys76.sh" "$CD761" "$V/S761" "$AUXROOT"
 		cp -rp "$V/S761" "$V/S761u"
 		python3 "$AUX/images/macenv/userfinder.py" "$V/S761u/%Finder"
 	fi
@@ -111,7 +134,43 @@ if [ -f "$OUT/mod.d/uinter" ] && [ -f "$AUXROOT/mac/bin/startmac" ] && [ -f "$SY
 		cp "$AUXROOT/mac/lib/Resources/sampledBeep" "$R6/mac/lib/Resources/"
 	fi
 	CD81=${CD81:-$AUX/media/MacOS8_1.iso}
-	[ ! -f "$CD81" ] || sh "$AUX/images/macenv/mksys81.sh" "$CD81" "$V/S81"
+	if [ -f "$CD81" ]; then
+		FULL=${FULL81-1} sh "$AUX/images/macenv/mksys81.sh" "$CD81" "$V/S81" "$AUXROOT"
+		if [ -n "$OTPROVIDER" ]; then
+			python3 "$AUX/tools/macbin2ad.py" "$OTPROVIDER" "$V/S81/Extensions"
+			if [ -z "${OTCONFIGURATOR:-}" ]; then
+				sh "$KDIR/otbridge/relay/build-configurator.sh" "$OUT/obj/otconfigurator"
+				OTCONFIGURATOR="$OUT/obj/otconfigurator/AUX Host Configurator Library"
+			fi
+			python3 "$AUX/tools/macbin2ad.py" "$OTCONFIGURATOR" "$V/S81/Extensions"
+			if [ -n "$OTRESETCACHE" ]; then
+				rm -f "$V/S81/Preferences/ASLM Preferences" "$V/S81/Preferences/%ASLM Preferences"
+			fi
+			touch "$OUT/root/mac/lib/OTProvProbe"
+			if [ -n "${OTDATA:-}" ]; then
+				sh "$T/net/otprobe/udp-build.sh" "$OUT/obj/otudp"
+				mkdir -p "$OUT/root/tests/net"
+				cp "$OUT/obj/otudp/otudp" "$OUT/root/tests/net/otudp"
+				chmod 755 "$OUT/root/tests/net/otudp"
+				touch "$OUT/root/mac/lib/OTDataProbe"
+			fi
+			if [ -n "${OTLISTEN:-}" ]; then
+				touch "$OUT/root/mac/lib/OTListenProbe"
+			fi
+			[ -z "$OTFAST" ] || touch "$OUT/root/mac/lib/OTFastProbe"
+			[ -z "$OTSTOCK" ] || touch "$OUT/root/mac/lib/OTStockProbe"
+			if [ -n "$OTLOADLIB" ]; then
+				printf "%s\n" "$OTLOADLIB" > "$OUT/root/mac/lib/OTLoadProbe"
+			fi
+		fi
+		[ -z "$MACFAST" ] || touch "$OUT/root/mac/lib/MacFastProbe"
+		if [ -n "${COFFUNIX:-}" ]; then
+			mkdir -p "$OUT/root/etc/aux"
+			touch "$OUT/root/etc/aux/CoffUnixProbe"
+		fi
+		cp -rp "$V/S81" "$V/S81u"
+		python3 "$AUX/images/macenv/userfinder.py" "$V/S81u/%Finder"
+	fi
 	if [ -d "$V" ]; then
 		(cd "$V" && find . -mindepth 1 | LC_ALL=C sort | cpio -o -H newc -R 0:3 --quiet) > "$OUT/macsys.cpio"
 		mb=$(du -sm "$V" | cut -f1)

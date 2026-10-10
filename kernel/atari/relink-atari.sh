@@ -53,7 +53,7 @@ $CC $CFLAGS -c "$A/atacons.c" -o "$W/atacons.o" 2> "$W/atacons.o.warn" || {
 
 # the display service and its input, after main() has cleared BSS
 DSINC="-DDS_ATARI -I$K/mac/display -I$K/mac/video -I$K/mac/adb"
-for c in "$K/mac/display/ds.c" "$K/mac/display/dsdev.c" "$K/mac/display/dsseg.c" "$A/atads.c"; do
+for c in "$K/mac/display/ds.c" "$A/atads.c"; do
 	o="$W/$(basename "$c" .c).o"
 	$CC $CFLAGS -fno-common $DSINC -c "$c" -o "$o" 2> "$o.warn" || { cat "$o.warn"; exit 1; }
 	[ -s "$o.warn" ] && { cat "$o.warn"; echo "[FAIL] $c: warnings"; exit 1; }
@@ -114,7 +114,7 @@ sh "$K/dlm/build.sh" -k "$W/dlm"
 sh "$K/guest/build.sh" -k "$BASE" "$W/guest"
 
 OBJS="$W/dlm/dlm.o $W/guest/guest.o $W/ataentry.o $W/ataintr.o $W/ataconf.o $W/ikbd.o $W/fbcons.o $W/fbfont.o
-$W/atadevsw.o $W/atacons.o $W/ds.o $W/dsdev.o $W/dsseg.o $W/atads.o $W/ataide.o $W/ahdi.o $W/atartc.o $W/rd.o $RDB/rdimage.o
+$W/atadevsw.o $W/atacons.o $W/ds.o $W/atads.o $W/ataide.o $W/ahdi.o $W/atartc.o $W/rd.o $RDB/rdimage.o
 $W/fpe030.o $FPEOBJS $W/fpe-obj/fpe_glue.o $W/fpe040.o"
 
 OVR="config putchar getchar callrom sysdump haltsys rtnfirm hw_clkstart clkreld

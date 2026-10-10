@@ -20,6 +20,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <time.h>
+#include <poll.h>
 #include "bdos3.h"
 
 #define	VERSION		0x2031
@@ -33,15 +34,61 @@ unsigned long b3_dma;
 
 static int dflt, user, errmode, mltio = 1, curfx;
 static unsigned rodsk, logdsk;
+static int sysdrv = -1;
 static unsigned long tpalo, tpahi, tpahi0, t2entry, dpb, alv;
 static unsigned long curfcb;
 
 /* search state: every match, made by search first */
 static struct match {
 	struct hfile	h;
-	int		ent;
+	int		ent, drv;
 } *found;
+static int scandrv;		/* the drive addmatch() is given files of */
 static int nfound, nextfound, maxfound;
+
+/* made-up block numbers: a file keeps one run of its own until a disk reset */
+static struct blkrun {
+	char	key[13];	/* drive, user, name */
+	long	base, n;
+} *blkruns;
+static int nblkruns, maxblkruns;
+static long blktop = 2;		/* 0 and 1 hold the directory */
+
+static long
+blkbase(h, d, n)
+	struct hfile *h;
+	int d;
+	long n;
+{
+	struct blkrun *b;
+	char key[13];
+	int i;
+
+	key[0] = d;
+	key[1] = h->user;
+	memcpy(key + 2, h->name, 11);
+	for (i = 0; i < nblkruns; i++)
+		if (memcmp(blkruns[i].key, key, 13) == 0 && blkruns[i].n >= n)
+			return blkruns[i].base;
+	if (n < 1)
+		n = 1;
+	if (blktop + n > DSM) {
+		nblkruns = 0;
+		blktop = 2;
+	}
+	if (nblkruns == maxblkruns) {
+		if ((b = realloc(blkruns, (maxblkruns + 256) * sizeof *blkruns)) == 0)
+			return blktop;
+		blkruns = b;
+		maxblkruns += 256;
+	}
+	b = &blkruns[nblkruns++];
+	memcpy(b->key, key, 13);
+	b->base = blktop;
+	b->n = n;
+	blktop += n;
+	return b->base;
+}
 
 unsigned long
 b3_get16(a)
@@ -94,7 +141,59 @@ b3_init(t2, lo, hi, area)
 	dpb = area;
 	alv = area + 16;
 	b3_dma = alv + ALVLEN;
+	b3_relog();
+}
+
+/* drives as the drive table has them now */
+void
+b3_relog()
+{
+	int d, fl;
+
+	hf_flush();
 	logdsk = hf_drives();
+	rodsk = hf_rodrives();
+	nblkruns = 0;
+	blktop = 2;
+	sysdrv = -1;
+	for (d = 0; d < NDRV; d++)
+		if (*hf_drive(d, &fl) && (fl & HF_SYS) && (logdsk & 1 << d))
+			sysdrv = d;
+}
+
+/* a program or submit file, looked for on the system drive too */
+static int
+systype(n)
+	char *n;
+{
+	return memcmp(n + 8, "68K", 3) == 0 || memcmp(n + 8, "SUB", 3) == 0 || shimtype(n);
+}
+
+/* a CP/M-80 or CP/M-86 program, which runs as a 68K one through the shim */
+int
+shimtype(n)
+	char *n;
+{
+	return memcmp(n + 8, "COM", 3) == 0 ? SHIM_80 : memcmp(n + 8, "CMD", 3) == 0 ? SHIM_86 : 0;
+}
+
+/* X.68K asked for, X.COM or X.CMD there */
+static int
+shimfind(d, u, n, h)
+	int d, u;
+	char *n;
+	struct hfile *h;
+{
+	char m[11];
+
+	if (memcmp(n + 8, "68K", 3))
+		return -1;
+	memcpy(m, n, 8);
+	memcpy(m + 8, "COM", 3);
+	if (hf_find(d, u, m, h) == 0)
+		return 0;
+	memcpy(m + 8, "CMD", 3);
+	return hf_find(d, u, m, h);
 }
 
 /* ---- errors ---- */
@@ -251,8 +350,17 @@ lookup(f, h, wr)
 	fcbname(f, n);
 	if (wild(n))
 		return 0xff;
-	if (hf_find(d, user, n, h) < 0)
-		return 0xff;
+	if (hf_find(d, user, n, h) < 0) {
+		if (wr)
+			return 0xff;
+		if (shimfind(d, user, n, h) == 0)
+			return 0;
+		if (sysdrv < 0 || d == sysdrv || !systype(n) ||
+		    (hf_find(sysdrv, 0, n, h) < 0 && shimfind(sysdrv, 0, n, h) < 0))
+			return 0xff;
+		FB(f, 0) = sysdrv + 1;	/* later calls go straight there */
+		return 0;
+	}
 	if (wr && (rodsk & 1 << d))
 		return berr(2, d);
 	if (wr && h->ro)
@@ -467,8 +575,10 @@ seqrw(f, wr)
 		if (cr > RECLEN)
 			cr = RECLEN;
 		rec = x * RECLEN + cr;
-		if ((r = rw1(f, &h, rec, wr, dma)) != 0)
-			return r == 4 ? 1 : r;
+		if ((r = rw1(f, &h, rec, wr, dma)) != 0) {
+			r = r == 4 ? 1 : r;
+			return r < 0x100 ? r | (long)i << 8 : r;	/* records done in the high byte */
+		}
 		if (cr == RECLEN) {
 			setext(f, &h, x + 1);
 			cr = 0;
@@ -515,7 +625,7 @@ ranrw(f, wr)
 		setext(f, &h, (rec + i) / RECLEN);
 		FB(f, 32) = (rec + i) % RECLEN;
 		if ((r = rw1(f, &h, rec + i, wr, dma)) != 0)
-			return r;
+			return r < 0x100 ? r | (long)i << 8 : r;
 	}
 	FB(f, 15) = extrecs(&h, fcbext(f));
 	return 0;
@@ -590,6 +700,13 @@ addmatch(h, arg)
 	long nent = (recs(h) + ENTREC - 1) / ENTREC, e;
 	int i, c, all = FB(f, 0) == '?';
 
+	/* the CCP looks a command up with a blank type and takes only .68K */
+	if (all && shimtype(h->name) && memcmp(B3MEM(f + 9), "   ", 3) == 0) {
+		for (i = 0; i < 8 && (FB(f, i + 1) & 0x7f) == h->name[i]; i++)
+			;
+		if (i == 8)
+			memcpy(h->name + 8, "68K", 3);
+	}
 	for (i = 0; i < 11 && !all; i++)
 		if ((c = FB(f, i + 1) & 0x7f) != '?' && c != h->name[i])
 			return 0;
@@ -606,9 +723,28 @@ addmatch(h, arg)
 			}
 		}
 		found[nfound].h = *h;
+		found[nfound].drv = scandrv;
 		found[nfound++].ent = e;
 	}
 	return 0;
+}
+
+/* the CCP's command lookup: system drive programs, shown in the current user */
+static int
+addsys(h, arg)
+	struct hfile *h;
+	char *arg;
+{
+	unsigned long f = *(unsigned long *)arg;
+	int i, c;
+
+	if (!systype(h->name))
+		return 0;
+	for (i = 0; i < 8; i++)
+		if ((c = FB(f, i + 1) & 0x7f) != '?' && c != h->name[i])
+			return 0;
+	h->user = user;
+	return addmatch(h, arg);
 }
 
 /* the next match as a directory record: the entry, two empty ones, its SFCB */
@@ -618,7 +754,7 @@ searchnext()
 	unsigned char *p = (unsigned char *)B3MEM(b3_dma);
 	struct match *m;
 	struct hfile *h;
-	long r, er, lx;
+	long r, er, lx, b;
 	int i;
 
 	if (nextfound >= nfound)
@@ -641,9 +777,10 @@ searchnext()
 	p[13] = (r - 1) / ENTREC == m->ent ? h->size % RECLEN : 0;
 	p[14] = lx >> 5;
 	p[15] = er ? er - (lx - (long)m->ent * 8) * RECLEN : 0;
+	b = blkbase(h, m->drv, (r + BLKREC - 1) / BLKREC) + (long)m->ent * 8;
 	for (i = 0; (long)i * BLKREC < er; i++) {
-		p[16 + 2 * i] = (i + 1) >> 8;
-		p[17 + 2 * i] = i + 1;
+		p[16 + 2 * i] = (b + i) >> 8;
+		p[17 + 2 * i] = b + i;
 	}
 	p[96] = 0x21;
 	hf_stamp(h->atime, p + 97);
@@ -662,9 +799,13 @@ search(f)
 	nfound = nextfound = 0;
 	if (!(logdsk & 1 << d))
 		return berr(4, d);
+	scandrv = d;
 	if (FB(f, 0) == '?') {
 		for (u = 0; u < NUSER; u++)
 			hf_scan(d, u, addmatch, (char *)&ff);
+		scandrv = sysdrv;
+		if (sysdrv >= 0 && d != sysdrv)
+			hf_scan(sysdrv, 0, addsys, (char *)&ff);
 	} else
 		hf_scan(d, user, addmatch, (char *)&ff);
 	return searchnext();
@@ -672,11 +813,25 @@ search(f)
 
 /* ---- disk parameters ---- */
 
+/* every file's run, so the allocation vector below covers them */
+static int
+addrun(h, arg)
+	struct hfile *h;
+	char *arg;
+{
+	blkbase(h, *(int *)arg, (recs(h) + BLKREC - 1) / BLKREC);
+	return 0;
+}
+
 static unsigned long
 dparams(d)
 	int d;
 {
 	long free = hf_free(d) / BLKREC, used, i;
+	int u;
+
+	for (u = 0; u < NUSER; u++)
+		hf_scan(d, u, addrun, (char *)&d);
 
 	b3_put16(dpb, 128L);
 	FB(dpb, 2) = 7;
@@ -689,6 +844,8 @@ dparams(d)
 	b3_put16(dpb + 12, 0x8000L);
 	b3_put16(dpb + 14, 0L);
 	used = DSM + 1 - (free > DSM - 1 ? DSM - 1 : free);
+	if (used < blktop)
+		used = blktop;
 	memset(B3MEM(alv), 0, ALVLEN);
 	for (i = 0; i < used / 8; i++)
 		FB(alv, i) = 0xff;
@@ -698,6 +855,16 @@ dparams(d)
 }
 
 /* ---- program load (function 59) ---- */
+
+/* move.l 4(sp),d1; move.w #B3_SHIM,d0; trap #3; moveq #0,d0; trap #2 */
+static unsigned char shimprg[] = {
+	0x60, 0x1a, 0, 0, 0, 14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+	0x22, 0x2f, 0, 4, 0x30, 0x3c, 0, B3_SHIM, 0x4e, 0x43, 0x70, 0, 0x4e, 0x42,
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0	/* no relocations */
+};
+int b3_shim, b3_shimdrv;
+struct hfile b3_shimh;
 
 static long
 pgmld(lpb)
@@ -710,13 +877,29 @@ pgmld(lpb)
 	long n, hl, i, nw;
 	int fd, rel, t;
 
-	if (lookup(f, &h, 0) != 0 || (fd = hf_open(fcbdrv(f), &h, 0)) < 0)
+	if (lookup(f, &h, 0) != 0)
 		return 2;
-	if (hi > tpahi || lo < tpalo || hi <= lo + 256 || h.size < 28 || (b = malloc(h.size)) == 0)
-		return 1;
-	if (lseek(fd, 0L, 0) != 0 || read(fd, (char *)b, h.size) != h.size) {
+	if ((b3_shim = shimtype(h.name)) != 0) {
+		/* the shim runs it: load a program that calls it */
+		b3_shimh = h;
+		b3_shimdrv = fcbdrv(f);
+		h.size = sizeof shimprg;
+		if ((b = malloc(h.size)) == 0)
+			return 1;
+		memcpy((char *)b, (char *)shimprg, sizeof shimprg);
+	} else {
+		if ((fd = hf_open(fcbdrv(f), &h, 0)) < 0)
+			return 2;
+		if (h.size < 28 || (b = malloc(h.size)) == 0)
+			return 1;
+		if (lseek(fd, 0L, 0) != 0 || read(fd, (char *)b, h.size) != h.size) {
+			free(b);
+			return 2;
+		}
+	}
+	if (hi > tpahi || lo < tpalo || hi <= lo + 256) {
 		free(b);
-		return 2;
+		return 1;
 	}
 	w = b[0] << 8 | b[1];
 	hl = w == 0x601b ? 36 : 28;
@@ -1050,10 +1233,12 @@ cpm_bdos3(fn, d1, regs)
 		return b3_constat() ? 0xff : 0;
 	case 12:
 		return VERSION;
+	case 141:
+		/* delay: d1 ticks of 1/60 s */
+		poll((struct pollfd *)0, 0L, (int)((d1 & 0xffff) * 50 / 3));
+		return 0;
 	case 13:
-		hf_flush();
-		logdsk = hf_drives();
-		rodsk = 0;
+		b3_relog();
 		dflt = 0;
 		return 0;
 	case 14:
@@ -1085,7 +1270,7 @@ cpm_bdos3(fn, d1, regs)
 		user = d1 & 15;
 		return 0;
 	case 37:
-		rodsk &= ~d1;
+		rodsk &= ~d1 | hf_rodrives();
 		return 0;
 	case 38:
 	case 39:

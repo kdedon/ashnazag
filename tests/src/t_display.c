@@ -22,6 +22,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include "t.h"
+#include "sys/mod.h"
 #include "dspat.h"
 
 #define DISPGID		25
@@ -911,6 +912,92 @@ t_kill()
 		t_check("console_restored", strcmp(r2, "same") == 0, "console screen: %s", r2);
 }
 
+static int
+modid()
+{
+	struct modstatus st;
+	int i = 1;
+
+	while (modstat(i, &st, 1) == 0) {
+		if (strcmp(st.ms_name, "dsuser") == 0)
+			return st.ms_id;
+		i = st.ms_id + 1;
+	}
+	return -1;
+}
+
+static void
+t_module()
+{
+	struct modstatus st;
+	unsigned long v = 0, info;
+	unsigned char *map;
+	int fd, id, kb, ms, rdy[2], go[2], pid, status = 0, waited;
+	struct pollfd ready;
+	char c;
+
+	if (getksym("ds_modinit", &v, &info) < 0) {
+		t_skip("module", "static display devices");
+		return;
+	}
+	fd = fbopen();
+	id = modid();
+	if (!t_check("module_autoload", fd >= 0 && id > 0, "%s", T_ERR)) {
+		if (fd >= 0) close(fd);
+		return;
+	}
+	t_check("module_open_busy", moduload(id) < 0 && errno == EBUSY, "%s", T_ERR);
+	if (acquire(fd, 0, "dlm") <= 0 || pipe(rdy) < 0 || pipe(go) < 0) {
+		t_fail("module_setup", "%s", T_ERR);
+		close(fd);
+		return;
+	}
+	map = (unsigned char *)mmap(0, fi.fi_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	if (map == (unsigned char *)-1) {
+		t_fail("module_map", "%s", T_ERR);
+		close(fd);
+		return;
+	}
+	map[0] = 0x5a;
+	close(fd);
+	t_check("module_closed_mapped_busy", moduload(id) < 0 && errno == EBUSY, "%s", T_ERR);
+	pid = fork();
+	if (pid == 0) {
+		write(rdy[1], "r", 1);
+		ready.fd = go[0]; ready.events = POLLIN;
+		if (poll(&ready, 1, 10000) <= 0 || read(go[0], &c, 1) != 1 || map[0] != 0x5a)
+			_exit(2);
+		map[0] = 0xa5;
+		munmap(map, fi.fi_size);
+		_exit(0);
+	}
+	if (pid < 0) {
+		t_fail("module_fork", "%s", T_ERR);
+		munmap(map, fi.fi_size);
+		return;
+	}
+	ready.fd = rdy[0]; ready.events = POLLIN;
+	if (poll(&ready, 1, 10000) <= 0 || read(rdy[0], &c, 1) != 1)
+		t_fail("module_child_ready", "timeout");
+	munmap(map, fi.fi_size);
+	t_check("module_child_mapping_busy", modstat(id, &st, 0) == 0 && st.ms_refcnt > 0 &&
+	    moduload(id) < 0 && errno == EBUSY, "%s", T_ERR);
+	write(go[1], "g", 1);
+	waited = t_waitchild(pid, &status, 10);
+	t_check("module_child_fault", waited == pid && WIFEXITED(status) && WEXITSTATUS(status) == 0, "status %x", status);
+	close(rdy[0]); close(rdy[1]); close(go[0]); close(go[1]);
+	t_check("module_unload", moduload(id) == 0, "%s", T_ERR);
+	fd = fbopen();
+	kb = open("/dev/kbd", O_RDONLY);
+	ms = open("/dev/mouse", O_RDONLY);
+	id = modid();
+	t_check("module_reload_devices", fd >= 0 && kb >= 0 && ms >= 0 && id > 0, "%s", T_ERR);
+	if (fd >= 0) close(fd);
+	if (kb >= 0) close(kb);
+	if (ms >= 0) close(ms);
+	t_check("module_reload_unload", id > 0 && moduload(id) == 0, "%s", T_ERR);
+}
+
 int
 main()
 {
@@ -939,5 +1026,6 @@ main()
 		close(fd);
 	t_check("close_front", waitfront(0L, 5), "front %ld after the last close", front());
 	t_kill();
+	t_module();
 	return t_done();
 }

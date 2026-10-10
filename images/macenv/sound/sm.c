@@ -301,7 +301,7 @@ long quiet;
 }
 
 extern int sdev_install();
-extern void sdev_test();
+extern void sdev_test(), sdev_probe();
 
 /*
  * From the INIT, in the system-heap copy: the Sound Manager 3.x plays
@@ -317,6 +317,7 @@ sm_install()
 		(void)auxsys(48L, 13L, old, 0L);
 	trace('i');
 	if (sdev_install()) {
+		sdev_probe(1);
 		sdev_test(1);
 		return;
 	}
@@ -334,5 +335,6 @@ sm_install()
 	settrap(0xA806L, p_control);
 	settrap(0xA807L, p_newchannel);
 	trace('t');
+	sdev_probe(0);
 	sdev_test(0);
 }

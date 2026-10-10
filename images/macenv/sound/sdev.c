@@ -30,6 +30,8 @@ extern unsigned long ticks();
 extern long auxsysr(), splhi(), gettrap(), smversion(), newhandlesys();
 extern long delegate(), registercomp(), findnext(), capture(), setdefault();
 extern long getsrc(), openmixer(), closemixer();
+extern long probe_defaultout(), probe_memtop(), probe_rombase();
+extern long probe_opencomp(), probe_closecomp(), probe_soundtool(), probe_gestalt();
 extern void splx(), instime(), primetime(), dtinstall();
 extern void p_sdev(), t_tm(), t_dt();
 
@@ -85,6 +87,116 @@ static unsigned long retry;	/* Ticks at the last failed open */
 static short needfmt;
 static unsigned char hdr[16];	/* the record being written: header (+ format) */
 static long hoff, hlen, left;	/* its header progress, PCM bytes still due */
+
+static unsigned long probe[113];
+static short probe_enabled, probe_played, probe_idle;
+static void probe_write(void)
+{
+    long fd;
+    if (!probe_enabled) return;
+    probe[4] = mixer != 0; probe[5] = sdev_frames;
+    probe[6] = tmon; probe[7] = running;
+    fd = auxsysr(5L, (long)"/tmp/sndpath.out", 0x309L, 0666L);
+    if (fd < 0) return;
+    (void)auxsysr(4L, fd, (long)probe, (long)sizeof probe);
+    (void)auxsysr(6L, fd, 0L, 0L);
+}
+static int probe_span(unsigned long a,unsigned long n)
+{
+    unsigned long top=(unsigned long)probe_memtop();
+    if(top>=0x1000 && top<=0x40000000UL && a>=0x1000 &&
+        n<=top && a<=top-n)return 1;
+    return (unsigned long)probe_rombase()==0x40800000UL && n<=0x100000UL &&
+        a>=0x40800000UL && a<=0x40900000UL-n;
+}
+static int probe_bytes(unsigned long a,const unsigned char *b,unsigned long n)
+{
+    unsigned long i;
+    if(!probe_span(a,n))return 0;
+    for(i=0;i<n;i++)if(((unsigned char *)a)[i]!=b[i])return 0;
+    return 1;
+}
+static void probe_setterproof(void)
+{
+    static const unsigned char entry[]={0x42,0x41,0x12,0x00,0x0c,0x01,0x00,0x68,0x64,0x04,0x4e,0xfb,0x10,0x8c};
+    static const unsigned char setter[]={0x4e,0x56,0xff,0xe8,0x48,0xe7,0x01,0x38,0x20,0x78,0x02,0xb6,0x24,0x68,0x01,0x10,0x25,0x6e,0x00,0x08,0x00,0x40,0x42,0x2a,0x00,0x5c};
+    unsigned long h,target,stub;
+    if(probe[0]!=0x03218000UL)return;
+    probe[42]=h=(unsigned long)probe_soundtool(24L);
+    if(h<0x68 || !probe_span(h-0x68,0x68+sizeof entry) ||
+        !probe_bytes(h,entry,sizeof entry))return;
+    stub=G32((char *)(h-0x48));
+    if((stub>>16)!=0x4efa)return;
+    probe[43]=target=h-0x46+(short)(stub&0xffff);
+    probe[44]=probe_bytes(target,setter,sizeof setter);
+}
+static unsigned long probe_resolve(unsigned long a)
+{
+    int i;
+    for(i=0;i<2;i++) {
+        if(!probe_span(a,4))return 0;
+        if(G16((char *)a)==0x4efa)a=a+2+(short)G16((char *)(a+2));
+        else if(G16((char *)a)==0x4ef9) {
+            if(!probe_span(a,6))return 0;
+            a=G32((char *)(a+2));
+        } else break;
+    }
+    return probe_span(a,24)?a:0;
+}
+static void probe_traps(int late)
+{
+    static const unsigned char native[2][24]={{0x4e,0x56,0xff,0xf0,0x48,0xe7,0xf,0x18,0x3a,0x2e,0x0,0x10,0x2c,0x2e,0x0,0xc,0x20,0x78,0x2,0xb6,0x2d,0x68,0x1,0x10},{0x4e,0x56,0xff,0xf4,0x48,0xe7,0x3,0x18,0x26,0x6e,0x0,0xe,0x28,0x6e,0x0,0xa,0x20,0xc,0x67,0x4,0x4a,0x94,0x66,0x8}};
+    unsigned long a,raw,i,j,at;
+    if(probe[0]!=0x03218000UL)return;
+    for(j=0;j<2;j++) {
+        at=45+late*18+j*9;
+        probe[at]=raw=(unsigned long)gettrap(j?0xa805L:0xa807L);
+        probe[at+1]=a=probe_resolve(raw);
+        if(!a)continue;
+        for(i=0;i<6;i++) {
+            unsigned char *p=(unsigned char *)(a+4*i);
+            probe[at+2+i]=(unsigned long)p[0]<<24 | (unsigned long)p[1]<<16 | (unsigned long)p[2]<<8 | p[3];
+        }
+        probe[at+8]=probe_bytes(a,native[j],24);
+    }
+}
+static void probe_imports(void)
+{
+    static const unsigned long offsets[4]={0x140,0x180,0x1b8,0x1d2};
+    static const unsigned char prefixes[3][20]={
+        {0x4e,0x56,0xff,0xf8,0x48,0xe7,0x03,0x18,0x20,0x78,0x02,0xb6,0x2d,0x68,0x01,0x10,0xff,0xf8,0x55,0x8f},
+        {0x4e,0x56,0,0,0x48,0xe7,0,0x18,0x26,0x6e,0,8,0x28,0x6b,0,4},
+        {0x4e,0x56,0,0,0x48,0xe7,3,0x18,0x26,0x6e,0,8,0x3e,0x2e,0,0x0e,0x28,0x6b,0,4}};
+    unsigned long entry,site,target,op,j,k,*row;
+    if(probe[0]!=0x03218000UL || !probe[71])return;
+    entry=probe[64];
+    for(j=0;j<4;j++){
+        row=probe+81+j*8;row[0]=site=entry+offsets[j];
+        if(site<entry || !probe_span(site,4))continue;
+        row[1]=(unsigned long)((unsigned char*)site)[0]<<24 |
+            (unsigned long)((unsigned char*)site)[1]<<16 |
+            (unsigned long)((unsigned char*)site)[2]<<8 | ((unsigned char*)site)[3];
+        op=G16((char*)site);
+        if(op==0x4eba || op==0x6100)target=site+2+(short)G16((char*)(site+2));
+        else if(op==0x4eb9 && probe_span(site,6))target=G32((char*)(site+2));
+        else continue;
+        row[2]=target;
+        if(!probe_span(target,20))continue;
+        row[3]=probe_bytes(target,prefixes[j<2?0:j-1],j==2?16:20);
+        for(k=0;k<4;k++){
+            unsigned char *b=(unsigned char *)(target+4*k);
+            row[4+k]=(unsigned long)b[0]<<24 | (unsigned long)b[1]<<16 | (unsigned long)b[2]<<8 | b[3];
+        }
+    }
+}
+void sdev_probe(int installed)
+{
+    probe_enabled = auxsysr(33L, (long)"/tmp/sndpath", 0L, 0L) >= 0;
+    if (!probe_enabled) return;
+    probe[1] = (unsigned long)smversion(); probe[3] = installed;
+    probe[9] = (unsigned long)gettrap(0xA800L);
+    probe_write();
+}
 
 void
 trace(c)
@@ -225,7 +337,7 @@ long s, v;
 
 /*
  * One mixer buffer into the ring as 16-bit stereo; 0 when the mixer is
- * idle.  Silence keeps time but is not sent, so the chip can stop.
+ * idle.  Silent frames preserve gaps between audible buffers.
  */
 static int
 pull()
@@ -233,7 +345,7 @@ pull()
 	char *d = 0;
 	unsigned char *p;
 	short *o;
-	long n, i, l, r, w, vl, vr, nz = 0;
+	long n, i, l, r, w, vl, vr;
 	int ch, sz;
 
 	if (getsrc(mixer, &d) != noErr || d == 0)
@@ -266,13 +378,12 @@ pull()
 		o = (short *)(ring + w);
 		o[0] = l > 32767 ? 32767 : l < -32768 ? -32768 : l;
 		o[1] = r > 32767 ? 32767 : r < -32768 ? -32768 : r;
-		nz |= l | r;
 		w = (w + 4) & (RB - 1);
 	}
-	if (nz)
-		head = w;
+	head = w;
 	ahead += n;
 	sdev_frames += n;
+    if (probe_enabled && !probe_played) {probe_played = 1; probe_write();}
 	return 1;
 }
 
@@ -303,8 +414,12 @@ tm_run()
 	}
 	if (running || used)
 		primetime(&tm, (long)PERIOD);
-	else
+	else {
 		tmon = 0;
+        if (probe_enabled && probe_played && !probe_idle) {
+            probe_idle = 1; probe_write();
+        }
+    }
 }
 
 /* a source started: run the pulls if they stopped */
@@ -314,6 +429,7 @@ kick()
 	long s = splhi();
 
 	running = 1;
+    if (probe_enabled) {probe_idle = 0; probe_write();}
 	if (!tmon) {
 		tmon = 1;
 		last = ticks();
@@ -401,9 +517,12 @@ long storage;
 	char *pp = pa + 4;
 	long e;
 	int what = (short)G16(pa + 2);
+    if(probe_enabled) {probe[11]++;probe[12]=(unsigned long)what;
+        probe[20]=(unsigned char)pa[1];probe[21]=storage!=0;}
 
 	switch (what) {
 	case -1:			/* open */
+        if(probe_enabled)probe[13]++;
 		return noErr;
 	case -4:			/* version */
 		return 0x00010000L;
@@ -415,18 +534,22 @@ long storage;
 		return noErr;
 	case -3:			/* can do */
 		what = (short)G16(pp);
+        if(probe_enabled)probe[18]=(unsigned long)what;
 		return (what >= -5 && what <= -1) || (what >= 1 && what <= 5) ||
 		    (what >= 0x101 && what <= 0x108);
 	case -5:			/* register */
 		return noErr;
 	case 1:				/* InitOutputDevice */
 		trace('o');
+        if(probe_enabled)probe[14]++;
 		if (mixer)
 			return noErr;
 		e = openmixer(&outdesc, 0L, &mixer);
+        if(probe_enabled)probe[15]=(unsigned long)e;
 		trace('m');
 		return e;
 	case 0x103:			/* GetInfo(source, selector, infoPtr) */
+		if(probe_enabled)probe[19]=G32(pp+4);
 		return getinfo(pa, (long)G32(pp + 4), (char *)G32(pp));
 	case 0x104:			/* SetInfo */
 		return setinfo(pa, (long)G32(pp + 4), (long)G32(pp));
@@ -439,7 +562,9 @@ long storage;
 			kick();
 		return e;
 	default:
-		return mixer ? delegate(pa, mixer) : badComponentSelector;
+        e=mixer ? delegate(pa,mixer) : badComponentSelector;
+        if(probe_enabled) {probe[16]=(unsigned long)e;probe[17]=(unsigned long)what;}
+        return e;
 	}
 }
 
@@ -449,18 +574,25 @@ sdev_install()
 {
 	static long desc[5];
 	char **name;
-	long c, n;
+	long c, n, ci, hwerror;
+    unsigned long subtype;
 
+    probe_enabled = auxsysr(33L, (long)"/tmp/sndpath", 0L, 0L) >= 0;
 	trace('g');
-	if (gettrap(0xA800L) == gettrap(0xA89FL))
+	probe[8] = (unsigned long)gettrap(0xA800L);
+    probe[10] = (unsigned long)gettrap(0xA89FL);
+	if (probe[8] == probe[10])
 		return 0;
 	trace('v');
-	if ((unsigned long)smversion() >> 24 < 3)
+	probe[0] = (unsigned long)smversion();
+	if (probe[0] >> 24 < 3)
 		return 0;
+    if(probe_enabled)probe_traps(0);
 	trace('f');
 	desc[0] = OSTYPE('m','i','x','r');
 	if (findnext(0L, desc) == 0)
 		return 0;
+	probe[2] = 1;
 	trace('h');
 	outdesc.format = OSTYPE('t','w','o','s');
 	outdesc.chans = 2;
@@ -477,21 +609,50 @@ sdev_install()
 	}
 	/* stereo 16-bit in, under the built-in device's name */
 	desc[0] = OSTYPE('s','d','e','v');
-	desc[1] = OSTYPE('a','s','c',' ');
+    hwerror=probe_gestalt(OSTYPE('s','n','h','w'),&subtype);
+    desc[1]=OSTYPE('a','s','c',' ');
+    if(!hwerror && (subtype==OSTYPE('a','s','c',' ') ||
+        subtype==OSTYPE('c','l','a','s') || subtype==OSTYPE('s','i','n','g'))) {
+        desc[1]=(long)subtype;
+    }
 	desc[2] = OSTYPE('a','p','p','l');
 	desc[3] = 0x0000000C;
 	desc[4] = 0;
+    if(probe_enabled)probe[38]=(unsigned long)probe_defaultout(&probe[39]);
 	if ((me = registercomp(desc, p_sdev, name)) == 0)
 		return 0;
+    if(probe_enabled) {
+        probe[22]=(unsigned long)me;
+        probe[33]=(unsigned long)probe_gestalt(OSTYPE('s','n','d',' '),&probe[29]);
+        probe[34]=(unsigned long)probe_gestalt(OSTYPE('s','n','h','w'),&probe[30]);
+        probe[35]=(unsigned long)probe_gestalt(OSTYPE('h','d','w','r'),&probe[31]);
+        desc[1]=(long)probe[30];
+        if(!probe[34])probe[36]=(unsigned long)findnext(0L,desc);
+    }
 	trace('r');
 	/* the hardware's own output components are hidden behind this one */
 	desc[1] = desc[2] = desc[3] = 0;
 	for (c = findnext(0L, desc); c; c = n) {
 		n = findnext(c, desc);
-		if (c != me)
-			capture(c, me);
+		if (c != me) {
+            long e=capture(c, me);
+            if(probe_enabled){probe[26]++;if(e)probe[27]=(unsigned long)e;}
+        }
 	}
-	setdefault(me, 7L);		/* any flags, manufacturer, subtype */
+    c=setdefault(me, 7L);
+    if(probe_enabled) {
+        probe[28]=(unsigned long)c;
+        desc[1]=OSTYPE('a','s','c',' ');desc[2]=OSTYPE('a','p','p','l');
+        probe[23]=(unsigned long)findnext(0L,desc);
+        desc[1]=(long)probe[30];
+        if(!probe[34])probe[37]=(unsigned long)findnext(0L,desc);
+        probe[32]=(unsigned long)probe_soundtool(16L);
+        ci=probe_opencomp(me);probe[24]=(unsigned long)ci;
+        if(ci)probe[25]=(unsigned long)probe_closecomp(ci);
+        probe[40]=(unsigned long)probe_defaultout(&probe[41]);
+        probe_setterproof();
+        probe_traps(1);probe_imports();
+    }
 	instime(&tm);
 	trace('d');
 	return 1;
@@ -589,6 +750,7 @@ int comp;
 	for (i = 0; i < TESTN; i++)
 		p[36 + i] = (i / 50) & 1 ? 0xA0 : 0x60;
 	f0 = sdev_frames;
+    if(probe_enabled){probe_traps(1);probe_imports();}
 	trace('n');
 	e = sndnew(&chan, 5L, 0L, t_cb);	/* sampledSynth */
 	trace('p');
@@ -597,6 +759,7 @@ int comp;
 		e = sndplay(chan, h, 1L);
 	t1 = ticks();
 	trace('q');
+    probe_write();
 	q = line;
 	for (p = comp ? "path=component " : "path=traps "; *p; )
 		*q++ = *p++;

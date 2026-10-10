@@ -40,9 +40,9 @@ type Settings struct {
 	Devices []string `json:"devices"`
 	// OptionalDevices may be added to Devices.
 	OptionalDevices []string `json:"optionalDevices,omitempty"`
-	RootMiB int      `json:"rootMiB,omitempty"`
-	SwapMiB int      `json:"swapMiB,omitempty"`
-	DiskMiB int      `json:"diskMiB,omitempty"`
+	RootMiB         int      `json:"rootMiB,omitempty"`
+	SwapMiB         int      `json:"swapMiB,omitempty"`
+	DiskMiB         int      `json:"diskMiB,omitempty"`
 }
 
 type Preset struct {
@@ -72,6 +72,7 @@ type Package struct {
 
 // Changes holds only what differs from the preset.
 type Changes struct {
+	DSUser    bool      `json:"dsuser,omitempty"`
 	Devices   *[]string `json:"devices,omitempty"`
 	RootMiB   *int      `json:"rootMiB,omitempty"`
 	SwapMiB   *int      `json:"swapMiB,omitempty"`
@@ -97,6 +98,7 @@ type Recipe struct {
 
 // Selection is the editable state a recipe restores.
 type Selection struct {
+	DSUser    bool      `json:"dsuser,omitempty"`
 	Preset    string    `json:"preset"`
 	Machine   string    `json:"machine"`
 	Settings  Settings  `json:"settings"`
@@ -183,6 +185,9 @@ func Roles(s Selection) []string {
 	if p, _ := Lookup(s.Preset); p.Recipe != "falcon-console" {
 		roles = append(roles, "boot-donor")
 	}
+	if s.DSUser {
+		roles = append(roles, "dsuser")
+	}
 	for _, p := range s.Provision {
 		roles = append(roles, "package:"+p.ID)
 	}
@@ -209,6 +214,7 @@ func NewRecipe(s Selection, inputs []Input) (Recipe, error) {
 	if v := s.Settings.SwapMiB; v != p.Settings.SwapMiB {
 		r.Changes.SwapMiB = &v
 	}
+	r.Changes.DSUser = s.DSUser
 	r.Changes.Provision = append([]Package(nil), s.Provision...)
 	if _, err := r.Selection(); err != nil {
 		return Recipe{}, err
@@ -225,7 +231,7 @@ func (r Recipe) Selection() (Selection, error) {
 	if r.Preset.Revision > p.Revision {
 		return Selection{}, fmt.Errorf("preset %s revision %d is newer than this forge supports (%d)", p.ID, r.Preset.Revision, p.Revision)
 	}
-	s := Selection{Preset: p.ID, Machine: p.Machine, Settings: p.Settings, Provision: r.Changes.Provision}
+	s := Selection{Preset: p.ID, Machine: p.Machine, Settings: p.Settings, Provision: r.Changes.Provision, DSUser: r.Changes.DSUser}
 	s.Settings.Devices = sorted(p.Settings.Devices)
 	if r.Changes.Devices != nil {
 		s.Settings.Devices = sorted(*r.Changes.Devices)
