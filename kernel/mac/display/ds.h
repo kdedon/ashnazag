@@ -78,13 +78,14 @@ struct dsvid {
 	int		v_scur;		/* the edge the host's input 7 is set to */
 };
 
-/* one blitter run: a line or part of one, at physical addresses */
+/* one blitter run: whole lines or part of one, at physical addresses */
 struct dsbrun {
 	unsigned short	r_ht[16];	/* halftone */
 	short		r_sxi, r_syi, r_dxi, r_dyi;
 	unsigned long	r_sa, r_da;
 	unsigned short	r_em[3];	/* end masks */
 	unsigned short	r_xn;
+	unsigned short	r_yn;		/* lines; 0 is one */
 	unsigned char	r_hop, r_op;
 	unsigned char	r_ctl;		/* smudge and line number */
 	unsigned char	r_skew;		/* FXSR, NFSR, skew */

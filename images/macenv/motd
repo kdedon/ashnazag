@@ -1,6 +1,7 @@
 	System V Release 4.0		Ash Nazag
 
  Mac    startmac        System 7.6.1; leave with Special > Log Out
+        Mac OS 8.1:  makemac -e 8.1  once, then  startmac -e 8.1
         startmac6       System 6.0.7; leave with Special > Logout
  TOS    starttos        EmuTOS and TeraDesk; -M TT mono, -m MB ST-RAM
         XaAES:   starttos -e xaaes  (multitasking; maketos -x -e NAME for more)

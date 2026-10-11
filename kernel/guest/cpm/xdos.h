@@ -19,3 +19,4 @@ extern unsigned long xpbase();
 extern int b3_conshared;
 extern void b3_exit(), b3_conflush(), b3_child();
 extern long b3_ccpsv();
+extern int b3_setcon();

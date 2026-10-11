@@ -3722,10 +3722,6 @@ app76()
 		host("key meta_l+d");
 		n = waitshot(SHOT "text_discarded", SHOT "simpletext", 100000, 1 << 30, 20);
 	}
-	if (n >= 100000) {
-		unlink("/Desktop Folder/mac81dialog");
-		unlink("/Desktop Folder/%mac81dialog");
-	}
 #endif
 	n = waitshot(SHOT "quit", SHOT "closed", 0, 1999, 40);
 	t_check("simpletext_quit", n >= 0 && n < 2000, "%d pixels from the desktop", n);
@@ -3866,6 +3862,11 @@ app76()
 #endif
 	t_check("finder_stays", alive76(), "");
 	shutdown76();
+#ifdef SYS81
+	/* the saved file stays for the session: the Finder sees outside deletions late */
+	unlink("/Desktop Folder/mac81dialog");
+	unlink("/Desktop Folder/%mac81dialog");
+#endif
 #ifdef SYS81
     if((!getenv("MACPMSTUB") && !getenv("MACPMIDLE")) ||
         (getenv("MACPMSTUB") && !strcmp(getenv("MACPMSTUB"),"1")))
@@ -4321,7 +4322,6 @@ char **argv;
 #ifdef SYS81
 		/* this session's patches only */
 		setsym("uinter_patched", 0L);
-        setsym("uinter_soundnative", 0L);
 #endif
 #ifdef COFF76
         copyf("/mac/bin/CommandShell", "/Desktop Folder/CommandShell");
@@ -4367,12 +4367,10 @@ char **argv;
 		 * _SoundDispatch answered, the selected File Manager configuration,
 		 * FSSpecs made for Unix volumes, _HFSDispatch's table entry taken
 		 */
-		t_check("sound_dispatch_initialization", (getsym("uinter_patched") & 0x20) != 0 ||
-            getsym("uinter_soundnative") > 0,
-            "neither bootstrap nor authenticated native initialization");
+		t_check("sound_dispatch_initialization", (getsym("uinter_patched") & 0x20) != 0,
+		    "applied %#lx", getsym("uinter_patched"));
 		t_check("live_patches", getsym("uinter_fmgroup") >= 0 &&
-		    ((getsym("uinter_patched") |
-            (getsym("uinter_soundnative") > 0 ? 0x20L : 0)) & ~0x2e00L) ==
+		    (getsym("uinter_patched") & ~0x2e00L) ==
 		    (getsym("uinter_fmgroup") == 0 ? 0x113f : 0x117f),
 		    "applied %#lx", getsym("uinter_patched"));
 		/* SimpleText's exit ran the Process Manager's Time Manager cleanup */

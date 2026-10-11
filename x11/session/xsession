@@ -79,6 +79,10 @@ menus() {
 		echo "$1\"`label $e`\" $2/usr/x11r6/bin/xdmenv $e$3"
 	done
 	[ -z "$cpm" ] || echo "$1\"`label cpm`\" ${2}xterm -T CP/M-68K -e /usr/bin/startcpm$3"
+	# more terminals on the running environment
+	[ -z "$cpm" ] || for n in 1 2 3; do
+		echo "$1\"CP/M-68K console $n\" ${2}xterm -T CP/M-68K:$n -e /usr/bin/startcpm -c $n$3"
+	done
 }
 
 case $name in

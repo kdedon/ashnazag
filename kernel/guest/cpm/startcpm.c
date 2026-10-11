@@ -68,6 +68,7 @@ char *b3_mem;
 static unsigned long mem, tables = TABLES, tablim = XPRIV, mrt, retstub, excstub;
 static int iobyte, lst = -1;
 static int tty, peeked = -1, eof, cin, cout = 1, isroot = 1, session = 1;
+static int contty, curcon, homecon, homein, homeout = 1, hometty, con0in, con0out = 1, con0tty;
 static struct termio tio;
 static char tmpdir[1100];
 static unsigned char *ccpimg, sv[SVLEN];
@@ -140,8 +141,12 @@ flush()
 	int n = nobuf;
 
 	nobuf = 0;
-	if (n && write(cout, obuf, n) < 0 && errno == EPIPE)
-		quit(0);
+	if (n && write(cout, obuf, n) < 0 && errno == EPIPE) {
+		if (curcon != homecon)
+			b3_xdos(148L, (unsigned long)homecon);
+		else
+			quit(0);
+	}
 }
 
 static void
@@ -211,7 +216,7 @@ rawtty()
 	t.c_cc[VMIN] = 1;
 	t.c_cc[VTIME] = 0;
 	if (ioctl(0, TCSETAW, &t) == 0)
-		tty = 1;
+		tty = contty = hometty = 1;
 }
 
 /* ---- drives ---- */
@@ -439,6 +444,7 @@ mount(bp)
 static int
 conin()
 {
+	struct pollfd pf;
 	unsigned char c;
 	int n;
 
@@ -448,15 +454,24 @@ conin()
 		c = peeked;
 		peeked = -1;
 	} else {
+		/* a process that attached the console after we waited reads first */
+		pf.fd = cin;
+		pf.events = POLLIN;
+		while (poll(&pf, 1L, -1) < 0 || xconbusy())
+			xconwait();
 		do
 			n = read(cin, (char *)&c, 1);
 		while (n < 0 && errno == EINTR);
+		if (n <= 0 && curcon != homecon) {
+			b3_xdos(148L, (unsigned long)homecon);
+			return conin();
+		}
 		if (n <= 0)
 			quit(0);
 	}
 	if (c == 0x7f)
 		return 8;
-	return !tty && c == '\n' ? '\r' : c;
+	return !contty && c == '\n' ? '\r' : c;
 }
 
 /* fl: show what was written first, as a program asking would expect */
@@ -680,6 +695,47 @@ run(bp, sp, n, t, f1, f2)
 	cpm_enter(get32(bp + 8), sp);
 }
 
+/* console n for this process's I/O: 0 if it is there, -1 if nobody is at it */
+int
+b3_setcon(n)
+	int n;
+{
+	char in[1200], out[1200];
+	int i, o, t = 0;
+
+	flush();
+	if (n == curcon)
+		return 0;
+	if (n == homecon) {
+		i = homein, o = homeout, t = hometty;
+	} else if (n == 0) {
+		i = con0in, o = con0out, t = con0tty;
+	} else {
+		fifo(n, in, out);
+		if ((o = open(out, O_WRONLY | O_NONBLOCK)) < 0)
+			return -1;
+		if ((i = open(in, O_RDONLY | O_NONBLOCK)) < 0) {
+			close(o);
+			return -1;
+		}
+		fcntl(i, F_SETFL, 0);
+		fcntl(o, F_SETFL, 0);
+		fcntl(i, F_SETFD, 1);
+		fcntl(o, F_SETFD, 1);
+	}
+	if (curcon != homecon && curcon != 0) {
+		close(cin);
+		close(cout);
+	}
+	cin = i;
+	cout = o;
+	contty = t;
+	curcon = n;
+	peeked = -1;
+	eof = 0;
+	return 0;
+}
+
 /*
  * Warm boot: the program the CCP left in its state, otherwise the CCP.
  * A process made by function 144 ends here.
@@ -692,6 +748,7 @@ cpm_ccprun()
 
 	if (!session)
 		xexit(0);
+	b3_xdos(148L, (unsigned long)homecon);
 	xwarm();
 	if (sv[SV_PEND] || sv[SV_PEND + 1]) {
 		sv[SV_PEND] = sv[SV_PEND + 1] = 0;
@@ -765,6 +822,9 @@ conjoin(n)
 				_exit(1);
 		fcntl(cin, F_SETFD, 1);
 		fcntl(cout, F_SETFD, 1);
+		homein = cin;
+		homeout = cout;
+		curcon = homecon = n;
 		peeked = -1;
 		eof = 0;
 		nobuf = 0;
@@ -805,6 +865,12 @@ consoles()
 		return;
 	sprintf(in, "%s/.con", tmpdir);
 	mkdir(in, 0700);
+	/* the sessions keep this terminal, for function 148 */
+	con0in = dup(0);
+	con0out = dup(1);
+	con0tty = isatty(0);
+	fcntl(con0in, F_SETFD, 1);
+	fcntl(con0out, F_SETFD, 1);
 	for (n = 1; n < xncon; n++) {
 		fifo(n, in, out);
 		unlink(in);
@@ -813,7 +879,7 @@ consoles()
 			continue;
 		if (fork() == 0) {
 			isroot = 0;
-			tty = 0;
+			tty = contty = hometty = 0;
 			if ((fd = open("/dev/null", O_RDWR)) >= 0) {
 				dup2(fd, 0);
 				dup2(fd, 1);

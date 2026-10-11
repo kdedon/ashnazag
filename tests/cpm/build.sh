@@ -5,7 +5,7 @@
 #
 # Out: outdir/root/cpm/bin/startcpm, outdir/root/cpm/sys/CCP.68K,
 # outdir/root/cpm/dist/ (P:: the first disk's files, X.68K linked to
-# each X.REL, EXIT.68K and MOUNT.68K), outdir/root/tests/cpm/hello.68k
+# each X.REL, EXIT.68K, MOUNT.68K and the utilities), outdir/root/tests/cpm/hello.68k
 # and outdir/root/tests/cpm/bin/*.68K.  CPMZIP names DRI's release zip
 # (default: media/cpm68k/68kv1_3.zip); without it nothing is built and
 # t_cpm skips.  First the file system code is checked on this host.
@@ -187,6 +187,29 @@ for f in "$T"/cpm/c/*.c; do
 	$CC16 -I"$L" -c "$f" -o "$O/t_$n.o"
 	link68k "$R/tests/cpm/bin/$(echo "$n" | tr a-z A-Z).68K" "$O/crt0.o" "$O/t_$n.o" "$O/libcpm.o"
 done
+# the utilities, on P:
+for f in "$G"/cpm/cmd/*.c; do
+	n=$(basename "$f" .c)
+	$CC16 -I"$L" -c "$f" -o "$O/u_$n.o"
+	link68k "$R/cpm/dist/$(echo "$n" | tr a-z A-Z).68K" "$O/crt0.o" "$O/u_$n.o" "$O/libcpm.o"
+done
+# GET.RSX and PUT.RSX: C behind the header and trap entry
+for n in get put; do
+	sed "s/\"NAME    \"/\"$(echo $n | tr a-z A-Z)     \"/" "$G/cpm/cmd/rsx/rsxcrt.s" > "$O/crt_$n.s"
+	$AS68 -o "$O/crt_$n.o" "$O/crt_$n.s"
+	$CC16 -c "$G/cpm/cmd/rsx/${n}rsx.c" -o "$O/m_$n.o"
+	link68k "$R/cpm/dist/$(echo $n | tr a-z A-Z).RSX" "$O/crt_$n.o" "$O/m_$n.o"
+done
+# test RSXes; UCASE3 is UCASE under its own name and sub-function,
+# PROTN is PROT marked non-banked
+sed 's/"UCASE   "/"UCASE3  "/; s/&200,/\&202,/' "$T/cpm/rsx/ucase.s" > "$O/ucase3.s"
+sed '/nbank/s/0, 0/0, 1/' "$T/cpm/rsx/prot.s" > "$O/protn.s"
+for f in "$T/cpm/rsx/ucase.s" "$T/cpm/rsx/prot.s" "$O/ucase3.s" "$O/protn.s"; do
+	n=$(basename "$f" .s)
+	$AS68 -o "$O/r_$n.o" "$f"
+	link68k "$R/tests/cpm/bin/$(echo "$n" | tr a-z A-Z).RSX" "$O/r_$n.o"
+done
+cp "$G/cpm/cmd/HELP.HLP" "$R/cpm/dist/"
 rm -f "$O"/l0*.elf "$O"/l0*.bin
 rm -rf "$O/zip" "$O/all" "$O"/*.img
 echo "[ok] startcpm, CP/M-68K $(ls "$R/cpm/dist" | wc -l | tr -d ' ') files"

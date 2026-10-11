@@ -364,6 +364,21 @@ detach()
 	return 0;
 }
 
+/* 148: this process's I/O to console n; it leaves the old one detached */
+static long
+setcon(n)
+	int n;
+{
+	int c = xt->p[xme].con;
+
+	if (n >= xncon || b3_setcon(n) < 0)
+		return XFAIL;
+	if (n != c && xt->conown[c] == (long)getpid())
+		xt->conown[c] = 0;
+	xt->p[xme].con = n;
+	return 0;
+}
+
 /* 149: the named process to console n */
 static long
 assign(pb)
@@ -856,7 +871,7 @@ b3_xdos(fn, d1)
 	case 147:
 		return detach();
 	case 148:
-		return (d1 & 0x0f) == xt->p[xme].con ? 0 : XFAIL;
+		return setcon((int)(d1 & 0xff));
 	case 149:
 		return assign(d1);
 	case 150:

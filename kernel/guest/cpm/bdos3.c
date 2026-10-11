@@ -907,6 +907,38 @@ int b3_shim, b3_shimdrv;
 struct hfile b3_shimh;
 
 /*
+ * Relocate text (ts bytes at tl) and data (ds at dl) by the relocation
+ * words r: dt, dd and db are how far text, data and bss moved.
+ */
+static int
+reloc(r, ts, ds, dt, dd, db, tl, dl)
+	unsigned char *r;
+	unsigned long ts, ds, dt, dd, db, tl, dl;
+{
+	unsigned long v, delta;
+	long i, nw = (ts + ds) / 2;
+	int t;
+
+	for (i = 0; i < nw; i++) {
+		t = r[2 * i + 1] & 7;
+		v = i * 2 < (long)ts ? tl + i * 2 : dl + i * 2 - ts;
+		if (t == 5 && i + 1 < nw) {
+			t = r[2 * i + 3] & 7;
+			if (t == 4)
+				return 3;
+			delta = t == 1 ? dd : t == 2 ? dt : t == 3 ? db : 0;
+			b3_put32(v, b3_get32(v) + delta);
+			i++;
+		} else if (t >= 1 && t <= 3) {
+			delta = t == 1 ? dd : t == 2 ? dt : db;
+			b3_put16(v, b3_get16(v) + delta);
+		} else if (t == 4)
+			return 3;
+	}
+	return 0;
+}
+
+/*
  * An image of size bytes at b, loaded with its base page at lo and its
  * stack below hi; drv goes in the base page.  0, or 1 (no room or not a
  * program) or 3 (bad relocation).
@@ -918,10 +950,12 @@ b3_ldimg(b, size, lo, hi, drv, bpp, spp)
 	unsigned long lo, hi, *bpp, *spp;
 	int drv;
 {
-	unsigned long ts, ds, bs, ss, tst, dst, bst, tl, dl, bl, bp, img, w, v, delta;
-	long n, hl, i, nw;
-	int rel, t;
+	unsigned long ts, ds, bs, ss, tst, dst, bst, tl, dl, bl, bp, w;
+	long n, hl;
+	int rel;
 
+	if (lo == tpalo && hi > tpahi)
+		hi = tpahi;
 	if (size < 28 || hi <= lo + 256)
 		return 1;
 	w = b[0] << 8 | b[1];
@@ -947,26 +981,8 @@ b3_ldimg(b, size, lo, hi, drv, bpp, spp)
 	memcpy(B3MEM(tl), b + hl, ts);
 	memcpy(B3MEM(dl), b + hl + ts, ds);
 	memset(B3MEM(bl), 0, bs);
-	if (rel) {
-		img = hl + ts + ds + ss;	/* relocation words */
-		nw = (ts + ds) / 2;
-		for (i = 0; i < nw; i++) {
-			t = b[img + 2 * i + 1] & 7;
-			v = i * 2 < (long)ts ? tl + i * 2 : dl + i * 2 - ts;
-			if (t == 5 && i + 1 < nw) {
-				t = b[img + 2 * i + 3] & 7;
-				delta = t == 1 ? dl - dst : t == 2 ? tl - tst : t == 3 ? bl - bst : 0;
-				if (t == 4)
-					return 3;
-				b3_put32(v, b3_get32(v) + delta);
-				i++;
-			} else if (t >= 1 && t <= 3) {
-				delta = t == 1 ? dl - dst : t == 2 ? tl - tst : bl - bst;
-				b3_put16(v, b3_get16(v) + delta);
-			} else if (t == 4)
-				return 3;
-		}
-	}
+	if (rel && reloc(b + hl + ts + ds + ss, ts, ds, tl - tst, dl - dst, bl - bst, tl, dl) != 0)
+		return 3;
 	memset(B3MEM(bp), 0, 0x38);
 	b3_put32(bp, lo);
 	b3_put32(bp + 4, hi);
@@ -983,6 +999,45 @@ b3_ldimg(b, size, lo, hi, drv, bpp, spp)
 	*bpp = bp;
 	*spp = n;
 	return 0;
+}
+
+static long rsxload();
+static int rsxhave();
+
+/*
+ * GENCOM's file: a 256-byte header (0xEE05, the module count, the
+ * program's record), 16-byte descriptors from offset 16 (record.w,
+ * length.l, 0, 0, name[8]), the modules, then the program.  The
+ * modules attach first, the first one highest, unless the program
+ * goes to another process's memory.
+ */
+static long
+gcload(b, size, lo, hi, drv, bpp, spp)
+	unsigned char *b;
+	long size;
+	unsigned long lo, hi, *bpp, *spp;
+	int drv;
+{
+	unsigned char *d;
+	unsigned long off, len;
+	int i, n;
+
+	if (size < 256 || (b[0] << 8 | b[1]) != 0xee05)
+		return b3_ldimg(b, size, lo, hi, drv, bpp, spp);
+	n = b[2] << 8 | b[3];
+	off = (b[4] << 8 | b[5]) * 128L;
+	if (n > 15 || off < 256 || off >= size)
+		return 1;
+	for (i = 0; i < n && lo == tpalo; i++) {
+		d = b + 16 + 16 * i;
+		len = (unsigned long)d[2] << 24 | (unsigned long)d[3] << 16 | d[4] << 8 | d[5];
+		d = b + (d[0] << 8 | d[1]) * 128L;
+		if (d < b + 256 || d + len > b + off || len < 28 + 42)
+			return 1;
+		if (!rsxhave(d) && rsxload(d, (long)len, tpahi) < 256)
+			return 1;
+	}
+	return b3_ldimg(b + off, size - off, lo, hi, drv, bpp, spp);
 }
 
 /* the FCB's program at lo..hi */
@@ -1011,7 +1066,7 @@ b3_ldfile(f, lo, hi, bpp, spp)
 		free(b);
 		return 2;
 	}
-	r = b3_ldimg(b, h.size, lo, hi, fcbdrv(f), bpp, spp);
+	r = gcload(b, h.size, lo, hi, fcbdrv(f), bpp, spp);
 	free(b);
 	return r;
 }
@@ -1032,27 +1087,106 @@ pgmld(lpb)
 	return 0;
 }
 
-/* ---- resident system extensions (function 60) ----
- * A module's header: 6 serial, entry.l @6, 'RS' @10, next.l @12,
- * prev.l @16, warm-boot removal flag @20, name @22, len.l @38.  Trap #2
- * enters the newest module; a module passes a call on by jumping to
- * its next, which for the oldest is the BDOS.
+/* ---- resident system extensions (function 60, GENCOM) ----
+ * A module is a CP/M-68K program whose text starts with this header:
+ *	0 serial[6]	6 entry.l	10 'RS'		12 next.l, where calls go on
+ *	16 prev.l, the module below	20 FF: remove at warm boot	21 nbank
+ *	22 name[8]	30 FF on the topmost	32 up.l, the module above	38 len.l
+ * Trap #2 enters the newest, lowest module; the oldest passes calls to
+ * the BDOS.
  */
 
 #define	NRSX	16
 static unsigned long rsx[NRSX];		/* modules, oldest first */
 static int nrsx;
 
+/* rewrite every module's links and lower the TPA to the chain */
 static void
 rsxlink()
 {
+	unsigned long m, up;
+	int i;
+
+	for (i = 0; i < nrsx; i++) {
+		m = rsx[i];
+		up = i ? rsx[i - 1] : 0;
+		b3_put32(m + 12, up ? b3_get32(up + 6) : t2entry);
+		b3_put32(m + 16, i + 1 < nrsx ? rsx[i + 1] : 0L);
+		FB(m, 30) = up ? 0 : 0xff;
+		b3_put32(m + 32, up);
+	}
 	b3_put32(34 * 4L, nrsx ? b3_get32(rsx[nrsx - 1] + 6) : t2entry);
 	tpahi = nrsx ? rsx[nrsx - 1] : tpahi0;
 }
 
+static void
+rsxadd(org, len)
+	unsigned long org, len;
+{
+	memcpy(B3MEM(org), "\0\0\0\0\0\1", 6);
+	b3_put32(org + 38, len);
+	rsx[nrsx++] = org;
+	rsxlink();
+}
+
+/*
+ * Module b (a CP/M-68K program of size bytes) relocated to the highest
+ * 256-byte boundary that fits it under top: its address, or 0xf1 (not
+ * a program), 0xf2 (no room), 0xf3 (no header).
+ */
 static long
-rsxfn(pb)
-	unsigned long pb;
+rsxload(b, size, top)
+	unsigned char *b;
+	long size;
+	unsigned long top;
+{
+	unsigned long ts, ds, bs, ss, tst, org, need;
+
+	if (size < 28 + 42 || (b[0] << 8 | b[1]) != 0x601a || b[26] || b[27])
+		return 0xf1;
+#define	L(o)	((unsigned long)b[o] << 24 | (unsigned long)b[(o)+1] << 16 | b[(o)+2] << 8 | b[(o)+3])
+	ts = L(2), ds = L(6), bs = L(10), ss = L(14), tst = L(22);
+#undef L
+	if (ts < 42 || 28 + ss + 2 * (ts + ds) > size)
+		return 0xf1;
+	if ((b[28 + 10] << 8 | b[28 + 11]) != 0x5253)
+		return 0xf3;
+	need = ts + ds + bs;
+	if (top > tpahi)
+		top = tpahi;
+	org = (top - need) & ~0xffL;
+	if (nrsx == NRSX || top < need || org < tpalo + 256)
+		return 0xf2;
+	memcpy(B3MEM(org), b + 28, ts + ds);
+	memset(B3MEM(org + ts + ds), 0, bs);
+	if (reloc(b + 28 + ts + ds + ss, ts, ds, org - tst, org + ts - (tst + ts),
+	    org + ts + ds - (tst + ts + ds), org, org + ts) != 0)
+		return 0xf1;
+	rsxadd(org, need);
+	return org;
+}
+
+/* a module named like the one at b is resident */
+static int
+rsxhave(b)
+	unsigned char *b;
+{
+	int i;
+
+	for (i = 0; i < nrsx; i++)
+		if (memcmp(B3MEM(rsx[i] + 22), b + 28 + 22, 8) == 0)
+			return 1;
+	return 0;
+}
+
+/*
+ * pb: sub-function.b, 0, org.l, len.l, src.l.  127 attaches: org 0
+ * relocates the program file at src below the caller's stack, otherwise
+ * the module at src is copied to org as it is.  126 answers the newest.
+ */
+static long
+rsxfn(pb, usp)
+	unsigned long pb, usp;
 {
 	unsigned long org, len, src;
 
@@ -1063,17 +1197,14 @@ rsxfn(pb)
 		org = b3_get32(pb + 2);
 		len = b3_get32(pb + 6);
 		src = b3_get32(pb + 10);
+		if (org == 0)
+			return rsxload((unsigned char *)B3MEM(src), (long)len, usp - 1024);
 		if (nrsx == NRSX || len < 42 || org & 1 || org < tpalo + 256 || org + len > tpahi)
 			return 0xf2;
 		if (b3_get16(src + 10) != 0x5253)
 			return 0xf3;
 		memmove(B3MEM(org), B3MEM(src), len);
-		b3_put32(org + 12, nrsx ? b3_get32(rsx[nrsx - 1] + 6) : t2entry);
-		b3_put32(org + 16, 0L);
-		if (nrsx)
-			b3_put32(rsx[nrsx - 1] + 16, org);
-		rsx[nrsx++] = org;
-		rsxlink();
+		rsxadd(org, len);
 		return 0;
 	}
 	return 0xff;
@@ -1090,14 +1221,16 @@ b3_settpa(lo, hi)
 	rsxlink();
 }
 
-/* warm boot drops flagged modules from the top of the chain */
+/* warm boot drops the flagged modules; the TPA ends at the lowest left */
 static void
 rsxwarm()
 {
-	while (nrsx && FB(rsx[nrsx - 1], 20) == 0xff)
-		nrsx--;
-	if (nrsx)
-		b3_put32(rsx[nrsx - 1] + 16, 0L);
+	int i, n;
+
+	for (i = n = 0; i < nrsx; i++)
+		if (FB(rsx[i], 20) == 0)
+			rsx[n++] = rsx[i];
+	nrsx = n;
 	rsxlink();
 }
 
@@ -1139,8 +1272,8 @@ scbfn(pb)
 	hf_stamp((long)t, scb + 0x58);
 	tm = localtime(&t);
 	scb[0x5c] = (tm->tm_sec / 10) << 4 | tm->tm_sec % 10;
-	if (set != 0xff && set != 0xfe)
-		return scb[off] | scb[off + 1] << 8;
+	if (set != 0xff && set != 0xfe)	/* @CRDMA reads as the whole address */
+		return off == 0x3c ? (long)b3_dma : scb[off] | scb[off + 1] << 8;
 	scb[off] = FB(pb, 2);
 	if (set == 0xfe)
 		scb[off + 1] = FB(pb, 3);
@@ -1392,7 +1525,7 @@ cpm_bdos3(fn, d1, regs)
 	case 59:
 		return pgmld(d1);
 	case 60:
-		return rsxfn(d1);
+		return rsxfn(d1, regs + 64);
 	case 61:
 		i = b3_get16(d1);
 		if (i > 255)

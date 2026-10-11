@@ -511,8 +511,9 @@ register unsigned char *b;
 }
 
 /*
- * One line, or part of one, in HOG mode: the CPU waits while the
- * blitter has the bus.  0, or -1 if it did not finish.
+ * r_yn lines, or part of one, in HOG mode: the CPU waits while the
+ * blitter has the bus.  The addresses and line number it ends with go
+ * back into r.  0, or -1 if it did not finish.
  */
 #ifdef ATA060
 extern void ata_dmasync();
@@ -538,18 +539,19 @@ register struct dsbrun *r;
 	V16(0x8A30) = r->r_dyi;
 	V32(0x8A32) = r->r_da;
 	V16(0x8A36) = r->r_xn;
-	V16(0x8A38) = 1;
+	V16(0x8A38) = r->r_yn ? r->r_yn : 1;
 	V8(0x8A3A) = r->r_hop;
 	V8(0x8A3B) = r->r_op;
 	V8(0x8A3D) = r->r_skew;
 	V8(0x8A3C) = 0xC0 | r->r_ctl;
-#ifdef ATA060
 	i = ab_idle();
+#ifdef ATA060
 	ata_dmasync();
-	return i;
-#else
-	return ab_idle();
 #endif
+	r->r_sa = V32(0x8A24);
+	r->r_da = V32(0x8A32);
+	r->r_ctl = (r->r_ctl & 0xF0) | (V8(0x8A3C) & 15);
+	return i;
 }
 
 /* The IKBD keyboard has no LEDs. */

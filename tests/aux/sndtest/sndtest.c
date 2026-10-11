@@ -18,7 +18,7 @@
 #define G16(p)	(*(unsigned short *)(p))
 #define G32(p)	(*(unsigned long *)(p))
 
-extern long auxsysr(), sndnew(), sndplay(), snddo(), sndversion(), snddispatch();
+extern long auxsysr(), sndnew(), sndplay(), snddo();
 extern char **newhandlesys();
 extern char *newptr();
 extern unsigned long ticks();
@@ -26,8 +26,6 @@ extern long auxsleep();
 extern void sysbeep(), t_cb();
 
 static unsigned long t0, waitcalls, waitintr, waitbad;
-static unsigned long soundversion, sounddispatch;
-static short soundprobe;
 
 static char *
 put(q, k, v)
@@ -129,10 +127,6 @@ long p2;
 	q = put(q, "wait_calls=", waitcalls);
 	q = put(q, "wait_intr=", waitintr);
 	q = put(q, "wait_bad=", waitbad);
-	if (soundprobe) {
-		q = put(q, "sound_version=", soundversion);
-		q = put(q, "sound_dispatch=", sounddispatch);
-	}
 	q[-1] = '\n';
 	out(line, q, 0);
 }
@@ -165,12 +159,6 @@ st_main()
 	q = put(q, "sync_err=", (unsigned long)-e);
 	q = put(q, "sync_ticks=", t1 - t0);
 
-	/* Capture trap metadata before playback can enter its interrupt callback. */
-	soundprobe = auxsysr(33L, (long)"/tmp/sndpath", 0L, 0L) >= 0;
-	if (soundprobe) {
-		soundversion = (unsigned long)sndversion();
-		sounddispatch = (unsigned long)snddispatch();
-	}
 	e = sndnew(&chan, 5L, 0L, t_cb);	/* sampledSynth */
 	t0 = ticks();
 	if (e == 0)

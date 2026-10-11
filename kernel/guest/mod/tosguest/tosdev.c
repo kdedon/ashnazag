@@ -987,6 +987,66 @@ mfp_ack()
 	return (m->m_r[MFP_VR] & 0xf0) | ch;
 }
 
+static void mfp_wr();
+
+/*
+ * Timer C acknowledged at vector vec: if the guest's handler is TOS's
+ *
+ *	addq.l #1,_hz_200 ; rol.w pat ; bpl.s eoi ; ... ; eoi: move.b #$df,ISRB ; rte
+ *
+ * and this tick takes the bpl, its effect is made here and no interrupt
+ * goes to the guest.  1: done so.
+ */
+int
+mfp_tcskip(gp, vec)
+	struct guest_proc *gp;
+	int vec;
+{
+	unsigned char c[24], e[6];
+	unsigned long h, pa, hz;
+	unsigned short pat;
+	int i;
+
+	if ((vec & 15) != CH_TIMERC || copyin((caddr_t)(gp->gp_vvbr + vec * 4), (caddr_t)c, 4))
+		return 0;
+	h = G32(c);
+	if (copyin((caddr_t)h, (caddr_t)c, sizeof c))
+		return 0;
+	if (G16(c) == 0x52b8 && G16(c + 2) == 0x04ba)
+		i = 4;
+	else if (G16(c) == 0x52b9 && G32(c + 2) == 0x04ba)
+		i = 6;
+	else
+		return 0;
+	if (G16(c + i) == 0xe7f8) {
+		pa = (unsigned long)(long)(short)G16(c + i + 2);
+		i += 4;
+	} else if (G16(c + i) == 0xe7f9) {
+		pa = G32(c + i + 2);
+		i += 6;
+	} else
+		return 0;
+	if (c[i] != 0x6a || c[i + 1] == 0 || (c[i + 1] & 1) || c[i + 1] >= 0x80)
+		return 0;
+	h += i + 2 + c[i + 1];
+	if (copyin((caddr_t)h, (caddr_t)e, 6) || G32(e) != 0x11fc00dfL || G16(e + 4) != 0xfa11 ||
+	    copyin((caddr_t)h + 6, (caddr_t)c, 2) || G16(c) != 0x4e73 ||
+	    copyin((caddr_t)pa, (caddr_t)c, 2) || copyin((caddr_t)0x4ba, (caddr_t)c + 2, 4))
+		return 0;
+	pat = G16(c);
+	pat = pat << 1 | pat >> 15;
+	if (pat & 0x8000)
+		return 0;		/* the guest's handler has work this tick */
+	hz = G32(c + 2) + 1;
+	P16(c, pat);
+	P32(c + 2, hz);
+	if (copyout((caddr_t)c, (caddr_t)pa, 2) || copyout((caddr_t)c + 2, (caddr_t)0x4ba, 4))
+		return 0;
+	mfp_wr(&tosc.t_mfp, MFP_ISRB, 0xdf);
+	tosc.t_st.ts_tcskip++;
+	return 1;
+}
+
 /* an acknowledge whose frame could not be written */
 void
 mfp_unack(vec)

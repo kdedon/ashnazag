@@ -114,6 +114,8 @@ struct tosstat {
 	unsigned long	ts_idle;	/* input polls slept on */
 	unsigned long	ts_vblheld;	/* ticks the guest ran with a VBL masked */
 	unsigned long	ts_held;	/* requests held at an emulation tail */
+	unsigned long	ts_fpriv, ts_ftrap, ts_linea;	/* the gates' fast paths, all guests */
+	unsigned long	ts_tcskip;	/* timer C ticks made without the guest */
 };
 
 /*

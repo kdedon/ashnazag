@@ -160,22 +160,3 @@ t_cb:
 	addql	#8,%sp
 	jmp	(%a1)
 
-    .text
-    .globl sndversion
-sndversion:
-	moveml	%d2-%d7/%a2-%a6,-(%sp)
-    clrl -(%sp)
-    movel #0x000c0008,%d0
-    .short 0xa800
-    movel (%sp)+,%d0
-    moveml	(%sp)+,%d2-%d7/%a2-%a6
-    rts
-
-    .globl snddispatch
-snddispatch:
-	moveml	%d2-%d7/%a2-%a6,-(%sp)
-    movel #0xa800,%d0
-    .short 0xa746
-    movel %a0,%d0
-    moveml	(%sp)+,%d2-%d7/%a2-%a6
-    rts

@@ -1,0 +1,315 @@
+  ///1HELP
+
+  HELP {topic {subtopic ...}}
+
+  HELP prints one topic of this file.  With no topic it lists the
+  topics; with a topic it prints that topic and names the subtopics
+  under it.  A topic name may be abbreviated to any prefix that is
+  unambiguous to you -- HELP prints every topic the prefix matches.
+
+  After answering, HELP prompts:
+
+        HELP>
+
+  Type another topic, or a bare RETURN to leave HELP.
+
+  ///2File
+
+  HELP reads HELP.HLP, on the current drive if it is there and on A:
+  otherwise.  The file is plain text: a line beginning ///n names a
+  topic at nesting level n, and everything up to the next such line is
+  that topic's text.
+
+  This HELP has no index and needs none: it scans the file.  DRI's
+  HELP.HLP carries an index built by HELP [CREATE], and this one does
+  not, so [CREATE], [LIST] and [EXTRACT] are not accepted here.
+
+  ///1CCP
+
+  The Console Command Processor prints the A> prompt and runs what you
+  type.  A command is either built into the CCP or the name of a .68K
+  program file, which the CCP loads into the TPA and calls.
+
+  ///2Builtin
+
+  DIR      list the files on a drive
+  DIRSYS   list the files with the SYS attribute
+  ERASE    erase files
+  RENAME   rename a file
+  TYPE     print a text file on the console
+  USER     change the current user number
+
+  ///2Submit
+
+  When the CCP finds $$$.SUB on drive A: it takes its commands from
+  that file instead of from the console, one line at a time, until the
+  file is used up or you type a character at the console.  SUBMIT
+  writes the file; see the SUBMIT topic.
+
+  ///2Profile
+
+  At cold start -- the first time the CCP runs after a boot, and only
+  then -- the CCP looks for PROFILE.SUB on drive A: and, if it is there,
+  runs it before its first prompt.  See the PROFILE topic.
+
+  ///1PROFILE
+
+  PROFILE.SUB is a SUBMIT file the CCP runs once, at cold start.
+
+  Put in it whatever a session should always begin with:
+
+        DATE
+        SDIR [DATE]
+
+  It is an ordinary .SUB file, so the SUBMIT conventions apply -- but
+  nothing passes it parameters, so $1 through $9 expand to nothing.
+
+  The CCP looks for it on drive A: in the current user number, which at
+  cold start is 0, and only on a cold start; a warm boot does not run it
+  again.  If it is not there the CCP goes straight to its first prompt
+  and says nothing at all.
+
+  ///1SUBMIT
+
+  SUBMIT filename {parameters}
+
+  SUBMIT reads filename.SUB, substitutes $1..$9 with the parameters you
+  gave, and writes the result to $$$.SUB on drive A:, from which the CCP
+  then reads its commands.
+
+  ///2Parameters
+
+  $1 through $9 are replaced by the parameters on the SUBMIT command
+  line.  $$ is one dollar sign.  ^x is the control character x.  A
+  parameter that was never typed expands to nothing.
+
+  A line beginning < is console INPUT for the program the previous line
+  started, not a command.
+
+  ///2ReturnCodes
+
+  A program's exit status reaches the CCP as BDOS function 108's program
+  return code, and IF ERROR tests it, so a .SUB file can branch on a
+  command that failed:
+
+        MYCMD FOO.DAT
+        IF ERROR
+        TYPE OOPS.TXT
+        ELSE
+        TYPE FINE.TXT
+        FI
+
+  The CCP clears the code before every command it runs, so a program
+  that sets none is read as having SUCCEEDED.  Each command this port
+  builds sets it -- its C runtime publishes whatever main returned, or
+  the status given to exit -- and so do the CCP's own failures, an
+  unresolvable command name or a missing .SUB among them.
+
+  A program you compile here with ZCC and link against the runtime that
+  came with the compiler sets none, so IF ERROR reads success after it
+  however it ended.  Test its work instead, with IF EXIST on an output
+  file, or by reading it.
+
+  ///1PAGING
+
+  The console pauses at the foot of every page of output and waits for a
+  key.  Any key continues; CTRL-C at the pause abandons the program, as
+  it does anywhere else.
+
+  Paging is OFF as this system is built, and it is a program that turns
+  it on, through the System Control Block:
+
+        offset 1Ch  @CONPAGE   lines to a page (0 means 24)
+        offset 1Dh  @CONLINE   lines printed on this page so far
+        offset 2Ch  page$mode  0 turns paging ON, any other value OFF
+        offset 2Dh  pm$default what a warm boot resets page$mode to
+
+  BDOS function 49 reads and writes them.  The pause is in the BDOS, so
+  it applies to every program's output and not only to the CCP's -- one
+  reason it is off unless asked for.
+
+  ///2NotCtrlP
+
+  CTRL-P is not a paging control here and is not one in CP/M 3 either.
+  It toggles the printer echo: with it on, everything printed on the
+  console is copied to the list device.  Type it again to stop.
+
+  ///2CtrlS
+
+  CTRL-S stops output and CTRL-Q restarts it, whatever page$mode says.
+  That is the older and cruder pause and it is always available.
+
+  ///1SDIR
+
+  SDIR {d:}{filespec} {[options]}
+
+  SDIR lists directory entries with their sizes, attributes and date
+  stamps -- everything the plain DIR command does not show.
+
+  ///2Options
+
+  [SIZE]     show the file sizes
+  [DATE]     show the create, access and update stamps
+  [SYS]      include files with the SYS attribute
+  [DIR]      exclude them
+  [DRIVE=ALL] every logged-in drive
+  [USER=ALL]  every user number
+
+  ///1SHOW
+
+  SHOW {d:} {[option]}
+
+  SHOW reports on drives.
+
+  ///2Options
+
+  [SPACE]   free space, the default
+  [DRIVE]   the drive's characteristics
+  [USERS]   which user numbers hold files, and how many
+  [DIR]     directory entries used and free
+  [LABEL]   the directory label and its stamping modes
+
+  ///1SET
+
+  SET {d:}{filespec} {[options]}
+
+  SET changes file attributes, directory labels and date-stamping
+  modes.
+
+  ///2Options
+
+  [RO] [RW]        read-only, read-write
+  [SYS] [DIR]      system, directory
+  [ARCHIVE=ON|OFF] the archive attribute
+  [NAME=label]     give the drive a directory label
+  [CREATE=ON|OFF]  stamp file creation
+  [UPDATE=ON|OFF]  stamp file update
+  [ACCESS=ON|OFF]  stamp file access
+  [PROTECT=ON|OFF] on a DRIVE: enforce passwords on it
+  [PASSWORD=xxx]   the drive's own password, or a file's
+  [PROTECT=READ|WRITE|DELETE]   on a FILE: what its password guards
+  [DEFAULT=xxx]    the password programs open protected files with
+
+  Nothing is protected until [PROTECT=ON] on the drive: a medium
+  without that bit behaves as it always did.  A file needs a password
+  before it can be given a protection mode, and an empty [PASSWORD=]
+  or [PROTECT=OFF] takes both away again.
+
+  ///1STAT
+
+  STAT {d:}{filespec} {options}
+
+  STAT is the CP/M 2 status utility, kept because it still reports what
+  it always did: file sizes and attributes, drive space, and the
+  logical-to-physical device assignments.
+
+  SHOW and SDIR are the CP/M 3 utilities for the same ground.
+
+  ///1PIP
+
+  PIP destination=source{,source...}
+
+  PIP copies files.  The destination may be a file, a drive, or a
+  device; so may each source.
+
+        A>PIP B:=A:*.TXT
+        A>PIP NEW.TXT=ONE.TXT,TWO.TXT
+        A>PIP LST:=REPORT.TXT
+
+  ///1DATE
+
+  DATE
+  DATE SET
+
+  DATE prints the host's date and time.  The host's clock is not set
+  from here, so DATE SET only checks what is typed.
+
+  ///1GENCOM
+
+  GENCOM filename {rsxname ...} {[options]}
+
+  GENCOM binds resident system extensions to a program file, so that
+  loading the program attaches the modules first.
+
+  ///2Options
+
+  [NORSX]   strip the modules off again
+
+  See also RSXLDR, which attaches a module by itself with no program
+  attached to it.
+
+  ///1RSXLDR
+
+  RSXLDR filename.RSX {[RESIDENT]}
+
+  RSXLDR attaches one resident system extension.  Without [RESIDENT]
+  the module is temporary and goes away at the next warm boot -- that
+  is, when the next program finishes.
+
+  ///1GET
+
+  GET [CONSOLE] [INPUT] [FROM] FILE filename [[ECHO]|[NO ECHO]]
+  GET [CONSOLE] [INPUT] [FROM] CONSOLE
+
+  GET makes a file the console keyboard.  Every character a program --
+  or the CCP itself -- reads from the console comes out of the file
+  instead, until the file runs out or GET CONSOLE puts the keyboard
+  back.  So a file of commands, one per line, is a script.
+
+  With [ECHO], the default, what is read is printed as though it had
+  been typed.  [NO ECHO] keeps the console quiet; the commands still
+  run.
+
+  GET works by attaching GET.RSX, a resident system extension, so
+  GET.RSX must be on the default drive.  A file that runs out removes
+  the module at the next warm boot, and so does GET CONSOLE.
+
+  ///2Limits
+
+  [PROGRAM], [FILTERED], [NOT FILTERED] and [RAW] are refused by name.
+  This GET is always [SYSTEM]: the CCP is a transient here and reads
+  through the same extension chain as a program, so there is no way to
+  feed one and not the other.  Nothing filters the stream either -- the
+  file is served byte for byte, except that the line feed of a CR LF
+  pair is dropped, since a console line ends at the CR.
+
+  Only one GET at a time.  Modules cannot be relocated on this machine,
+  so GET.RSX has one fixed address and it must be free.
+
+  ///1PUT
+
+  PUT [CONSOLE] [OUTPUT] [TO] FILE filename [[ECHO]|[NO ECHO]]
+  PUT [CONSOLE] [OUTPUT] [TO] CONSOLE
+
+  PUT copies console output into a file.  With [ECHO], the default, the
+  screen shows it as well; with [NO ECHO] only the file gets it, and
+  the screen stays blank until the capture ends.
+
+  PUT CONSOLE ends the capture.  IT IS NOT OPTIONAL: it writes the last
+  part-filled record and closes the file.  Output made after the last
+  full record and never followed by PUT CONSOLE is lost.
+
+  The file must not already exist.  PUT attaches PUT.RSX, which must be
+  on the default drive.
+
+  ///2Limits
+
+  PRINTER, LIST and LST: are refused by name -- capturing the printer
+  means intercepting a function this module does not claim.  So are
+  [PROGRAM], [FILTERED] and [RAW], for GET's reasons.
+
+  PUT and GET can both be resident, but PUT must be started FIRST: each
+  module has one fixed address and a new one has to fit below the ones
+  already there.
+
+  ///1DEVICES
+
+  This machine's logical devices:
+
+  CON:   the console -- keyboard and screen
+  AUX:   the auxiliary serial port
+  LST:   the printer
+
+  There is more than one console: STARTCPM -c n joins console n from
+  another terminal.  A program talks to the console its process was
+  started on.

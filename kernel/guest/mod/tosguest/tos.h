@@ -132,4 +132,5 @@ extern void tos_timers();
 extern int mfp_level();
 extern int mfp_ack();
 extern void mfp_unack();
+extern int mfp_tcskip();
 extern void tos_snd(), tos_sndend();

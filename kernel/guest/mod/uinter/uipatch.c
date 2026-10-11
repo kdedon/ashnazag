@@ -856,7 +856,7 @@ static long extvcb();
 static long mkparms();
 static int extcall();
 static int trashnext();
-static int trashundo();
+static int trashundo(), trashother();
 static void trashroot();
 static void xvolbytes();
 
@@ -3397,159 +3397,6 @@ ui_insys(a)
 	return v > z && v < lim;
 }
 
-long uinter_soundnative, uinter_soundrefused, uinter_soundrollback;
-
-static unsigned char sndentry[] = {0x20,0x78,0x02,0xb6,0x20,0x68,0x01,0x10,0x20,0x68,0x00,0x2a,0x20,0x70,0x00,0x00,0x48,0x40,0x4e,0xd0};
-static unsigned char sndadd[] = {0x30,0x2f,0x00,0x08,0x0c,0x40,0x00,0x24,0x6c,0x1a,0x22,0x78,0x02,0xb6,0x22,0x69,0x01,0x10,0x22,0x69,0x00,0x2a,0x20,0x6f,0x00,0x04,0x23,0x88,0x00,0x00,0x42,0x6f,0x00,0x0a,0x60,0x06,0x3f,0x7c,0xff,0xce,0x00,0x0a,0x20,0x57,0xde,0xfc,0x00,0x0a,0x4e,0xd0};
-static unsigned char sndmanager[] = {0x42,0x41,0x12,0x00,0x0c,0x01,0x00,0x24,0x64,0x04,0x4e,0xfb,0x10,0xd0,0x20,0x5f,0x32,0x00,0xee,0x49,0xde,0xc1,0x3e,0xbc,0xff,0xce,0x4e,0xd0};
-static unsigned char sndversion[] = {0x4e,0x56,0x00,0x00,0x2d,0x7c,0x03,0x21,0x80,0x00,0x00,0x08,0x4e,0x5e,0x4e,0x75};
-static unsigned char sndlegacy[] = {0x48,0x78,0x00,0x40,0x61,0xff,0x00,0x00,0x69,0xf6,0x23,0xc8,0x00,0x05,0x66,0x3c,0x20,0x79,0x00,0x00,0x02,0xb6,0x21,0x79,0x00,0x05,0x66,0x3c,0x01,0x10,0x58,0x4f,0x66,0x14};
-static unsigned char sndcall[] = {0x61,0xff,0x00,0x02,0xaa,0x90,0x70,0x00};
-static unsigned char sndnop[] = {0x4e,0x71,0x4e,0x71,0x4e,0x71};
-
-static int
-soundmatch(gp,a,code,n)
-struct guest_proc *gp;
-unsigned long a;
-unsigned char *code;
-int n;
-{
-    unsigned char b[64];
-    return n<=sizeof b && ui_macrange(gp,a,n) &&
-        !copyin((caddr_t)a,(caddr_t)b,n) && !bcmp((caddr_t)b,(caddr_t)code,n);
-}
-
-/* Preserve native sound globals and dispatch slots during late initialization. */
-static int
-soundnative(gp)
-struct guest_proc *gp;
-{
-    unsigned char b[102],call[8],v[4];
-    unsigned long expand,globals,table,entry,manager,version;
-    int installed;
-    if(gp!=ui.l_gp || gp!=ui.l_active || gp->gp_proc!=u.u_procp ||
-        ui.l_proc!=u.u_procp || ui.l_state!=LS_INUSE ||
-        (AUXP(gp)->ap_mac&APM_COFF) || (gp->gp_vsr&0x700) ||
-        copyin((caddr_t)0x15a,(caddr_t)v,2) || G16(v)!=0x0810 ||
-        copyin((caddr_t)TOOLTAB,(caddr_t)v,4) ||
-        !soundmatch(gp,entry=G32(v),sndentry,sizeof sndentry) ||
-        copyin((caddr_t)0x2b6,(caddr_t)v,4) ||
-        !ui_macrange(gp,expand=G32(v),0x114) ||
-        copyin((caddr_t)(expand+0x110),(caddr_t)v,4) ||
-        !ui_macrange(gp,globals=G32(v),sizeof b) ||
-        copyin((caddr_t)globals,(caddr_t)b,sizeof b) ||
-        G32(b+0x12)!=102 || G16(b+0x18)!=1 ||
-        !ui_macrange(gp,G32(b+0x26),56) ||
-        !ui_macrange(gp,table=G32(b+0x2a),52) ||
-        copyin((caddr_t)(table+0x28),(caddr_t)v,4) ||
-        !soundmatch(gp,G32(v),sndadd,sizeof sndadd) ||
-        copyin((caddr_t)(table+8),(caddr_t)v,4) ||
-        !soundmatch(gp,manager=G32(v),sndmanager,sizeof sndmanager) ||
-        manager<24 || !ui_macrange(gp,manager-24,4) ||
-        copyin((caddr_t)(manager-24),(caddr_t)v,4) || G16(v)!=0x4efa)
-        goto refused;
-    version=manager-22+(short)G16(v+2);
-    if(!soundmatch(gp,version,sndversion,sizeof sndversion) ||
-        !soundmatch(gp,0x33108,sndlegacy,sizeof sndlegacy) ||
-        !ui_macrange(gp,0x8676,sizeof call) ||
-        copyin((caddr_t)0x8676,(caddr_t)call,sizeof call))goto refused;
-    installed=!bcmp((caddr_t)call,(caddr_t)sndnop,sizeof sndnop);
-    if(G16(call+6)!=0x7000 || (!installed &&
-        bcmp((caddr_t)call,(caddr_t)sndcall,sizeof sndcall)))goto refused;
-    if(installed)return 1;
-    if(as_checkprot(u.u_procp->p_as,(caddr_t)0x8676,6,PROT_READ|PROT_WRITE|PROT_EXEC))goto refused;
-    if(copyout((caddr_t)sndnop,(caddr_t)0x8676,6) ||
-        !soundmatch(gp,0x8676,sndnop,sizeof sndnop)) {
-        uinter_soundrollback++;
-        if(copyout((caddr_t)call,(caddr_t)0x8676,6) ||
-            !soundmatch(gp,0x8676,call,6)) {
-            uinter_soundrefused++;dlm_cacheflush();
-            psignal(u.u_procp,SIGSEGV);return -1;
-        }
-        dlm_cacheflush();return 0;
-    }
-    dlm_cacheflush();uinter_soundnative++;return 1;
-refused:
-    uinter_soundrefused++;return 0;
-}
-
-int uin_soundopendiag;
-long uin_soundopencount, uin_soundopenrefused, uin_soundopenearly;
-unsigned long uin_soundopen[16][22], uin_soundopenreject[8], uin_soundopenlast[10];
-
-/* Record native component opens without changing the guest call. */
-static void
-soundopenrecord(gp,r,tw)
-struct guest_proc *gp;
-char *r;
-unsigned short tw;
-{
-    unsigned char v[4],stack[20],bytes[32];
-    unsigned long entry=0,expand=0,globals=0,table=0,manager=0,version=0,size=0,sp,pc,*row;
-    int i,stage=0;
-    if(!uin_soundopendiag || tw!=0xa82a)return;
-    if(uin_soundopencount>=16){uin_soundopenreject[0]++;return;}
-    if(GR_D(r,0)!=7){uin_soundopenreject[1]++;return;}
-    if(gp!=ui.l_gp || gp!=ui.l_active){uin_soundopenreject[2]++;return;}
-    if(gp->gp_proc!=u.u_procp || ui.l_proc!=u.u_procp){uin_soundopenreject[3]++;return;}
-    if(ui.l_state!=LS_INUSE){uin_soundopenreject[4]++;return;}
-    if(AUXP(gp)->ap_mac&APM_COFF){uin_soundopenreject[5]++;return;}
-    stage=1;
-    if(copyin((caddr_t)0x15a,(caddr_t)v,2) || G16(v)!=0x0810)goto refused;
-    stage=2;
-    if(copyin((caddr_t)TOOLTAB,(caddr_t)v,4) ||
-        !soundmatch(gp,entry=G32(v),sndentry,sizeof sndentry))goto refused;
-    stage=3;
-    if(copyin((caddr_t)0x2b6,(caddr_t)v,4))goto refused;
-    expand=G32(v);stage=4;
-    if(!ui_macrange(gp,expand,0x114) ||
-        copyin((caddr_t)(expand+0x110),(caddr_t)v,4))goto refused;
-    globals=G32(v);stage=5;
-    if(!ui_macrange(gp,globals,102) ||
-        copyin((caddr_t)(globals+0x12),(caddr_t)v,4))goto refused;
-    size=G32(v);stage=6;
-    if(size!=102)goto refused;
-    stage=7;
-    if(copyin((caddr_t)(globals+0x2a),(caddr_t)v,4))goto refused;
-    table=G32(v);
-    if(!ui_macrange(gp,table,52) || copyin((caddr_t)(table+8),(caddr_t)v,4))goto refused;
-    manager=G32(v);stage=8;
-    if(!soundmatch(gp,manager,sndmanager,sizeof sndmanager))goto refused;
-    stage=9;
-    if(manager<24 || !ui_macrange(gp,manager-24,4) ||
-        copyin((caddr_t)(manager-24),(caddr_t)v,4) || G16(v)!=0x4efa)goto refused;
-    version=manager-22+(short)G16(v+2);stage=10;
-    if(!soundmatch(gp,version,sndversion,sizeof sndversion))goto refused;
-    stage=11;
-    if(copyin((caddr_t)(globals+0x40),(caddr_t)v,4))goto refused;
-    if(!G32(v)){uin_soundopenearly++;uin_soundopenreject[7]++;return;}
-    row=uin_soundopen[uin_soundopencount];
-    for(i=0;i<22;i++)row[i]=0xffffffffUL;
-    row[0]=pc=GR_PC(r);row[1]=GR_D(r,0);row[2]=GR_A(r,0);
-    row[3]=sp=GR_USP(r);row[10]=GR_A(r,5);row[11]=globals;row[13]=(unsigned long)(gp->gp_vsr&0xffff)<<16;
-    if(ui_macrange(gp,sp,sizeof stack) &&
-        !copyin((caddr_t)sp,(caddr_t)stack,sizeof stack)) {
-        for(i=0;i<5;i++)row[4+i]=G32(stack+4*i);
-        row[13]|=1;
-    }
-    if(!copyin((caddr_t)0xb7c,(caddr_t)v,4)){row[9]=G32(v);row[13]|=2;}
-    if(!copyin((caddr_t)(globals+0x40),(caddr_t)v,4)){row[12]=G32(v);row[13]|=4;}
-    if(pc>=16 && ui_macrange(gp,pc-16,sizeof bytes) &&
-        !copyin((caddr_t)(pc-16),(caddr_t)bytes,sizeof bytes)) {
-        for(i=0;i<8;i++)row[14+i]=G32(bytes+4*i);
-        row[13]|=8;
-    }
-    uin_soundopencount++;
-    return;
-refused:
-    uin_soundopenrefused++;uin_soundopenreject[6]++;
-    uin_soundopenlast[0]=GR_PC(r);uin_soundopenlast[1]=gp->gp_vsr;
-    uin_soundopenlast[2]=stage;uin_soundopenlast[3]=expand;
-    uin_soundopenlast[4]=globals;uin_soundopenlast[5]=size;
-    uin_soundopenlast[6]=table;uin_soundopenlast[7]=manager;
-    uin_soundopenlast[8]=version;uin_soundopenlast[9]=GR_D(r,0);
-}
-
 /* 1 if _SoundDispatch is _Unimplemented; -1 if the table is unreadable. */
 static int
 ui_unimpl()
@@ -3562,7 +3409,7 @@ ui_unimpl()
 	return G32(b) == G32(u);
 }
 
-/* Keep the public slot available to the native Sound Manager installer. */
+/* Answer _SoundDispatch as no manager until the A/UX one installs. */
 static int
 soundearly(r, tw)
 	char *r;
@@ -3686,17 +3533,19 @@ sysmap()
 }
 
 /*
- * The Finder looks for each volume's Trash by name in its root, where HFS
- * keeps it; Patch.067C's FindFolder puts the startup volume's elsewhere.
- * A root lookup that fails with fnfErr asks FindFolder for the volume's
- * Trash and, if that folder has the name looked for, answers with it as a
- * folder of the root.  Three stubs: the lookup, FindFolder, then
- * PBGetCatInfo of the Trash itself.  Their data past the frame:
+ * The Finder looks for each volume's Trash and Temporary Items by name in
+ * its root, where HFS keeps them; Patch.067C's FindFolder puts the startup
+ * volume's elsewhere.  A root lookup that fails with fnfErr asks FindFolder
+ * for the volume's Trash, then its Temporary Items, and if that folder has
+ * the name looked for, answers with it as a folder of the root.  Three
+ * stubs: the lookup, FindFolder, then PBGetCatInfo of the folder itself.
+ * Their data past the frame:
  */
 #define	TNAME	0		/* the name looked for, 64 bytes */
 #define	TVREF	64		/* ioVRefNum << 16 | the volume's vRefNum */
-#define	TDIR	68		/* the Trash's vRefNum << 16, then its dirID */
-#define	TEXT	76
+#define	TDIR	68		/* the folder's vRefNum << 16, then its dirID */
+#define	TTYPE	76		/* the folder type asked for */
+#define	TEXT	80
 
 static unsigned short hgetcat[] = { 0xa260, 0x4e71, 0x4e71, 0x4e71, 0x4e71, 0x4e71 };
 
@@ -3727,6 +3576,32 @@ trashcat(r, tw)
 	return ui_auxcall(r, 0, 0L, code, MCAT, 0);
 }
 
+/* FindFolder(the volume, t's type, false, &vRefNum, &dirID) below the frame */
+static int
+trashfold(r, t)
+	char *r;
+	unsigned char *t;
+{
+	static unsigned short fold[] = {	/* lea f-18,sp; moveq #0,d0; _FindFolder */
+		0x4ffa, 0xffe8, 0x7000, 0xa823, 0x4e71, 0x4e71
+	};
+	unsigned char a[18];
+	long g = (GR_USP(r) - FSIZE - TEXT) & ~3L;
+
+	P32(a, g + FSIZE + TDIR + 4);
+	P32(a + 4, g + FSIZE + TDIR);
+	P16(a + 8, 0);
+	bcopy((char *)t + TTYPE, (char *)a + 10, 4);
+	bcopy((char *)t + TVREF + 2, (char *)a + 14, 2);
+	P16(a + 16, 0);
+	if (copyout((caddr_t)a, (caddr_t)(g - 18), sizeof a) ||
+	    !ui_auxcall(r, 0, 0L, fold, MFOLD, TEXT))
+		return 0;
+	(void)copyout((caddr_t)t, (caddr_t)(g + FSIZE), TEXT);
+	trashbusy = 1;
+	return 2;
+}
+
 /*
  * RESUME of a Trash stub (mark m, frame f): 1 if the next one runs, 2 if
  * that is FindFolder (which may take stubs of its own), else 0 with the
@@ -3738,11 +3613,8 @@ trashnext(r, m, f, d0)
 	int m;
 	long f, *d0;
 {
-	static unsigned short fold[] = {	/* lea f-18,sp; moveq #0,d0; _FindFolder */
-		0x4ffa, 0xffe8, 0x7000, 0xa823, 0x4e71, 0x4e71
-	};
-	unsigned char pb[0x34], t[TEXT], nm[64], a[18];
-	long a0 = GR_A(r, 0), v, g;
+	unsigned char pb[0x34], t[TEXT], nm[64], a[4];
+	long a0 = GR_A(r, 0), v;
 	int i;
 
 	if (copyin((caddr_t)a0, (caddr_t)pb, sizeof pb)) {
@@ -3758,20 +3630,8 @@ trashnext(r, m, f, d0)
 		bcopy((char *)nm, (char *)t + TNAME, nm[0] + 1);
 		bcopy((char *)pb + 0x16, (char *)t + TVREF, 2);
 		(void)copyin((caddr_t)(v + 0x4e), (caddr_t)t + TVREF + 2, 2);
-		/* FindFolder(vRefNum, 'trsh', false, &vRefNum, &dirID) below the frame */
-		g = (GR_USP(r) - FSIZE - TEXT) & ~3L;
-		P32(a, g + FSIZE + TDIR + 4);
-		P32(a + 4, g + FSIZE + TDIR);
-		P16(a + 8, 0);
-		P32(a + 10, 0x74727368);
-		bcopy((char *)t + TVREF + 2, (char *)a + 14, 2);
-		P16(a + 16, 0);
-		if (copyout((caddr_t)a, (caddr_t)(g - 18), sizeof a) ||
-		    !ui_auxcall(r, 0, 0L, fold, MFOLD, TEXT))
-			return 0;
-		(void)copyout((caddr_t)t, (caddr_t)(g + FSIZE), sizeof t);
-		trashbusy = 1;
-		return 2;
+		P32(t + TTYPE, 0x74727368);
+		return trashfold(r, t);
 	}
 	if (copyin((caddr_t)(f + FSIZE), (caddr_t)t, sizeof t) || t[TNAME] > 63) {
 		*d0 = FNFERR;
@@ -3779,7 +3639,7 @@ trashnext(r, m, f, d0)
 	}
 	if (m == MFOLD) {
 		if (copyin((caddr_t)(f - 2), (caddr_t)a, 2) || G16(a) || !G32(t + TDIR + 4))
-			return trashundo(r, t, d0);
+			return trashother(r, t, d0);
 		P16(pb + 0x16, G16(t + TDIR));
 		P16(pb + 0x1c, -1);
 		bcopy((char *)t + TDIR + 4, (char *)pb + 0x30, 4);
@@ -3789,14 +3649,14 @@ trashnext(r, m, f, d0)
 			return trashundo(r, t, d0);
 		return 1;
 	}
-	/* MTRASH: the Trash, if it has the name looked for */
+	/* MTRASH: the folder, if it has the name looked for */
 	if ((short)*d0 || copyin((caddr_t)G32(pb + 0x12), (caddr_t)nm, sizeof nm) ||
 	    nm[0] > 63 || nm[0] != t[TNAME])
-		return trashundo(r, t, d0);
+		return trashother(r, t, d0);
 	for (i = 1; i <= nm[0]; i++)
 		if (lower(nm[i]) != lower(t[TNAME + i]))
-			return trashundo(r, t, d0);
-	if (!copyin((caddr_t)(a0 + 0x64), (caddr_t)a, 4)) {
+			return trashother(r, t, d0);
+	if (G32(t + TTYPE) == 0x74727368 && !copyin((caddr_t)(a0 + 0x64), (caddr_t)a, 4)) {
 		trashpar = G32(a);
 		trashdir = G32(t + TDIR + 4);
 		trashvref = G16(t + TVREF + 2);
@@ -3807,6 +3667,24 @@ trashnext(r, m, f, d0)
 	(void)copyout((caddr_t)pb, (caddr_t)a0, sizeof pb);
 	(void)copyout((caddr_t)a, (caddr_t)(a0 + 0x64), 4);
 	return 0;
+}
+
+/* after the Trash, Temporary Items; then the lookup's own result */
+static int
+trashother(r, t, d0)
+	char *r;
+	unsigned char *t;
+	long *d0;
+{
+	int i;
+
+	if (G32(t + TTYPE) != 0x74727368)
+		return trashundo(r, t, d0);
+	trashundo(r, t, d0);
+	P32(t + TTYPE, 0x74656d70);
+	if ((i = trashfold(r, t)) == 0)
+		*d0 = FNFERR;
+	return i;
 }
 
 /* the lookup's own result: fnfErr, its name and fields back */
@@ -3993,7 +3871,6 @@ struct guest_proc *gp;
 unsigned short tw;
 {
     struct uipatch *p;int i;
-    if(uin_soundopendiag && uin_soundopencount<16 && tw==0xa82a)return 1;
     if((gp->gp_flags&GPF_STUB) || !uinter_patches ||
         (uin_coffdiag && gp==coffdiagowner) ||
         (AUXP(gp)->ap_mac&APM_COFF) || ui_forceget() || ui_forcepollowned(gp))return 1;
@@ -4007,7 +3884,7 @@ unsigned short tw;
         if(p->p_kind==PFSM && (tw&0xf8ff)==p->p_trap)return 1;
         if(gp->gp_flags&GPF_DONE(i))continue;
         if(p->p_kind==PSLEEPQ && (tw&0xf800)==0xa800)return 1;
-        if(p->p_kind==PSOUND && ((tw&~0x400)==0xa800 || tw==0xa02e))return 1;
+        if(p->p_kind==PSOUND && (tw&~0x400)==0xa800)return 1;
         if(p->p_kind==PHFS && (tw&~0x200)==p->p_trap)return 1;
         if(tw==p->p_trap)return 1;
     }
@@ -4032,8 +3909,6 @@ struct guest_proc *gp;
     if(!uinter_patches)return 0;
     if(copyin((caddr_t)0x15a,(caddr_t)b,2))return 1;
     sv=G16(b);
-    if(uin_soundopendiag && uin_soundopencount<16 && sv==0x0810 &&
-        gp==ui.l_gp && gp==ui.l_active && gp->gp_proc==u.u_procp)return 1;
     if(sv==0x0710 || (sv>>8)<6 || (sv>>8)>9 || (sv&0xf0)>0x90 || (sv&0xf)>9)return 1;
     for(i=0;i<NPATCH;i++)
         if(uipatches[i].p_sysver==sv && !(gp->gp_flags&GPF_DONE(i)))return 1;
@@ -4056,7 +3931,6 @@ ui_alwatch(gp, r)
 	uinter_nalwatch++;
 	if (copyin((caddr_t)pc, (caddr_t)b, 2))
 		return 0;
-    soundopenrecord(gp,r,G16(b));
     if(!ui_trapinterest(gp,G16(b))) {uin_watchskipped++;return 0;}
     coffwatch=coffdiagwatch(gp,r);
     coffbound=ui_coffworld(gp,coffworld);
@@ -4137,8 +4011,7 @@ ui_alwatch(gp, r)
 	for (i = 0; i < NPATCH; i++)
 		if (uipatches[i].p_sysver == sv && !(gp->gp_flags & GPF_DONE(i)))
 			todo = 1;
-	if ((!uinter_patches && !spacewatch(gp)) || (!todo && !coffwatch && !coffbound && !spacewatch(gp) && !ui_forceget() && !ui_forcepollowned(gp) && !(pmwatchneeded(gp)) &&
-        !(uin_soundopendiag && uin_soundopencount<16 && sv==0x0810))) {
+	if ((!uinter_patches && !spacewatch(gp)) || (!todo && !coffwatch && !coffbound && !spacewatch(gp) && !ui_forceget() && !ui_forcepollowned(gp) && !(pmwatchneeded(gp)))) {
 		gp->gp_flags &= ~GPF_AWATCH;
 		if (uinter_trace)
 			printf("uinter: watch off after %d A-lines, SysVersion %x\n",
@@ -4175,19 +4048,16 @@ ui_alwatch(gp, r)
 			return 1;
 		}
 		if (p->p_kind == PSOUND && p->p_sysver == sv && !(gp->gp_flags & GPF_DONE(i)) &&
-		    ((tw & ~0x400) == 0xa800 || tw == 0xa02e) && !(gp->gp_vsr & 0x700)) {
+		    (tw & ~0x400) == 0xa800 && !(gp->gp_vsr & 0x700)) {
 			int state = ui_unimpl();
 			if (state < 0)
 				return 0;
 			if (!state) {
-                int native = soundnative(gp);
-                if(native<0)return 1;
-                if(native)gp->gp_flags |= GPF_DONE(i);
+				gp->gp_flags |= GPF_DONE(i);
 				if (uinter_trace)
 					printf("uinter: _SoundDispatch there at %x\n", (int)pc);
 				continue;
 			}
-            if ((tw & ~0x400) != 0xa800)continue;
 			if (!soundearly(r, tw))
 				return 0;
 			uinter_patched |= 1L << i;

@@ -69,4 +69,4 @@ Risks:
 6. Record locks over host `fcntl` locks; passwords stay Unix modes.
 
 ## Status
-Done: steps 1-5 (see `CPM.md`). Left: GENCOM's load-time RSX attach and the RSX tests (`rsxt`, `rsxt2`); 148 to another console; xsession opening extra consoles. Not ported (C900 scheduler internals and timings): `concl`, `concm`, `conco`, `concr`, `concs`, `concv`, `concz`, `xdospol`.
+Done: steps 1-5, GENCOM load-time RSX attach (relocated modules), RSX tests, the C900 utilities, 148 to any console, xsession console menus (see `CPM.md`). Not ported (C900 scheduler internals and timings): `concl`, `concm`, `conco`, `concr`, `concs`, `concv`, `concz`, `xdospol`.

@@ -6,18 +6,14 @@
 #    halts through the kernel; the System's goes on to the ROM's
 #    power-off code.  A group that goes on with other modules is split
 #    after them, the rest keeping the group's condition.
-#  - With -s the Sound Manager's group loses notAUX: it plays through
-#    SoundOut's output component, which hides the hardware's.  Without it
-#    A/UX's own sound traps stay, playing through /dev/snd.
 #  - A 'gpch' that stores a cache routine in the table at $DB8 skips it.
-# usage: auxguard.py [-n] [-s] [-S] %System     (-n: list only)
-import sys, os, struct, hashlib
+# usage: auxguard.py [-n] %System     (-n: list only)
+import sys, os, struct
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import rsrcedit
 
 NOTAUX = 0x100
 MM = set(range(0xa01e, 0xa02e)) | {0xa036, 0xa040, 0xa057, 0xa064, 0xa09d}
-SND = {0xa803, 0xa805}	# SndDoCommand, SndPlay
 
 def fork(d):
     n, = struct.unpack('>H', d[24:26])
@@ -76,39 +72,13 @@ def install_table(b):
     return []
 
 
-SOUND3_ORIGINAL = 'e50236c3f2f04000513dce7549fccabc06291ebb3d342c60298c93bf3f9f2caf'
-SOUND3_LEGACY_ENABLED = '5cf329672e590934d9982228a7d15d1405257bdb249e9513cc2c37f63960185f'
-SOUND3_ENABLED = '3252ea519b7f62fe89c385b98e549c71dd7d56b0cee2c3472bb863537ff8c98e'
-SOUND3_GROUPS = (0x9497, 0x94d1, 0x94b6)
-SOUND3_CONDITIONS = {0x9497: (0x13c, NOTAUX), 0x94d1: (0x13c, NOTAUX),
-                     0x94b6: (0x10001c, 0x100000)}
-
-def sound3(b):
-    digest = hashlib.sha256(b).hexdigest()
-    if digest not in (SOUND3_ORIGINAL, SOUND3_LEGACY_ENABLED, SOUND3_ENABLED):
-        raise ValueError('unrecognized native Sound Manager resource')
-    out = bytearray(b)
-    changed = 0
-    for at in SOUND3_GROUPS:
-        cond = int.from_bytes(out[at:at + 3], 'big')
-        original, mask = SOUND3_CONDITIONS[at]
-        if cond not in (original, original & ~mask):
-            raise ValueError('unexpected native Sound Manager condition')
-        if cond & mask:
-            out[at:at + 3] = (cond & ~mask).to_bytes(3, 'big')
-            changed += 1
-    if hashlib.sha256(out).hexdigest() != SOUND3_ENABLED:
-        raise ValueError('native Sound Manager guard authentication failed')
-    return bytes(out), changed
 
 if __name__ == '__main__':
     a = sys.argv[1:]
     dry = '-n' in a
-    snd = '-s' in a
-    snd3 = '-S' in a
-    a = [x for x in a if x not in ('-n', '-s', '-S')]
+    a = [x for x in a if x != '-n']
     if len(a) != 1:
-        sys.exit('usage: auxguard.py [-n] [-s] [-S] %System')
+        sys.exit('usage: auxguard.py [-n] %System')
     d = bytearray(open(a[0], 'rb').read())
     base, _ = fork(d)
     n = 0
@@ -120,11 +90,6 @@ if __name__ == '__main__':
         for at, cond, traps in install_table(b):
             # OS trap words carry flag bits 8-10
             mm = traps and all(v & ~0x700 in MM for v in traps)
-            if snd and SND <= set(traps) and cond & NOTAUX:
-                print('lpch %d: Sound Manager' % rid)
-                d[off + at:off + at + 3] = (cond & ~NOTAUX).to_bytes(3, 'big')
-                n += 1
-                continue
             sd = 0
             while sd < len(traps) and traps[sd] == 0xa895:
                 sd += 1
@@ -150,17 +115,6 @@ if __name__ == '__main__':
             print('gpch %d: $DB8 store' % rid)
             d[off + k - 0x18] = 0x60
             n += 1
-    if snd3:
-        found = False
-        for t, rid, off, ln in resources(d, base):
-            if (t, rid) == (b'gpch', 666):
-                replacement, count = sound3(bytes(d[off:off + ln]))
-                d[off:off + ln] = replacement
-                n += count
-                found = True
-                print('gpch 666: native Sound Manager guards %d' % count)
-        if not found:
-            raise ValueError('native Sound Manager resource missing')
     if not dry and n:
         with open(a[0] + '.tmp', 'wb') as f:
             f.write(d)

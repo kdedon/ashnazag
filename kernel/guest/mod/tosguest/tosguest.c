@@ -208,17 +208,22 @@ tos_intr(gp, r)
 			break;
 		}
 		t->t_held = 0;
-		if (l == 6)
+		if (l == 6) {
 			vec = mfp_ack();
-		else {
+			splx_(s);
+			if (mfp_tcskip(gp, vec)) {
+				s = splhi_();
+				continue;
+			}
+		} else {
 			if (t->t_vblowed)
 				t->t_vblowed--;
 			else
 				t->t_vblpend = 0;
 			t->t_st.ts_vbl++;
 			vec = 28;
+			splx_(s);
 		}
-		splx_(s);
 		if (guest_reflect(gp, r, GR_PC(r), vec << 2, (char *)0, 2, l) < 0) {
 			s = splhi_();
 			if (l == 6)
@@ -842,6 +847,9 @@ tosioctl(dev, cmd, arg, mode, cr, rvp)
 		tos_kick(1);
 		return 0;
 	case TOSIOC_STAT:
+		t->t_st.ts_fpriv = guest_nfpriv;
+		t->t_st.ts_ftrap = guest_nftrap;
+		t->t_st.ts_linea = guest_nlinea;
 		return copyout((caddr_t)&t->t_st, arg, sizeof t->t_st) ? EFAULT : 0;
 	case TOSIOC_SND: {
 		struct tossndio sn;

@@ -72,6 +72,7 @@ static unsigned long lvg;		/* gvbl() when it last changed */
 static long tkey, tmove;		/* -v: when the last key and motion came */
 static unsigned long *scr;		/* -v: the session's screen, read-only */
 static unsigned long scrlast;		/* -v: its sum, sampled while timing a redraw */
+static struct tosstat st0;		/* -v: the counters when the key came */
 static long now();
 static unsigned long scrsum();
 
@@ -244,6 +245,7 @@ events(fd)
 			if (scr && ev[i].ie_value) {
 				tkey = now();
 				scrlast = scrsum();
+				ioctl(tfd, TOSIOC_STAT, &st0);
 			}
 			if (ev[i].ie_code >= 128 ||
 			    (k = native ? ev[i].ie_code : adb2ikbd[ev[i].ie_code]) == 0)
@@ -523,6 +525,24 @@ scrsum()
 	return s;
 }
 
+/* -v: what the guest cost the kernel since the key */
+static void
+stdelta()
+{
+	struct tosstat st;
+	unsigned long r = 0;
+	int i;
+
+	if (ioctl(tfd, TOSIOC_STAT, &st) < 0)
+		return;
+	for (i = 0; i < 64; i++)
+		r += st.ts_refl[i] - st0.ts_refl[i];
+	fprintf(stderr, "starttos: timer C %lu (%lu without the guest) vbl %lu io %lu priv %lu+%lu fast trap %lu refl %lu\n",
+	    st.ts_ints[5] - st0.ts_ints[5], st.ts_tcskip - st0.ts_tcskip, st.ts_vbl - st0.ts_vbl,
+	    st.ts_io - st0.ts_io, st.ts_priv - st0.ts_priv, st.ts_fpriv - st0.ts_fpriv,
+	    st.ts_ftrap - st0.ts_ftrap, r);
+}
+
 /*
  * -v with the session owning the video: how long the guest drew after a
  * key, to the last change before two seconds without one; where GEM has
@@ -544,8 +564,10 @@ measure()
 		}
 	}
 	if (tkey && t - (tdraw ? tdraw : tkey) > 2000) {
-		if (tdraw)
+		if (tdraw) {
 			fprintf(stderr, "starttos: redraw %ld ms\n", tdraw - tkey);
+			stdelta();
+		}
 		tkey = tdraw = 0;
 	}
 	if (tmove && t - tmove > 500 && pv->pv_cxy == pv->pv_xy) {

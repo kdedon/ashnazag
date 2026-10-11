@@ -1924,6 +1924,121 @@ int mode;
 	return 0;
 }
 
+#define BCHUNK	512		/* words a run of whole lines may move */
+
+/* lowest and highest byte k lines touch, from a, n words a line */
+static void
+ds_bspan(a, n, xi, yi, k, lo, hi)
+unsigned long a, n, k, *lo, *hi;
+long xi, yi;
+{
+	unsigned long c[4];
+	int i;
+
+	c[0] = a;
+	c[1] = a + (n - 1) * xi;
+	c[2] = a + (k - 1) * ((n - 1) * xi + yi);
+	c[3] = c[2] + (n - 1) * xi;
+	*lo = *hi = c[0];
+	for (i = 1; i < 4; i++) {
+		if ((long)(c[i] - *lo) < 0)
+			*lo = c[i];
+		if ((long)(c[i] - *hi) > 0)
+			*hi = c[i];
+	}
+	*hi += 1;
+}
+
+/* the physical address of lo if lo..hi is resident and contiguous where the blitter reaches, else NONE */
+static unsigned long
+ds_bcontig(lo, hi, wr)
+unsigned long lo, hi;
+int wr;
+{
+	unsigned long p, q, g;
+
+	if ((p = ds_bpa(lo, wr, 0)) & 1)
+		return NONE;
+	for (g = PG(lo) + DS_PGSIZE; g <= hi; g += DS_PGSIZE)
+		if ((q = ds_bpa(g, wr, 0)) & 1 || q != p + (g - lo))
+			return NONE;
+	return p + (hi - lo) < (wr ? 0xE00000L : 0xF00000L) ? p : NONE;
+}
+
+/* the pages of lo..hi in, for writing when wr; 0, or -1 */
+static int
+ds_bfault(lo, hi, wr)
+unsigned long lo, hi;
+int wr;
+{
+	unsigned long g;
+
+	for (g = lo; g <= hi; g = PG(g) + DS_PGSIZE)
+		if (ds_bpa(g, wr, 1) == NONE)
+			return -1;
+	return 0;
+}
+
+/*
+ * k whole lines of t in one run, when what they read and write is
+ * contiguous in physical memory: the blitter takes the guest's
+ * registers as they are, with the addresses translated.  0 ran, -1
+ * not (the lines go one by one).
+ */
+static int
+ds_bchunk(t, b, s, k)
+register struct dsblit *t;
+register unsigned char *b;
+struct dssess *s;
+unsigned long k;
+{
+	unsigned long dlo, dhi, slo, shi, pd, ps = 0, n;
+	int x, rc;
+
+	ds_bspan(t->t_da, t->t_xn, (long)t->t_r.r_dxi, (long)t->t_r.r_dyi, k, &dlo, &dhi);
+	if (ds_bfault(dlo, dhi, 1))
+		return -1;
+	if (t->t_src) {
+		/* reads a line: FXSR adds one, NFSR drops the last unless it is the only one */
+		n = t->t_xn + (t->t_fxsr ? 1 : 0) - (t->t_nfsr && t->t_xn > 1 ? 1 : 0);
+		ds_bspan(t->t_sa, n, (long)t->t_r.r_sxi, (long)t->t_r.r_syi, k, &slo, &shi);
+		if (ds_bfault(slo, shi, 0))
+			return -1;
+	}
+	x = DS_SPL(DS_HI);
+	if (s != ds_front || ds_vowner() != s || (pd = ds_bcontig(dlo, dhi, 1)) == NONE ||
+	    (t->t_src && (ps = ds_bcontig(slo, shi, 0)) == NONE)) {
+		DS_SPLX(x);
+		return -1;
+	}
+	t->t_r.r_da = pd + (t->t_da - dlo);
+	t->t_r.r_sa = t->t_src ? ps + (t->t_sa - slo) : 0;
+	t->t_r.r_xn = t->t_xn;
+	t->t_r.r_yn = k;
+	t->t_r.r_em[0] = BW(0x28);
+	t->t_r.r_em[1] = BW(0x2a);
+	t->t_r.r_em[2] = BW(0x2c);
+	t->t_r.r_hop = t->t_hop;
+	t->t_r.r_op = t->t_op;
+	t->t_r.r_ctl = t->t_smudge | t->t_line;
+	t->t_r.r_skew = b[0x3d];
+	pd = t->t_r.r_da;
+	ps = t->t_r.r_sa;
+	rc = ata_brun(&t->t_r);
+	DS_SPLX(x);
+	DS_CPUSHA();		/* the next run's page checks read what the blitter wrote */
+	t->t_r.r_yn = 1;
+	if (rc)
+		return -1;
+	t->t_da += t->t_r.r_da - pd;
+	if (t->t_src) {
+		t->t_sa += t->t_r.r_sa - ps;
+		t->t_p1 = t->t_sa - t->t_r.r_syi;
+	}
+	t->t_line = t->t_r.r_ctl & 15;
+	return 0;
+}
+
 /*
  * The owner's guest started its blitter: b is its view of the
  * registers.  Each line runs on the blitter while the session is in
@@ -1938,7 +2053,7 @@ register unsigned char *b;
 {
 	register struct dssess *s;
 	struct dsblit t;
-	unsigned long yn;
+	unsigned long yn, k, c;
 	int i, x, n, rc = -1;
 
 	if ((s = ds_vowner()) == 0)
@@ -1961,8 +2076,19 @@ register unsigned char *b;
 	t.t_nfsr = b[0x3d] & 0x40;
 	t.t_skew = b[0x3d] & 15;
 	t.t_src = (0x7bde >> t.t_op & 1) && ((t.t_hop & 2) || (t.t_hop == 1 && t.t_smudge));
+	t.t_r.r_yn = 1;
+	k = t.t_xn <= BCHUNK ? BCHUNK / t.t_xn : 0;
 	/* a line count of 0: the blit is over, as after a busy bit set again */
-	for (yn = BW(0x38); yn; yn--) {
+	for (yn = BW(0x38); yn; yn -= c) {
+		c = 1;
+		while (s != ds_front)
+			if (sleep((caddr_t)&ds_front, (PZERO + 1) | PCATCH)) {
+				rc = 1;
+				goto out;
+			}
+		if (k && ds_bchunk(&t, b, s, c = yn < k ? yn : k) == 0)
+			goto done;
+		c = 1;
 		for (n = 0;; n++) {
 			while (s != ds_front)
 				if (sleep((caddr_t)&ds_front, (PZERO + 1) | PCATCH)) {
@@ -1980,14 +2106,15 @@ register unsigned char *b;
 		DS_SPLX(x);
 		if (i)
 			goto out;
-		PB(b + 0x38, yn - 1, 2);
+done:
+		PB(b + 0x38, yn - c, 2);
 		PB(b + 0x24, t.t_sa, 4);
 		PB(b + 0x32, t.t_da, 4);
 		b[0x3c] = (b[0x3c] & 0xE0) | t.t_line;
 		/* a long blit lets others run and a kill end it; b holds where it is */
 		if (runrun)
 			preempt();
-		if (yn > 1 && (curproc->p_sig & sigmask(SIGKILL))) {
+		if (yn > c && (curproc->p_sig & sigmask(SIGKILL))) {
 			rc = 1;
 			goto out;
 		}

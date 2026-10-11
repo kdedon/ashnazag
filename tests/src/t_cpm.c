@@ -343,6 +343,174 @@ c_progs()
 	    strstr(p, b) > strchr(p, '\r')), "A%s B%s: \"%.400s\"", a, b, o);
 }
 
+static int
+count(o, s)
+	char *o, *s;
+{
+	int n = 0;
+
+	for (; (o = strstr(o, s)) != 0; o++)
+		n++;
+	return n;
+}
+
+/* the 8 hex digits after key in o, or "" */
+static char *
+hexafter(o, key, b)
+	char *o, *key, *b;
+{
+	b[0] = 0;
+	if ((o = strstr(o, key)) != 0)
+		sprintf(b, "%.8s", o + strlen(key));
+	return b;
+}
+
+/* a command whose output has every string of want, and n of count's */
+static void
+rsxcmd(line, name, want, cnt, n)
+	char *line, *name, **want, *cnt;
+	int n;
+{
+	char *o;
+
+	if (!cmd(ofd, line, name))
+		return;
+	o = out + from;
+	for (; *want && strstr(o, *want); want++)
+		;
+	t_check(name, *want == 0 && (!cnt || count(o, cnt) == n), "no \"%s\" or not %d \"%s\" in \"%.600s\"",
+	    *want ? *want : "", n, cnt ? cnt : "", o);
+}
+
+/* resident system extensions: attached by RSXLDR and by GENCOM'd programs */
+static char *w_r0[] = { "rsxt: fn60 unclaimed", "rsxt: head=00000000", "rsxt: hello from rsxt", 0 };
+static char *w_r1[] = { "rsxt2: chain empty", "rsxt2: delete guard=0 ok", "rsxt2: reopen guard=255 fail", 0 };
+static char *w_r10[] = { "RSXT2: FLAGGED 2", 0 };
+static char *w_r9[] = { "RSXT: HELLO FROM RSXT", 0 };
+static char *w_r2[] = { "RSXLDR: ATTACHED AT", " TEMPORARY", 0 };
+static char *w_r3[] = { "RSXLDR: ATTACHED AT", " RESIDENT", "TEMPORARY", 0 };
+static char *w_r4[] = { "RSXT2: MOD", "UCASE", "RSXT2: UCASE=", "RSXT2: PROT UNCLAIMED", 0 };
+static char *w_r5[] = { "GENCOM completed.", 0 };
+static char *w_r6[] = { "PROT ", "RSXT2: UCASE=", "RSXT2: DELETE GUARD=255 FAIL", "RSXT2: REOPEN GUARD=0 OK",
+	"RSXT2: PROT=0211", 0 };
+static char *w_r7[] = { "UCASE3", "RSXT2: UCASE=", "RSXT2: PROT=", 0 };
+static char *w_r8[] = { "UCASE3", "RSXT2: PROT UNCLAIMED", 0 };
+
+static void
+rsx()
+{
+	static char *f[] = { "RSXT.68K", "RSXT2.68K", "UCASE.RSX", "UCASE3.RSX", "PROT.RSX", "PROTN.RSX", 0 };
+	char path[200], to[200], h0[12], h1[12], t1[12];
+	char **n;
+	char *o;
+
+	for (n = f; *n; n++) {
+		sprintf(path, "/tests/cpm/bin/%s", *n);
+		sprintf(to, E "/%s", *n);
+		copy(path, to);
+	}
+	copy("/tests/cpm/bin/RSXT2.68K", E "/GT.68K");
+	rsxcmd("RSXT", "rsx_none", w_r0, (char *)0, 0);
+	hexafter(out + from, "rsxt: htpa=", h0);
+	rsxcmd("RSXT2", "rsx_control", w_r1, (char *)0, 0);
+	rsxcmd("RSXLDR UCASE.RSX T PROT.RSX T UCASE3.RSX T", "rsx_temp", w_r2, "RSXLDR: CHAIN", 3);
+	rsxcmd("RSXT", "rsx_gone", w_r0, (char *)0, 0);
+	rsxcmd("RSXLDR UCASE.RSX PROT.RSX T", "rsx_attach", w_r3, "RSXLDR: CHAIN", 2);
+	rsxcmd("RSXT", "rsx_resident", w_r9, "RSXT: FN60 ANSWERED", 1);
+	o = out + from;
+	hexafter(o, "RSXT: HEAD=", h1);
+	hexafter(o, "RSXT: HTPA=", t1);
+	t_check("rsx_fence", h1[0] && strcmp(h1, t1) == 0 && strcmp(h1, h0) < 0 && strcmp(h1, "00000000") > 0,
+	    "none %s, head %s, top %s", h0, h1, t1);
+	rsxcmd("RSXT2", "rsx_survivor", w_r4, "RSXT2: MOD", 1);
+	/* GENCOM: PROTN goes with the program; resident UCASE is not loaded twice */
+	rsxcmd("GENCOM GT PROTN.RSX UCASE.RSX", "gencom", w_r5, (char *)0, 0);
+	rsxcmd("GT", "gencom_run", w_r6, "RSXT2: MOD", 2);
+	rsxcmd("RSXT2", "gencom_temp", w_r4, "RSXT2: MOD", 1);
+	/* three modules: the middle one goes at the warm boot */
+	rsxcmd("GENCOM GT UCASE3.RSX", "gencom_rebind", w_r5, (char *)0, 0);
+	rsxcmd("GT", "rsx_three", w_r7, "RSXT2: MOD", 3);
+	rsxcmd("RSXT2", "rsx_middle", w_r8, "RSXT2: MOD", 2);
+	rsxcmd("GENCOM GT", "gencom_strip", w_r5, (char *)0, 0);
+	rsxcmd("GT", "gencom_plain", w_r8, "RSXT2: MOD", 2);
+	rsxcmd("RSXT2 OFF", "rsx_flag", w_r10, (char *)0, 0);
+	rsxcmd("RSXT", "rsx_off", w_r0, (char *)0, 0);
+}
+
+/* GET and PUT, and the utilities on P: */
+static char *w_get[] = { "Getting console input from file: GETIN.TXT", "HI FROMFILE", 0 };
+static char *w_put[] = { "Putting console output to file: PUTOUT.TXT", 0 };
+static char *w_putc[] = { "PUT completed for console", 0 };
+static char *w_sdir[] = { "Directory For Drive", 0 };
+static char *w_date[] = { "/", ":", 0 };
+static char *w_show[] = { "k", 0 };
+static char *w_help[] = { "DATE", 0 };
+static char *w_fcopy[] = { "HELLO", 0 };
+static char *w_dev[] = { "CON", 0 };
+
+static void
+utils()
+{
+	struct stat sb;
+	char b[2048], *p;
+	int fd, n;
+
+	put(E "/getin.txt", "HI FROMFILE\r\n\032", 14);
+	prog("GET FILE GETIN.TXT [NO ECHO]", "get", w_get);
+	if ((p = strstr(out + from, "HI FROMFILE")) != 0) {
+		from = p - out;
+		t_check("get_console", waitfor(ofd, "\nA>", 60000), "no prompt: \"%.300s\"", out + from);
+	}
+	prog("PUT FILE PUTOUT.TXT", "put", w_put);
+	cmd(ofd, "HI CAPTURED", "put");
+	prog("PUT CONSOLE", "put_close", w_putc);
+	n = 0;
+	if ((fd = open(E "/putout.txt", O_RDONLY)) >= 0) {
+		n = read(fd, b, sizeof b - 1);
+		close(fd);
+	}
+	b[n > 0 ? n : 0] = 0;
+	t_check("put_file", n > 0 && strstr(b, "HI CAPTURED") != 0, "%d bytes \"%.300s\"", n, b);
+	prog("SDIR *.TXT", "sdir", w_sdir);
+	prog("DATE", "date", w_date);
+	prog("SHOW", "show", w_show);
+	prog("HELP DATE", "help", w_help);
+	prog("FCOPY HELLO.TXT FC.TXT", "fcopy", w_fcopy + 1);
+	t_check("fcopy_file", stat(E "/fc.txt", &sb) == 0, "FC.TXT: %s", T_ERR);
+	prog("P:TYPE FC.TXT", "type_util", w_fcopy);
+	cmd(ofd, "RENAME FC2.TXT=FC.TXT", "rename");
+	t_check("rename", stat(E "/fc2.txt", &sb) == 0 && stat(E "/fc.txt", &sb) < 0, "output \"%.300s\"", out + from);
+	cmd(ofd, "ERASE FC2.TXT", "erase");
+	t_check("erase", stat(E "/fc2.txt", &sb) < 0, "output \"%.300s\"", out + from);
+	prog("DEVICE VALUES", "device", w_dev);
+	cmd(ofd, "SET HELLO.TXT [RO]", "set");
+	t_check("set", strstr(out + from, "R/O") || strstr(out + from, "RO"), "output \"%.300s\"", out + from);
+	cmd(ofd, "BEEP", "beep");
+}
+
+/* fd's output into b (n bytes so far) until s appears; the new n */
+static int
+jwait(fd, b, n, size, s)
+	int fd, n, size;
+	char *b, *s;
+{
+	struct pollfd pf;
+	long end = t_now_ms() + 60000;
+	int k;
+
+	while (!strstr(b, s) && t_now_ms() < end) {
+		pf.fd = fd;
+		pf.events = POLLIN;
+		if (poll(&pf, 1, 1000) > 0) {
+			if ((k = read(fd, b + n, size - 1 - n)) <= 0)
+				break;
+			n += k;
+			b[n] = 0;
+		}
+	}
+	return n;
+}
+
 /* startcpm -c 1 from another terminal: its own CCP on console 1 */
 static void
 joincon()
@@ -385,6 +553,17 @@ joincon()
 		}
 	}
 	t_check("console1", strstr(b, "HI CONSOLE\r\n") != 0, "output \"%.400s\"", b);
+	/* function 148: a program on console 0 reads a key on console 1 */
+	copy("/tests/cpm/bin/CONSW.68K", E "/CONSW.68K");
+	n = 0;
+	b[0] = 0;
+	from = nout;
+	write(in, "CONSW\r", 6);
+	n = jwait(jout, b, n, sizeof b, "a key: ");
+	write(jin, "Q", 1);
+	t_check("setcon", strstr(b, "CONSW: on console 1, a key: ") && waitfor(ofd, "got Q", 60000) &&
+	    strstr(out + from, "CONSW: con9=255") && strstr(out + from, "CONSW: back on console 0, got Q") &&
+	    waitfor(ofd, "\nA>", 60000), "console 1 \"%.300s\", console 0 \"%.300s\"", b, out + from);
 	fd = open("/dev/null", O_RDWR);
 	if ((p2 = fork()) == 0) {
 		putenv("HOME=" H);
@@ -595,6 +774,27 @@ char *name;
 	t_check("tos_absent_after", module("tosguest", &st) < 0, "tosguest loaded during CP/M");
 }
 
+/*
+ * The kernel allocator's pools (struct kmeminfo: bytes in pools, then bytes
+ * in use, per size class) only grow: a session whose peak no longer fits
+ * keeps a new pool, and the allocator a small record of it, after it ends.
+ * That costs resident and swap pages but is not a leak; other allocations
+ * still in use would be.
+ */
+static long
+kmpool()
+{
+	return t_kmem("kmeminfo") + t_kmem("kmeminfo+4") + t_kmem("kmeminfo+8");
+}
+
+static long
+kmused()
+{
+	return t_kmem("kmeminfo+12") + t_kmem("kmeminfo+16") + t_kmem("kmeminfo+20");
+}
+
+static long pool0, poolnow, used0, pagesz;
+
 static void
 recovered(name, resident, swap, pages)
 char *name;
@@ -602,12 +802,18 @@ long resident, swap, pages;
 {
 	char label[64];
 	long r = t_kmem("availrmem"), s = t_kmem("availsmem");
-	t_info(name, "resident %ld -> %ld, swap %ld -> %ld, active swap %ld",
-	    resident, r, swap, s, active_swap);
+	long pool = kmpool(), grown = (pool - pool0) / pagesz, used = kmused();
+
+	t_info(name, "resident %ld -> %ld, swap %ld -> %ld, active swap %ld, allocator pools +%ld pages, in use %ld -> %ld",
+	    resident, r, swap, s, active_swap, grown, used0, used);
 	sprintf(label, "%s_ram_released", name);
-	t_check(label, r >= resident, "resident %ld -> %ld", resident, r);
+	t_check(label, r + grown >= resident, "resident %ld -> %ld, pools +%ld", resident, r, grown);
 	sprintf(label, "%s_swap_released", name);
-	t_check(label, s >= swap, "swap %ld -> %ld", swap, s);
+	t_check(label, s + grown >= swap, "swap %ld -> %ld, pools +%ld", swap, s, grown);
+	sprintf(label, "%s_kmem_released", name);
+	t_check(label, used <= used0 || pool > poolnow, "allocator bytes in use %ld -> %ld", used0, used);
+	used0 = used;
+	poolnow = pool;
 	sprintf(label, "%s_vm_released", name);
 	t_check(label, active_swap >= 0 && s - active_swap >= pages,
 	    "recovered %ld pages, CP/M RAM requires %ld", s - active_swap, pages);
@@ -740,6 +946,8 @@ main()
 		t_check("late", strstr(out + from, "LATE FROM HOST") != 0, "output \"%.400s\"", out + from);
 	dirtime(ofd);
 	c_progs();
+	utils();
+	rsx();
 	joincon();
 	shim(ofd);
 	second();
@@ -761,6 +969,9 @@ main()
 	/* The complete workload primes persistent kernel metadata and file caches. */
 	budget = resident_now;
 	swap = swap_now;
+	poolnow = pool0 = kmpool();
+	used0 = kmused();
+	pagesz = pagebytes;
 
 	if ((ofd = boot()) >= 0 && t_check("reboot", waitfor(ofd, "A>", 60000),
 	    "output \"%.400s\"", out)) {
