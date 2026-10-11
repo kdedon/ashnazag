@@ -3,9 +3,9 @@
 #
 #   sh kernel/guest/tos/fvdi/build.sh outdir
 #
-# Out: outdir/{fvdi.prg,ashfb.sys,fvdi.sys}.  FVDI names the fVDI source
-# tree (default ref/fvdi; cloned from github.com/th-otto/fvdi, GPL, when
-# absent).  Built with the gcc 13 m68k cross compiler as TOS programs:
+# Out: outdir/{fvdi.prg,ashfb.sys,bitplane.sys,16_bit.sys,fvdi.sys}.
+# FVDI names the fVDI source tree (default ref/fvdi; cloned from
+# github.com/th-otto/fvdi, GPL, when absent).  Built with the gcc 13 m68k cross compiler as TOS programs:
 # each image is linked at 0 and 0x10000 and the difference gives the
 # relocations.
 set -e
@@ -33,6 +33,8 @@ patch -s -p1 -d "$W/src" < "$H/wheelv.patch"
 patch -s -p1 -d "$W/src" < "$H/linea.patch"
 patch -s -p1 -d "$W/src" < "$H/trnfm.patch"
 patch -s -p1 -d "$W/src" < "$H/nonf.patch"
+patch -s -p1 -d "$W/src" < "$H/drvlist.patch"
+patch -s -p1 -d "$W/src" < "$H/mousepos.patch"
 cat > "$W/bin/cc" <<CC
 #!/bin/sh
 exec nice -n 19 $B/m68k-linux-gnu-gcc -m68020 -Wa,--register-prefix-optional \\
@@ -78,9 +80,23 @@ done
 "$W/bin/cc" $CF -c "$H/linea.c" -o "$W/linea.o"
 "$W/bin/cc" $CF -c "$H/pfb.c" -o "$W/pfb.o"
 "$W/bin/cc" $CF -c "$H/plane.c" -o "$W/plane.o"
+"$W/bin/cc" $CF -c "$H/hwblit.c" -o "$W/hwblit.o"
 "$W/bin/cc" -c "$H/../../drawops/drawops.s" -o "$W/drawops.o"
 prg "$OUT/ashfb.sys" "$D/c_common.gnu.o" "$D/common.gnu.o" "$D/clip.gnu.o" \
-	"$W/init.o" "$W/colours.o" "$W/printf.o" "$W/ashfb.o" "$W/linea.o" "$W/pfb.o" "$W/plane.o" "$W/drawops.o"
+	"$W/init.o" "$W/colours.o" "$W/printf.o" "$W/ashfb.o" "$W/linea.o" "$W/pfb.o" "$W/plane.o" "$W/hwblit.o" "$W/drawops.o"
+# fVDI's own drivers, each started only on the ROM's screen in its depths
+for d in bitplane:0x114:"init colours printf spec palette fill blit line" \
+    16_bit:0x10000:"init colours printf 16_bit"; do
+	n=${d%%:*} m=${d#*:} c=${d##*:}
+	o=
+	for f in $c; do
+		"$W/bin/cc" $CF -c "$W/src/drivers/$n/$f.c" -o "$W/$n-$f.o"
+		[ $f = init ] || "$B/m68k-linux-gnu-objcopy" --redefine-sym _initialize=_fb_initialize "$W/$n-$f.o"
+		o="$o $W/$n-$f.o"
+	done
+	"$W/bin/cc" $CF -DDEPTHS=${m%:*} -c "$H/romscr.c" -o "$W/$n-romscr.o"
+	prg "$OUT/$n.sys" "$D/c_common.gnu.o" "$D/common.gnu.o" "$D/clip.gnu.o" $o "$W/$n-romscr.o"
+done
 sed 's/$/\r/' "$H/fvdi.sys" > "$OUT/fvdi.sys"
 rm -rf "$W"
-echo "[ok] fvdi.prg, ashfb.sys, fvdi.sys"
+echo "[ok] fvdi.prg, ashfb.sys, bitplane.sys, 16_bit.sys, fvdi.sys"

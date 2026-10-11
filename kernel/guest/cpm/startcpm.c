@@ -1066,8 +1066,9 @@ main(argc, argv)
 	signal(SIGCLD, SIG_IGN);
 	signal(SIGHUP, onsig);
 	signal(SIGTERM, onsig);
-	signal(SIGINT, onsig);
-	signal(SIGQUIT, onsig);
+	/* Ctrl-C belongs to the program inside, never the session */
+	signal(SIGINT, SIG_IGN);
+	signal(SIGQUIT, SIG_IGN);
 	signal(SIGPIPE, onsig);
 	signal(SIGSEGV, onsig);
 	signal(SIGBUS, onsig);

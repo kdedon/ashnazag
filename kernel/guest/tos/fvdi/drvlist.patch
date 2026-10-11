@@ -1,0 +1,45 @@
+--- a/engine/startup.c
++++ b/engine/startup.c
+@@ -120,7 +120,7 @@
+ long startup(void)
+ {
+     Virtual *base_vwk, *first_vwk;
+-    List *element;
++    List *element, **link;
+     Driver *driver;
+ 
+     kputs("\n");
+@@ -280,8 +280,7 @@
+     }
+ 
+     first_vwk = 0;
+-    element = driver_list;
+-    while (element)
++    for (link = &driver_list; (element = *link) != NULL; )
+     {
+         driver = (Driver *)element->value;
+         if (driver->module.flags & MOD_RESIDENT)
+@@ -290,17 +289,16 @@
+             {
+                 PRINTF((" %s at $%08lx\n", driver->module.name, (long) driver->module.initialize));
+             }
++            /* a driver for another screen steps aside */
+             if (driver->module.initialize(driver->default_vwk) == 0)
+             {
+-                /* Driver that fails initialization should be removed! */
+-                error("Failed driver initialization of ", driver->module.name);
+-            } else
+-            {
+-                if (!first_vwk)
+-                    first_vwk = driver->default_vwk;
++                *link = element->next;
++                continue;
+             }
++            if (!first_vwk)
++                first_vwk = driver->default_vwk;
+         }
+-        element = element->next;
++        link = &element->next;
+     }
+ 
+     if (first_vwk == 0)

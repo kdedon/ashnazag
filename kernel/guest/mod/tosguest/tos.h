@@ -127,6 +127,7 @@ extern int tos_berr();
 extern int tos_fault();
 extern void tos_devinit();
 extern void tos_nvinit();
+extern int tos_blit();
 extern void tos_input();
 extern void tos_timers();
 extern int mfp_level();

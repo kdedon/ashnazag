@@ -1659,6 +1659,8 @@ boot()
 	if (!t_check("boot_mount", system("/sbin/mount -F ufs " SYSDEV " " SYS) == 0,
 	    "mount " SYSDEV " failed"))
 		return;
+	/* User-Startup runs the test scripts */
+	close(creat(SYS "/fixtures", 0644));
 	/* the most private memory this system reserves now, in 4 MB steps */
 	{
 		struct rlimit rl;
@@ -1690,6 +1692,7 @@ boot()
 	}
 	if (p < 0) {
 		t_check("boot_start", 0, "fork: %s", T_ERR);
+		unlink(SYS "/fixtures");
 		system("/sbin/umount " SYS);
 		return;
 	}
@@ -1800,6 +1803,7 @@ boot()
 		t_check("boot_release", r && strncmp(r, "diff", 4) == 0, "session still shown: %s",
 		    r ? r : "no reply");
 	}
+	unlink(SYS "/fixtures");
 	/* the helpers drop their files when they see the exit */
 	for (i = 0; i < 10 && (sleep(1), system("/sbin/umount " SYS) != 0); i++)
 		;

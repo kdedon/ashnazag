@@ -117,11 +117,13 @@ mkdir -p "$R/tos/stik"
 cp "$O/stiktest.prg" "$R/tos/stik/STIKTEST.PRG"
 printf 'Drive C: of the TOS container.\r\n' > "$R/tos/sys/README.TXT"
 printf '# system drives\nG /tmp/tosg ro\n' > "$R/tos/sys/drives"
-# fVDI's files for C: (FVDI.SYS, ASHFB.SYS, AUTO\FVDI.PRG): GEM on the frame buffer
+# fVDI's files for C: (FVDI.SYS, the drivers, AUTO\FVDI.PRG): GEM on the frame buffer
 if AUX=$AUX sh "$G/tos/fvdi/build.sh" "$O/fvdi" > "$O/fvdi.log" 2>&1; then
 	mkdir -p "$R/tos/fvdi/AUTO"
 	cp "$O/fvdi/fvdi.sys" "$R/tos/fvdi/FVDI.SYS"
 	cp "$O/fvdi/ashfb.sys" "$R/tos/fvdi/ASHFB.SYS"
+	cp "$O/fvdi/bitplane.sys" "$R/tos/fvdi/BITPLANE.SYS"
+	cp "$O/fvdi/16_bit.sys" "$R/tos/fvdi/16_BIT.SYS"
 	cp "$O/fvdi/fvdi.prg" "$R/tos/fvdi/AUTO/FVDI.PRG"
 elif [ "$NOFVDI" = 1 ]; then
 	echo "[skip] fVDI (NOFVDI=1): $(tail -1 "$O/fvdi.log")"

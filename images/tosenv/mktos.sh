@@ -87,10 +87,12 @@ fi
 if AUX=$AUX sh "$G/tos/fvdi/build.sh" "$O/fvdi" > "$O/fvdi.log" 2>&1; then
 	cp "$O/fvdi/fvdi.sys" "$T/tos/sys/FVDI.SYS"
 	cp "$O/fvdi/ashfb.sys" "$T/tos/sys/ASHFB.SYS"
+	cp "$O/fvdi/bitplane.sys" "$T/tos/sys/BITPLANE.SYS"
+	cp "$O/fvdi/16_bit.sys" "$T/tos/sys/16_BIT.SYS"
 	cp "$O/fvdi/fvdi.prg" "$T/tos/sys/AUTO/FVDI.PRG"
 	# starttos -C: what a folder without its own fVDI boots with
 	mkdir -p "$T/tos/fvdi"
-	(cd "$T/tos/sys" && cp -p FVDI.SYS ASHFB.SYS "$T/tos/fvdi/" && cp -rp AUTO "$T/tos/fvdi/")
+	(cd "$T/tos/sys" && cp -p FVDI.SYS ASHFB.SYS BITPLANE.SYS 16_BIT.SYS "$T/tos/fvdi/" && cp -rp AUTO "$T/tos/fvdi/")
 	mkdir -p "$T/tos/src/fvdi/ashfb"
 	tar -C "$(dirname "${FVDI:-$AUX/ref/fvdi}")" --exclude=.git -czf "$T/tos/src/fvdi/fvdi.tar.gz" \
 		"$(basename "${FVDI:-$AUX/ref/fvdi}")"

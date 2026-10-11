@@ -192,6 +192,8 @@ where(a, na)
 
 __asm__(".weak ds_bltgo");
 extern void ds_bltgo();
+static unsigned long *volatile machtype;
+static int *volatile atatt;
 
 /* the guest's blit, on the machine's blitter; without one it ends at once */
 static void
@@ -201,6 +203,27 @@ bltgo()
 		ds_bltgo(tosc.t_blt);
 	else
 		tosc.t_blt[0x3c] &= 0x7f;
+}
+
+/*
+ * TOSIOC_BLIT: a blit the guest hands over whole, on a Falcon's
+ * blitter.  The registers come back as the blitter leaves them; busy
+ * still set when a signal cut it short.
+ */
+int
+tos_blit(arg)
+	caddr_t arg;
+{
+	static void (*volatile go)() = ds_bltgo;
+	unsigned char b[0x40];
+
+	if (!go || !machtype || (atatt && *atatt) || !(tosc.t_flags & TEF_FALCON))
+		return ENXIO;
+	if (copyin(arg, (caddr_t)b, 0x3e))
+		return EFAULT;
+	b[0x3c] |= 0x80;
+	(*go)(b);
+	return copyout((caddr_t)b, arg, 0x3e) ? EFAULT : 0;
 }
 
 /* 0, or -1 with x->ba set */

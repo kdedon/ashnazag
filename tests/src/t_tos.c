@@ -300,7 +300,8 @@ procs(tag)
 #define	FVDIDIR	"/tos/fvdi"		/* fVDI's files for C: */
 
 static int fvdi;			/* C: holds fVDI */
-static char *fvdifiles[] = { "FVDI.SYS", "ASHFB.SYS", "AUTO/FVDI.PRG" };
+static char *fvdifiles[] = { "FVDI.SYS", "ASHFB.SYS", "BITPLANE.SYS", "16_BIT.SYS", "AUTO/FVDI.PRG" };
+#define	NFVDI	(int)(sizeof fvdifiles / sizeof fvdifiles[0])
 #define	GDIR	"/tmp/tosg"
 #define	EHOME	"/tmp/tosh"		/* EmuTOS's ~: ~/TOS/c is CDIR */
 #define	BALLERDIR "/tos/baller"		/* a GEM game that also writes the screen itself */
@@ -511,7 +512,7 @@ cmake()
 	unlink(CDIR "/AUTO/LATEST.PRG");
 	unlink(UDIR "/linea.txt");
 	unlink(CDIR "/SESSION.ACC");
-	for (i = 0; i < 3; i++) {
+	for (i = 0; i < NFVDI; i++) {
 		sprintf(b, "%s/%s", CDIR, fvdifiles[i]);
 		unlink(b);
 	}
@@ -538,7 +539,7 @@ cmake()
 	mkdir(EHOME, 0755);
 	mkdir(EHOME "/TOS", 0755);
 	symlink(CDIR, EHOME "/TOS/c");
-	for (i = 0; fvdi && i < 3; i++) {
+	for (i = 0; fvdi && i < NFVDI; i++) {
 		sprintf(a, "%s/%s", FVDIDIR, fvdifiles[i]);
 		sprintf(b, "%s/%s", CDIR, fvdifiles[i]);
 		fcopy(a, b);

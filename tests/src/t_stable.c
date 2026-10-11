@@ -8,10 +8,12 @@
  * may set idle=SECONDS (default 60) and cycles=N, fewer stop kinds.
  * Per environment: a start, until it settles (the machine's load back
  * near the boot baseline), then ends in turn by SIGTERM, Ctrl-C (SIGINT
- * to its group), a hangup (the login line closed), SIGKILL and, where
- * there is one, its own exit (the Mac's Special menu).  After each stop:
+ * to its group; CP/M must ignore it, then gets SIGTERM), a hangup (the
+ * login line closed), SIGKILL and, where there is one, its own exit
+ * (the Mac's Special menu, CP/M's EXIT).  After each stop:
  * no process of the session left, its lock free, Mac RAM gone; against
- * the first stop, free memory, swap and RAM reservations, System V IPC
+ * the first stop, free memory (file pages left cached count as free),
+ * swap and RAM reservations, System V IPC
  * objects, file locks, the next free pty and the process count back.
  * Its guest module unloads before the last start, which loads it again.
  * After the first start, IDLE seconds at rest: the emulator's host CPU
@@ -28,6 +30,7 @@
 #include <sys/shm.h>
 #include <sys/sem.h>
 #include <sys/msg.h>
+#include <sys/vnode.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -72,7 +75,7 @@ struct env {
 };
 
 struct snap {
-	long	freemem, rmem, smem, procs, shm, sem, msg, flk[1], pty;
+	long	freemem, cache, rmem, smem, procs, shm, sem, msg, flk[1], pty;
 };
 
 static int hfd = -1, hseq, ufd = -1, cin = -1;
@@ -316,6 +319,62 @@ nextpty()
 	return n;
 }
 
+#define	PGSZ	60	/* the kernel's struct page */
+
+/*
+ * Pages holding regular files' data, -1 unknown.  File pages stay in
+ * use after their readers end, until the pager needs the memory: a
+ * session that reads files new to the cache lowers freemem for good,
+ * while the reservations (availrmem, availsmem) show real leaks.
+ */
+static long
+filecache()
+{
+	static unsigned char b[64 * PGSZ];
+	static long vn[2048], vt[2048];
+	long pa = kread(kaddr("pages")), pe = kread(kaddr("epages")), a, v, nf = 0, n = 0, k, i, j;
+	int fd = open("/dev/kmem", O_RDONLY), nv = 0;
+	unsigned char *q;
+
+	memset((char *)vn, 0, sizeof vn);
+	if (fd < 0 || pa <= 0 || pe <= pa || (pe - pa) % PGSZ) {
+		if (fd >= 0)
+			close(fd);
+		return -1;
+	}
+	for (a = pa; a < pe; a += k * PGSZ) {
+		k = (pe - a) / PGSZ < 64 ? (pe - a) / PGSZ : 64;
+		if (lseek(fd, (off_t)a, 0) == -1 || read(fd, (char *)b, k * PGSZ) != k * PGSZ)
+			break;
+		for (i = 0; i < k; i++) {
+			q = b + i * PGSZ;
+			if (q[0] & 0x20) {	/* p_free */
+				nf++;
+				continue;
+			}
+			if ((v = *(long *)(q + 4)) == 0)	/* p_vnode */
+				continue;
+			/* each vnode's type once, hashed by address */
+			for (j = (v >> 4) & 2047; vn[j] && vn[j] != v; j = (j + 1) & 2047)
+				;
+			if (!vn[j]) {
+				if (++nv > 1536)
+					break;
+				vn[j] = v;
+				vt[j] = kread(v + (long)&((vnode_t *)0)->v_type);
+			}
+			if (vt[j] == VREG)
+				n++;
+		}
+		if (i < k)
+			break;
+	}
+	close(fd);
+	/* a struct page of another size: the free pages would not add up */
+	k = t_kmem("freemem");
+	return a == pe && nf >= k - 64 && nf <= k + 64 ? n : -1;
+}
+
 static void
 snap(s)
 	struct snap *s;
@@ -323,6 +382,7 @@ snap(s)
 	long f = kaddr("flckinfo");
 
 	s->freemem = t_kmem("freemem");
+	s->cache = filecache();
 	s->rmem = t_kmem("availrmem");
 	s->smem = t_kmem("availsmem");
 	s->procs = nprocs();
@@ -700,7 +760,11 @@ amiprep(e)
 		return 0;
 	close(fd);
 	vmem(128L);
-	return system("/sbin/mount -F ufs " AMIDEV " " AMISYS) == 0;
+	if (system("/sbin/mount -F ufs " AMIDEV " " AMISYS) != 0)
+		return 0;
+	/* Workbench at rest: without t_amiga's polling scripts */
+	unlink(AMISYS "/fixtures");
+	return 1;
 }
 
 static void
@@ -748,6 +812,14 @@ cpmexec(e)
 {
 	putenv("HOME=" CPMH);
 	execl("/cpm/bin/startcpm", "startcpm", "-e", "t", "-d", "C=" CPMH "/c", (char *)0);
+}
+
+/* EXIT.68K on P: ends the session from console 0 */
+static int
+cpmout(e)
+	struct env *e;
+{
+	return write(cin, "EXIT\r", 5) == 5;
 }
 
 static void
@@ -821,7 +893,7 @@ static struct env envs[] = {
 	{ "xaaes", "/tos/xaaes/MINT", "tosguest", 200, tosprep, tosexec, tosdone, CDIR "/.env", 0 },
 	{ "amiga", "/tests/amiga/startmig", "amigaguest", 150, amiprep, amiexec, amidone, 0, 0 },
 	{ "cpm", "/cpm/bin/startcpm", "cpmguest", 90, cpmprep, cpmexec, cpmdone,
-	    CPMH "/CPM/t/.env", 0 },
+	    CPMH "/CPM/t/.env", cpmout },
 	{ "win16", "/usr/bin/startwin", 0, 400, winprep, winexec, 0, 0, 0 },
 	{ 0 }
 };
@@ -937,6 +1009,14 @@ gone(e, pid, how)
 		}
 	} else if (how == 0)
 		kill(pid, SIGTERM);
+	else if (how == 1 && strcmp(e->name, "cpm") == 0) {
+		/* Ctrl-C stays inside CP/M: the session runs on, SIGTERM ends it */
+		kill(-pid, SIGINT);
+		nap(5000L);
+		t_check("cpm_sigint_ignored", waitpid(pid, &st, WNOHANG) == 0,
+		    "SIGINT ended the session, status %#x", st);
+		kill(pid, SIGTERM);
+	}
 	else
 		kill(-pid, sig[how]);
 	while (t_now_ms() - t0 < 60000L && (r = waitpid(pid, &st, WNOHANG)) == 0)
@@ -1038,7 +1118,7 @@ run(e)
 {
 	struct snap b0, b1, s;
 	char n[48], w[64];
-	long hl, cl, t, sv = -1, h;
+	long hl, cl, t, sv = -1, h, f;
 	int c, k, nc = e->own ? 5 : 4, id, ok;
 	pid_t pid;
 
@@ -1137,18 +1217,22 @@ run(e)
 			shmctl(shmget(TLOW, 0, 0), IPC_RMID, (struct shmid_ds *)0);
 		nap(2000L);
 		snap(&s);
-		t_info(e->name, "after %s: free %ld rmem %ld smem %ld procs %ld shm %ld sem %ld msg %ld "
-		    "flck %ld pty %ld", how[k], s.freemem, s.rmem, s.smem, s.procs, s.shm,
+		t_info(e->name, "after %s: free %ld file pages %ld rmem %ld smem %ld procs %ld shm %ld sem %ld msg %ld "
+		    "flck %ld pty %ld", how[k], s.freemem, s.cache, s.rmem, s.smem, s.procs, s.shm,
 		    s.sem, s.msg, s.flk[0], s.pty);
 		if (c == 0) {
 			b1 = s;
 			continue;
 		}
 		sprintf(n, "%s_mem%d", e->name, c);
-		/* a few pages either way: the buffer cache and page tables */
-		t_check(n, s.freemem >= b1.freemem - 64 && s.rmem >= b1.rmem - 8 &&
-		    s.smem >= b1.smem - 8, "free %ld rmem %ld smem %ld, first stop %ld %ld %ld",
-		    s.freemem, s.rmem, s.smem, b1.freemem, b1.rmem, b1.smem);
+		/*
+		 * a few pages either way: the buffer cache and page tables; file
+		 * pages the session left cached count as free
+		 */
+		f = s.cache >= 0 && b1.cache >= 0 ? s.cache - b1.cache : 0;
+		t_check(n, s.freemem + f >= b1.freemem - 64 && s.rmem >= b1.rmem - 8 &&
+		    s.smem >= b1.smem - 8, "free %ld file pages %+ld rmem %ld smem %ld, first stop %ld %ld %ld",
+		    s.freemem, f, s.rmem, s.smem, b1.freemem, b1.rmem, b1.smem);
 		sprintf(n, "%s_ipc%d", e->name, c);
 		t_check(n, s.shm == b0.shm && s.sem == b0.sem && s.msg == b0.msg,
 		    "shm %ld sem %ld msg %ld, before %ld %ld %ld", s.shm, s.sem, s.msg, b0.shm,

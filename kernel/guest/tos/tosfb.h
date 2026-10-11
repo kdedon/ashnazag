@@ -15,7 +15,7 @@
 #define	TFB_MAGIC	0x7f8e0001L
 
 struct tfbcart {
-	unsigned long	fc_addr;	/* 0: no frame buffer, 1: the ROM's screen */
+	unsigned long	fc_addr;	/* 0: no frame buffer, 1: the ROM's screen (the rest unset) */
 	unsigned short	fc_width, fc_height;
 	unsigned long	fc_rowbytes;
 	unsigned short	fc_depth;	/* bits a pixel; planes when fc_plane8 is set */

@@ -26,6 +26,8 @@
 #define	TOSIOC_SND	TOSIOC(10)	/* in/out struct tossndio: the sound pump */
 #define TOSIOC_RAM	TOSIOC(14)	/* value: bytes of scattered, fault-allocated RAM */
 #define	TOSIOC_STRAM	TOSIOC(11)	/* value: bytes of contiguous ST-RAM, then mmap at 0 */
+#define	TOSIOC_BLIT	TOSIOC(15)	/* in/out the blitter's registers ($FF8A00-$FF8A3D):
+					   the guest's blit on the machine's blitter */
 
 #define	TOS_ROMBASE	0xe00000L
 

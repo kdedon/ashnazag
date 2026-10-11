@@ -138,7 +138,8 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 	[ -z "$STABLE" ] || { echo "$STABLE" > "$B/stable.envs"; echo "f /tests/stable.envs 444 0 3 $B/stable.envs"; }
 	for f in "$B"/bin/*; do
 		# GROUP/ONLY: only the chosen tests (helpers that are not t_* stay)
-		case " $ONLY " in "  ") ;; *t_*) case $(basename "$f") in t_*)
+		# t_stable runs hours: only when chosen
+		case " $ONLY " in "  ") [ $(basename "$f") != t_stable ] || continue ;; *t_*) case $(basename "$f") in t_*)
 			case " $ONLY " in *"/$(basename "$f").c "*) ;; *) continue ;; esac ;; esac ;; esac
 		echo "f /tests/$(basename "$f") 755 0 3 $f"
 	done

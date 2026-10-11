@@ -27,6 +27,10 @@ export TMPDIR="${TMPDIR:-$B/tmp}"
 
 mkdir -p "$O" "$BIN" "$TMPDIR"
 LIBGCC=$(ls "$TC"/lib/gcc-lib/m68k-cbm-sysv4/*/libgcc.a | tail -1)
+# t_cc295's second compiler; without it t_cc295 skips
+CC295=$AUX/toolchain/amix-gcc295/bin/m68k-cbm-sysv4-gcc
+LIBGCC295=$(ls "$AUX"/toolchain/amix-gcc295/lib/gcc-lib/m68k-cbm-sysv4/*/libgcc.a 2>/dev/null | tail -1)
+[ -x "$CC295" ] || CC295=$CC
 
 # nonshared libc members, without the libc.so.1 member itself
 if [ ! -f "$O/libextra.a" ]; then
@@ -38,6 +42,11 @@ fi
 cc() {	# src obj [flags]
 	src=$1; obj=$2; shift 2
 	nice -n 19 "$CC" $CFLAGS "$@" -I"$T/src" -c "$src" -o "$obj"
+}
+
+cc295() {	# src obj [flags]
+	src=$1; obj=$2; shift 2
+	nice -n 19 "$CC295" -O2 -Wall -Wno-implicit -Wno-return-type "$@" -I"$T/src" -c "$src" -o "$obj"
 }
 
 link() {	# out obj...
@@ -58,6 +67,17 @@ for s in "$KDIR"/dlm/libmod/*.s; do
 done
 for s in ${ONLY:-"$T"/src/t_*.c "$T/src/runall.c"}; do
 	n=$(basename "$s" .c)
+	[ -n "$ONLY" ] || [ $n != t_stable ] || continue
+	if [ $n = t_cc295 ]; then
+		cc "$s" "$O/$n.o"
+		cc295 "$T/src/cc295abi.c" "$O/cc295abi.o"
+		link "$BIN/$n" "$O/$n.o" "$O/cc295abi.o" "$O/t.o" $LIBGCC295
+		cc295 "$T/src/t_arith.c" "$O/cc295_arith.o" $XA
+		cc295 "$T/src/t.c" "$O/cc295_t.o"
+		link "$BIN/cc295_arith" "$O/cc295_arith.o" "$O/cc295_t.o" $LIBGCC295
+		echo "[ok] $n"
+		continue
+	fi
 	cc "$s" "$O/$n.o" $XA -I"$KDIR/dlm/include" -I"$KDIR/mac/display" -I"$KDIR/mac/sound" \
 		-I"$KDIR/guest/mod/tosguest" -I"$KDIR/guest/include" -I"$KDIR/guest/amiga" -I"$KDIR/net"
 	extra=

@@ -31,5 +31,6 @@ void linea_init(Workstation *wk);
 long la_alias(void *a);
 struct tfbcart;
 void pfb_init(Workstation *wk, struct tfbcart *fc);
+void hw_init(long const *lim);
 
 #endif

@@ -114,12 +114,15 @@ sys.stdout.buffer.write(donotwait(open(sys.argv[2], "rb").read()))' \
 	python3 "$KDIR/guest/amiga/rtg/elf2hunk.py" "$O/alerttest.o" "$O/alerttest"
 	echo "f /C/alerttest 755 0 3 $O/alerttest" >> "$M"
 	echo "f /S/alertwait 755 0 3 $T/amiga/alert/alertwait" >> "$M"
-	# User-Startup also runs dragtest and, with IBrowse in SYS:, ibtest
+	# with SYS:fixtures (t_amiga's), User-Startup also runs dragtest and, with IBrowse in SYS:, ibtest;
+	# they poll each second, so other tests see Workbench at rest without them
 	U=$(cd "$AMIGASYS/S" && ls | grep -i '^user-startup$' || :)
-	{ [ -z "$U" ] || { cat "$AMIGASYS/S/$U"; echo; }; echo 'Run >NIL: Execute S:dragtest'
+	{ [ -z "$U" ] || { cat "$AMIGASYS/S/$U"; echo; }; echo 'If EXISTS SYS:fixtures'
+	  echo 'Run >NIL: Execute S:dragtest'
 	  echo 'Run >NIL: Execute S:sndtest'
 	  echo 'Run >NIL: Execute S:alertwait'
-	  [ ! -f "$AMIGASYS/IBrowse/IBrowse" ] || echo 'Run >NIL: Execute S:ibtest'; } > "$O/User-Startup"
+	  [ ! -f "$AMIGASYS/IBrowse/IBrowse" ] || echo 'Run >NIL: Execute S:ibtest'
+	  echo 'EndIf'; } > "$O/User-Startup"
 	[ -z "$U" ] || { sed "/ \/S\/$U /d" "$M" > "$M.new"; mv "$M.new" "$M"; }
 	echo "f /S/${U:-User-Startup} 755 0 3 $O/User-Startup" >> "$M"
 	echo "f /S/dragtest 755 0 3 $T/amiga/dragtest" >> "$M"

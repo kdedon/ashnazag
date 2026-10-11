@@ -306,16 +306,8 @@ fbmap(fd)
 			die("display");
 		hfi = fi;
 		close(rf.fd);
-		/* one plane: fVDI draws on the ROM's screen */
-		if (fi.fi_depth == 1) {
-			put32((unsigned long)p, 1);
-			p[4] = fi.fi_width >> 8; p[5] = fi.fi_width;
-			p[6] = fi.fi_height >> 8; p[7] = fi.fi_height;
-			put32((unsigned long)p + 8, fi.fi_rowbytes);
-			p[12] = 0; p[13] = 1;
-			pl = fi.fi_rowbytes * fi.fi_height / 8;
-			p[14] = pl >> 8; p[15] = pl;
-		}
+		/* fVDI draws on the ROM's screen, in whatever mode TOS set */
+		put32((unsigned long)p, 1);
 		return;
 	}
 	if (!stscreen && ioctl(rf.fd, FBIOGINFO, &fi) == 0 &&

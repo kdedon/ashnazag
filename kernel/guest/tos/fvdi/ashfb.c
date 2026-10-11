@@ -384,11 +384,24 @@ short accel_s = 0;
 short accel_c = A_SET_PAL | A_GET_COL | A_SET_PIX | A_GET_PIX | A_BLIT | A_FILL | A_EXPAND | A_LINE | A_MOUSE;
 const Mode *graphics_mode = &mode[0];
 
+/*
+ * The least pixels a blitter fill or copy takes, by drawops kind.  Off
+ * by default: a Falcon's blitter is no faster than its 68030.
+ */
+static long hwlim[5] = { 0x7fffffff, 0x7fffffff, 0x7fffffff, 0x7fffffff, 0x7fffffff };
+
+/* options: hwfill N, hwblit N */
 long check_token(char *token, const char **ptr)
 {
-	(void)token;
-	(void)ptr;
-	return 0;
+	long k = access->funcs.equal(token, "hwfill") ? DO_FILL :
+	    access->funcs.equal(token, "hwblit") ? DO_BLIT : 0;
+	char n[16];
+
+	if (!k || !(*ptr = access->funcs.skip_space(*ptr)))
+		return 0;
+	*ptr = access->funcs.get_token(*ptr, n, sizeof n);
+	hwlim[k] = access->funcs.atol(n);
+	return 1;
 }
 
 /* the ROM's screen */
@@ -407,17 +420,27 @@ long CDECL initialize(Virtual *vwk)
 	static struct tfbcart rom;
 	static signed char tos[16] = { 0, -1, 1, 2, 4, 6, 3, 5, 7, 8, 9, 10, 12, 14, 11, 13 };
 	Workstation *wk;
-	long i, d = fc->fc_depth;
+	unsigned short *la;
+	long i, d;
 
+	if (*(long *)0xfa0000 == 0xabcdef42L && fc->fc_addr == 1) {
+		/* the ROM's screen as Line-A has it; more planes are fVDI's own drivers' */
+		la = (unsigned short *)me->default_vwk->real_address->screen.linea;
+		if (la[0] != 1)
+			return 0;
+		rom.fc_addr = logbase();
+		rom.fc_width = la[-0xc / 2];
+		rom.fc_height = la[-4 / 2];
+		rom.fc_rowbytes = la[-2 / 2];
+		rom.fc_depth = 1;
+		rom.fc_plane8 = rom.fc_rowbytes * rom.fc_height / 8;
+		fc = &rom;
+	}
+	d = fc->fc_depth;
 	if (*(long *)0xfa0000 != 0xabcdef42L || !fc->fc_addr ||
 	    (fc->fc_plane8 ? d < 1 || d > 8 : d != 8)) {
 		access->funcs.error("ashfb: no frame buffer", 0);
 		return 0;
-	}
-	if (fc->fc_addr == 1) {
-		rom = *fc;
-		rom.fc_addr = logbase();
-		fc = &rom;
 	}
 	/* VDI colour to pixel: TOS's first 16, black last, beyond the palette black */
 	ncol = 1L << d;
@@ -455,6 +478,8 @@ long CDECL initialize(Virtual *vwk)
 		graphics_mode = &planes;
 		setup_scrninfo(&device, graphics_mode);
 		pfb_init(wk, fc);
+		if (fc == &rom)
+			hw_init(hwlim);
 	} else {
 		/* packed pixels: palette calls stay here instead of going to the ROM's VDI */
 		device.format = 2;

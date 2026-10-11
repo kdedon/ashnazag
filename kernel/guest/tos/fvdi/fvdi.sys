@@ -1,4 +1,6 @@
-# fVDI on the container's frame buffer
+# fVDI on the container's frame buffer or the ROM's screen
 PATH = C:\
 booted
 01r ashfb.sys
+01r bitplane.sys
+01r 16_bit.sys

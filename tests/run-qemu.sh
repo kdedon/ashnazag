@@ -50,7 +50,7 @@ mkdir -p "$OUT"
 case ${GROUP:-} in
 "") ;;
 smoke)	G="t_sys t_file t_proc t_pipe t_dlm t_guestdlm t_envram t_gate t_vtop" ;;
-core)	G="t_arith t_file t_mem t_pipe t_proc t_sig t_streams t_sys t_time t_tty t_vtop t_dlm t_guestdlm t_envram t_gate t_page t_moddemo t_stress t_env t_ufs" ;;
+core)	G="t_arith t_cc295 t_file t_mem t_pipe t_proc t_sig t_streams t_sys t_time t_tty t_vtop t_dlm t_guestdlm t_envram t_gate t_page t_moddemo t_stress t_env t_ufs" ;;
 mac)	G="t_aux t_mac t_mac6 t_mac76 t_mac81 t_env" ;;
 tos)	G="t_tos t_xaaes t_env" ;;
 mint)	G="t_mint" ;;

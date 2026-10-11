@@ -219,6 +219,23 @@ macdump(pid_t pid)
 	}
 }
 
+/* the XPRAM every Mac session shares, as the last session left it */
+static void
+pramdump(void)
+{
+	unsigned char b[256];
+	int fd = open("/etc/aux/pram", O_RDONLY), n = fd < 0 ? 0 : read(fd, (char *)b, sizeof b), i, j;
+	char l[80], *q;
+
+	if (fd >= 0)
+		close(fd);
+	for (i = 0; i < n; i += 32) {
+		for (q = l, j = i; j < i + 32 && j < n; j++, q += 2)
+			sprintf(q, "%02x", b[j]);
+		t_info("pram", "%02x: %s", i, l);
+	}
+}
+
 /* the end of startmac's output */
 static void
 maclog(void)
@@ -400,7 +417,7 @@ macsnd(int a, int version)
 	char line[256], tn[16], init[96], inith[96], *root = sys6 ? ROOT6 : "";
 	char tf[64], tout[64], ttrace[64];
 	unsigned long fed[4], tsync, tasync, tcb;
-	long serr, err, t0, tpart = -1, tdone = -1;
+	long serr, err, t0, tpart = -1, tdone = -1, el, mcpu;
 	int cb, ui, fd, n, st, id, k, lf, nm = 0, p[2];
 	off_t tsz = 0;
 	struct stat sb;
@@ -492,14 +509,17 @@ macsnd(int a, int version)
 			}
 		}
 	}
+	el = t_now_ms() - t0;
+	mcpu = pid > 0 ? cpu(pid) : -1;
 	close(p[0]);
 	close(lf);
 	s.ss_fed = 0;
 	sstat(a, &s);
 	fed[3] = s.ss_fed;
-	if (n <= 0) {
+	if (n <= 0 || line[n - 1] != '\n') {
 		psdump();
 		macdump(pid);
+		pramdump();
 	}
 	if (pid > 0 && n > 0 && line[n - 1] == '\n') {
 		long cm, cd, ca, dm, dd, da;
@@ -547,7 +567,8 @@ macsnd(int a, int version)
 	}
 	if (!t_check(NM("selftest"), n > 0 && sscanf(line,
 	    "sync_err=%ld sync_ticks=%lu err=%ld async_ticks=%lu cb=%d cb_ticks=%lu",
-	    &serr, &tsync, &err, &tasync, &cb, &tcb) == 6, "no result in 120 s")) {
+	    &serr, &tsync, &err, &tasync, &cb, &tcb) == 6, "no result in %ld s, Mac CPU %ld ms",
+	    el / 1000, mcpu)) {
 		maclog();
 		return;
 	}

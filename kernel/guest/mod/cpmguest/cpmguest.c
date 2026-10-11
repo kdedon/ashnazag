@@ -51,10 +51,22 @@ int *rv;
 	return EINVAL;
 }
 
+/* no guest interrupts to hold back: Ctrl-C and hangup reach startcpm at once */
+static int
+cpm_fsig(p, gp)
+struct proc *p;
+struct guest_proc *gp;
+{
+	return __amix_fsig(p);
+}
+
 static int
 cpm_load()
 {
-	return guest_lone_init(&cpm_profile, "cpm", &cpmguest_wrapper);
+	int e = guest_lone_init(&cpm_profile, "cpm", &cpmguest_wrapper);
+
+	cpm_profile.gpf_fsig = cpm_fsig;
+	return e;
 }
 
 static int

@@ -863,6 +863,8 @@ tosioctl(dev, cmd, arg, mode, cr, rvp)
 		return curproc == t->t_proc ? tsock(arg) : EPERM;
 	case TOSIOC_HALT:
 		return curproc == t->t_proc ? guest_halt() : EPERM;
+	case TOSIOC_BLIT:
+		return curproc == t->t_proc ? tos_blit(arg) : EPERM;
 	}
 	return EINVAL;
 }
