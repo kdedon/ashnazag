@@ -6,9 +6,9 @@
  *
  * SysBeep, a synchronous SndPlay of half a second with no channel, then an
  * asynchronous SndPlay of one second on a channel and a callBackCmd, whose
- * routine writes the line's end.  Before each, a byte is appended to
- * /tmp/sndtest.trace and the test is given half a second to count the
- * chip's frames so far.
+ * routine writes the line's end; the channel goes once it has.  Before
+ * each, a byte is appended to /tmp/sndtest.trace and the test is given
+ * half a second to count the chip's frames so far.
  */
 #define TESTF	"/tmp/sndinit"
 #define CHIPHZ	22254
@@ -18,7 +18,7 @@
 #define G16(p)	(*(unsigned short *)(p))
 #define G32(p)	(*(unsigned long *)(p))
 
-extern long auxsysr(), sndnew(), sndplay(), snddo();
+extern long auxsysr(), sndnew(), sndplay(), snddo(), snddispose();
 extern char **newhandlesys();
 extern char *newptr();
 extern unsigned long ticks();
@@ -26,6 +26,7 @@ extern long auxsleep();
 extern void sysbeep(), t_cb();
 
 static unsigned long t0, waitcalls, waitintr, waitbad;
+static volatile int cbdone;
 
 static char *
 put(q, k, v)
@@ -129,6 +130,7 @@ long p2;
 	q = put(q, "wait_bad=", waitbad);
 	q[-1] = '\n';
 	out(line, q, 0);
+	cbdone = 1;
 }
 
 void
@@ -138,6 +140,7 @@ st_main()
 	unsigned long t1;
 	char **h1, **h2, *chan, line[160], *q = line;
 	long e;
+	int n;
 
 	if (auxsysr(33L, (long)TESTF, 0L, 0L) < 0)
 		return;
@@ -177,4 +180,12 @@ st_main()
 		q[-1] = '\n';
 		out(line, q, 0);
 	}
+	/*
+	 * The Sound Manager keeps the startup application heap with the
+	 * channel; once the Finder runs, that heap is gone.
+	 */
+	for (n = 0; n < 5 && e == 0 && !cbdone; n++)
+		wait(60L);
+	if (e == 0)
+		snddispose(chan);
 }

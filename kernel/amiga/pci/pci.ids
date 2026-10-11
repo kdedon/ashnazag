@@ -1,0 +1,54 @@
+# PCI vendor and device names for lspci, in the pci.ids format: a vendor
+# line "vvvv  name", its devices below as "<tab>dddd  name".  Only the
+# cards and bridges used with Amiga PCI bridges; the full upstream
+# pci.ids can replace this file.
+1002  ATI
+	4242  R200 [All-In-Wonder 8500 DV]
+	4966  RV250 [Radeon 9000]
+	4967  RV250 [Radeon 9000]
+	496e  RV250 [Radeon 9000] (secondary)
+	514c  R200 [Radeon 8500]
+	514d  R200 [Radeon 9100]
+	5144  R100 [Radeon 7200]
+	5157  RV200 [Radeon 7500]
+	5159  RV100 [Radeon 7000 / VE]
+	5940  RV280 [Radeon 9200 Pro] (secondary)
+	5941  RV280 [Radeon 9200] (secondary)
+	5960  RV280 [Radeon 9200 Pro / 9250]
+	5961  RV280 [Radeon 9200]
+	5962  RV280 [Radeon 9200]
+	5964  RV280 [Radeon 9200 SE]
+	5d44  RV280 [Radeon 9200 SE] (secondary)
+1011  DEC
+	0001  21050
+	0024  21152
+	0026  21154
+104c  Texas Instruments
+	ac23  PCI2250
+10ec  Realtek
+	8029  RTL8029(AS)
+	8139  RTL8139
+121a  3dfx
+	0001  Voodoo
+	0002  Voodoo2
+	0003  Voodoo Banshee
+	0005  Voodoo3
+	0009  Voodoo4 / Voodoo5
+1274  Ensoniq
+	1371  ES1371 AudioPCI 97
+	5000  ES1370 AudioPCI
+12d8  Pericom
+	8150  PI7C8150
+1319  ForteMedia
+	0801  FM801
+3388  HiNT
+	0021  HB6
+5333  S3
+	5631  ViRGE (86C325)
+	883d  ViRGE/VX (86C988)
+	8a01  ViRGE/DX or GX
+	8a10  ViRGE/GX2
+	8c01  ViRGE/MX
+8086  Intel
+	b152  21152
+	b154  21154

@@ -1,11 +1,13 @@
 #!/bin/sh
 # amiberry.sh -- boot the mkhdf.sh disk in Amiberry, headless: an A3000
-# with a 68040, a Prometheus and PCI cards.  Serial goes to TCP 1234.
+# with a 68040, a Prometheus and PCI cards.  Serial goes to TCP port
+# SERPORT (default 1234).
 #
 #   sh amiberry.sh hdfdir [seconds]
 #
 # AMIBERRY: the install prefix (default toolchain/amiberry/usr).
-# KICK: an A3000 Kickstart ROM.  STATE: config, home and IPC socket
+# KICK: an A3000 Kickstart ROM.  CPU: 68040 (default) or 68060.
+# STATE: config, home and IPC socket
 # directory (default hdfdir/run).  CARDS: Amiberry board names on the
 # PCI bus (default "ne2000_pci es1370 fm801").  GFX: a graphics card
 # (default ZZ9000_Z2; S3VIRGE_PCI puts one on PCI; empty for none).
@@ -21,6 +23,7 @@ AB=${AMIBERRY:-$AUX/toolchain/amiberry/usr}
 ST=${STATE:-$H/run}
 CARDS=${CARDS-ne2000_pci es1370 fm801}
 GFX=${GFX-ZZ9000_Z2}
+CPU=${CPU:-68040}
 [ -f "$KICK" ] || { echo "[FAIL] KICK: no Kickstart ROM"; exit 1; }
 mkdir -p "$ST/home/.config" "$ST/xdg"
 chmod 700 "$ST/xdg"
@@ -31,9 +34,9 @@ use_gui=no
 kickstart_rom_file=$KICK
 chipset=ecs
 chipset_compatible=A3000
-cpu_model=68040
-fpu_model=68040
-mmu_model=68040
+cpu_model=$CPU
+fpu_model=$CPU
+mmu_model=$CPU
 cpu_compatible=false
 cpu_24bit_addressing=false
 cpu_speed=max
@@ -46,7 +49,7 @@ z3mem_size=0
 z3mapping=uae
 filesystem2=rw,DH0:AmigaBoot:$H/boot,5
 hardfile2=rw,SD6:$H/amix.hdf,0,0,0,512,-128,,scsi6_a3000
-serial_port=TCP://127.0.0.1:1234
+serial_port=TCP://127.0.0.1:${SERPORT:-1234}
 serial_direct=true
 sound_output=none
 prometheus_rom_file=:ENABLED

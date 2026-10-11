@@ -11,7 +11,7 @@ top of it as environments: ordinary Unix processes with their own display sessio
 | Quadra 800 (68040) | QEMU `q800` with a Quadra 800 ROM; real Quadra 800 | Boots from disk to a multi-user login on the built-in screen and ADB keyboard. SCSI, SONIC Ethernet, clock, swap, ufs, loadable modules, display and sound services, X11. All environments below. |
 | Falcon030 (68030, no FPU) | Hatari (TOS 4.04); real Falcon | Boots from IDE to a login on VGA or RGB monitors. X11 and xdm, TOS, CP/M and System 6 environments. Slow on real hardware. |
 | CT60/CT63 Falcon (68060) | Hatari 060 with FastRAM | Kernel boots from FastRAM; SuperVidel or Videl console. Real-hardware testing in progress. |
-| Amiga A3000 (68040) | Amiberry | Started from AmigaDOS by `unix_boot040`; login on the serial port. PCI through openpci.library (Prometheus), NE2000 Ethernet, ZZ9000 RTG. Real hardware untested. |
+| Amiga A3000 (68040, 68060) | Amiberry; WinUAE for PCI 3D cards | Started from AmigaDOS by `unix_boot040`; login on the console. PCI through openpci.library (Prometheus), NE2000 Ethernet, ZZ9000 RTG, Voodoo3 detected. Real hardware untested. |
 
 ## Environments
 
@@ -21,13 +21,13 @@ Start commands, run as an ordinary user. Ctrl-Option-Command-0 shows the console
 | Environment | Command | Hosts | Status |
 |---|---|---|---|
 | Mac System 7.6.1 | `startmac` | Quadra | Works: Finder, applications, Open/Save, CommandShell, sound, Log Out and Shut Down. |
-| Mac OS 8.1 | `makemac -e 8.1`, then `startmac -e 8.1` | Quadra | Works, with known issues: Finder idles at about 60% CPU after an application has shown an Open or Save dialog; asynchronous sound never completes. |
+| Mac OS 8.1 | `makemac -e 8.1`, then `startmac -e 8.1` | Quadra | Works: Finder, applications, Open/Save, sound through A/UX's Sound Manager, Open Transport networking. |
 | Mac System 6.0.7 | `startmac6` | Quadra, Falcon | Works; slow, no colour. Needs A/UX 2.0.1 and a IIci ROM. |
 | TOS (EmuTOS, TeraDesk) | `starttos` | Quadra, Falcon, Amiga | Works. fVDI at the screen's size; XaAES with `starttos -e xaaes`. On a Falcon, `starttos -P` runs the machine's own TOS ROM (slow redraws). |
-| Amiga (Kickstart 3.2, Workbench) | `startmig` | Quadra, Amiga | Partial: Workbench on RTG (Picasso96 or ZZ9000); slow start; stock chipset display not supported. |
-| CP/M-68K 1.3 | `startcpm` | Quadra, Falcon | Works, in the terminal; Z80 and 8086 programs too. Disk I/O on host folders is slow. |
+| Amiga (Kickstart 3.2, Workbench) | `startmig` | Quadra, Amiga | Partial: Workbench on RTG (Picasso96 or ZZ9000), 8-, 16- and 32-bit where the host card has them; slow start; stock chipset display not supported. |
+| Concurrent CP/M-68K | `startcpm` | Quadra, Falcon | Works, in the terminal: CP/M 3 BDOS, XDOS processes, more consoles with `startcpm -c N`, RSXes. Z80 and 8086 programs too. |
 | Windows 3.x programs (Win16) | `startwin` | Quadra | Works for Program Manager and the tested programs. Each user installs their own Windows 3.1/3.11 and Wabi 2.2 with `startwin -install`. |
-| X11R6.3 | `startx`, `xsession` | Quadra, Falcon | Works: twm, XView, xdm session chooser; sessions for each environment. |
+| X11R6.3 | `startx`, `xsession` | Quadra, Falcon | Works: twm, XView, xdm session chooser; sessions for each environment. OpenGL through Mesa 5 (software); `glxgears`. |
 
 SMSQ/E, TI calculators, TT and more are planned (`docs/*-plan.md`).
 
@@ -40,7 +40,7 @@ You supply:
 - Mac: Quadra 800 and Quadra 700 ROMs, the A/UX 3.1 CD, Mac OS 7.6.1 and 8.1 CDs; System 6 needs the A/UX 2.0.1 CD and a IIci ROM
 - Falcon: TOS 4.04 for passthrough (EmuTOS is fetched)
 - Amiga environment: the AmigaOS 3.2 CD and Picasso96; Amiga host: its Kickstart ROM and openpci.library
-- CP/M-68K: Digital Research's 1.3 release zip
+- CP/M: optionally Digital Research's CP/M-68K 1.3 release zip, for its programs (AS68, ED, STAT, ...); the system itself is ours
 - Win16, at run time: Windows 3.1 or 3.11 and Wabi 2.2
 
 `tools/setup.sh` builds the toolchains and fetches the open-source parts; see `BUILDING.md`.
@@ -49,7 +49,7 @@ You supply:
 
 ```
 sh kernel/build.sh                      # Quadra kernel: kernel/build/unix-mac.elf
-GROUP=smoke sh tests/run-qemu.sh        # tests in QEMU q800; groups: smoke core mac tos cpm amiga display sound win16
+GROUP=smoke sh tests/run-qemu.sh        # tests in QEMU q800; groups: smoke core mac tos cpm amiga display sound win16 gl stable
 sh images/macenv/mkmacimage.sh          # Quadra disk image with every environment
 PLATFORM=atari sh kernel/build.sh       # Falcon030 kernel (PLATFORM=atari060: CT60)
 sh kernel/atari/mkdisk.sh               # Falcon disk image
@@ -85,6 +85,7 @@ missing. [docs/hosts.md](docs/hosts.md) covers booting each host.
 - [amigaux.org](https://amigaux.org/): AMIX packages, zz9000-amix
 - [EmuTOS](https://emutos.sourceforge.io/), fVDI, TeraDesk, XaAES: the TOS environment
 - [FreeType](https://freetype.org/): TrueType for the Win16 environment (fetched at build time)
+- [Mesa](https://mesa3d.org/) 5.0.2: OpenGL (fetched at build time)
 
 ## AI disclosure
 

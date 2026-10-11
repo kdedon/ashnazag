@@ -540,7 +540,10 @@ macsnd(int a, int version)
 	}
 	if (pid > 0) {
 		kill(-pid, SIGKILL);
+		st = 0;
 		t_waitchild(pid, &st, 20);
+		if (n <= 0 || line[n - 1] != '\n')
+			t_info("mac_status", "%#x", st);
 	}
 	if ((id = shmget(TLOW, 0, 0)) >= 0)
 		shmctl(id, IPC_RMID, (struct shmid_ds *)0);

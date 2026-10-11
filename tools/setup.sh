@@ -23,6 +23,8 @@
 #   --x11             fetch X11R6.3 and x11r6.3-amix into ref/
 #   --tos-src         fetch EmuTOS and fVDI into ref/
 #   --gl              fetch Mesa 5.0.2 and its demos into ref/
+#   --winuae          fetch WinUAE into toolchain/winuae, run under
+#                     Wine (needs wine; Xvfb is fetched when missing)
 # JOBS (default 1) is passed to make; downloads go to toolchain/dl.
 set -e
 AUX=$(cd "$(dirname "$0")/.." && pwd)
@@ -58,6 +60,8 @@ XAMIX_PIN=cb61a2115659cb3ae27c649439edb2ca133131b6
 MESA_URL=https://archive.mesa3d.org/older-versions/5.x
 MESA_SUMS="MesaLib-5.0.2.tar.gz:912836d16b56091b2e7d6c5fa2f336de1791a43cef45c94a263ad84d12607172
 MesaDemos-5.0.2.tar.gz:6cc3cec1e9bdb7ce0627746f40dfa132a00d88b77b48d328b6f0e7041e995985"
+WINUAE_URL=https://download.abime.net/winuae/releases/WinUAE6030_x64.zip
+WINUAE_SUM=f8b7c44e8ab2f68db49b4205793848b4496464dbee3c036921840d82627f4fc3
 
 die() { echo "setup: $*" >&2; exit 1; }
 step() { echo "== $*"; }
@@ -101,7 +105,7 @@ cdimage() {	# .iso or .7z, link name
 	esac
 }
 
-TAPE= PATCHDISK= CROSS= QEMU= X11= TOSSRC= GL=
+TAPE= PATCHDISK= CROSS= QEMU= X11= TOSSRC= GL= WINUAE=
 while [ $# -gt 0 ]; do
 	case $1 in
 	--tape)	# one or more values, kept newline-separated
@@ -127,6 +131,7 @@ while [ $# -gt 0 ]; do
 	--x11) X11=1; shift; continue ;;
 	--tos-src) TOSSRC=1; shift; continue ;;
 	--gl) GL=1; shift; continue ;;
+	--winuae) WINUAE=1; shift; continue ;;
 	*) sed -n '2,/^set -e/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 2 ;;
 	esac
 	[ $# -ge 2 ] || die "$1 needs a value"
@@ -323,6 +328,16 @@ if [ -n "$QEMU" ] && [ ! -x "$TC/qemu-local/usr/bin/qemu-system-m68k" ]; then
 	step "QEMU 8.2.2 with the 68040 fix"
 	sh "$TC/build-qemu.sh" > "$TC/qemu-build.log" 2>&1 || die "QEMU build failed; see $TC/qemu-build.log"
 	rm -rf "$TC/qemu-build"
+fi
+if [ -n "$WINUAE" ]; then
+	step "WinUAE 6.0.3"
+	command -v wine >/dev/null || die "host tool missing: wine"
+	mkdir -p "$TC/winuae/bin"
+	unzip -oq "$(fetch $WINUAE_URL $WINUAE_SUM)" -d "$TC/winuae/bin"
+	if ! command -v Xvfb >/dev/null && [ ! -x "$TC/winuae/xvfb/usr/bin/Xvfb" ]; then
+		(cd "$DL" && apt-get download xvfb) || die "Xvfb: install it, or apt-get download xvfb failed"
+		dpkg -x "$DL"/xvfb_*.deb "$TC/winuae/xvfb"
+	fi
 fi
 
 echo "== done; now: sh tools/check-env.sh"

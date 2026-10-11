@@ -9,7 +9,7 @@
 # UNIX_Root ufs = c6d0s1, UNIX_Swap = c6d0s2) and outdir/boot/, the
 # AmigaDOS volume: S/Startup-Sequence runs unix_boot040 on the kernel.
 # A login runs on the serial port.  The root holds the amilib, opci, pci
-# ne, zz9000 and floppy modules (floppy loaded at boot, zz9000 when the card is there), modadmin, lspci, fltool, tcpcat, /dev/pci and /dev/ne0, registered at
+# ne, zz9000, floppy and v3bars modules (floppy loaded at boot, zz9000 when the card is there), modadmin, lspci and pci.ids, fltool, tcpcat, /dev/pci and /dev/ne0, registered at
 # run level 2; ne0 comes up as 10.0.2.15 (Amiberry's user-mode network).
 # AMIX_TAPE: tape segments (default media/amix-tape).  UNIXBOOT: the
 # unix_boot040 executable.  OPENPCI: openpci's unpacked archive (Libs/
@@ -124,6 +124,7 @@ e /var/adm/utmp 644 0 2
 e /var/adm/utmpx 644 0 2
 f /sbin/modadmin 555 0 3 bin/modadmin
 f /usr/bin/lspci 555 2 2 bin/lspci
+f /usr/share/lib/pci.ids 444 2 2 $A/pci/pci.ids
 f /usr/bin/fltool 555 2 2 bin/fltool
 f /usr/bin/tcpcat 555 2 2 bin/tcpcat
 f /usr/bin/kread 555 2 2 bin/kread
@@ -139,6 +140,7 @@ f /etc/conf/mod.d/pci 644 0 3 mods/mod.d/pci
 f /etc/conf/mod.d/ne 644 0 3 mods/mod.d/ne
 f /etc/conf/mod.d/zz9000 644 0 3 mods/mod.d/zz9000
 f /etc/conf/mod.d/floppy 644 0 3 mods/mod.d/floppy
+f /etc/conf/mod.d/v3bars 644 0 3 mods/mod.d/v3bars
 c /dev/floppy0 666 0 3 62 0
 c /dev/floppy1 666 0 3 62 1
 c /dev/floppy2 666 0 3 62 2

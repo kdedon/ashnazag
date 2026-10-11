@@ -23,8 +23,7 @@ A/UX 3.1's Mac environment (A/UX 2.0.1's for System 6). Root's System Folder is
 `/etc/aux/macenv.conf` sets `TBMEMORY` (default a quarter of RAM, 8-32 MB) and, for root,
 `MACMODEL`.
 
-Known issues: 8.1's Finder idles at about 60% CPU after an application has shown an Open or
-Save dialog; 8.1 asynchronous sound never completes; System 6 is slow and has no colour.
+Known issues: System 6 is slow and has no colour.
 
 ## TOS
 
@@ -45,7 +44,8 @@ fast RAM (or `fastmb=MB` in `.env`). The display is RTG through Picasso96 (`cont
 
 ## CP/M-68K
 
-`startcpm` runs Concurrent CP/M-68K in the terminal; `EXIT` ends it. `startcpm -c 1` (to 3) in
+`startcpm` runs Concurrent CP/M-68K in the terminal. Ctrl-C stops the program inside; `EXIT`
+(or closing the terminal) ends the session. `startcpm -c 1` (to 3) in
 another terminal joins it as a further console. Drives are directories:
 A: `~/CPM` (user areas 1-15 are subdirectories), H: home, M: a private scratch directory,
 O: `/`, P: Digital Research's programs. Z80 and 8086 CP/M programs run too.
@@ -64,5 +64,35 @@ H: home, R: `/`. Design: `docs/win16-design.md`.
 
 ## X11
 
-`startx` starts twm; `xsession` offers a menu, or `xsession twm|xview|mac|tos|amiga|win|console|cpm`.
+`startx` starts twm; `xsession` offers a menu, or `xsession twm|xview|mac|tos|amiga|win|smsqe|lisa|voyage200|console|cpm`.
 With xdm the session chooser lists the same.
+
+## Native SMSQ/E, Lisa and TI Voyage200 ports
+
+`startsmsqe`, `startlisa` and `startvoyage200` launch caller-supplied AMIX m68k ELF executables as
+separate Unix processes. Install the launchers with
+`sh kernel/guest/nativeenv/build.sh OUTDIR DESTDIR`.
+
+Each family has its own directory: `~/SMSQE`, `~/Lisa` or `~/Voyage200`; `-e NAME` selects a
+subdirectory. Create that directory, install your executable as `native` and
+provide a readable file or directory as `media`. Explicit absolute paths use
+`-x /path/to/executable -m /path/to/media`. Arguments after `--` pass through.
+For example:
+
+```sh
+mkdir -p "$HOME/SMSQE"
+startsmsqe -x /opt/native/smsqe -m /home/guest/disks/smsqe -- application
+```
+
+The executable inherits terminal input/output, the environment directory as its
+working directory, and its `.env` session lock. It receives
+`NATIVEHOST_ENVIRONMENT`, `NATIVEHOST_ROOT`, and `NATIVEHOST_MEDIA`. Its native
+port defines media interpretation and uses `nativehost` for AMIX services and
+display ownership. The launcher preserves the executable's process exit status
+and signal handling through `exec`.
+
+`/etc/default/smsqe`, `/etc/default/lisa` and `/etc/default/voyage200` use the existing `LEGACY_ROOT`,
+`ENVIRONMENT_ROOT` and `ENVIRONMENT_METADATA` policy keys. `-q` checks payload
+availability; the X chooser lists each family only when its default executable
+and media are available. Missing or incompatible executables and missing media
+fail before launching. OS payloads and native ports must be supplied separately.

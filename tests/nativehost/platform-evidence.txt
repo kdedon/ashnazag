@@ -1,0 +1,17 @@
+nativehost_platform target fixture — 2026-10-11
+
+Root-reported AMIX execution: eight fixture assertions and outer execution
+assertion passed. Overall: TESTS DONE pass=9 fail=0 skip=0,33ms.
+
+Exact captured output:
+PLATFORM os=UNIX_System_V node=unix release=4.0 version=2.1c 0800430 machine=mac68k 68040-261011-01
+PLATFORM supported=27 valid=27 arch=m68k provider=Amiga page=4096
+
+Masks are hexadecimal. 0x27 covers uname identity, OS architecture label,
+OS provider label, and page size. provider records the operating system's
+sysinfo(SI_HW_PROVIDER) response. The fixture now prints sysinfo_provider
+for that field. Board, CPU model, physical RAM, managed RAM, and available
+RAM validity bits are clear.
+
+The root runner's count-only postprocessor expected its outer assertion
+alone and returned 1 for the nine reported passes.

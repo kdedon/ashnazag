@@ -101,7 +101,7 @@ static int (*volatile p_faulthook)() = plat_faulthook;
 static void (*volatile p_unfaulthook)() = plat_unfaulthook;
 static void (*volatile p_delayus)() = delayus;
 static timestruc_t *volatile p_hrestime = &hrestime;
-static short *volatile p_cputype = &cputype;
+static long *volatile p_cputype = (long *)&cputype;	/* the kernel defines it as a long */
 
 extern long amilib_loops_us;		/* Space.c: busy loops per microsecond */
 

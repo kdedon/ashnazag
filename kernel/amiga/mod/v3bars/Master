@@ -1,0 +1,4 @@
+# v3bars: colour bars on a Voodoo3, a bring-up check
+$depend opci
+$modtype misc
+v3bars	v3bars	m	0	0	0

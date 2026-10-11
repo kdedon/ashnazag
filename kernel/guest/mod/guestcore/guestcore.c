@@ -145,30 +145,54 @@ gc_fork(pp, cp)
 	return 0;
 }
 
+static int gc_nhost;		/* NOTICE lines printed */
+static void gc_dump();
+
+#define	FATALSIGS	(sigmask(SIGILL) | sigmask(SIGTRAP) | sigmask(SIGEMT) | \
+			 sigmask(SIGFPE) | sigmask(SIGBUS) | sigmask(SIGSEGV))
+
+/* a guest killed by a fault's signal: its state at the fault */
 static void
 gc_exit(p, stat)
 	struct proc *p;
 	int stat;
 {
+	struct guest_proc *gp = GUESTP(p);
+	int sig = p->p_cursig;
+
+	if (gp && p == u.u_procp && sig > 0 && sig < NSIG && (sigmask(sig) & FATALSIGS) &&
+	    gc_nhost < 10 && ++gc_nhost) {
+		printf("NOTICE: guest pid %d: signal %d at %x, vector %d\n", (int)p->p_pid, sig,
+		    (int)GR_PC((char *)u.u_ar0), (int)GR_VEC((char *)u.u_ar0));
+		gc_dump(gp, (char *)u.u_ar0);
+	}
 	gc_free(p);
 }
 
-static int gc_nhost;		/* NOTICE lines printed */
-
-/* a jump into low memory: d0-a6 (r0-r14), the stack, the code before each long on it */
+/*
+ * d0-a6 (r0-r14), the virtual SR and other stack, the code around the pc,
+ * the stack and the code before each long on it
+ */
 static void
-gc_dump(r)
+gc_dump(gp, r)
+	struct guest_proc *gp;
 	char *r;
 {
 	long sp = GR_USP(r), w, c[4];
 	int i, j;
 
+	printf("  sr %x vsr %x other sp %x\n", (int)GR_SR(r), (int)gp->gp_vsr,
+	    (int)gp->gp_vusp);
+	if (copyin((caddr_t)(GR_PC(r) & ~1) - 16, (caddr_t)c, 16) == 0)
+		printf("  pc-16 %x %x %x %x\n", (int)c[0], (int)c[1], (int)c[2], (int)c[3]);
+	if (copyin((caddr_t)(GR_PC(r) & ~1), (caddr_t)c, 16) == 0)
+		printf("  pc %x %x %x %x\n", (int)c[0], (int)c[1], (int)c[2], (int)c[3]);
 	for (i = 0; i < 15; i += 5)
 		printf("  r%d %x %x %x %x %x\n", i, (int)GR_D(r, i),
 		    (int)GR_D(r, i + 1), (int)GR_D(r, i + 2), (int)GR_D(r, i + 3),
 		    (int)GR_D(r, i + 4));
 	printf("  sp %x\n", (int)sp);
-	for (i = -4; i < 8; i++) {
+	for (i = -4; i < 16; i++) {
 		w = fuword((caddr_t)(sp + 4 * i));
 		printf("  sp+%d %x", 4 * i, (int)w);
 		if (!(w & 1) && w >= 0x100 && copyin((caddr_t)(w - 16), (caddr_t)c, 16) == 0)
@@ -177,6 +201,22 @@ gc_dump(r)
 		printf("\n");
 	}
 	printf("  last A-line at %x\n", (int)guest_lineapc);
+	if (!(gp->gp_flags & GPF_ALINE))
+		return;
+	/* the Mac's TheZone, SysZone, ApplZone, CurrentA5, CurMap and CurApName */
+	if (copyin((caddr_t)0x118, (caddr_t)&c[0], 4) == 0 &&
+	    copyin((caddr_t)0x2a6, (caddr_t)&c[1], 8) == 0 &&
+	    copyin((caddr_t)0x904, (caddr_t)&c[3], 4) == 0 &&
+	    copyin((caddr_t)0xa5a, (caddr_t)&w, 2) == 0)
+		printf("  zone %x sys %x appl %x a5 %x curmap %x\n", (int)c[0], (int)c[1],
+		    (int)c[2], (int)c[3], (int)(w >> 16 & 0xffff));
+	if (copyin((caddr_t)0x910, (caddr_t)c, 16) == 0) {
+		char n[17];
+
+		bcopy((caddr_t)c + 1, n, 15);
+		n[(*(unsigned char *)c < 15) ? *(unsigned char *)c : 15] = 0;
+		printf("  app %s\n", n);
+	}
 }
 
 /*
@@ -201,8 +241,8 @@ gc_host(gp, r, v)
 	if (gc_nhost < 10 && ++gc_nhost) {
 		printf("NOTICE: guest pid %d: vector %d at %x (%x) to the host\n",
 		    (int)curproc->p_pid, v, (int)GR_PC(r), op);
-		if ((unsigned long)GR_PC(r) < 0x100)
-			gc_dump(r);
+		if ((unsigned long)GR_PC(r) < 0x100 || v == 4)
+			gc_dump(gp, r);
 	}
 	return 1;
 }

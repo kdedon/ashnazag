@@ -19,9 +19,9 @@ nice -n19 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68000 -DDS_AMIGA -Wall -Wno-c
 nice -n19 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68000 -DDS_AMIGA -Wall -Wno-comment -fno-common \
  -I"$K/mac/display" -I"$K/mac/video" -I"$K/mac/adb" -I"$A/include" -c "$A/amigads.c" -o "$W/amigads.o"
 WEAK="--weaken-symbol dmainit --weaken-symbol execsw --weaken-symbol fmodsw"
-OVR="ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig kbintr unt_latch vtop hat_ptalloc uiomove aciabintr"
+OVR="ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig kbintr unt_latch vtop hat_ptalloc uiomove aciabintr pstart"
 for s in $OVR; do WEAK="$WEAK --weaken-symbol $s"; done
-for s in sendsig valid_usr_range fsig kbintr unt_latch hat_ptalloc uiomove aciabintr; do
+for s in sendsig valid_usr_range fsig kbintr unt_latch hat_ptalloc uiomove aciabintr pstart; do
  v=$(m68k-linux-gnu-nm "$BASE" | awk -v s="$s" '$3==s && $2=="T"{print $1}')
  [ -n "$v" ] || { echo "[FAIL] no $s"; exit 1; }
  WEAK="$WEAK --add-symbol __amix_$s=.text:0x$v,function,global"
@@ -44,7 +44,8 @@ nice -n19 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68040 -I"$K/dlm/include" -c "
 nice -n19 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68040 -c "$A/amigarom.c" -o "$W/amigarom.o"
 nice -n19 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68040 -I"$A/amilib" -c "$A/amigazorro.c" -o "$W/amigazorro.o"
 nice -n19 m68k-cbm-sysv4-gcc -m68040 -c "$PORT/src/devkvmap040.s" -o "$W/devkvmap.o"
-OBJS="$W/vtop.o $W/ptalloc.o $W/uiomod.o $W/amigadlm.o $W/amigarom.o $W/amigazorro.o $W/devkvmap.o $W/ds.o $W/amigads.o $W/guest/guest.o"
+nice -n19 m68k-cbm-sysv4-gcc -m68040 -c "$A/cpu060.s" -o "$W/cpu060.o"
+OBJS="$W/vtop.o $W/ptalloc.o $W/uiomod.o $W/amigadlm.o $W/amigarom.o $W/amigazorro.o $W/devkvmap.o $W/cpu060.o $W/ds.o $W/amigads.o $W/guest/guest.o"
 for f in dlm_core dlm_ld dlm_sym dlm_slot dlm_str dlmconf dlm_cache dlm_hooksw; do
  OBJS="$OBJS $W/dlm/$f.o"
 done

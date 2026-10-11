@@ -147,6 +147,19 @@ snddo:
 	moveml	(%sp)+,%d2-%d7/%a2-%a6
 	rts
 
+| snddispose(chan): SndDisposeChannel, quiet now
+	.globl	snddispose
+snddispose:
+	moveml	%d2-%d7/%a2-%a6,-(%sp)
+	clrw	-(%sp)
+	movel	50(%sp),-(%sp)
+	movew	#0x100,-(%sp)
+	.short	0xa801
+	movew	(%sp)+,%d0
+	extl	%d0
+	moveml	(%sp)+,%d2-%d7/%a2-%a6
+	rts
+
 | the callBackCmd routine: (chan, var cmd)
 	.globl	t_cb
 t_cb:

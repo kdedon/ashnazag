@@ -71,7 +71,10 @@ envroot(family, id, home, out, size)
 {
 	char *er = strcmp(family, "mac") == 0 ? "~/Mac" :
 	    strcmp(family, "tos") == 0 ? "~/TOS" :
-	    strcmp(family, "cpm") == 0 ? "~/CPM" : "~/Amiga";
+	    strcmp(family, "cpm") == 0 ? "~/CPM" :
+	    strcmp(family, "smsqe") == 0 ? "~/SMSQE" :
+	    strcmp(family, "lisa") == 0 ? "~/Lisa" :
+	    strcmp(family, "voyage200") == 0 ? "~/Voyage200" : "~/Amiga";
 
 	if (id == 0 || strcmp(id, "default") == 0)
 		return envpolicy(family, "LEGACY_ROOT",
