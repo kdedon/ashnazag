@@ -9,6 +9,11 @@
 #define AMIGA_BELL 0xf7fffcUL
 #define AMIGA_SNDBELL 0xf7fff8UL
 static void amiga_ring() {}
+static int amiga_pvget() { return -1; }
+static void amiga_pvput() {}
+static void amiga_repost() {}
+static void amiga_pvclock() {}
+static void amiga_await() {}
 typedef char *caddr_t;
 #define USTKCLEAR 1
 struct { int u_sigflag; } u;

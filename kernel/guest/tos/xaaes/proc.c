@@ -3,7 +3,8 @@
  * queues, sleep and wake, timeouts, signals and process extensions.
  *
  * A process switches only in the kernel: when it sleeps, yields, or on
- * its way back to user mode after the tick asked for a switch.  Each
+ * its way back to user mode after the tick asked for a switch, which
+ * includes the return from a timer interrupt of its user code.  Each
  * has its own kernel stack (MiNT's p->stack), which holds its trap
  * frames; xa_swtch saves the callee-saved registers and USP there.
  * The root is the idle loop: it runs due timeouts, polls the select
@@ -359,8 +360,11 @@ swtch_next(short sr)
 	}
 	rm_q(READY_Q, p);
 	p->wait_q = CURPROC_Q;
+	KP(p)->slice = 0;
 	if (p == old)
 		return;
+	if (KP(p)->shadows)
+		fork_swapin(KP(p));
 	curproc = p;
 	xa_swtch(&KP(old)->ksp, KP(p)->ksp);
 }
@@ -483,11 +487,15 @@ sel_wait(long ms)
 	return !ms;
 }
 
-/* the tick: ask for a switch when something is due */
+/* the tick: ask for a switch when something is due or a program's time is up */
 void
 xa_tick_c(void)
 {
+	struct kp *k = KP(curproc);
+
 	if ((tlist && tlist->when <= now_ms()) || nsel || sysq[WAIT_Q].head)
+		xa_resched = 1;
+	else if (!k->kthread && curproc != rootproc && ++k->slice >= 2 && sysq[READY_Q].head)
 		xa_resched = 1;
 }
 
@@ -660,6 +668,11 @@ post_sig(struct kp *k, int sig)
 		return EBADARG;
 	if (k->zombie || sig == 0)
 		return 0;
+	if (k->hostpid) {
+		if (host_sig(sig))
+			hc(H_KILL, 2, k->hostpid, (long)host_sig(sig));
+		return 0;
+	}
 	k->p.sigpending |= 1UL << sig;
 	if (sig == SIGKILL || !(k->p.p_sigmask & (1UL << sig))) {
 		if (k->p.wait_q != STOP_Q || k->started)
@@ -698,6 +711,18 @@ raise(unsigned short sig)
 {
 	post_sig(KP(curproc), sig);
 	handle_sigs();
+}
+
+/* a new program: caught signals go back to their defaults */
+void
+proc_sigreset(struct kp *k)
+{
+	int i;
+
+	for (i = 1; i < NSIG; i++)
+		if (k->p.p_sigacts->sigact[i].sa_handler != SIG_IGN)
+			k->p.p_sigacts->sigact[i].sa_handler = SIG_DFL;
+	k->sigsave = 0;
 }
 
 /* ---- extensions ---- */
@@ -843,6 +868,9 @@ proc_exit(struct kp *k, int code)
 		if (e->ext[i]->cb_vector && e->ext[i]->cb_vector->on_exit)
 			(*e->ext[i]->cb_vector->on_exit)(e->ext[i]->data, &k->p, code);
 	cancelproc(&k->p);
+	k->alarm = 0;
+	vfork_release(k);
+	fork_exit(k);
 	fd_closeall(k);
 	if (k->p.p_mem == &k->mem)
 		mem_freeproc(k);
@@ -901,7 +929,7 @@ reap_orphans(void)
 
 again:
 	for (k = allprocs; k; k = k->all)
-		if (k->zombie && &k->p != curproc && (k->p.ppid == 0 || k->kthread) &&
+		if (k->zombie && &k->p != curproc && (k->p.ppid == 0 || (k->kthread && !k->hostfd)) &&
 		    k->fd.links <= 1 && k->cwd.links <= 1 && k->mem.links <= 1 && k->sa.links <= 1) {
 			proc_reap(k);
 			goto again;

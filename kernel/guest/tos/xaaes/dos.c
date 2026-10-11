@@ -21,6 +21,8 @@ extern void short83(const char *n, char *o);
 extern long _cdecl sys_p_exec(short mode, const void *p1, const void *p2, const void *p3);
 extern long post_sig(struct kp *k, int sig);
 extern void reap_orphans(void);
+extern TIMEOUT *_cdecl addtimeout_curproc(long delta, void (*func)(PROC *, long));
+extern void _cdecl canceltimeout(TIMEOUT *t);
 
 static char hp[PLEN];
 
@@ -48,10 +50,94 @@ sys_c_conout(int c)
 	return file_write(fd_get(ME, 1), &b, 1);
 }
 
+/* Cconin echoes on a terminal the line discipline would echo on */
 static long _cdecl
 sys_c_conin(void)
 {
+	struct tty *t = tty_of(fd_get(ME, 0));
+	long c = file_getchar(fd_get(ME, 0), RAW);
+	char b = c;
+
+	if (t && (t->sg.sg_flags & T_ECHO) && !(t->sg.sg_flags & T_RAW) && b)
+		file_write(fd_get(ME, 1), &b, 1);
+	return c;
+}
+
+static long _cdecl
+sys_c_rawcin(void)
+{
 	return file_getchar(fd_get(ME, 0), RAW);
+}
+
+/* Cconrs: a line from handle 0, edited and echoed on handle 1 */
+static long _cdecl
+sys_c_conrs(char *sbuf)
+{
+	unsigned char *buf = (unsigned char *)sbuf;
+	struct file *in = fd_get(ME, 0), *out = fd_get(ME, 1);
+	int n = 0;
+	long c;
+	char b;
+
+	while (n < buf[0]) {
+		c = file_getchar(in, RAW);
+		if (c < 0)
+			break;
+		b = c;
+		if (b == '\r' || b == '\n')
+			break;
+		if (b == 8 || b == 127) {
+			if (n > 0) {
+				n--;
+				file_write(out, "\b \b", 3);
+			}
+			continue;
+		}
+		if (b == 3) {
+			post_sig(ME, SIGINT);
+			break;
+		}
+		buf[2 + n++] = b;
+		file_write(out, &b, 1);
+	}
+	file_write(out, "\r", 1);
+	buf[1] = n;
+	return n;
+}
+
+/*
+ * BIOS console calls of a user process whose handles 0 or 1 are not
+ * the console go to them; 0x80000000: the call is TOS's.
+ */
+long
+xa_bios(short *a)
+{
+	struct file *in = fd_get(ME, 0), *out = fd_get(ME, 1);
+	char b;
+
+	if (ME->kthread || curproc == rootproc || (a[1] != 2 && a[1] != 5))
+		return 0x80000000L;
+	switch (a[0]) {
+	case 1:
+		if (a[1] != 2 || !in || is_console(in))
+			break;
+		return file_select(in, 0) ? -1 : 0;
+	case 2:
+		if (a[1] != 2 || !in || is_console(in))
+			break;
+		return file_getchar(in, RAW);
+	case 3:
+		if (!out || is_console(out))
+			break;
+		b = a[2];
+		file_write(out, &b, 1);
+		return 0;
+	case 8:
+		if (!out || is_console(out))
+			break;
+		return -1;
+	}
+	return 0x80000000L;
 }
 
 static long _cdecl
@@ -1009,7 +1095,7 @@ sys_p_waitpid(short pid, short nohang, long *rusage)
 	for (;;) {
 		any = 0;
 		for (k = allprocs; k; k = k->all) {
-			if (k->p.ppid != curproc->pid || k->kthread || k == ME)
+			if (k->p.ppid != curproc->pid || (k->kthread && !k->hostfd) || k == ME)
 				continue;
 			if (pid > 0 && k->p.pid != pid)
 				continue;
@@ -1144,11 +1230,40 @@ sys_p_msg(int mode, long mbid, char *ptr)
 	return ENOSYS;
 }
 
+static void
+alarm_ring(PROC *p, long arg)
+{
+	(void)arg;
+	KP(p)->alarm = 0;
+	post_sig(KP(p), SIGALRM);
+}
+
+/* SIGALRM in ms milliseconds, 0 none, below 0 asks; the time left of the last */
+static long _cdecl
+sys_t_malarm(long ms)
+{
+	struct kp *k = ME;
+	long left = 0;
+
+	if (k->alarm && (left = k->alarm->when - now_ms()) <= 0)
+		left = 1;
+	if (ms < 0)
+		return left;
+	if (k->alarm) {
+		canceltimeout(k->alarm);
+		k->alarm = 0;
+	}
+	if (ms > 0)
+		k->alarm = addtimeout_curproc(ms, alarm_ring);
+	return left;
+}
+
 static long _cdecl
 sys_t_alarm(long x)
 {
-	(void)x;
-	return 0;
+	long r = sys_t_malarm(x < 0 ? -1 : x * 1000);
+
+	return (r + 999) / 1000;
 }
 
 static long _cdecl
@@ -1222,13 +1337,62 @@ sys_p_sigreturn(void)
 	return 0;
 }
 
+struct mpoll {
+	long	fd;
+	ushort	events, revents;
+};
+
+#define	P_IN	0x0043			/* POLLIN, POLLPRI, POLLRDNORM */
+#define	P_OUT	0x0104			/* POLLOUT, POLLWRNORM */
+
+/* Fpoll, on the select waiters' polling; handles from 32 on are polled every 20 ms */
 static long _cdecl
-sys_f_poll(struct pollfd *fds, ulong nfds, ulong timeout)
+sys_f_poll(struct mpoll *fds, ulong nfds, ulong timeout)
 {
-	(void)fds;
-	(void)nfds;
-	(void)timeout;
-	return ENOSYS;
+	struct kp *k = ME;
+	long end = now_ms() + timeout, r, w, left;
+	struct file *f;
+	ulong i;
+	int n, far;
+
+	for (;;) {
+		n = far = 0;
+		r = w = 0;
+		for (i = 0; i < nfds; i++) {
+			fds[i].revents = 0;
+			if (fds[i].fd < 0)
+				continue;
+			if (!(f = fd_get(k, fds[i].fd)))
+				fds[i].revents = 0x20;
+			else {
+				if ((fds[i].events & P_IN) && file_select(f, 0))
+					fds[i].revents |= fds[i].events & P_IN;
+				if ((fds[i].events & P_OUT) && file_select(f, 1))
+					fds[i].revents |= fds[i].events & P_OUT;
+				if (fds[i].fd >= 32)
+					far = 1;
+				else {
+					if (fds[i].events & P_IN)
+						r |= 1L << fds[i].fd;
+					if (fds[i].events & P_OUT)
+						w |= 1L << fds[i].fd;
+				}
+			}
+			if (fds[i].revents)
+				n++;
+		}
+		if (n || timeout == 0 || (timeout != ~0UL && now_ms() >= end))
+			return n;
+		left = timeout == ~0UL ? 0 : end - now_ms();
+		if (far && (left == 0 || left > 20))
+			left = 20;
+		k->sel_r = &r;
+		k->sel_w = &w;
+		sel_wait(left);
+		k->sel_r = k->sel_w = 0;
+		if (curproc->sigpending & ~curproc->p_sigmask & ~(1UL << SIGCHLD))
+			return EINTR;
+	}
 }
 
 /* Ssystem: identity, cookies, memory peeks */
@@ -1275,10 +1439,10 @@ sys_s_system(int mode, ulong arg1, ulong arg2)
 	return ENOSYS;
 }
 
+/* from a module: trap #1's own entry serves programs */
 static long _cdecl
 sys_p_vfork(void)
 {
-	xlog("Pvfork/Pfork from pid %d: not served", curproc->pid);
 	return ENOSYS;
 }
 
@@ -1289,8 +1453,9 @@ dos_vecs dos_tab = {
 	.p_c_conin = sys_c_conin,
 	.p_c_conout = sys_c_conout,
 	.p_c_rawio = sys_c_rawio,
-	.p_c_rawcin = sys_c_conin,
-	.p_c_necin = sys_c_conin,
+	.p_c_rawcin = sys_c_rawcin,
+	.p_c_necin = sys_c_rawcin,
+	.p_c_conrs = sys_c_conrs,
 	.p_c_conws = sys_c_conws,
 	.p_c_conis = sys_c_conis,
 	.p_c_conos = sys_c_conos,
@@ -1381,7 +1546,7 @@ dos_vecs dos_tab = {
 	.p_p_waitpid = sys_p_waitpid,
 	.p_d_getcwd = sys_d_getcwd,
 	.p_s_alert = sys_s_alert,
-	.p_t_malarm = sys_t_alarm,
+	.p_t_malarm = sys_t_malarm,
 	.p_s_uptime = sys_s_uptime,
 	.p_d_xreaddir = sys_d_xreaddir,
 	.p_f_stat64 = sys_f_stat64,
@@ -1390,7 +1555,7 @@ dos_vecs dos_tab = {
 	.p_d_readlabel = sys_d_readlabel,
 	.p_s_system = sys_s_system,
 	.p_t_gettimeofday = sys_t_gettimeofday,
-	.p_f_poll = sys_f_poll,
+	.p_f_poll = (void *)sys_f_poll,
 	.p_f_fstat = sys_f_fstat,
 };
 
@@ -1404,6 +1569,7 @@ dos_init(void)
 	long (**t)() = (long (**)())&dos_tab;
 	int i;
 
+	sock_init(&dos_tab);
 	for (i = 0; i < 0x190; i++) {
 		dos_trap[i] = t[i];
 		if (!t[i])

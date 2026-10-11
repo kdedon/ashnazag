@@ -9,6 +9,7 @@
 	.globl	_trap_13_emu, _trap_14_emu
 	.globl	_xa_setusp, _xa_sigtramp
 	.globl	_ks_usp, _ks_pc, _ks_sr, _ks_regs, _xa_super, _xa_usp
+	.globl	_xa_tmrc, _old_tmrc, _xa_rexec, _xa_trap13, _old_trap13
 
 	.text
 | AUTO start: run xa_auto, stay resident if it returns a size
@@ -58,6 +59,10 @@ _xa_trap1:
 	move.w	(a0)+,d1
 	cmp.w	#0x11a,d1
 	beq.s	Lsigret
+	cmp.w	#0x113,d1
+	beq.s	Lfork
+	cmp.w	#0x11b,d1
+	beq.s	Lfork
 	cmp.w	#0x190,d1
 	bcc.s	Lpass1
 	lea	_dos_trap,a1
@@ -87,6 +92,15 @@ Lsigret:
 	pea	(sp)
 	jsr	_xa_sigreturn
 	addq.l	#4,sp
+	movem.l	(sp)+,d1-d7/a0-a6
+	bra	Ltret
+
+| Pvfork, Pfork: the caller's registers and frame to xa_fork
+Lfork:
+	move.l	d1,-(sp)
+	pea	4(sp)
+	jsr	_xa_fork
+	addq.l	#8,sp
 	movem.l	(sp)+,d1-d7/a0-a6
 	bra	Ltret
 
@@ -147,6 +161,62 @@ _xa_tick:
 	movem.l	(sp)+,d0-d2/a0-a2
 	move.l	_old_etv,-(sp)
 	rts
+
+| MFP timer C.  An interrupt of user code gets a frame of ours under
+| the handler's, so it returns here and the process may be switched
+| out as at a trap return.
+	.long	0x58425241, 0x58414d54
+_old_tmrc:
+	.long	0
+_xa_tmrc:
+	btst	#5,(sp)
+	bne.s	1f
+	move.w	#0x114,-(sp)
+	pea	Lpreempt
+	move.w	#0x2600,-(sp)
+1:	move.l	_old_tmrc,-(sp)
+	rts
+Lpreempt:
+	tst.w	_xa_resched
+	bne.s	1f
+	move.l	a0,-(sp)
+	move.l	_curproc,a0
+	add.l	_xa_sigoff,a0
+	tst.l	(a0)
+	movem.l	(sp)+,a0
+	beq.s	2f
+1:	move.w	d0,-(sp)
+	move.w	2(sp),d0
+	and.w	#0x0700,d0
+	or.w	#0x2000,d0
+	move.w	d0,sr
+	move.w	(sp)+,d0
+	bra	Ltret
+2:	rte
+
+| BIOS: a user process's console calls to its own handles
+	.long	0x58425241, 0x58414d54
+_old_trap13:
+	.long	0
+_xa_trap13:
+	btst	#5,(sp)
+	bne.s	1f
+	movem.l	d1-d2/a0-a2,-(sp)
+	move.l	usp,a0
+	move.l	a0,-(sp)
+	jsr	_xa_bios
+	addq.l	#4,sp
+	movem.l	(sp)+,d1-d2/a0-a2
+	cmp.l	#0x80000000,d0
+	bne	Ltret
+1:	move.l	_old_trap13,-(sp)
+	rts
+
+| xa_rexec(sp): a process's kernel stack starts over and it enters its
+| new program, as at its first run
+_xa_rexec:
+	move.l	4(sp),sp
+	bra	_xa_kstart
 
 | xa_swtch(long *save, long sp): callee-saved registers and USP on this
 | stack, its pointer to *save; then the other stack's

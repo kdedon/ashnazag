@@ -4,6 +4,11 @@
  * descriptors, the console, null and in-memory pipes, per-process
  * handles, directory reading.
  *
+ * A pipe named tty* is a terminal pair: its creator holds the master,
+ * whoever opens the name after gets the terminal, with a line
+ * discipline that edits and echoes unless raw.  Sockets are the
+ * environment's host sockets, blocking here so the host call never does.
+ *
  * Paths: X:\a\b on a table drive is <root>/a/b, each name matched as
  * given, else ignoring case, else by its 8.3 form.  On U:, \dev and
  * \pipe are devices, \x (one letter) is drive X:, \host is /, and
@@ -29,12 +34,23 @@ struct pipe {
 	short	links, writers;
 	char	name[32];
 	struct pipe *next;
+	struct pty *pty;
+};
+
+struct pty {
+	struct pipe	*in, *out;	/* keys to the terminal, its output */
+	struct tty	tty;
+	short		masters, slaves;
+	short		llen, lready;	/* the line being edited; bytes of it done */
+	char		line[256];
 };
 static struct pipe *pipes;
 
 short contty_state;
 static struct tty contty;
 static char hpbuf[PLEN];
+
+static struct file *fnew(DEVDRV *dev, long info, int flags);
 
 /* ---- devices ---- */
 
@@ -326,7 +342,7 @@ pipe_select(FILEPTR *f, long proc, int mode)
 
 	(void)proc;
 	if (mode == O_RDONLY)
-		return p->count > 0;
+		return p->count > 0 || p->writers == 0;
 	return p->count < (long)sizeof p->buf;
 }
 
@@ -334,6 +350,406 @@ static DEVDRV pipedev = {
 	host_open, pipe_write, pipe_read, con_lseek, pipe_ioctl, con_datime,
 	pipe_close, pipe_select, host_unselect, 0, 0, 0
 };
+
+/* ---- terminal pairs ---- */
+
+static int
+pipe_put(struct pipe *p, const char *b, long n)
+{
+	long i;
+
+	for (i = 0; i < n; i++) {
+		while (p->count == sizeof p->buf)
+			sleep(IO_Q, (long)p);
+		p->buf[p->head] = b[i];
+		p->head = (p->head + 1) % sizeof p->buf;
+		p->count++;
+	}
+	wake(IO_Q, (long)p);
+	return n;
+}
+
+/* the next key, -1 at end, EAGAIN when none and nonblocking */
+static long
+pipe_get(struct pipe *p, int ndelay)
+{
+	unsigned char c;
+
+	while (p->count == 0) {
+		if (p->writers == 0)
+			return -1;
+		if (ndelay)
+			return EAGAIN;
+		sleep(IO_Q, (long)p);
+	}
+	c = p->buf[p->tail];
+	p->tail = (p->tail + 1) % sizeof p->buf;
+	p->count--;
+	wake(IO_Q, (long)p);
+	return c;
+}
+
+static long _cdecl
+ptm_write(FILEPTR *f, const char *buf, long n)
+{
+	struct pty *t = (struct pty *)f->devinfo;
+	struct kp *k;
+	struct file *s;
+	long i;
+
+	for (i = 0; i < n; i++) {
+		if (buf[i] == 3 && !(t->tty.sg.sg_flags & T_RAW)) {
+			for (k = allprocs; k; k = k->all)
+				if (!k->zombie && (s = fd_get(k, 0)) && s->devinfo == (long)t &&
+				    s->dev != f->dev)
+					post_sig(k, SIGINT);
+			continue;
+		}
+		pipe_put(t->in, buf + i, 1);
+	}
+	return n;
+}
+
+static long _cdecl
+ptm_read(FILEPTR *f, char *buf, long n)
+{
+	struct pty *t = (struct pty *)f->devinfo;
+	long i, c;
+
+	for (i = 0; i < n; i++) {
+		c = pipe_get(t->out, i || (f->flags & O_NDELAY));
+		if (c < 0)
+			return i ? i : c == -1 ? 0 : c;
+		buf[i] = c;
+	}
+	return i;
+}
+
+static long _cdecl
+ptm_select(FILEPTR *f, long proc, int mode)
+{
+	struct pty *t = (struct pty *)f->devinfo;
+
+	(void)proc;
+	if (mode == O_RDONLY)
+		return t->out->count > 0 || t->out->writers == 0;
+	return t->in->count < (long)sizeof t->in->buf;
+}
+
+static void
+pty_free(struct pty *t)
+{
+	struct pipe **pp;
+
+	if (t->masters || t->slaves)
+		return;
+	for (pp = &pipes; *pp; pp = &(*pp)->next)
+		if (*pp == t->in) {
+			*pp = t->in->next;
+			break;
+		}
+	kfree_any(t->in);
+	kfree_any(t->out);
+	kfree_any(t);
+}
+
+static long _cdecl
+ptm_close(FILEPTR *f, int pid)
+{
+	struct pty *t = (struct pty *)f->devinfo;
+
+	(void)pid;
+	if (f->links > 0)
+		return 0;
+	t->masters--;
+	t->in->writers--;
+	wake(IO_Q, (long)t->in);
+	pty_free(t);
+	return 0;
+}
+
+static long _cdecl
+pts_write(FILEPTR *f, const char *buf, long n)
+{
+	struct pty *t = (struct pty *)f->devinfo;
+	long i, j;
+
+	for (i = j = 0; i < n; i++)
+		if (buf[i] == '\n' && (t->tty.sg.sg_flags & T_CRMOD)) {
+			pipe_put(t->out, buf + j, i - j);
+			pipe_put(t->out, "\r", 1);
+			j = i;
+		}
+	pipe_put(t->out, buf + j, n - j);
+	return n;
+}
+
+static void
+echo(struct pty *t, const char *s, int n)
+{
+	if (t->tty.sg.sg_flags & T_ECHO)
+		pipe_put(t->out, s, n);
+}
+
+/* raw: what has come; cooked: a line, edited and echoed as it comes */
+static long _cdecl
+pts_read(FILEPTR *f, char *buf, long n)
+{
+	struct pty *t = (struct pty *)f->devinfo;
+	long i, c;
+
+	if (t->tty.sg.sg_flags & (T_RAW | T_CBREAK)) {
+		for (i = 0; i < n; i++) {
+			c = pipe_get(t->in, i || (f->flags & O_NDELAY));
+			if (c < 0)
+				return i ? i : c == -1 ? 0 : c;
+			buf[i] = c;
+			if (!(t->tty.sg.sg_flags & T_RAW) && (t->tty.sg.sg_flags & T_ECHO))
+				echo(t, buf + i, 1);
+		}
+		return i;
+	}
+	while (!t->lready) {
+		c = pipe_get(t->in, f->flags & O_NDELAY);
+		if (c == EAGAIN)
+			return c;
+		if (c < 0 || (c == 4 && t->llen == 0))
+			return 0;
+		if (c == 8 || c == 127) {
+			if (t->llen > 0) {
+				t->llen--;
+				echo(t, "\b \b", 3);
+			}
+			continue;
+		}
+		if (c == '\r' || c == '\n') {
+			echo(t, "\r\n", 2);
+			t->line[t->llen++] = '\n';
+			t->lready = t->llen;
+			break;
+		}
+		if (t->llen < (int)sizeof t->line - 1) {
+			t->line[t->llen++] = c;
+			echo(t, (char *)&t->line[t->llen - 1], 1);
+		}
+	}
+	if (n > t->lready)
+		n = t->lready;
+	memcpy(buf, t->line, n);
+	for (i = n; i < t->llen; i++)
+		t->line[i - n] = t->line[i];
+	t->llen -= n;
+	t->lready -= n;
+	return n;
+}
+
+static long _cdecl
+pts_select(FILEPTR *f, long proc, int mode)
+{
+	struct pty *t = (struct pty *)f->devinfo;
+
+	(void)proc;
+	if (mode == O_RDONLY)
+		return t->lready || t->in->count > 0 || t->in->writers == 0;
+	return t->out->count < (long)sizeof t->out->buf;
+}
+
+static long _cdecl
+pts_ioctl(FILEPTR *f, int mode, void *buf)
+{
+	struct pty *t = (struct pty *)f->devinfo;
+
+	switch (mode) {
+	case FIONREAD:
+		*(long *)buf = t->lready ? t->lready : t->in->count;
+		return 0;
+	case FIONWRITE:
+		*(long *)buf = sizeof t->out->buf - t->out->count;
+		return 0;
+	case TIOCGETP:
+		*(struct sgttyb *)buf = t->tty.sg;
+		return 0;
+	case TIOCSETN: case TIOCSETP:
+		t->tty.sg = *(struct sgttyb *)buf;
+		return 0;
+	case TIOCGPGRP:
+		*(long *)buf = t->tty.pgrp;
+		return 0;
+	case TIOCSPGRP:
+		t->tty.pgrp = *(long *)buf;
+		return 0;
+	case TIOCGWINSZ:
+		*(struct winsize *)buf = t->tty.wsiz;
+		return 0;
+	case TIOCSWINSZ:
+		t->tty.wsiz = *(struct winsize *)buf;
+		return 0;
+	}
+	return con_ioctl(f, mode, buf);
+}
+
+static long _cdecl
+pts_close(FILEPTR *f, int pid)
+{
+	struct pty *t = (struct pty *)f->devinfo;
+
+	(void)pid;
+	if (f->links > 0)
+		return 0;
+	t->slaves--;
+	t->out->writers--;
+	wake(IO_Q, (long)t->out);
+	pty_free(t);
+	return 0;
+}
+
+static DEVDRV ptmdev = {
+	host_open, ptm_write, ptm_read, con_lseek, pts_ioctl, con_datime,
+	ptm_close, ptm_select, host_unselect, 0, 0, 0
+};
+
+static DEVDRV ptsdev = {
+	host_open, pts_write, pts_read, con_lseek, pts_ioctl, con_datime,
+	pts_close, pts_select, host_unselect, 0, 0, 0
+};
+
+struct tty *
+tty_of(struct file *f)
+{
+	return f && f->dev == &ptsdev ? &((struct pty *)f->devinfo)->tty : 0;
+}
+
+int
+is_tty(struct file *f)
+{
+	return f && (f->dev == &ptsdev || f->dev == &condev);
+}
+
+/* ---- sockets ---- */
+
+struct tsock {
+	long	op, fd, arg;
+	char	*buf;
+	long	len, rv;
+	char	addr[16];
+	long	alen;
+	char	*gap;
+};
+
+/* until host descriptor hfd can read (or write), unless nonblocking */
+long
+host_wait(long hfd, int wr, int nonblock)
+{
+	long pfd[2];
+
+	if (nonblock)
+		return EAGAIN;
+	for (;;) {
+		pfd[0] = hfd;
+		pfd[1] = (wr ? 4L : 1L) << 16;
+		if (hc(H_POLL, 3, (long)pfd, 1L, 0L) > 0 && (pfd[1] & 0xffff))
+			return 0;
+		if (curproc->sigpending & ~curproc->p_sigmask)
+			return EINTR;
+		nap(20);
+	}
+}
+
+/*
+ * A socket call of the environment's (op: the host's TSO_*), waiting
+ * here while it would block.  addr (16 bytes) goes in with *alenp and
+ * comes back from accept, recv and the names.
+ */
+long
+sock_op(int op, long hfd, long arg, char *buf, long len, char *addr, long *alenp, int ndelay)
+{
+	static char gap[576];
+	struct tsock so;
+	long r;
+
+	for (;;) {
+		bzero(&so, sizeof so);
+		so.op = op;
+		so.fd = hfd;
+		so.arg = arg;
+		so.buf = buf;
+		so.len = len;
+		so.gap = gap;
+		if (addr && alenp && *alenp > 0 && op != 5 && op != 7 && op != 9) {
+			so.alen = *alenp > 16 ? 16 : *alenp;
+			memcpy(so.addr, addr, so.alen);
+		}
+		r = hc(H_IOCTL, 3, *(long *)0xfa0078, (long)TOSIOC_SOCK, (long)&so);
+		if (r >= 0) {
+			if (addr && alenp && (op == 5 || op == 7 || op == 9)) {
+				memcpy(addr, so.addr, *alenp < 0 ? 0 : *alenp < 16 ? *alenp : 16);
+				*alenp = 16;
+			}
+			return so.rv;
+		}
+		if ((op != 5 && op != 6 && op != 7) || r != -H_EAGAIN ||
+		    (r = host_wait(hfd, op == 6, ndelay)) != 0) {
+			if (r != EAGAIN && r != EINTR && r != -H_EINPROGRESS)
+				xlog("socket call %d on %ld: host error %ld", op, hfd, -r);
+			return r == EAGAIN || r == EINTR ? r : merr(r);
+		}
+	}
+}
+
+static long _cdecl
+sock_write(FILEPTR *f, const char *buf, long n)
+{
+	return sock_op(6, f->devinfo, 0, (char *)buf, n, 0, 0, f->flags & O_NDELAY);
+}
+
+static long _cdecl
+sock_read(FILEPTR *f, char *buf, long n)
+{
+	return sock_op(7, f->devinfo, 0, buf, n, 0, 0, f->flags & O_NDELAY);
+}
+
+static long _cdecl
+sock_ioctl(FILEPTR *f, int mode, void *buf)
+{
+	long n = 0;
+
+	switch (mode) {
+	case FIONREAD:
+		if (hc(H_IOCTL, 3, f->devinfo, 0x5301L, (long)&n) < 0)
+			n = 0;
+		*(long *)buf = n;
+		return 0;
+	case FIONWRITE:
+		*(long *)buf = 1;
+		return 0;
+	}
+	return host_ioctl(f, mode, buf);
+}
+
+static DEVDRV sockdev = {
+	host_open, sock_write, sock_read, host_lseek, sock_ioctl, host_datime,
+	host_close, host_select, host_unselect, 0, 0, 0
+};
+
+/* host socket hfd as a file */
+long
+file_sock(long hfd, int flags, struct file **res)
+{
+	hc(H_FCNTL, 3, hfd, 4L, (long)HO_NONBLOCK);
+	*res = fnew(&sockdev, hfd, O_RDWR | (flags & O_NDELAY));
+	if (!*res) {
+		hc(H_CLOSE, 1, hfd);
+		return ENOMEM;
+	}
+	return 0;
+}
+
+/* a socket file's host descriptor, -1 for other files */
+long
+sock_hfd(struct file *f)
+{
+	return f && f->dev == &sockdev ? f->devinfo : -1;
+}
 
 /* ---- the drive table ---- */
 
@@ -783,6 +1199,31 @@ hflags(int m)
 	return h | HO_NOCTTY;
 }
 
+/* a terminal pair named name: the master for its creator */
+static long
+pty_new(const char *name, int mode, struct file **res)
+{
+	struct pty *t = kmalloc_o(sizeof *t, 0);
+
+	if (!t)
+		return ENOMEM;
+	bzero(t, sizeof *t);
+	t->in = pipe_new(name);
+	t->out = pipe_new("");
+	*res = fnew(&ptmdev, (long)t, (mode & ~O_RWMODE) | O_RDWR);
+	if (!t->in || !t->out || !*res)
+		return ENOMEM;
+	t->in->pty = t;
+	t->in->writers = 1;
+	t->masters = 1;
+	t->tty.sg.sg_flags = T_ECHO | T_CRMOD | T_TOS;
+	t->tty.sg.sg_erase = 8;
+	t->tty.sg.sg_kill = 21;
+	t->tty.wsiz.ws_row = 24;
+	t->tty.wsiz.ws_col = 80;
+	return 0;
+}
+
 /* an open file for a MiNT path */
 long
 file_open(const char *path, int mode, int perm, struct file **res)
@@ -818,6 +1259,17 @@ file_open(const char *path, int mode, int perm, struct file **res)
 		for (p = pipes; p; p = p->next)
 			if (stricmp(p->name, hp) == 0)
 				break;
+		if (p && p->pty) {
+			f = fnew(&ptsdev, (long)p->pty, mode);
+			if (!f)
+				return ENOMEM;
+			p->pty->slaves++;
+			p->pty->out->writers++;
+			*res = f;
+			return 0;
+		}
+		if (!p && (mode & O_CREAT) && strnicmp(hp, "tty", 3) == 0)
+			return pty_new(hp, mode, res);
 		if (!p) {
 			if (!(mode & O_CREAT))
 				return EFILNF;
@@ -901,6 +1353,10 @@ file_getchar(struct file *f, int mode)
 			nap(20);
 		r = bios(2, 2);
 		return mode == RAW ? r : r & 0xff;
+	}
+	if (f->dev == &ptsdev) {
+		r = pipe_get(((struct pty *)f->devinfo)->in, 0);
+		return r < 0 ? MiNTEOF : r;
 	}
 	r = file_read(f, (char *)&c, 1);
 	return r == 1 ? c : MiNTEOF;

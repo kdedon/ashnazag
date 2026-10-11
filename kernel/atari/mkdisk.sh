@@ -19,6 +19,8 @@
 # (e.g. TESTS=t_page).  MODS: a module directory (guest/build.sh -m's
 # mod.d) to put in /tests/mod.d, with /tests/auxreg, /dev/uinter0 and
 # /dev/tos.  TOSOUT: mktos.sh's outdir; starttos and the cartridge go in /tests.
+# TESTROOT: a directory whose tree goes on the root too (e.g. tests/build/root's
+# tos/xatick for t_xaaes).
 # X11: x11/package.sh's pkg directory, or 1 for the Atari X work tree
 # (images/work/x11-atari), built or refreshed here; X goes on the root with the AMIX
 # clients (tape segments 13, 14) and the server options in etc/xoptions.
@@ -172,7 +174,7 @@ if [ "$TOSENV" = 1 ]; then
 	{ echo 'd /etc/tos 755 0 3'
 	  echo "f /etc/tos/emutos.img 444 0 3 $E/tos/emutos.img"
 	  echo "f /etc/tos/tosml.img 444 0 3 $E/tos/tosml.img"
-	  for f in starttos maketos tosdrive; do echo "f /usr/bin/$f 755 0 3 $E/tos/$f"; done
+	  for f in starttos mintrun maketos tosdrive; do echo "f /usr/bin/$f 755 0 3 $E/tos/$f"; done
 	  echo "a $E/tos/sys.cpio"
 	  echo "a $E/tos/games.cpio"
 	  echo "a $E/cpm/cpm.cpio"
@@ -213,7 +215,7 @@ if [ -n "$MODS$TOSENV$MACENV" ]; then
 fi
 if [ -n "$TESTS" ]; then
 	TB=$K/../tests/build
-	"$K/../toolchain/linux/bin/m68k-linux-gnu-nm" "$KERNEL" | awk '$3 ~ /^(freemem|availrmem|availsmem|lbolt|fpu_present|anoninfo)$/ { print $3, $1 }' \
+	"$K/../toolchain/linux/bin/m68k-linux-gnu-nm" "$KERNEL" | awk '$3 ~ /^(freemem|availrmem|availsmem|lbolt|fpu_present|anoninfo|guest_loading)$/ { print $3, $1 }' \
 		> "$W/src/build/ksyms"
 	{ echo 'd /tests 755 0 3'
 	  echo 'f /tests/ksyms 444 0 3 build/ksyms'
@@ -221,6 +223,11 @@ if [ -n "$TESTS" ]; then
 		[ -x "$TB/bin/$t" ] || { echo "[FAIL] no $TB/bin/$t (run tests/build.sh)" >&2; exit 1; }
 		echo "f /tests/$t 755 0 3 $TB/bin/$t"
 	  done
+	  if [ -n "$TESTROOT" ]; then
+		(cd "$TESTROOT" && find . -mindepth 1 | sed 's|^\./||' | cpio -o -H newc -R 0:3 --quiet) \
+			> "$W/src/build/testroot.cpio"
+		echo "a $W/src/build/testroot.cpio"
+	  fi
 	  if [ -n "$MODS" ]; then
 		echo 'd /tests/mod.d 755 0 3'
 		echo 'f /tests/auxreg 755 0 3 build/auxreg'
@@ -234,8 +241,8 @@ fi
 { printf '\tSystem V Release 4.0\t\tAsh Nazag\n\n'
   [ "$MACENV" != 1 ] || echo ' Mac    startmac6       System 6.0.7 (root); leave with Special > Logout'
   [ "$TOSENV" != 1 ] || { echo ' TOS    starttos        EmuTOS and TeraDesk; -P this machine'"'"'s TOS, -M mono'
-	cpio -it < "$E/cpm/cpm.cpio" 2> /dev/null | grep -q CPM.SYS &&
-		printf '%s\n' ' CP/M   startcpm        CP/M-68K in this terminal; EXIT ends it' \
+	cpio -it < "$E/cpm/cpm.cpio" 2> /dev/null | grep -q CCP.68K &&
+		printf '%s\n' ' CP/M   startcpm        Concurrent CP/M-68K; EXIT ends it, -c N joins' \
 		"                        A: ~/CPM, H: home, M: temp, O: /, P: DRI's programs"
 	cpio -it < "$E/win/win.cpio" 2> /dev/null | grep -q startwin &&
 		printf '%s\n' ' Win16  startwin        Windows 3.x programs; startwin -install your disks first'

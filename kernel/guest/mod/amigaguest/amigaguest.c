@@ -435,7 +435,8 @@ amiga_priv(gp, r, v)
 		a->ac_pvtb = 0x10000;
 		s = amiga_spl();
 		amigadev_reset(&a->ac_dev);
-		amigadev_configure(&a->ac_dev, (a->ac_config.ae_flags & AMIGAF_PAL) != 0);
+		amigadev_configure(&a->ac_dev, (a->ac_config.ae_flags & AMIGAF_PAL) != 0,
+		    (a->ac_config.ae_flags & AMIGAF_SCSI) != 0);
 		bzero((caddr_t)a->ac_gary, sizeof a->ac_gary);
 		a->ac_epoch++;
 		gp->gp_vpend = 0; a->ac_fraction = 0;
@@ -629,7 +630,7 @@ amigaioctl(dev, cmd, arg, mode, cr, rvp)
 		if (copyin(arg, (caddr_t)&ae, sizeof ae)) return EFAULT;
 		if (ae.ae_version != AMIGA_ABI_VERSION || ae.ae_chipsize != AMIGA_CHIP_SIZE ||
 		    ae.ae_fastsize > AMIGA_FAST_MAX || (ae.ae_fastsize & 0xfffff) ||
-		    (ae.ae_flags & ~(AMIGAF_PAL | AMIGAF_CENSUS | AMIGAF_PV))) return EINVAL;
+		    (ae.ae_flags & ~(AMIGAF_PAL | AMIGAF_CENSUS | AMIGAF_PV | AMIGAF_SCSI))) return EINVAL;
 		/* the census goes to the console */
 		if ((ae.ae_flags & AMIGAF_CENSUS) && !suser(cr)) return EPERM;
 		if ((e = guest_attach(&amiga_profile)) != 0) return e;
@@ -639,7 +640,8 @@ amigaioctl(dev, cmd, arg, mode, cr, rvp)
 		a->ac_stat.as_version = AMIGA_ABI_VERSION;
 		a->ac_stat.as_pid = curproc->p_pid;
 		amigadev_reset(&a->ac_dev);
-		amigadev_configure(&a->ac_dev, (ae.ae_flags & AMIGAF_PAL) != 0);
+		amigadev_configure(&a->ac_dev, (ae.ae_flags & AMIGAF_PAL) != 0,
+		    (ae.ae_flags & AMIGAF_SCSI) != 0);
 		gp->gp_vsr = 0x2700;
 		gp->gp_flags = GPF_PRIV | GPF_FTRAP | GPF_FTRAP13;
 		dlm_cacheflush();

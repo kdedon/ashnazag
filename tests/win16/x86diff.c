@@ -9,7 +9,8 @@
  * descriptor and in real mode, running from random bytes, mostly opcodes
  * the run loop handles: one instruction, or in protected mode up to six
  * at a stretch (the run loop's own segment state carried between them);
- * then the initial states in corpus (mkcorpus.py, from the 80386 suite).
+ * then a far-pointer word sum's loop whole, and the initial states in
+ * corpus (mkcorpus.py, from the 80386 suite).
  * Registers, flags (as made from either core's lazy record), segments,
  * counters, faults and memory must match.
  * Prints the totals and how many instructions went to the reference;
@@ -460,6 +461,86 @@ bench(mil)
 	}
 }
 
+/*
+ * A far-pointer word sum (the run loop takes it whole) on both cores,
+ * to its HLT: random registers, lengths and an ES that may end inside
+ * it or hold the pointer itself.
+ */
+static int
+sumloop(n)
+	int n;
+{
+	static u8 prg[] = {
+		0xeb, 0x0b,			/* jmp L2 */
+		0xc4, 0x5e, 0xfc,		/* L1: les bx, [bp-4] */
+		0x26, 0x03, 0x37,		/* add si, es:[bx] */
+		0x4f,				/* dec di */
+		0x83, 0x46, 0xfc, 0x02,		/* add word [bp-4], 2 */
+		0x0b, 0xff,			/* L2: or di, di */
+		0x75, 0xf1,			/* jne L1 */
+		0xf4				/* hlt */
+	};
+	static int regs[] = { 0, 1, 2, 6, 7 };
+	int i, k, r, c, bad = 0;
+	u32 p, s0 = x86_nslow;
+
+	for (k = 0; k < MEM; k++)
+		ma[k] = rnd();
+	for (i = 0; i < n; i++) {
+		r = regs[rn(5)];
+		do
+			c = regs[rn(5)];
+		while (c == r);
+		prg[7] = r << 3 | 7;
+		prg[8] = 0x48 + c;
+		prg[14] = 0xc0 | c << 3 | c;
+		memcpy(ma, (char *)prg, sizeof prg);
+		ldt[1].d_base = 0;
+		ldt[1].d_limit = 0xfff;
+		ldt[1].d_acc = 0x9b;
+		ldt[2].d_base = 0x1000;
+		ldt[2].d_limit = 0xffff;
+		ldt[2].d_acc = 0x93;
+		ldt[3].d_base = 0x8000 + rn(0x8000);
+		ldt[3].d_limit = rn(4) ? 0xffff : rn(0x1000);
+		ldt[3].d_acc = rn(4) ? 0x93 : 0x91;
+		x86_init(&ca, ma, MEM, ldt);
+		ca.fault = onfault;
+		ca.intr = onint;
+		ca.prot = 1;
+		x86_loadseg(&ca, S_CS, SEL(1));
+		x86_loadseg(&ca, S_DS, SEL(2));
+		x86_loadseg(&ca, S_ES, SEL(2));
+		x86_loadseg(&ca, S_SS, SEL(2));
+		for (k = 0; k < 8; k++)
+			ca.r[k] = rnd() & 0xffff;
+		ca.r[R_BP] = 0x100 + rn(0xf000);
+		ca.r[R_SP] = 0xfff0;
+		ca.r[c] = rn(0x400);
+		p = 0x1000 + ca.r[R_BP] - 4;
+		k = rn(8) ? 3 : 2;		/* 2: the pointer inside ES */
+		ma[p] = rn(0x10000) & 0xfe;
+		ma[p + 1] = k == 2 ? (ca.r[R_BP] - 4 - rn(0x40)) >> 8 : rn(0x100);
+		ma[p + 2] = SEL(k);
+		ma[p + 3] = 0;
+		ca.user = (void *)&fa;
+		cb = ca;
+		cb.user = (void *)&fb;
+		cb.mem = mb;
+		memcpy(mb, ma, MEM);
+		c0 = ca;
+		memset((char *)&fa, 0, sizeof fa);
+		memset((char *)&fb, 0, sizeof fb);
+		x86_useasm = 1;
+		x86_run(&ca);
+		x86_useasm = 0;
+		x86_run(&cb);
+		bad += same(prg, MEM) != 0;
+	}
+	printf("word sums: %d cases, %d differ, %ld to the reference\n", n, bad, (long)(x86_nslow - s0));
+	return bad;
+}
+
 int
 main(argc, argv)
 	int argc;
@@ -505,6 +586,7 @@ main(argc, argv)
 		bad += run1(MEM);
 	}
 	printf("random: %d cases, %d differ, %ld to the reference\n", n, bad, (long)(x86_nslow - s0));
+	bad += sumloop(n / 100);
 	if (argc > 1) {
 		memset(ma, 0, CMEM);
 		memset(mb, 0, CMEM);

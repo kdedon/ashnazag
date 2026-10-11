@@ -13,9 +13,13 @@
  * block's offset (as Windows does), so *(char **)h works.
  */
 
+#include <sys/types.h>
+#include <sys/mman.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include "w16.h"
 
 u8 *M;
@@ -50,14 +54,29 @@ static int nfr, maxfr;
 
 #define	LOWMEM	0x20000		/* below: the BIOS data area and such, never a block */
 
+/* n zeroed bytes, mapped: pages are zeroed as first touched */
+static char *
+zalloc(n)
+	u32 n;
+{
+	char *p = (char *)-1;
+	int fd;
+
+	if ((fd = open("/dev/zero", O_RDWR)) >= 0) {
+		p = (char *)mmap((caddr_t)0, n, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+		close(fd);
+	}
+	return p != (char *)-1 ? p : (char *)calloc(1, n);
+}
+
 void
 mem_init(size)
 	u32 size;
 {
 	MSIZE = size;
-	M = (u8 *)calloc(1, size + 16);
-	LDT = (struct desc *)calloc(LDTSIZE, sizeof *LDT);
-	gblk = (struct gblock *)calloc(LDTSIZE, sizeof *gblk);
+	M = (u8 *)zalloc(size + 16);
+	LDT = (struct desc *)zalloc(LDTSIZE * sizeof *LDT);
+	gblk = (struct gblock *)zalloc(LDTSIZE * sizeof *gblk);
 	maxfr = 256;
 	fr = (struct range *)malloc(maxfr * sizeof *fr);
 	if (!M || !LDT || !gblk || !fr)

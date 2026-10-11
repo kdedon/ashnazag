@@ -57,6 +57,7 @@ SH_DS	=	48
 	.lcomm	Lsps,4		| the loop's stack pointer
 	.lcomm	Lcsg,4		| IP must be below this to run here
 	.lcomm	Lcslim,4	| CS's limit
+	.lcomm	Lcsend,4	| IP + the instruction's length may reach this
 	.lcomm	Lone,4		| instructions left, 0: no count
 
 x86runa:
@@ -83,7 +84,7 @@ Ljump:
 	bne	Lcount
 Ltop:
 	cmpl	Lcsg,%d7
-	bcc	Lslow
+	bcc	Lnear
 	lea	%a3@(0,%d7:l),%a1
 	moveq	&-1,%d6
 	moveq	&0,%d0
@@ -107,6 +108,20 @@ Lslow:
 	beq	Lexit
 1:	bsr	Lload
 	bra	Ltop
+| near CS's end only REP and its string instruction, both in reach
+Lnear:	moveq	&2,%d0
+	addl	%d7,%d0
+	cmpl	Lcsend,%d0
+	bhi	Lslow
+	lea	%a3@(0,%d7:l),%a1
+	moveq	&-1,%d6
+	moveq	&0,%d0
+	moveb	%a1@+,%d0
+	cmpib	&0xf2,%d0
+	bcs	Lslow
+	cmpib	&0xf3,%d0
+	bhi	Lslow
+	bra	Lrep
 Lcount:
 	subql	&1,Lone
 	bne	Ltop
@@ -186,7 +201,8 @@ Lsetcs:
 2:	cmpl	%d2,%d0
 	bls	3f
 	movel	%d2,%d0
-3:	subl	&15,%d0
+3:	movel	%d0,Lcsend
+	subl	&15,%d0
 	bcc	4f
 	moveq	&0,%d0
 4:	tstb	%a5@(CS_BIG)
@@ -194,6 +210,7 @@ Lsetcs:
 	tstb	%a5@(SS_BIG)
 	beq	6f
 5:	moveq	&0,%d0
+	clrl	Lcsend
 6:	movel	%d0,Lcsg
 	rts
 
@@ -550,7 +567,41 @@ Lcfold:	movel	%a5@(C_LFOP),%d1
 	beq	3f
 	cmpib	&4,%d1
 	bcc	3f
-	movel	%d0,%sp@-
+	cmpib	&3,%d1
+	beq	1f			| logic: CF clear
+	cmpil	&1,%a5@(C_LFOP+4)
+	bhi	Lcfl
+	| add: CF is bit 8 or 16 of a + b + carry in; sub: the sign of
+	| a - b - borrow in.  The carry in is r - (a + b), a - b - r.
+	moveml	%d2-%d3,%sp@-
+	moveq	&0,%d3
+	notw	%d3
+	tstl	%a5@(C_LFOP+4)
+	bne	4f
+	lsrw	&8,%d3
+4:	movel	%a5@(C_LFOP+8),%d2
+	subqb	&1,%d1
+	bne	5f
+	addl	%a5@(C_LFOP+12),%d2
+	movel	%a5@(C_LFRES),%d1
+	subl	%d2,%d1
+	andl	%d3,%d1
+	addl	%d1,%d2
+	bra	6f
+5:	subl	%a5@(C_LFOP+12),%d2
+	movel	%d2,%d1
+	subl	%a5@(C_LFRES),%d1
+	andl	%d3,%d1
+	subl	%d1,%d2
+6:	notl	%d3
+	andl	%d3,%d2
+	moveml	%sp@+,%d2-%d3
+	bne	2f
+1:	bclr	&0,%a5@(C_FL+3)
+	rts
+2:	bset	&0,%a5@(C_FL+3)
+	rts
+Lcfl:	movel	%d0,%sp@-
 	moveq	&2,%d0
 	bsr	Lcond
 	bne	1f
@@ -570,7 +621,45 @@ Lrec:	moveml	%d1-%d4,%a5@(C_LFOP)
 Lalub:	moveq	&0,%d2
 	bra	Lalu
 Laluw:	moveq	&1,%d2
-Lalu:	movel	%d0,%sp@-
+Lalu:	movew	%d0,%a0
+	movel	%d3,%d0
+	moveq	&2,%d1
+	cmpw	%d1,%a0
+	beq	Lalucy
+	cmpw	&3,%a0
+	beq	Lalucy
+	cmpw	&5,%a0
+	beq	1f
+	cmpw	&7,%a0
+	beq	1f
+	moveq	&3,%d1
+	cmpw	&1,%a0
+	beq	2f
+	cmpw	&4,%a0
+	beq	3f
+	cmpw	&6,%a0
+	beq	4f
+	addl	%d4,%d0			| ADD
+	moveq	&1,%d1
+	bra	5f
+1:	subl	%d4,%d0			| SUB, CMP
+	bra	5f
+2:	orl	%d4,%d0
+	bra	5f
+3:	andl	%d4,%d0
+	bra	5f
+4:	eorl	%d4,%d0
+5:	tstb	%d2
+	beq	6f
+	andl	&0xffff,%d0
+	bra	7f
+6:	andl	&0xff,%d0
+7:	moveml	%d1-%d4,%a5@(C_LFOP)
+	movel	%d0,%a5@(C_LFRES)
+	movel	%a0,%d1
+	rts
+Lalucy:	movel	%a0,%d0			| ADC, SBB
+	movel	%d0,%sp@-
 	movel	%d2,%sp@-
 	moveq	&0,%d2
 	cmpib	&2,%d0			| ADC, SBB: the carry in
@@ -945,6 +1034,113 @@ Llds:	moveq	&3,%d4
 	bsr	Lldseg
 	movew	%sp@+,%d1
 	movew	%d3,%a5@(2,%d1:w:4)
+	tstl	%d4
+	beq	Lsumw
+	bra	Lnext
+
+| A word sum through a far pointer at [BP+d], as compiled code has it:
+|
+|	L: les bx,[bp+d]	add r,es:[bx]	dec n
+|	   add word [bp+d],2	or n,n		jne L
+|
+| runs here whole after its first LES, until n is 0 or the next word
+| is out of ES; then on from where it stopped.  Not on a counted run.
+Lsumw:	cmpib	&0x5e,%a1@(-2)
+	bne	Lnext
+	tstl	%d6
+	bpl	Lnext
+	tstl	Lone
+	bne	Lnext
+	cmpiw	&0x2603,%a1@
+	bne	Lnext
+	moveq	&0,%d0
+	moveb	%a1@(2),%d0
+	movel	%d0,%d1
+	andb	&0xc7,%d1
+	cmpib	&7,%d1			| [BX]
+	bne	Lnext
+	lsrb	&3,%d0			| r
+	moveq	&0,%d1
+	moveb	%a1@(3),%d1
+	subib	&0x48,%d1		| n
+	cmpib	&7,%d1
+	bhi	Lnext
+	cmpb	%d0,%d1
+	beq	Lnext
+	moveq	&0x38,%d2		| neither BX, SP nor BP
+	btst	%d0,%d2
+	bne	Lnext
+	btst	%d1,%d2
+	bne	Lnext
+	cmpiw	&0x8346,%a1@(4)
+	bne	Lnext
+	moveb	%a1@(-1),%d2
+	cmpb	%a1@(6),%d2
+	bne	Lnext
+	cmpib	&2,%a1@(7)
+	bne	Lnext
+	cmpib	&0x0b,%a1@(8)
+	bne	Lnext
+	movel	%d1,%d2
+	lslb	&3,%d2
+	orb	%d1,%d2
+	orb	&0xc0,%d2
+	cmpb	%a1@(9),%d2
+	bne	Lnext
+	cmpiw	&0x75f1,%a1@(10)
+	bne	Lnext
+	movel	%d5,%d2			| [BP+d] writable
+	addql	&2,%d2
+	cmpl	%a6@(SH_SS+8),%d2
+	bhi	Lnext
+	moveml	%d0-%d1,%sp@-
+	movel	%a6@(SH_SS),%a0
+	addl	%d5,%a0			| the pointer
+	movel	%a6@(SH_ES),%a4
+	movel	%a6@(SH_ES+4),%d2
+	moveq	&0,%d3
+	movew	%a5@(2,%d0:w:4),%d3
+	moveq	&0,%d4
+	movew	%a5@(2,%d1:w:4),%d4
+	moveq	&0,%d5
+	movew	%a5@(RBX),%d5
+	moveq	&0,%d6			| instructions after the first LES
+1:	moveq	&2,%d0
+	addl	%d5,%d0
+	cmpl	%d2,%d0
+	bhi	3f
+	movew	%a4@(0,%d5:l),%d0
+	rorw	&8,%d0
+	addw	%d0,%d3
+	scs	%d7
+	subqw	&1,%d4
+	addqw	&2,%d5
+	movew	%d5,%d0
+	rorw	&8,%d0
+	movew	%d0,%a0@
+	addql	&5,%d6
+	tstw	%d4
+	beq	2f
+	addql	&1,%d6
+	bra	1b
+2:	subqw	&2,%d5			| BX: the last LES's
+	lea	%a1@(12),%a1
+3:	moveml	%sp@+,%d0-%d1
+	tstl	%d6
+	beq	Lnext
+	movew	%d5,%a5@(RBX)
+	movew	%d3,%a5@(2,%d0:w:4)
+	movew	%d4,%a5@(2,%d1:w:4)
+	addl	%d6,%a5@(C_ICOUNT)
+	bclr	&0,%a5@(C_FL+3)		| CF of the last ADD, as DEC left it
+	tstb	%d7
+	beq	4f
+	bset	&0,%a5@(C_FL+3)
+4:	moveq	&3,%d1			| OR n,n
+	moveq	&1,%d2
+	movel	%d4,%d3
+	movel	%d4,%d0
+	bsr	Lrec
 	bra	Lnext
 
 | XCHG

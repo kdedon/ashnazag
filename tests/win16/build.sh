@@ -34,7 +34,8 @@ done
 AS="nice -n 19 $TC/bin/m68k-cbm-sysv4-as -L -I$AUX/kernel/guest"
 $AS -o "$OUT/obj/x86a.o" "$G/x86a.s"
 $AS -o "$OUT/obj/x86com.o" "$AUX/kernel/guest/x86com/x86com.s"
-objs="$objs $OUT/obj/x86a.o $OUT/obj/x86com.o"
+$AS -o "$OUT/obj/mem68k.o" "$G/mem68k.s"
+objs="$objs $OUT/obj/x86a.o $OUT/obj/x86com.o $OUT/obj/mem68k.o"
 nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O2 -w -D__STDC__=0 -I"$G" -c "$T/win16/x86diff.c" -o "$OUT/obj/x86diff.o"
 nice -n 19 "$TC/bin/m68k-cbm-sysv4-ld" -o "$OUT/x86diff" "$SYS/usr/ccs/lib/crt1.o" "$SYS/usr/ccs/lib/crti.o" \
 	"$OUT/obj/x86diff.o" "$OUT/obj/x86.o" "$OUT/obj/x87.o" "$OUT/obj/x86a.o" "$OUT/obj/x86com.o" \

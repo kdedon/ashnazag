@@ -1,11 +1,12 @@
 #!/bin/sh
-# build.sh -- t_cpm's inputs: startcpm, DRI's CP/M-68K 1.3 and a test program.
+# build.sh -- t_cpm's inputs: startcpm, the CCP, DRI's CP/M-68K 1.3 programs and test programs.
 #
 #   sh tests/cpm/build.sh outdir
 #
-# Out: outdir/root/cpm/bin/startcpm, outdir/root/cpm/sys/CPM.SYS,
+# Out: outdir/root/cpm/bin/startcpm, outdir/root/cpm/sys/CCP.68K,
 # outdir/root/cpm/dist/ (P:: the first disk's files, X.68K linked to
-# each X.REL, EXIT.68K and MOUNT.68K), outdir/root/tests/cpm/hello.68k.  CPMZIP names DRI's release zip
+# each X.REL, EXIT.68K and MOUNT.68K), outdir/root/tests/cpm/hello.68k
+# and outdir/root/tests/cpm/bin/*.68K.  CPMZIP names DRI's release zip
 # (default: media/cpm68k/68kv1_3.zip); without it nothing is built and
 # t_cpm skips.  First the file system code is checked on this host.
 set -e
@@ -32,7 +33,6 @@ for d in 1 2 3 4 5 6 7 8 9; do
 		[ -f "$O/all/$(basename "$f")" ] || cp "$f" "$O/all/"
 	done
 done
-cp "$O/zip/DISK1/CPM.SYS" "$R/cpm/sys/CPM.SYS"
 for f in "$O"/zip/DISK1/*; do
 	[ "$(basename "$f")" = CPM.SYS ] || cp "$f" "$R/cpm/dist/"
 done
@@ -59,7 +59,7 @@ cc -std=gnu89 -O -Wall -w -I"$G/cpm" -o "$O/fscheck" "$T/cpm/fscheck.c" "$G/cpm/
 python3 "$T/cpm/fscheck.py" "$O" "$R/cpm/dist"
 # the BDOS on this host, over a scratch directory
 cc -std=gnu89 -O -Wall -w -I"$G/cpm" -o "$O/bdostest" "$T/cpm/bdostest.c" \
-	"$G/cpm/bdos3.c" "$G/cpm/con3.c" "$G/cpm/hostfs.c"
+	"$G/cpm/bdos3.c" "$G/cpm/con3.c" "$G/cpm/hostfs.c" "$T/cpm/xstub.c"
 rm -rf "$O/bdos"
 "$O/bdostest" "$O/bdos"
 rm -rf "$O/bdos"
@@ -82,7 +82,7 @@ if [ -d "$SHIMCORPUS/z80corpus" ] && [ -d "$SHIMCORPUS/i86corpus" ]; then
 	# DRI's programs and the benchmarks through the shims and our BDOS
 	cc -std=gnu89 -O -w -no-pie -DHOSTCC -DI86RUN=i86run -I"$G/cpm" -I"$S" -o "$O/shimrun" \
 		"$T/cpm/shim/shimrun.c" "$G/cpm/bdos3.c" "$G/cpm/con3.c" "$G/cpm/hostfs.c" \
-		"$G/cpm/cpmshim.c" "$G/cpm/cpmshim80.c" "$G/cpm/cpmshim86.c" \
+		"$G/cpm/cpmshim.c" "$G/cpm/cpmshim80.c" "$G/cpm/cpmshim86.c" "$T/cpm/xstub.c" \
 		$(for c in $Z80C $I86C; do echo "$S/$c.c"; done | sort -u)
 	D=$O/shimdisk
 	rm -rf "$D"; mkdir -p "$D"
@@ -107,7 +107,7 @@ link68() {	# out objects...
 	nice -n 19 "$TC/bin/m68k-cbm-sysv4-ld" -o "$o" "$SYS/usr/ccs/lib/crt1.o" "$SYS/usr/ccs/lib/crti.o" \
 		"$@" "$SYS/usr/lib/libc.so.1" "$T/build/obj/libextra.a" "$LIBGCC" "$SYS/usr/ccs/lib/crtn.o"
 }
-for c in startcpm bdos3 con3 hostfs cpmshim cpmshim80 cpmshim86; do
+for c in startcpm bdos3 con3 hostfs xdos cpmshim cpmshim80 cpmshim86; do
 	$CC68 -I"$G/include" -c "$G/cpm/$c.c" -o "$O/$c.o"
 done
 $CC68 -DI86RUN=i86run -I"$G/include" -c "$G/cpm/cpmshim86.c" -o "$O/cpmshim86c.o"
@@ -135,7 +135,7 @@ done
 $AS68 -o "$O/x86com.o" "$G/x86com/x86com.s"
 $AS68 -o "$O/z80tab.o" "$O/z80tab.s"
 $AS68 -o "$O/i86tab.o" "$O/i86tab.s"
-COMMON="$O/startcpm.o $O/bdos3.o $O/con3.o $O/hostfs.o $O/cpment.o $O/cpmshim.o $O/cpmshim80.o \
+COMMON="$O/startcpm.o $O/bdos3.o $O/con3.o $O/hostfs.o $O/xdos.o $O/cpment.o $O/cpmshim.o $O/cpmshim80.o \
 	$O/s_z80mnem.o $O/s_z80exec.o $O/s_z80load.o $O/s_z80bdos.o $O/s_z80gsx.o \
 	$O/s_gdpb.o $O/s_i86exec.o $O/s_i86load.o $O/s_i86bdos.o $O/s_i86gsx.o"
 FAST80="$O/z80deca.o $O/z80runa.o $O/z80tab.o $O/s_z80decc.o $O/segclra.o"
@@ -157,5 +157,36 @@ if [ -d "$SHIMCORPUS/z80corpus" ]; then
 		"$SHIMCORPUS/i86corpus/PIP.CMD" "$SHIMCORPUS/i86corpus/STAT.CMD" "$R/tests/cpm/shim/"
 	python3 "$T/cpm/shim/mkbench.py" "$R/tests/cpm/shim"
 fi
+# CP/M-68K programs: 16-bit ints, linked twice for the relocations
+BIN=$AUX/toolchain/bin
+CC16="nice -n 19 $AUX/toolchain/linux/bin/m68k-linux-gnu-gcc -std=gnu89 -mshort -mcpu=68020 -O \
+	-fno-pic -fno-pie -ffreestanding -fno-builtin -fno-ivopts -w"
+link68k() {	# out.68K crt.o objects...
+	o=$1; shift
+	for base in 0 0x10000; do
+		nice -n 19 "$BIN/m68k-elf-ld" --no-warn-rwx-segments -N -Ttext=$base -e _start \
+			-o "$O/l$base.elf" "$@"
+		"$BIN/m68k-elf-objcopy" -O binary "$O/l$base.elf" "$O/l$base.bin"
+	done
+	end=$("$BIN/m68k-elf-nm" "$O/l0.elf" | awk '$3 == "_end" { print $1 }')
+	python3 "$G/cpm/elf268k.py" "$O/l0.bin" "$O/l0x10000.bin" \
+		$((0x$end - $(wc -c < "$O/l0.bin"))) "$o"
+}
+L=$G/cpm/lib
+$AS68 -o "$O/crt0.o" "$L/crt0.s"
+$CC16 -I"$L" -c "$L/libcpm.c" -o "$O/libcpm.o"
+C=$G/cpm/ccp
+$AS68 -o "$O/ccpcrt.o" "$C/ccpcrt.s"
+for c in ccp ccpext ccpgo; do
+	$CC16 -DCCPTRANSIENT -I"$C" -c "$C/$c.c" -o "$O/$c.o"
+done
+link68k "$R/cpm/sys/CCP.68K" "$O/ccpcrt.o" "$O/ccp.o" "$O/ccpext.o" "$O/ccpgo.o"
+mkdir -p "$R/tests/cpm/bin"
+for f in "$T"/cpm/c/*.c; do
+	n=$(basename "$f" .c)
+	$CC16 -I"$L" -c "$f" -o "$O/t_$n.o"
+	link68k "$R/tests/cpm/bin/$(echo "$n" | tr a-z A-Z).68K" "$O/crt0.o" "$O/t_$n.o" "$O/libcpm.o"
+done
+rm -f "$O"/l0*.elf "$O"/l0*.bin
 rm -rf "$O/zip" "$O/all" "$O"/*.img
 echo "[ok] startcpm, CP/M-68K $(ls "$R/cpm/dist" | wc -l | tr -d ' ') files"

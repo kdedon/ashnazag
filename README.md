@@ -23,7 +23,7 @@ Start commands, run as an ordinary user. Ctrl-Option-Command-0 shows the console
 | Mac System 7.6.1 | `startmac` | Quadra | Works: Finder, applications, Open/Save, CommandShell, sound, Log Out and Shut Down. |
 | Mac OS 8.1 | `makemac -e 8.1`, then `startmac -e 8.1` | Quadra | Works, with known issues: Finder idles at about 60% CPU after an application has shown an Open or Save dialog; asynchronous sound never completes. |
 | Mac System 6.0.7 | `startmac6` | Quadra, Falcon | Works; slow, no colour. Needs A/UX 2.0.1 and a IIci ROM. |
-| TOS (EmuTOS, TeraDesk) | `starttos` | Quadra, Falcon, Amiga | Works. fVDI at the screen's size; XaAES with `starttos -e xaaes`; Cubase 3.1/Score/Audio Falcon with `starttos -C`. On a Falcon, `starttos -P` runs the machine's own TOS ROM (slow redraws). |
+| TOS (EmuTOS, TeraDesk) | `starttos` | Quadra, Falcon, Amiga | Works. fVDI at the screen's size; XaAES with `starttos -e xaaes`. On a Falcon, `starttos -P` runs the machine's own TOS ROM (slow redraws). |
 | Amiga (Kickstart 3.2, Workbench) | `startmig` | Quadra, Amiga | Partial: Workbench on RTG (Picasso96 or ZZ9000); slow start; stock chipset display not supported. |
 | CP/M-68K 1.3 | `startcpm` | Quadra, Falcon | Works, in the terminal; Z80 and 8086 programs too. Disk I/O on host folders is slow. |
 | Windows 3.x programs (Win16) | `startwin` | Quadra | Works for Program Manager and the tested programs. Each user installs their own Windows 3.1/3.11 and Wabi 2.2 with `startwin -install`. |
@@ -42,7 +42,6 @@ You supply:
 - Amiga environment: the AmigaOS 3.2 CD and Picasso96; Amiga host: its Kickstart ROM and openpci.library
 - CP/M-68K: Digital Research's 1.3 release zip
 - Win16, at run time: Windows 3.1 or 3.11 and Wabi 2.2
-- Cubase: your own copies
 
 `tools/setup.sh` builds the toolchains and fetches the open-source parts; see `BUILDING.md`.
 

@@ -121,6 +121,8 @@ cmd(fd, line, name)
 {
 	char b[128];
 
+	if (nout > (int)sizeof out / 2)
+		nout = out[0] = 0;
 	from = nout;
 	sprintf(b, "%s\r", line);
 	write(in, b, strlen(b));
@@ -221,6 +223,188 @@ timed(line, want, name)
 	}
 	t_pass(name);
 	return t_now_ms() - t0;
+}
+
+/* a program; its output since the command comes to have every string of want */
+static void
+prog(line, name, want)
+	char *line, *name, **want;
+{
+	char *o;
+	int ok;
+
+	if (!cmd(ofd, line, name))
+		return;
+	o = out + from;
+	for (ok = 1; ok && *want && (ok = waitfor(ofd, *want, 60000)); want++)
+		;
+	t_check(name, ok, "no \"%s\" in \"%.300s\"", ok ? "" : *want, o);
+}
+
+/* the C programs: CP/M 3 functions, then Concurrent CP/M's */
+static char *w_u0t[] = { "U0T: PASS", "U0T: rec 258 00 [0258]", "U0T: user 3 after", 0 };
+static char *w_v3ret[] = { "V3RET: PASS", 0 };
+static char *w_scb[] = { "SCBTEST: PASS", 0 };
+static char *w_stampt[] = { "STAMPT: PASS", 0 };
+static char *w_wildt[] = { "WILDT: PASS", 0 };
+static char *w_trunct[] = { "TRUNCT: PASS", 0 };
+static char *w_err[] = { "ERRTEST: PASS", "ERRTEST: normal file I/O still works", 0 };
+static char *w_cpm3fn[] = { "CPM3FN: PASS", 0 };
+static char *w_ccpct[] = { "CCPCT: filled", 0 };
+static char *w_hi[] = { "HI AGAIN", 0 };
+static char *w_lockt[] = { "A: done", "A lock0=0", "A lock5=1", "B lock0=8", "B write0=8",
+	"B read0=0", "B lock1=0", "A lock1=8", "A unlock0=0", "B lock0=0", "A relock0=0",
+	"A relock1=0", "A write1=0", 0 };
+static char *w_xdosm[] = { " checks, 0 failed", 0 };
+static char *w_xdosd[] = { "XDOSD: PASS", "XDOSE: wrote", "XDOSD: msg HELLO", 0 };
+static char *w_conc[] = { "CONC: A done", "CONCB: B done, 4096 bytes of my own intact", 0 };
+static char *w_concd[] = { "CONCD: D done", "CONCE: E done", 0 };
+static char *w_concf[] = { "CONCF: F done", "CONCG: G done", 0 };
+static char *w_conch[] = { "CONCI: I done", "CONCH: H done", 0 };
+static char *w_concp[] = { "CONCQ: Q done, 4096 bytes of my own intact", "CONCP: P done", 0 };
+static char *w_concx[] = { "CONCY: Y done, 4096 bytes of my own intact", "CONCX: X done", 0 };
+static char *w_concw[] = { "CONCW: A exits", "CONCWB: B seg", 0 };
+static char *w_concwc[] = { "signature intact", "CONCWB: B still seg", "CONCWC: got", 0 };
+
+static void
+c_progs()
+{
+	static char *bin[] = { "V3RET", "SCBTEST", "STAMPT", "WILDT", "TRUNCT", "ERRTEST",
+		"CPM3FN", "CCPCT", "HI", "LOCKT", "XDOSM", "XDOSD", "XDOSE", "CONC", "CONCB",
+		"CONCD", "CONCE", "CONCF", "CONCG", "CONCH", "CONCI", "CONCP", "CONCQ", "CONCX",
+		"CONCY", "CONCW", "CONCWB", "CONCWC", 0 };
+	char path[200], to[200], rec[128], *o, *p, a[8], b[8];
+	char **n;
+	int fd, i;
+
+	for (n = bin; *n; n++) {
+		sprintf(path, "/tests/cpm/bin/%s.68K", *n);
+		sprintf(to, E "/%s.68K", *n);
+		copy(path, to);
+	}
+	mkdir(E "/3", 0755);
+	copy("/tests/cpm/bin/U0T.68K", E "/3/U0T.68K");
+	put(E "/hello.txt", "HELLO\r\n\032", 8);
+	put(E "/u0plain.txt", "PLAIN\r\n\032", 8);
+	put(E "/3/u3only.txt", "MINE\r\n\032", 7);
+	if ((fd = open(E "/.u0share.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644)) >= 0) {
+		for (i = 0; i < 300; i++) {
+			memset(rec, ' ', sizeof rec);
+			sprintf(rec, "%04d record of U0SHARE", i);
+			rec[strlen(rec)] = ' ';
+			write(fd, rec, sizeof rec);
+		}
+		close(fd);
+	}
+	from = nout;
+	write(in, "USER 3\r", 7);
+	if (waitfor(ofd, "3A>", 60000)) {
+		from = nout;
+		write(in, "U0T\r", 4);
+		if (waitfor(ofd, "3A>", 60000)) {
+			o = out + from;
+			for (n = w_u0t; *n && strstr(o, *n); n++)
+				;
+			t_check("u0t", *n == 0, "no \"%s\" in \"%.300s\"", *n ? *n : "", o);
+		} else
+			t_fail("u0t", "no prompt: \"%.400s\"", out + from);
+	} else
+		t_fail("u0t", "USER 3: \"%.400s\"", out + from);
+	cmd(ofd, "USER 0", "u0t");
+	prog("V3RET", "v3ret", w_v3ret);
+	prog("SCBTEST", "scbtest", w_scb);
+	prog("STAMPT", "stampt", w_stampt);
+	prog("WILDT", "wildt", w_wildt);
+	prog("TRUNCT", "trunct", w_trunct);
+	prog("ERRTEST", "errtest", w_err);
+	prog("CPM3FN", "cpm3fn", w_cpm3fn);
+	prog("CCPCT F", "ccpct", w_ccpct);
+	prog("HI AGAIN", "ccpct_reload", w_hi);
+	prog("LOCKT", "lockt", w_lockt);
+	prog("XDOSM", "xdosm", w_xdosm);
+	prog("XDOSD", "xdosd", w_xdosd);
+	prog("CONC", "conc", w_conc);
+	prog("CONCD", "concd", w_concd);
+	prog("CONCF", "concf", w_concf);
+	prog("CONCH", "conch", w_conch);
+	prog("CONCP", "concp", w_concp);
+	prog("CONCX", "concx", w_concx);
+	prog("CONCW", "concw", w_concw);
+	o = out + from;
+	a[0] = b[0] = 0;
+	if ((p = strstr(o, "CONCW: A seg ")) != 0)
+		sprintf(a, " %.2s", p + 13);
+	if ((p = strstr(o, "CONCWB: B seg ")) != 0)
+		sprintf(b, " %.2s", p + 14);
+	prog("CONCWC", "concwc", w_concwc);
+	o = out + from;
+	p = strstr(o, "CONCWC: got");
+	t_check("concw_owner", a[0] && b[0] && p && strstr(p, a) && (!strstr(p, b) ||
+	    strstr(p, b) > strchr(p, '\r')), "A%s B%s: \"%.400s\"", a, b, o);
+}
+
+/* startcpm -c 1 from another terminal: its own CCP on console 1 */
+static void
+joincon()
+{
+	int i[2], o[2], st = -1, jout, jin, n, fd;
+	char b[4096];
+	pid_t p, p2;
+	long end;
+
+	if (pipe(i) < 0 || pipe(o) < 0)
+		return;
+	if ((p = fork()) == 0) {
+		putenv("HOME=" H);
+		dup2(i[0], 0);
+		dup2(o[1], 1);
+		dup2(o[1], 2);
+		for (fd = 3; fd < 64; fd++)
+			close(fd);
+		execl(START, "startcpm", "-e", "t", "-c", "1", (char *)0);
+		_exit(126);
+	}
+	close(i[0]);
+	close(o[1]);
+	jin = i[1];
+	jout = o[0];
+	write(jin, "HI CONSOLE\r", 11);
+	n = 0;
+	b[0] = 0;
+	end = t_now_ms() + 60000;
+	while (!strstr(b, "HI CONSOLE\r\n") && t_now_ms() < end) {
+		struct pollfd pf;
+
+		pf.fd = jout;
+		pf.events = POLLIN;
+		if (poll(&pf, 1, 1000) > 0) {
+			if ((fd = read(jout, b + n, sizeof b - 1 - n)) <= 0)
+				break;
+			n += fd;
+			b[n] = 0;
+		}
+	}
+	t_check("console1", strstr(b, "HI CONSOLE\r\n") != 0, "output \"%.400s\"", b);
+	fd = open("/dev/null", O_RDWR);
+	if ((p2 = fork()) == 0) {
+		putenv("HOME=" H);
+		dup2(fd, 0);
+		dup2(fd, 1);
+		dup2(fd, 2);
+		execl(START, "startcpm", "-e", "t", "-c", "1", (char *)0);
+		_exit(126);
+	}
+	close(fd);
+	st = -1;
+	if (p2 > 0 && t_waitchild(p2, &st, 30) < 0)
+		kill(p2, SIGKILL);
+	t_check("console1_busy", WIFEXITED(st) && WEXITSTATUS(st) == 1, "status %#x", st);
+	close(jin);
+	st = -1;
+	if (t_waitchild(p, &st, 30) < 0)
+		kill(p, SIGKILL);
+	t_check("console1_leave", WIFEXITED(st) && WEXITSTATUS(st) == 0, "status %#x", st);
+	close(jout);
 }
 
 /* CP/M-80 .COM and CP/M-86 .CMD programs through the shim */
@@ -446,7 +630,7 @@ main()
 		return t_done();
 	}
 	if (stat(MD "/cpmguest", &sb) < 0 || stat("/dev/cpm", &sb) < 0 ||
-	    stat(START, &sb) < 0 || stat("/cpm/sys/CPM.SYS", &sb) < 0) {
+	    stat(START, &sb) < 0 || stat("/cpm/sys/CCP.68K", &sb) < 0) {
 		t_skip("all", "no cpmguest module, startcpm or CP/M-68K on this root");
 		return t_done();
 	}
@@ -541,6 +725,9 @@ main()
 	if (cmd(ofd, "B:HELLO", "run"))
 		t_check("run", strstr(out + from, "HELLO FROM CP/M-68K") != 0,
 		    "output \"%.400s\"", out + from);
+	copy("/tests/cpm/bin/HI.68K", E "/b/HI.68K");
+	if (cmd(ofd, "B:HI THERE", "c_prog"))
+		t_check("c_prog", strstr(out + from, "HI THERE") != 0, "output \"%.400s\"", out + from);
 	if (cmd(ofd, "STAT", "stat"))
 		t_check("stat", strstr(out + from, "SPACE") != 0, "output \"%.400s\"", out + from);
 	if (cmd(ofd, "PIP A:COPY.TXT=B:README.TXT", "pip"))
@@ -552,6 +739,8 @@ main()
 	if (cmd(ofd, "TYPE LATE.TXT", "late"))
 		t_check("late", strstr(out + from, "LATE FROM HOST") != 0, "output \"%.400s\"", out + from);
 	dirtime(ofd);
+	c_progs();
+	joincon();
 	shim(ofd);
 	second();
 	from = nout;

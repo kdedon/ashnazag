@@ -61,7 +61,7 @@ conbrk()
 		return;
 	brkctr = 0;
 	stop = 0;
-	if (b3_const())
+	if (!kbchar && b3_const())		/* one character of type-ahead */
 		do {
 			if ((ch = b3_conin()) == CTRLC && !(b3_conmode & CM_NOTERM))
 				ctlcexit();

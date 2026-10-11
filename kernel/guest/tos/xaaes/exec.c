@@ -211,6 +211,13 @@ create_process(const void *filename, const void *cmdline, const void *env, struc
 	if (host_path(filename, hp, 1) < 0)
 		return ENOENT;
 	basename_noext(filename, name, sizeof name);
+	if (host_prg(hp, filename)) {
+		err = host_spawn(hp, cmdline, name, opts && (opts->mode & CREATE_PROCESS_OPTS_DEFDIR) ?
+		    opts->defdir : 0, &k);
+		if (!err && pret)
+			*pret = &k->p;
+		return err;
+	}
 	k = proc_new(parent, name, 0, 0);
 	if (!k)
 		return ENOMEM;
@@ -275,6 +282,58 @@ proc_frombase(BASEPAGE *b, const char *name)
 	return k;
 }
 
+/*
+ * Pexec 200: the caller becomes the program, keeping its pid and
+ * handles.  A Pvfork child leaves its parent's memory; anyone else's
+ * old memory goes.  No return on success: the kernel stack starts over.
+ */
+static long
+exec_over(const char *path, const char *cmd, const char *env)
+{
+	struct kp *k = KP(curproc);
+	BASEPAGE *b, *pb = k->base ? k->base->p_parent : 0;
+	char hp[PLEN], name[PNAMSIZ + 1], tail[128];
+	long err = 0, i;
+	char *e;
+
+	if (host_path(path, hp, 1) < 0)
+		return EFILNF;
+	basename_noext(path, name, sizeof name);
+	b = prg_read(hp, 0, 0, &err);
+	if (!b)
+		return err ? err : ENOEXEC;
+	e = env_copy(env ? env : k->base ? k->base->p_env : 0, 0);
+	if (cmd)
+		memcpy(tail, cmd, 128);
+	else
+		tail[0] = tail[1] = 0;
+	strncpy(k->p.fname, path, sizeof k->p.fname - 1);
+	if (k->vfparent)
+		vfork_release(k);
+	else {
+		fork_exit(k);
+		mem_freeproc(k);
+	}
+	mem_give(b, k);
+	mem_give(e, k);
+	b->p_env = e;
+	b->p_parent = pb;
+	memcpy(b->p_cmdlin, tail, 128);
+	for (i = MIN_HANDLE; i < NOFILE; i++)
+		if (k->p.p_fd->ofiles[i] && (k->p.p_fd->ofileflags[i] & FD_CLOEXEC)) {
+			file_close(k->p.p_fd->ofiles[i]);
+			k->p.p_fd->ofiles[i] = 0;
+		}
+	proc_sigreset(k);
+	strncpy(k->p.name, name, PNAMSIZ);
+	proc_setstart(k, b);
+	strupr(name);
+	xlog("exec %s pid %d tpa %lx-%lx", name, k->p.pid, b->p_lowtpa, b->p_hitpa);
+	xa_spl7();
+	xa_rexec(k->p.sysstack);
+	return 0;
+}
+
 long _cdecl
 sys_p_exec(short mode, const void *p1, const void *p2, const void *p3)
 {
@@ -284,10 +343,19 @@ sys_p_exec(short mode, const void *p1, const void *p2, const void *p3)
 	long err = 0;
 
 	switch (mode) {
+	case 200:
+		return exec_over(p1, p2, p3);
 	case 0: case 100: case 3:
 		if (host_path(p1, hp, 1) < 0)
 			return EFILNF;
 		basename_noext(p1, name, sizeof name);
+		if (mode != 3 && host_prg(hp, p1)) {
+			if ((err = host_spawn(hp, p2, name, 0, &k)) != 0)
+				return err;
+			xlog("Pexec %d %s: Unix process %ld, pid %d", mode, (const char *)p1,
+			    k->hostpid, k->p.pid);
+			return mode == 100 ? k->p.pid : waitchild(k);
+		}
 		k = proc_new(KP(curproc), name, 0, 0);
 		if (!k)
 			return ENOMEM;

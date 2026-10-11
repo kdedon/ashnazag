@@ -12,7 +12,7 @@
 # IMAGE defaults to kernel/build/atari/disk/falcon-disk.img; it is copied.
 # TOSROM: the TOS 4.04 image or its zip (default: tos404*.zip in the
 # repo root).  Skips (exit 0) without the ROM or Hatari.
-# STAGES: any of vga rgb mod tos tosint tosloop x xtos xdm xdmboots mac6 (mod, tos and tosloop need an
+# STAGES: any of vga rgb mod tos tosint tosloop x xtos xdm xdmboots mac6 xaaes (mod, tos and tosloop need an
 # image made with TESTS=modadmin MODS=<mod.d>, tos also takes TOSENV=1; x one made with X11=<pkg>)
 # (default "vga rgb").  x: startx in 256 colours, typing into xterm, the
 # server stopped and the console back; then in 2 colours with the German
@@ -29,6 +29,8 @@
 # Ctrl-C to TOS, Ctrl-C on the console ends it and the login comes back.
 # xdmboots (the same image): BOOTS (default 5) boots, each to the xdm
 # login without a crash; root logs in and restarts the machine.
+# xaaes (an image made with TOSENV=1 TESTS=t_xaaes TESTROOT=tests/build/tos/root):
+# t_xaaes as root, on EmuTOS: the checks needing no host line.
 # mac6 (an image made with MACENV=1): System 6's Finder desktop; Command-A
 # and Command-O open its windows; the hot key to the console, whose
 # Ctrl-C ends it.
@@ -130,6 +132,9 @@ for s in $STAGES; do
 			i=$((i + 1))
 		done
 		! grep -q 'BUS ERROR\|PANIC\|panic' "$OUT/xdmboots.log.out" || { echo "[FAIL] xdmboots: client or kernel error"; fail=1; } ;;
+	xaaes)	run xaaes vga 3000
+		check "$OUT/xaaes.log.out" 'PASS xaaes.preempt' 'PASS xaaes.pfork' 'xaaes-rc=0'
+		! grep -q 'FAIL xaaes\|PANIC\|panic' "$OUT/xaaes.log.out" || { echo "[FAIL] xaaes"; fail=1; } ;;
 	mac6)	run mac6 vga
 		check "$OUT/mac6.log.out" 'uinter: ROM /etc/aux/rom, 512 KB, version 67C' 'startmac-left=0'
 		! grep -q 'BUS ERROR\|PANIC\|panic' "$OUT/mac6.log.out" || { echo "[FAIL] mac6: fault notice or kernel error"; fail=1; }

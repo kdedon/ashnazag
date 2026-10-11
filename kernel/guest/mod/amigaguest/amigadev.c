@@ -26,12 +26,16 @@ amigadev_reset(struct amigadev *d)
 			d->cia[i].port[j] = d->cia[i].direction[j] = 0;
 		}
 	}
+	d->scsi.cntr = d->scsi.sasr = d->scsi.irq = 0;
+	for (i = 0; i < 32; i++)
+		d->scsi.reg[i] = 0;
 }
 
 void
-amigadev_configure(struct amigadev *d, int pal)
+amigadev_configure(struct amigadev *d, int pal, int scsi)
 {
 	d->pal = pal != 0;
+	d->scsi.on = scsi != 0;
 	d->vbl_phase = 0;
 }
 
@@ -49,6 +53,66 @@ sync_irq(struct amigadev *d)
 		d->intreq |= 0x0008;
 	if (d->cia[1].irq)
 		d->intreq |= 0x2000;
+	if (d->scsi.irq && (d->scsi.cntr & 4))
+		d->intreq |= 0x0008;
+}
+
+#define WD_STATUS 0x17
+#define WD_COMMAND 0x18
+
+/*
+ * Byte registers: $DD000B control, $DD001F interrupt status (bit 0: FIFO
+ * empty), $DD0049 WD address/aux status, $DD0043 WD data. Reset reports
+ * done and every selection times out; the rest reads 0.
+ */
+static int
+scsi_access(struct amigadev *d, unsigned long address, int size,
+    unsigned long *value, int wr)
+{
+	struct amigascsi *s = &d->scsi;
+	int r = s->sasr;
+	if (!s->on || address < 0xdd0000UL || address + size > 0xdd0100UL)
+		return -1;
+	if (!wr) *value = 0;
+	if (size != 1)
+		return 0;
+	switch (address & 0xff) {
+	case 0x0b:
+		if (wr) s->cntr = *value;
+		else *value = s->cntr;
+		break;
+	case 0x1f:
+		if (!wr) *value = s->irq ? 0x51 : 0x01;
+		break;
+	case 0x49:
+		if (wr) s->sasr = *value & 0x1f;
+		else *value = s->irq ? 0x80 : 0;
+		break;
+	case 0x43:
+		if (r != WD_COMMAND && r != 0x19 && r != 0x1f)
+			s->sasr = (r + 1) & 0x1f;
+		if (!wr) {
+			*value = s->reg[r];
+			if (r == WD_STATUS) s->irq = 0;
+			break;
+		}
+		s->reg[r] = *value;
+		if (r != WD_COMMAND)
+			break;
+		switch (*value & 0x7f) {
+		case 0x00:
+			s->reg[WD_STATUS] = (s->reg[0] & 8) ? 0x01 : 0x00;
+			s->irq = 1;
+			break;
+		case 0x06: case 0x07: case 0x08: case 0x09:
+			s->reg[WD_STATUS] = 0x42;
+			s->irq = 1;
+			break;
+		}
+		break;
+	}
+	sync_irq(d);
+	return 0;
 }
 
 int
@@ -89,6 +153,8 @@ amigadev_read(struct amigadev *d, unsigned long address, int size,
 	int i, reg, timer;
 	struct amigacia *c;
 	unsigned long v;
+	if (scsi_access(d, address, size, value, 0) == 0)
+		return 0;
 	if (address >= 0xdff000UL && address < 0xdff200UL) {
 		if ((size != 1 && size != 2 && size != 4) ||
 		    (size != 1 && (address & 1)) || address + size > 0xdff200UL)
@@ -168,6 +234,8 @@ amigadev_write(struct amigadev *d, unsigned long address, int size,
 {
 	int i, reg, timer;
 	struct amigacia *c;
+	if (scsi_access(d, address, size, &value, 1) == 0)
+		return 0;
 	if (address == 0xdff05bUL && size == 1)
 		return 0;
 	if (address >= 0xdff000UL && address < 0xdff200UL) {

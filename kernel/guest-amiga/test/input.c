@@ -2,8 +2,10 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/mman.h>
 #include "dsio.h"
 #include "inputshare.h"
+#include "earlyshare.h"
 static struct mig_input q;
 static struct mig_input_state s;
 static int emit(unsigned int type, unsigned int code, long value)
@@ -17,6 +19,11 @@ int main(void)
     assert(sizeof(struct mig_input_event) == 12);
     assert(offsetof(struct mig_input, event) == 32);
     assert(sizeof q <= MIG_INPUT_MAP_SIZE);
+    /* the alert block sits at a fixed guest address */
+    struct mig_early_alert *al = mmap((void *)(MIG_EARLY_ALERT & ~0xfffUL), 4096,
+        PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+    assert(al != MAP_FAILED);
+    al = (struct mig_early_alert *)MIG_EARLY_ALERT;
     mig_input_init(&q);
     assert(!emit(IE_KEY, 0, 1) && q.head == 0);
     q.ready = 1;
@@ -31,6 +38,9 @@ int main(void)
     assert(emit(IE_REL, IE_RELX, -99999) && q.event[5].x == -32768);
     assert(q.event[5].qualifier == 0xc000);
     assert(emit(IE_BTN, 1, 0) && q.event[6].code == 0xe8);
+    al->seq = 1;
+    assert(!emit(IE_BTN, 2, 1) && al->click == 2 && q.head == 7);
+    al->done = 1;
     assert(!emit(IE_BTN, 4, 1) && !emit(IE_KEY, 128, 1));
     assert(mig_input_translate(EVK_IKBD, 0x1e) == 0x20);
     assert(mig_input_translate(EVK_AMIGA, 0) == 0);

@@ -6,7 +6,7 @@
 #   sh kernel/guest/tos/xaaes/build.sh outdir
 #
 # Out: outdir/C/AUTO/XAMINT.PRG, outdir/C/MINT/XAAES/ (XAAES.KM,
-# MOOSE.ADI, resources, XAAES.CNF) and outdir/xaaes-src.tar.gz, the
+# MOOSE.ADI, resources, XAAES.CNF, CONSOLE.PRG) and outdir/xaaes-src.tar.gz, the
 # FreeMiNT source XaAES comes from.  MINT: where the cross tools go
 # (outdir/mint).  XAAES=deb builds XaAES with its diagnostics.
 set -e
@@ -50,5 +50,6 @@ cp "$S/adi/whlmoose/.compile_02060/moose_w.adi" "$X/MOOSE_W.ADI"
 cp "$S/xaaes.rsc" "$S/xaaeswdg.rsc" "$S/xa_xtobj.rsc" "$S/xa_help.txt" "$X/"
 cp -r "$S/img" "$S/pal" "$X/"
 sed 's/$/\r/' "$H/xaaes.cnf" > "$X/XAAES.CNF"
+nice -n 19 m68k-atari-mint-gcc -O2 -Wall -s -o "$X/CONSOLE.PRG" "$H/console/console.c" -lgem
 rm -rf "$W"
 echo "[ok] XaAES"

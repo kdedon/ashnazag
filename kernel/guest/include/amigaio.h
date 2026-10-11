@@ -19,6 +19,8 @@
  *   +6 byte  reads left before Kickstart reads the real timer again
  */
 #define AMIGAF_PV 4
+/* the board's SCSI controller at $DD0000, empty bus */
+#define AMIGAF_SCSI 8
 #define AMIGA_PV_BASE 0x20001f00UL
 #define AMIGA_FEAT_BOOT 1
 #define AMIGA_FEAT_BASE 2

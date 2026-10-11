@@ -33,7 +33,7 @@ Save dialog; 8.1 asynchronous sound never completes; System 6 is slow and has no
 - C: `~/TOS` (else `/tos/sys`, read-only), G: games, U: `/`; more in `~/TOS/drives` or `-D L=dir`.
 - `-e xaaes`: XaAES multitasking AES. `maketos -x -e NAME` makes more.
 - `-M` ST high monochrome, `-S` the ST screen, `-m MB` ST-RAM.
-- `-C DIR` boots a program folder, e.g. Cubase: `starttos -C ~/TOS/CUBASE/CUBASE31`.
+- `-C DIR` boots a program folder: `starttos -C ~/TOS/PROGRAM`.
 - `-rom FILE`: your own TOS ROM. On a Falcon, `-P` runs the machine's own TOS on its
   hardware.
 
@@ -45,7 +45,8 @@ fast RAM (or `fastmb=MB` in `.env`). The display is RTG through Picasso96 (`cont
 
 ## CP/M-68K
 
-`startcpm` runs CP/M-68K 1.3 in the terminal; `EXIT` ends it. Drives are directories:
+`startcpm` runs Concurrent CP/M-68K in the terminal; `EXIT` ends it. `startcpm -c 1` (to 3) in
+another terminal joins it as a further console. Drives are directories:
 A: `~/CPM` (user areas 1-15 are subdirectories), H: home, M: a private scratch directory,
 O: `/`, P: Digital Research's programs. Z80 and 8086 CP/M programs run too.
 

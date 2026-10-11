@@ -33,7 +33,9 @@ the MiNT calls and XaAES's module interface (kentry).
 - Processes: FreeMiNT `struct proc` with its own kernel stack; a switch
   saves registers and USP there.  Switches happen when a process sleeps
   (sleep, Fselect, nap, Syield, Pwaitpid), and at a return to user mode
-  after the tick asked.  The root is the idle loop: due timeouts run
+  after the tick asked, including the return from an MFP timer C
+  interrupt of user code: a program spinning without system calls is
+  switched out after two 20 ms ticks.  The root is the idle loop: due timeouts run
   there (or at a return to user mode), never inside another's sleep;
   select waiters are polled; idle is `stop`.
 - Programs get a 128 KB initial TPA past their BSS, as MiNT gives, and
@@ -48,6 +50,31 @@ the MiNT calls and XaAES's module interface (kentry).
   or by their 8.3 form.
 - Signals: kernel threads' handlers are called directly; a program's
   run on its own stack and return through Psigreturn, MiNT's frame.
+  Talarm/Tmalarm are timeouts posting SIGALRM.
+- Pvfork: the child runs in the parent's memory, the parent sleeping
+  until the child's Pexec 200 or exit.  Pfork: the child gets the
+  parent's blocks at the same addresses; each process's copy is
+  swapped in as it is switched to.
+- Fpoll rides on Fselect's polling.  Sockets (MiNTNet's calls, AF_INET)
+  are the environment's host sockets (`/dev/tos` TOSIOC_SOCK), kept
+  nonblocking on the host; a blocking call waits in the layer.
+- Terminals: a pipe named `u:\pipe\tty*` is a pair; its creator holds
+  the master, later opens get the terminal, with echo and line editing
+  unless raw.  Cconrs, Cconin's echo and BIOS console calls of a user
+  process go to its handles 0 and 1.
+- Console windows: `CONSOLE.PRG` (run from `XAAES.CNF`) creates
+  `u:\pipe\tosrun`, where XaAES writes the TOS programs it starts.
+  Each gets a window with a VT52 screen on a terminal pair.
+- MiNT command-line programs (`.TTP`/`.TOS` marked MiNT in the program
+  header) started by Pexec run as Unix processes: starttos's spawner
+  child runs `mintrun` on a host pseudo-terminal and passes the master
+  back; a proxy process in the layer copies between it and the caller's
+  handles, forwards signals and ends with the program's exit status.
+
+```
+  XaAES --tosrun--> CONSOLE.PRG --Pexec--> TOS program (layer process)
+                        |  ttyc master/terminal  \-> proxy == pty == mintrun (Unix)
+```
 - Log: `C:\MINT\XAMINT.LOG`; with `C:\MINT\XAMINT.TRC` present every
   kentry and GEMDOS call is logged too.  Unserved slots log their
   number and return ENOSYS; unserved trap #1 calls go to TOS.
@@ -62,8 +89,7 @@ diagnostics in the layer's log.
 ## Limits
 
 - One address space, no memory protection (as in startmac).
-- No preemption inside user code: a GEM program that spins without
-  system calls holds the CPU until its next call.
-- Pfork/Pvfork, Fpoll, sockets and Talarm are not served yet; MiNT
-  command-line programs run under `mintrun` as Unix processes, not from
-  XaAES.
+- Pfork's copies cost a copy of the blocks per switch between the
+  processes sharing them; a kernel thread touching such a block sees
+  whichever copy is in place.
+- Fsocketpair and AF_UNIX are not served.

@@ -211,9 +211,10 @@ static struct kickrom {
 	unsigned long crc;
 	char *name;
 	unsigned long at[4];		/* sites[] */
+	unsigned long flags;		/* AMIGAF_* the machine needs */
 } kickroms[] = {
-	{ 0x9bb8fc93UL, "A4000 Kickstart 3.2 (47.96)", { 0xfd4f82, 0xfd4f9e, 0xf81722, 0xf81770 } },
-	{ 0xf3af46ccUL, "A3000 Kickstart 3.2 (47.96)", { 0xfd41be, 0xfd41da, 0xf816be, 0xf8170c } }
+	{ 0x9bb8fc93UL, "A4000 Kickstart 3.2 (47.96)", { 0xfd4f82, 0xfd4f9e, 0xf81722, 0xf81770 }, 0 },
+	{ 0xf3af46ccUL, "A3000 Kickstart 3.2 (47.96)", { 0xfd41be, 0xfd41da, 0xf816be, 0xf8170c }, AMIGAF_SCSI }
 };
 static struct kickrom *kickrom;		/* the one last verified */
 
@@ -1227,7 +1228,7 @@ main(argc, argv)
 	ae.ae_version = AMIGA_ABI_VERSION;
 	ae.ae_chipsize = CHIPSIZE;
 	ae.ae_fastsize = fastmb << 20;
-	ae.ae_flags |= AMIGAF_PAL | (census ? AMIGAF_CENSUS : 0);
+	ae.ae_flags |= AMIGAF_PAL | (census ? AMIGAF_CENSUS : 0) | kickrom->flags;
 	if (ioctl(fd, AMIGAIOC_ENTER, &ae) < 0)
 		fail("Amiga session (AMIGAIOC_ENTER)");
 	if (gofd >= 0)

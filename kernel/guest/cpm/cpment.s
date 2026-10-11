@@ -1,12 +1,12 @@
-| cpment.s -- startcpm's BDOS and BIOS entries (traps #2, #3) and CP/M's start.
+| cpment.s -- startcpm's BDOS and BIOS entries (traps #2, #3) and program entry.
 |
 | CP/M runs in virtual supervisor mode; a trap's format-0 frame is on
 | its stack.  The BIOS's C runs on a stack of its own and returns by
 | rte, to user or supervisor state as the frame says.  Warm boot does
-| not return: the CCP starts over on its own stack.
+| not return: cpm_ccprun starts a program or the CCP afresh.
 
 	.text
-	.globl	cpm_t2, cpm_t3, cpm_go, cpm_wboot
+	.globl	cpm_t2, cpm_t3, cpm_wboot, cpm_enter
 
 | cpm_bdos3(d0, d1, saved registers); the result in d0
 cpm_t2:
@@ -23,18 +23,14 @@ cpm_t2:
 	moveml	%sp@+,&0x7ffe
 	rte
 
-| warm boot from C: the CCP starts over on its own stack
+| warm boot: the BIOS's stack afresh
 cpm_wboot:
-	clrl	%d0
-	movel	cpm_ccp,%a0
-	jmp	%a0@
+	movel	&cpm_stk+0x8000,%sp
+	jsr	cpm_ccprun
 
 cpm_t3:
 	cmpw	&1,%d0
-	bne.b	Lbios
-	clrl	%d0
-	movel	cpm_ccp,%a0
-	jmp	%a0@
+	beq.b	cpm_wboot
 Lbios:
 	moveml	&0x7ffe,%sp@-		| d1-d7/a0-a6
 	movel	%sp,%a0
@@ -49,7 +45,8 @@ Lbios:
 	moveml	%sp@+,&0x7ffe
 	rte
 
-| cpm_go(pc)
-cpm_go:
+| cpm_enter(pc, sp): a program on its own stack
+cpm_enter:
 	movel	%sp@(4),%a0
+	movel	%sp@(8),%sp
 	jmp	%a0@

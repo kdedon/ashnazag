@@ -182,7 +182,7 @@ census(x, a, wr)
 		c->custom[(a & 0x1fe) / 2][wr]++;
 		if (wr && (a == 0xdff058 || a == 0xdff05e)) {
 			for (i = 0; i < AMIGA_NOTHER && c->blit[i][1]; i++)
-				if (c->blit[i][0] == x->pc) break;
+				if (c->blit[i][0] == (unsigned long)x->pc) break;
 			if (i < AMIGA_NOTHER) {
 				c->blit[i][0] = x->pc;
 				c->blit[i][1]++;
@@ -218,6 +218,8 @@ ioaccess(x, a, sz, vp, wr)
 	if (a >= 0xbfa000 && a < 0xbfb000) a += 0x4000;
 	if (wr && a == AMIGA_BELL) x->bell = *vp == 1 ? 1 : 2;
 	if (wr && a == AMIGA_SNDBELL) x->sbell = 1;
+	if (x->dev.scsi.on && a >= 0xdd0000 && a + sz <= 0xdd0100)
+		return wr ? amigadev_write(&x->dev, a, sz, *vp) : amigadev_read(&x->dev, a, sz, vp);
 	if (openbus(x, a, sz)) {
 		if (!wr) *vp = sz == 1 ? 0xffUL : sz == 2 ? 0xffffUL : 0xffffffffUL;
 		return 0;

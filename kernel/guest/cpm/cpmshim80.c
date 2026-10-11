@@ -70,7 +70,6 @@ shim_run80(tail)
 	shim_segput(img);
 	z80tail(&m, tail);
 	z80wait = z80sleep;
-	z80ranbe = 0;
 	z80bdosinit(&m);
 	do {
 		k = 0;

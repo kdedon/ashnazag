@@ -6,7 +6,7 @@
         XaAES:   starttos -e xaaes  (multitasking; maketos -x -e NAME for more)
         Cubase:  starttos -C $HOME/TOS/CUBASE/CUBASE31  (or SCORE, CAF)
  Amiga  startmig        Workbench; -m MB fast RAM (or fastmb=MB in .env)
- CP/M   startcpm        CP/M-68K in this terminal; EXIT ends it
+ CP/M   startcpm        Concurrent CP/M-68K; EXIT ends it, -c N joins
                         A: ~/CPM, H: home, M: temp, O: /, P: DRI's programs
  Win16  startwin        Windows 3.x programs (Program Manager); first
                         startwin -install DISK1.IMG ... (your Windows disks)

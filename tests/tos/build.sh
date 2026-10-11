@@ -144,6 +144,20 @@ if AUX=$AUX MINT=$O/mint sh "$G/tos/xaaes/build.sh" "$O/xaaes" > "$O/xaaes.log" 
 	B=$(AUX=$AUX sh "$G/tos/mintgcc.sh" "$O/mint")
 	PATH=$B:$PATH nice -n 19 m68k-atari-mint-gcc -O2 -s -o "$R/tos/xatick/XATICK.PRG" \
 		"$T/tos/xatick.c" -lgem
+	# XABUSY.PRG spins; XAMISC.PRG makes MiNT calls; XAMINTP.TTP and XAHELLO.TOS
+	# (plain TOS) run in console windows
+	PATH=$B:$PATH nice -n 19 m68k-atari-mint-gcc -O2 -s -o "$R/tos/xatick/XABUSY.PRG" \
+		"$T/tos/xabusy.c" -lgem
+	PATH=$B:$PATH nice -n 19 m68k-atari-mint-gcc -O2 -s -o "$R/tos/xatick/XAMISC.PRG" \
+		"$T/tos/xamisc.c"
+	PATH=$B:$PATH nice -n 19 m68k-atari-mint-gcc -O2 -s -o "$R/tos/xatick/XAMINTP.TTP" \
+		"$T/tos/xamintp.c"
+	"$BIN/m68k-elf-as" -m68040 --register-prefix-optional -o "$O/xahello.o" "$T/tos/xahello.s"
+	for base in 0 0x10000; do
+		"$BIN/m68k-elf-ld" --no-warn-rwx-segments -N -Ttext=$base -o "$O/h$base.elf" "$O/xahello.o"
+		"$BIN/m68k-elf-objcopy" -O binary "$O/h$base.elf" "$O/h$base.bin"
+	done
+	python3 "$T/tos/elf2prg.py" "$O/h0.bin" "$O/h0x10000.bin" 0 "$R/tos/xatick/XAHELLO.TOS"
 else
 	echo "[skip] XaAES: $(tail -1 "$O/xaaes.log")"
 fi

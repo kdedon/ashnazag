@@ -20,7 +20,7 @@
  f /sbin/shutdown 755 0 3 build/shutdown
  h /usr/sbin/shutdown /sbin/shutdown
  f /sbin/rc0	744 0 3 build/rc0
-@@ -56,6 +56,68 @@
+@@ -56,6 +56,69 @@
  # date(1) runs setclk -s after stime(2); the kernel keeps the RTC
  f /usr/amiga/bin/setclk 755 0 3 etc/setclk
  
@@ -74,6 +74,7 @@
 +f /etc/tos/emutos.img 444 0 3 macpkg/tos/emutos.img
 +f /etc/tos/tosml.img 444 0 3 macpkg/tos/tosml.img
 +f /usr/bin/starttos 755 0 3 macpkg/tos/starttos
++f /usr/bin/mintrun 755 0 3 macpkg/tos/mintrun
 +f /usr/bin/maketos 755 0 3 macpkg/tos/maketos
 +f /usr/bin/tosdrive 755 0 3 macpkg/tos/tosdrive
 +a macpkg/tos/sys.cpio

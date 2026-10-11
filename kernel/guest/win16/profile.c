@@ -207,7 +207,19 @@ profile_get(file, sect, key, def, out, size)
 	out[0] = 0;
 	if ((f = iniopen(file, host)) == 0)
 		goto dflt;
-	while (inigets(line, sizeof line, f, &pos)) {
+	for (;;) {
+		if (!in || !sect) {	/* only a section's line matters: others skipped in place */
+			for (v = f->buf + pos; v < f->buf + f->len && (*v == ' ' || *v == '\t'); v++)
+				;
+			if (v < f->buf + f->len && *v != '[') {
+				while (v < f->buf + f->len && *v++ != '\n')
+					;
+				pos = v - f->buf;
+				continue;
+			}
+		}
+		if (!inigets(line, sizeof line, f, &pos))
+			break;
 		if (issection(line, name)) {
 			if (!sect) {
 				l = strlen(name);

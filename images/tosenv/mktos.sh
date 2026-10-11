@@ -6,7 +6,7 @@
 #
 #   sh images/tosenv/mktos.sh outdir
 #
-# Out: outdir/{starttos,maketos,tosdrive,emutos.img,tosml.img} and
+# Out: outdir/{starttos,mintrun,maketos,tosdrive,emutos.img,tosml.img} and
 # outdir/{sys,guest,games}.cpio, rooted at /.  EMUTOS names the EmuTOS
 # 512 KB release zip, EMUTOSLANG its image (us); FVDI the fVDI tree
 # (kernel/guest/tos/fvdi/build.sh).  TOSAPPS names the
@@ -45,6 +45,13 @@ done
 "$TC/bin/m68k-cbm-sysv4-ld" -o "$OUT/starttos" "$SYS/usr/ccs/lib/crt1.o" \
 	"$SYS/usr/ccs/lib/crti.o" "$O/starttos.o" "$O/tosdisp.o" "$O/tossnd.o" "$O/sndout.o" \
 	"$SYS/usr/lib/libc.so.1" \
+	"$O/libextra.a" "$LIBGCC" "$SYS/usr/ccs/lib/crtn.o"
+# mintrun: MiNT command-line programs as Unix processes
+nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -w -D__STDC__=0 -I"$G/mod/tosguest" \
+	-c "$G/tos/mintrun.c" -o "$O/mintrun.o"
+"$TC/bin/m68k-cbm-sysv4-as" -o "$O/mintent.o" "$G/tos/mintent.s"
+"$TC/bin/m68k-cbm-sysv4-ld" -o "$OUT/mintrun" "$SYS/usr/ccs/lib/crt1.o" \
+	"$SYS/usr/ccs/lib/crti.o" "$O/mintrun.o" "$O/mintent.o" "$SYS/usr/lib/libc.so.1" \
 	"$O/libextra.a" "$LIBGCC" "$SYS/usr/ccs/lib/crtn.o"
 # cartridge: machine layer, the U: drive and STiK
 nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -m68020 -Wall -Wno-implicit -fno-builtin \

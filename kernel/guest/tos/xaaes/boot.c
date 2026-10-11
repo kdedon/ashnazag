@@ -1,7 +1,7 @@
 /*
  * boot.c -- XAMINT.PRG: from the AUTO folder it stays resident and
  * takes exec_os, so the shell TOS starts after AUTO is this layer's
- * root.  The root hooks trap #1, trap #2 and the 50 Hz timer, adds
+ * root.  The root hooks trap #1, #2 and #13 and the timers, adds
  * the MiNT cookie and starts XaAES in a loader process.
  */
 #include "xamint.h"
@@ -131,6 +131,10 @@ xa_boot(BASEPAGE *bp)
 	*(long *)0x88 = (long)xa_trap2;
 	old_etv = *(long *)0x400;
 	*(long *)0x400 = (long)xa_tick;
+	old_tmrc = *(long *)0x114;
+	*(long *)0x114 = (long)xa_tmrc;
+	old_trap13 = *(long *)0xb4;
+	*(long *)0xb4 = (long)xa_trap13;
 	k = proc_new(KP(rootproc), "XaAES", 1, 0);
 	k->kfunc = loader;
 	k->base = loaderbase(bp);

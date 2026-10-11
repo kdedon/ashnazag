@@ -1,26 +1,30 @@
 /*
- * startcpm -- run CP/M-68K as this process.
+ * startcpm -- run Concurrent CP/M-68K as Unix processes.
  *
- *	startcpm [-e env] [-d X=path] ...
+ *	startcpm [-e env] [-m MB] [-d X=path] ...
+ *	startcpm [-e env] -c N		join the running environment as console N
  *
- * DRI's CPM.SYS (CCP and BDOS, linked with a sample BIOS) is loaded at
- * its own address in memory mapped at 0, and the process becomes a lone
- * guest: CP/M runs natively, its supervisor state virtual, its traps
- * through its own vector table.  The sample BIOS's init is skipped in
- * the loaded copy; trap #3 comes here instead, and trap #2 goes to our
- * own CP/M 3 BDOS.  The console is the caller's terminal.  Drives:
+ * Memory is mapped at 0 (16 MB by default) and the process becomes a
+ * lone guest: CP/M runs natively, its supervisor state virtual, its
+ * traps through its own vector table.  Trap #2 is our CP/M 3 BDOS,
+ * trap #3 our BIOS.  CCP.68K, the command processor, is loaded again
+ * at every warm boot.  Each CP/M process is a Unix process; all of them
+ * share memory from XPRIV up, so a pointer means the same in each.
+ * Console 0 is the caller's terminal; consoles 1-3 are sessions that
+ * wait for "startcpm -c N" to join from another terminal.  Drives:
  *	A:	~/CPM (with -e, ~/CPM/env), user areas as subdirectories
  *	H:	home
  *	M:	~/.cpm/tmp (with -e, ~/.cpm/tmp/env), private, emptied at start
  *	O:	/
  *	P:	DRI's programs, read-only; programs not found elsewhere run from here
- * The CCP knows only A: to P:.  Lines X=path in ~/CPM/DRIVES, then -d,
- * add or replace drives; MOUNT (on P:) changes them in a session.  EXIT ends the session.
+ * Lines X=path in ~/CPM/DRIVES, then -d, add or replace drives; MOUNT
+ * (on P:) changes them in a session.  EXIT ends the session.
  */
 
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,29 +38,41 @@
 #include <termio.h>
 #include "../include/cpmio.h"
 #include "bdos3.h"
+#include "xdos.h"
 #include "cpmshim.h"
 #include "../include/envroot.h"
 #include "../include/envmem.h"
 
-#define	MEM	0x400000L	/* memory at 0 */
-#define	TABLES	0x400L		/* BIOS tables, up to CP/M */
-#define	SYS	"/cpm/sys/CPM.SYS"
+#define	MEMMB	16		/* memory at 0, MB */
+#define	TABLES	0x400L		/* BIOS tables, up to XPRIV */
+#define	CCP	"/cpm/sys/CCP.68K"
 #define	DIST	"/cpm/dist"
+#define	CONS	4		/* consoles */
 #define	QUIT	0x7f		/* BIOS function: end the session, d1 the status */
 #define	MOUNT	0x7e		/* BIOS function: MOUNT, d1 its base page */
+#define	EXC	0x7c		/* BIOS function: an exception, d1 its vector */
+#define	SVLEN	0x600		/* the CCP's state; it starts with magic.w, then: */
+#define	SV_PEND	2		/* .w: a program to run at the warm boot */
+#define	SV_FCB	4		/* its FCB, base page FCBs 1 and 2, tail length, tail */
+#define	SV_FCB1	40
+#define	SV_FCB2	76
+#define	SV_TLEN	112
+#define	SV_TAIL	113
 
-extern void cpm_t2(), cpm_t3(), cpm_go(), cpm_wboot();
+extern void cpm_t2(), cpm_t3(), cpm_wboot(), cpm_enter();
 
 char cpm_stk[0x8000];		/* the BIOS's stack */
-long cpm_ccp;			/* the CCP's warm start */
 
 #define	root	b3_root
 char *b3_mem;
-static unsigned long tables = TABLES, tablim, mrt;
+static unsigned long mem, tables = TABLES, tablim = XPRIV, mrt, retstub, excstub;
 static int iobyte, lst = -1;
-static int tty, peeked = -1, eof;
+static int tty, peeked = -1, eof, cin, cout = 1, isroot = 1, session = 1;
 static struct termio tio;
-
+static char tmpdir[1100];
+static unsigned char *ccpimg, sv[SVLEN];
+static long ccplen;
+int b3_conshared;
 static void
 die(what)
 	char *what;
@@ -116,6 +132,7 @@ galloc(n)
 
 static char obuf[512];
 static int nobuf;
+static void conlost(), quit();
 
 static void
 flush()
@@ -123,8 +140,8 @@ flush()
 	int n = nobuf;
 
 	nobuf = 0;
-	if (n)
-		write(1, obuf, n);
+	if (n && write(cout, obuf, n) < 0 && errno == EPIPE)
+		quit(0);
 }
 
 static void
@@ -135,12 +152,20 @@ restore()
 	tty = 0;
 }
 
+
+/* the session ends; a joined console's session waits for the next */
 static void
 quit(st)
 	int st;
 {
 	flush();
+	if (!isroot) {
+		if (session)
+			conlost();
+		xexit(st);
+	}
 	restore();
+	xkillall();
 	exit(st);
 }
 
@@ -148,7 +173,28 @@ static void
 onsig(sig)
 	int sig;
 {
+	if (!isroot)
+		b3_exit(128 + sig);
 	quit(128 + sig);
+}
+
+void
+b3_exit(st)
+	int st;
+{
+	flush();
+	if (isroot) {
+		restore();
+		xkillall();
+		exit(st);
+	}
+	_exit(st);
+}
+
+void
+b3_conflush()
+{
+	flush();
 }
 
 static void
@@ -230,6 +276,15 @@ setmap(spec)
 	return 0;
 }
 
+static void
+tmppath(env, path)
+	char *env, *path;
+{
+	sprintf(path, "%s/.cpm/tmp", home);
+	if (env)
+		sprintf(path + strlen(path), "/%s", env);
+}
+
 /* M:, private and empty */
 static void
 tmpdrive(env, path)
@@ -244,10 +299,8 @@ tmpdrive(env, path)
 	mkdir(path, 0700);
 	strcat(path, "/tmp");
 	mkdir(path, 0700);
-	if (env) {
-		sprintf(path + strlen(path), "/%s", env);
-		mkdir(path, 0700);
-	}
+	tmppath(env, path);
+	mkdir(path, 0700);
 	if (lstat(path, &sb) < 0 || (sb.st_mode & S_IFMT) != S_IFDIR || sb.st_uid != getuid() ||
 	    chmod(path, 0700) < 0) {
 		path[0] = 0;
@@ -275,6 +328,7 @@ drives(env, nd, dv)
 	hf_setdrive(0, root, HF_AREAS);
 	hf_setdrive('H' - 'A', home, 0);
 	tmpdrive(env, path);
+	strcpy(tmpdir, path);
 	hf_setdrive('M' - 'A', path, 0);
 	hf_setdrive('O' - 'A', "/", 0);
 	hf_setdrive('P' - 'A', DIST, HF_RO | HF_SYS);
@@ -343,7 +397,7 @@ mount(bp)
 	struct stat sb;
 	int d, fl, n;
 
-	if (bp < TABLES || bp > MEM - 0x100)
+	if (bp < TABLES || bp > mem - 0x100)
 		return;
 	n = *(unsigned char *)(bp + 0x80);
 	if (n > 127)
@@ -389,12 +443,13 @@ conin()
 	int n;
 
 	flush();
+	xconwait();
 	if (peeked >= 0) {
 		c = peeked;
 		peeked = -1;
 	} else {
 		do
-			n = read(0, (char *)&c, 1);
+			n = read(cin, (char *)&c, 1);
 		while (n < 0 && errno == EINTR);
 		if (n <= 0)
 			quit(0);
@@ -404,42 +459,63 @@ conin()
 	return !tty && c == '\n' ? '\r' : c;
 }
 
+/* fl: show what was written first, as a program asking would expect */
 static int
-constat()
+constat(fl)
+	int fl;
 {
 	struct pollfd pf;
 	unsigned char c;
 
-	flush();
+	if (fl)
+		flush();
+	if (xconbusy())
+		return 0;
 	if (peeked >= 0 || eof)
 		return 0xff;
-	pf.fd = 0;
+	pf.fd = cin;
 	pf.events = POLLIN;
 	if (poll(&pf, 1L, 0) <= 0)
 		return 0;
-	if (read(0, (char *)&c, 1) == 1)
+	if (read(cin, (char *)&c, 1) == 1)
 		peeked = c;
 	else
 		eof = 1;	/* conin ends the session */
 	return 0xff;
 }
 
+/* an exception CP/M has no handler for ends the program */
+static void
+exc(v, regs)
+	long v;
+	unsigned long regs;
+{
+	char b[80];
+
+	sprintf(b, "\nException %ld at %lx\n", v, get32(regs + 56 + 8 + 2));
+	cputs(b);
+	b3_wboot();
+}
+
 long
-cpm_bios(fn, d1, d2)
+cpm_bios(fn, d1, d2, regs)
 	long fn, d1, d2;
+	unsigned long regs;
 {
 	unsigned char c;
 	long old;
 
 	switch (fn & 0xffff) {
 	case 2:
-		return constat();
+		return constat(1);
 	case 3:
 		return conin();
 	case 4:
 		if (nobuf == sizeof obuf)
 			flush();
 		obuf[nobuf++] = d1;
+		if (b3_conshared && (d1 == '\n' || nobuf > 80))
+			flush();
 		return 0;
 	case 5:
 		if (lst < 0) {
@@ -461,7 +537,7 @@ cpm_bios(fn, d1, d2)
 		return 0xff;
 	case 16:
 		d1 &= 0xffff;
-		if (d2 && (d2 >= MEM || d2 + 2 * d1 > MEM - 2))
+		if (d2 && (d2 >= mem || d2 + 2 * d1 > mem - 2))
 			return d1;
 		return d2 ? get16(d2 + 2 * d1) : d1;
 	case 18:
@@ -484,6 +560,8 @@ cpm_bios(fn, d1, d2)
 		return 0;
 	case B3_SHIM:
 		return cpm_shim((unsigned long)d1);
+	case EXC:
+		exc(d1, regs);
 	case QUIT:
 		quit((int)(d1 & 0xff));
 	}
@@ -500,7 +578,7 @@ b3_conin()
 int
 b3_const()
 {
-	return constat();
+	return constat(0);
 }
 
 void
@@ -521,7 +599,116 @@ long
 b3_bios(fn, d1, d2)
 	long fn, d1, d2;
 {
-	return cpm_bios(fn, d1, d2);
+	return cpm_bios(fn, d1, d2, 0L);
+}
+
+
+/* ---- programs ---- */
+
+/* 150, 151: the CCP's state out to its buffer, or back */
+long
+b3_ccpsv(a, put)
+	unsigned long a;
+	int put;
+{
+	if (put)
+		memcpy((char *)sv, B3MEM(a), SVLEN);
+	else
+		memcpy(B3MEM(a), (char *)sv, SVLEN);
+	return 0;
+}
+
+static void
+setmrt(lo, hi)
+	unsigned long lo, hi;
+{
+	put32(mrt + 2, lo);
+	put32(mrt + 6, hi - lo);
+}
+
+/* a blank FCB, or one from the next word of the tail */
+static char *
+tailfcb(p, f)
+	char *p;
+	unsigned long f;
+{
+	int i, n;
+
+	memset((char *)f, 0, 36);
+	memset((char *)f + 1, ' ', 11);
+	while (*p == ' ')
+		p++;
+	if (*p && p[1] == ':') {
+		*(char *)f = (*p & 0x5f) - 'A' + 1;
+		p += 2;
+	}
+	for (i = 0, n = 8; *p && *p != ' '; p++)
+		if (*p == '.')
+			i = 8, n = 11;
+		else if (i < n)
+			*(char *)(f + 1 + i++) = *p >= 'a' && *p <= 'z' ? *p - 32 : *p;
+	return p;
+}
+
+/* run the loaded program: base page bp, its stack sp; tail n bytes at t */
+static void
+run(bp, sp, n, t, f1, f2)
+	unsigned long bp, sp;
+	int n;
+	char *t, *f1, *f2;
+{
+	char tb[130], *p;
+
+	if (n > 126)
+		n = 126;
+	*(char *)(bp + 0x80) = n;
+	memcpy((char *)bp + 0x81, t, n);
+	*(char *)(bp + 0x81 + n) = 0;
+	if (f1) {
+		memcpy((char *)bp + 0x5c, f1, 36);
+		memcpy((char *)bp + 0x38, f2, 36);
+	} else {
+		memcpy(tb, t, n);
+		tb[n] = 0;
+		p = tailfcb(tb, bp + 0x5c);
+		tailfcb(p, bp + 0x38);
+	}
+	b3_dma = b3_dma0 = bp + 0x80;
+	sp -= 4;
+	put32(sp, retstub);
+	flush();
+	cpm_enter(get32(bp + 8), sp);
+}
+
+/*
+ * Warm boot: the program the CCP left in its state, otherwise the CCP.
+ * A process made by function 144 ends here.
+ */
+void
+cpm_ccprun()
+{
+	unsigned long lo = xpbase(xmypart0), hi = lo + XPSIZE, bp, sp;
+	long r;
+
+	if (!session)
+		xexit(0);
+	xwarm();
+	if (sv[SV_PEND] || sv[SV_PEND + 1]) {
+		sv[SV_PEND] = sv[SV_PEND + 1] = 0;
+		if ((r = b3_ldfile((unsigned long)sv + SV_FCB, lo, hi, &bp, &sp)) == 0) {
+			xname((char *)sv + SV_FCB + 1);
+			run(bp, sp, sv[SV_TLEN], (char *)sv + SV_TAIL, (char *)sv + SV_FCB1,
+			    (char *)sv + SV_FCB2);
+		}
+		cputs(r == 2 ? "\nProgram Load Error\n" : r == 3 ? "\nFile is not executable\n" :
+		    "\nInsufficient memory\n");
+	}
+	if (b3_ldimg(ccpimg, ccplen, lo, hi, 0, &bp, &sp) != 0) {
+		cputs("\nNo room for CCP.68K\n");
+		quit(1);
+	}
+	xname("CCP     ");
+	run(bp, sp, 0, "", (char *)0, (char *)0);
 }
 
 void
@@ -532,57 +719,169 @@ b3_wboot()
 	cpm_wboot();
 }
 
-/* ---- start ---- */
-
-/*
- * CPM.SYS at its own address.  Its cold start calls the BIOS's init
- * first, which in this copy only returns drive A:; the warm start is
- * where the cold start's stack setup recurs.
- */
-static unsigned long
-loadsys()
+/* function 144's process, after the fork: run what the parent loaded */
+void
+b3_child(bp, sp, n, t)
+	unsigned long bp, sp;
+	int n;
+	char *t;
 {
-	unsigned char h[28];
-	unsigned long ts, td, tb, base, cold, init, a;
-	int fd;
-
-	if ((fd = open(SYS, O_RDONLY)) < 0)
-		die(SYS);
-	if (read(fd, (char *)h, 28) != 28)
-		goto bad;
-	ts = get32((unsigned long)h + 2);
-	td = get32((unsigned long)h + 6);
-	tb = get32((unsigned long)h + 10);
-	base = get32((unsigned long)h + 22);
-	if (get16((unsigned long)h) != 0x601a || get16((unsigned long)h + 26) != 0xffff ||
-	    base < 0x4000 || base + ts + td + tb > MEM / 2 ||
-	    lseek(fd, 28L, 0) != 28 || read(fd, (char *)base, ts + td) != ts + td)
-		goto bad;
-	close(fd);
-	tablim = base;
-	cold = get32(base + 2);
-	if (get16(base) != 0x4ef9 || cold < base || cold >= base + ts || get16(cold) != 0x4ff9)
-		goto bad;
-	for (a = cold + 6, init = 0; a < cold + 64 && !init; a += 2)
-		if (get16(a) == 0x4eb9)
-			init = get32(a + 2);
-	for (a = cold + 6, cpm_ccp = 0; a < cold + 256 && !cpm_ccp; a += 2)
-		if (get16(a) == 0x4ff9 && get32(a + 2) == get32(cold + 2))
-			cpm_ccp = a;
-	if (init < base || init >= base + ts || !cpm_ccp ||
-	    get16(init) != 0x41f9 || get32(init + 6) != 0x23c80000 || get16(init + 10) != 0x8c)
-		goto bad;
-	put32(init, 0x70004e75L);	/* moveq #0,d0; rts */
-	mrt = galloc(10L);
-	a = (base + ts + td + tb + 0xfff) & ~0xfffL;
-	put16(mrt, 1L);
-	put32(mrt + 2, a);
-	put32(mrt + 6, MEM - a);
-	return base;
-bad:
-	fprintf(stderr, "startcpm: %s: not the CP/M-68K 1.3 system this BIOS knows\n", SYS);
-	exit(1);
+	session = 0;
+	isroot = 0;
+	b3_conshared = 1;
+	nobuf = 0;
+	xforked();
+	b3_settpa(bp, bp + XPSIZE);
+	setmrt(bp, bp + XPSIZE);
+	run(bp, sp, n, t, (char *)0, (char *)0);
 }
+
+/* ---- consoles ---- */
+
+static void
+fifo(n, in, out)
+	int n;
+	char *in, *out;
+{
+	sprintf(in, "%s/.con/%d.in", tmpdir, n);
+	sprintf(out, "%s/.con/%d.out", tmpdir, n);
+}
+
+/* wait for console n to be joined, then start its CCP */
+static void
+conjoin(n)
+	int n;
+{
+	char in[1200], out[1200];
+	int k;
+
+	fifo(n, in, out);
+	for (;;) {
+		while ((cin = open(in, O_RDONLY)) < 0)
+			if (errno != EINTR)
+				_exit(1);
+		while ((cout = open(out, O_WRONLY)) < 0)
+			if (errno != EINTR)
+				_exit(1);
+		fcntl(cin, F_SETFD, 1);
+		fcntl(cout, F_SETFD, 1);
+		peeked = -1;
+		eof = 0;
+		nobuf = 0;
+		if ((k = xjoined()) >= 0)
+			break;
+		cputs("\nNo memory for console\n");
+		flush();
+		close(cin);
+		close(cout);
+		xidle();
+	}
+	b3_settpa(xpbase(k), xpbase(k) + XPSIZE);
+	setmrt(xpbase(k), xpbase(k) + XPSIZE);
+	memset((char *)sv, 0, SVLEN);
+	cpm_bdos3(13L, 0L, 0L);
+	cpm_bdos3(32L, 0L, 0L);
+	cpm_wboot();
+}
+
+/* the joined terminal went away: wait for the next */
+static void
+conlost()
+{
+	nobuf = 0;
+	close(cin);
+	close(cout);
+	xidle();
+	conjoin(xcon());
+}
+
+static void
+consoles()
+{
+	char in[1200], out[1200];
+	int n, fd;
+
+	if (tmpdir[0] == 0)
+		return;
+	sprintf(in, "%s/.con", tmpdir);
+	mkdir(in, 0700);
+	for (n = 1; n < xncon; n++) {
+		fifo(n, in, out);
+		unlink(in);
+		unlink(out);
+		if (mkfifo(in, 0600) < 0 || mkfifo(out, 0600) < 0)
+			continue;
+		if (fork() == 0) {
+			isroot = 0;
+			tty = 0;
+			if ((fd = open("/dev/null", O_RDWR)) >= 0) {
+				dup2(fd, 0);
+				dup2(fd, 1);
+				dup2(fd, 2);
+				close(fd);
+			}
+			signal(SIGPIPE, SIG_IGN);
+			signal(SIGINT, SIG_IGN);
+			signal(SIGQUIT, SIG_IGN);
+			xsession(n);
+			conjoin(n);
+		}
+	}
+}
+
+/* startcpm -c n: this terminal is console n until its session ends */
+static int
+join(n)
+	int n;
+{
+	char in[1200], out[1200], b[512];
+	struct pollfd pf[2];
+	struct flock fl;
+	int fi, fo, lk, k;
+
+	fifo(n, in, out);
+	sprintf(b, "%s/.con/%d.lk", tmpdir, n);
+	if (n < 1 || n >= CONS) {
+		fprintf(stderr, "startcpm: consoles are 1 to %d\n", CONS - 1);
+		return 2;
+	}
+	memset((char *)&fl, 0, sizeof fl);
+	fl.l_type = F_WRLCK;
+	if ((lk = open(b, O_RDWR | O_CREAT, 0600)) < 0 || fcntl(lk, F_SETLK, &fl) < 0 ||
+	    (fi = open(in, O_WRONLY | O_NONBLOCK)) < 0) {
+		fprintf(stderr, "startcpm: console %d is in use or the environment is not running\n", n);
+		return 1;
+	}
+	fcntl(fi, F_SETFL, 0);
+	if ((fo = open(out, O_RDONLY)) < 0)
+		die(out);
+	signal(SIGPIPE, SIG_IGN);
+	rawtty();
+	pf[0].fd = 0;
+	pf[0].events = POLLIN;
+	pf[1].fd = fo;
+	pf[1].events = POLLIN;
+	for (;;) {
+		if (poll(pf, 2L, -1) < 0) {
+			if (errno == EINTR)
+				continue;
+			break;
+		}
+		if (pf[1].revents) {
+			if ((k = read(fo, b, sizeof b)) <= 0)
+				break;
+			write(1, b, k);
+		}
+		if (pf[0].revents) {
+			if ((k = read(0, b, sizeof b)) <= 0 || write(fi, b, k) != k)
+				break;
+		}
+	}
+	restore();
+	return 0;
+}
+
+/* ---- start ---- */
 
 static void
 mkroot()
@@ -598,23 +897,66 @@ mkroot()
 		die(root);
 }
 
+/* exception stubs: moveq #v,d1; moveq #EXC,d0; trap #3 */
+static void
+vectors()
+{
+	unsigned long a;
+	int v;
+
+	excstub = galloc(6L * 48);
+	for (v = 2; v < 48; v++) {
+		a = excstub + 6 * v;
+		put16(a, 0x7200L | v);
+		put16(a + 2, 0x7000L | EXC);
+		put16(a + 4, 0x4e43L);
+		put32(v * 4L, a);
+	}
+	put32(34 * 4L, (unsigned long)cpm_t2);
+	put32(35 * 4L, (unsigned long)cpm_t3);
+	retstub = galloc(4L);
+	put32(retstub, 0x70004e42L);	/* moveq #0,d0; trap #2 */
+	mrt = galloc(10L);
+	put16(mrt, 1L);
+}
+
+static void
+loadccp()
+{
+	struct stat sb;
+	int fd;
+
+	if ((fd = open(CCP, O_RDONLY)) < 0 || fstat(fd, &sb) < 0)
+		die(CCP);
+	ccplen = sb.st_size;
+	if ((ccpimg = malloc(ccplen)) == 0 || read(fd, (char *)ccpimg, ccplen) != ccplen)
+		die(CCP);
+	close(fd);
+}
+
 int
 main(argc, argv)
 	int argc;
 	char **argv;
 {
 	struct passwd *pw;
-	unsigned long pc;
+	struct rlimit rl;
+	unsigned long lo;
 	char *env = 0, *h, *dv[NDRV];
-	int c, fd, nd = 0;
+	int c, fd, nd = 0, con = 0, mb = MEMMB;
 
-	while ((c = getopt(argc, argv, "e:d:")) != -1)
+	while ((c = getopt(argc, argv, "e:d:m:c:")) != -1)
 		if (c == 'e')
 			env = optarg;
 		else if (c == 'd' && nd < NDRV)
 			dv[nd++] = optarg;
+		else if (c == 'm' && (mb = atoi(optarg)) >= 2 && mb <= 256)
+			;
+		else if (c == 'c' && (con = atoi(optarg)) > 0)
+			;
 		else {
-			fprintf(stderr, "usage: startcpm [-e env] [-d X=path] ...\n");
+			fprintf(stderr, "usage: startcpm [-e env] [-m MB] [-d X=path] ...\n"
+			    "       startcpm [-e env] -c console\n");
 			return 2;
 		}
 	h = getenv("HOME");
@@ -624,23 +966,38 @@ main(argc, argv)
 		fprintf(stderr, "startcpm: %s: not an environment name\n", env ? env : "~/CPM");
 		return 1;
 	}
+	home = h;
+	if (con) {
+		tmppath(env, tmpdir);
+		return join(con);
+	}
 	mkroot();
 	if (envlock("startcpm", "cpm", root) == -1)
 		return 1;
-	if (envmem_region(0, MEM, 0, -1) < 0)
+	mem = (unsigned long)mb << 20;
+	if (getrlimit(RLIMIT_VMEM, &rl) == 0 && rl.rlim_cur < mem + (8L << 20)) {
+		rl.rlim_cur = rl.rlim_max;
+		setrlimit(RLIMIT_VMEM, &rl);
+	}
+	if (envmem_region(0L, XPRIV, 0, -1) < 0 || envmem_region(XPRIV, mem - XPRIV, 1, -1) < 0)
 		die("guest memory");
-	pc = loadsys();
-	home = h;
+	loadccp();
 	drives(env, nd, dv);
-	b3_init((unsigned long)cpm_t2, get32(mrt + 2), MEM, galloc(16L + 65536L / 8 + 128));
-	put32(34 * 4L, (unsigned long)cpm_t2);
-	put32(35 * 4L, (unsigned long)cpm_t3);
+	if (xinit(mem, CONS, tmpdir[0] ? tmpdir : root) < 0) {
+		fprintf(stderr, "startcpm: no memory for a partition\n");
+		return 1;
+	}
+	vectors();
+	lo = xpbase(xmypart0);
+	setmrt(lo, lo + XPSIZE);
+	b3_init((unsigned long)cpm_t2, lo, lo + XPSIZE, galloc(16L + 65536L / 8 + 128));
 	if ((fd = open("/dev/cpm", O_RDWR)) < 0)
 		die("/dev/cpm");
 	fcntl(fd, F_SETFD, 1);
 	if (ioctl(fd, CPMIOC_ENTER, 0) < 0)
 		die("CPMIOC_ENTER");
 	close(fd);
+	signal(SIGCLD, SIG_IGN);
 	signal(SIGHUP, onsig);
 	signal(SIGTERM, onsig);
 	signal(SIGINT, onsig);
@@ -649,7 +1006,8 @@ main(argc, argv)
 	signal(SIGSEGV, onsig);
 	signal(SIGBUS, onsig);
 	signal(SIGILL, onsig);
+	consoles();
 	rawtty();
-	cpm_go(pc);
+	cpm_wboot();
 	return 0;
 }

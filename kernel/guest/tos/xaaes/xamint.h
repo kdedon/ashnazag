@@ -77,6 +77,14 @@ struct kp {
 	char		*dta;
 	BASEPAGE	*base;
 	struct sigsave	*sigsave;	/* contexts of handlers running */
+	TIMEOUT		*alarm;		/* Talarm's */
+	short		slice;		/* ticks run since switched in */
+	short		vfdone;		/* a Pvfork child: exec or exit frees its parent */
+	struct kp	*vfparent;
+	struct shadow	*shadows;	/* Pfork: blocks shared by address */
+	long		hostpid;	/* a proxy: the Unix process it stands for */
+	long		hostfd;		/* its terminal */
+	long		hoststat;	/* its wait status, -1 while it runs */
 };
 
 #define	KP(p)	((struct kp *)(p))
@@ -104,6 +112,9 @@ short xa_getsr(void);
 long xa_usp(void);
 void xa_setusp(long usp);
 void xa_sigtramp(void);
+void xa_rexec(long sp);
+void xa_tmrc(void), xa_trap13(void);
+extern long old_tmrc, old_trap13;
 long xa_super(void);
 extern long ks_usp, ks_pc, ks_regs[15];
 extern short ks_sr;
@@ -126,6 +137,8 @@ extern long old_trap1, old_trap2, old_etv;
 #define	H_UTIME		30
 #define	H_ACCESS	33
 #define	H_KILL		37
+#define	I_RECVFD	0x530e
+#define	TOSIOC_SOCK	0x5407
 #define	H_DUP		41
 #define	H_PIPE		42
 #define	H_IOCTL		54
@@ -152,6 +165,8 @@ extern long old_trap1, old_trap2, old_etv;
 #define	HO_TRUNC	0x200
 #define	HO_EXCL		0x400
 #define	HO_NOCTTY	0x800
+#define	H_EAGAIN	11
+#define	H_EINPROGRESS	150
 
 /* the host's struct stat: offsets */
 #define	HST_SIZE	136
@@ -216,6 +231,20 @@ TIMEOUT *_cdecl addroottimeout(long delta, void (*func)(PROC *, long), unsigned 
 void _cdecl cancelroottimeout(TIMEOUT *t);
 long _cdecl kthread_create(struct proc *p, void _cdecl (*func)(void *), void *arg, struct proc **np, const char *fmt, ...);
 void _cdecl kthread_exit(short code);
+long post_sig(struct kp *k, int sig);
+void proc_sigreset(struct kp *k);
+
+/* fork.c */
+long xa_fork(long *regs, long n);
+void fork_swapin(struct kp *k);
+void fork_exit(struct kp *k);
+void vfork_release(struct kp *k);
+
+/* host.c */
+int host_prg(const char *hp, const char *name);
+long host_spawn(const char *hp, const char *tail, const char *name, const char *dir, struct kp **res);
+void host_poll(void);
+int host_sig(int sig);
 
 /* exec.c */
 long _cdecl create_process(const void *filename, const void *cmdline, const void *env, struct proc **pret, long stack, struct create_process_opts *opts);
@@ -246,6 +275,12 @@ long _cdecl kernel_read(struct file *f, void *buf, long n);
 long _cdecl kernel_write(struct file *f, const void *buf, long n);
 long _cdecl kernel_lseek(FILEPTR *f, long where, int whence);
 void _cdecl kernel_close(struct file *f);
+int is_tty(struct file *f);
+struct tty *tty_of(struct file *f);
+long file_sock(long hfd, int flags, struct file **res);
+long sock_hfd(struct file *f);
+long sock_op(int op, long hfd, long arg, char *buf, long len, char *addr, long *alenp, int ndelay);
+long host_wait(long hfd, int wr, int nonblock);
 extern short contty_state;
 extern int logfd;
 
@@ -254,6 +289,9 @@ void dos_init(void);
 long _cdecl sys_p_term(short code);
 long _cdecl sys_s_system(int mode, ulong arg1, ulong arg2);
 long _cdecl sys_f_select(unsigned short timeout, long *rfdp, long *wfdp, long *xfdp);
+
+/* sock.c */
+void sock_init(dos_vecs *t);
 
 /* trace.c */
 void trace_init(void);

@@ -244,3 +244,17 @@ detach_region(struct proc *p, MEMREGION *m)
 	(void)p;
 	(void)m;
 }
+
+/* the first block of k's above after, 0 if none; its length in *len */
+long
+mem_next(struct kp *k, long after, long *len)
+{
+	struct blk *b;
+
+	for (b = first; b; b = b->next)
+		if (b->used && b->owner == k && (long)b->m.loc > after) {
+			*len = b->m.len;
+			return b->m.loc;
+		}
+	return 0;
+}

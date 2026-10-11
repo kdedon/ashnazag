@@ -341,16 +341,16 @@ LaserJet III and the Epson FX-80 drivers, their output decoded and checked.
 
 ## Not done yet
 
-- Speed. CPU time at 15.6 MIPS (QEMU's instruction counting; a Quadra 800
-  runs roughly 15 to 25), C core alone (`W16_X86C=1`) -> now: Program
-  Manager's first start, groups made, 65 -> 23 s; later starts 20 -> 8.3 s;
-  a full redraw 0.53 -> 0.48 s; Notepad 1.9 -> 1.6 s, Calculator 1.1 ->
-  0.75 s, Minesweeper 1.5 -> 1.2 s, Solitaire 3.5 -> 2.2 s, Clock 11.6 ->
-  2.8 s; `-install` 2.5 minutes. A loop of compiled code's kind takes 62
-  host instructions per x86 instruction in the 68k loop, 254 in the C core
-  (`x86diff -t`). System time is about a tenth. Program Manager's own
-  group checksum (a word sum over each .GRP, again for every item added)
-  is 70 to 90% of its x86 instructions.
+- Speed. CPU time at 15.6 MIPS (QEMU's instruction counting, `-icount
+  shift=6`; a Quadra 800 runs roughly 15 to 25), C core alone
+  (`W16_X86C=1`) -> now: Program Manager's first start, groups made, 65
+  -> 10 s; later starts 20 -> 2.6 s; a full redraw 0.53 -> 0.23 s; Notepad
+  1.9 -> 0.5 s, Calculator 1.1 -> 0.6 s, Minesweeper 1.5 -> 1.1 s,
+  Solitaire 3.5 -> 2.0 s, Clock 11.6 -> 2.3 s; `-install` 2.5 minutes. A
+  loop of compiled code's kind takes 62 host instructions per x86
+  instruction in the 68k loop, 254 in the C core (`x86diff -t`). System
+  time is about a fifth. Program Manager's group checksum (a word sum over
+  each .GRP, again for every item added) runs whole in the 68k loop.
 - Serial ports (COMM.DRV's OpenComm and the rest over the host's ttys:
   Terminal), MIDI output, recording, printing to FILE: ports.
 - Scaled raster fonts (a bitmap face stretched to a size it lacks), the

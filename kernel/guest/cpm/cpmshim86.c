@@ -116,7 +116,6 @@ shim_run86(tail)
 	i86segget = shim_segget;
 	i86segput = shim_segput;
 	i86wait = i86sleep;
-	i86ranbe = 0;
 	i86gsxdev = 0;
 	i86bdosinit(&m);
 	for (;;) {

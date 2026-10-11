@@ -1,10 +1,10 @@
 #!/bin/sh
-# mkcpm.sh -- the CP/M-68K environment's files: startcpm, DRI's CPM.SYS
-# and the nine distribution disks' files, the shared read-only P:.
+# mkcpm.sh -- the CP/M-68K environment's files: startcpm, the CCP and
+# the nine distribution disks' files, the shared read-only P:.
 #
 #   sh images/cpmenv/mkcpm.sh outdir
 #
-# Out: outdir/cpm.cpio (usr/bin/startcpm, cpm/sys/CPM.SYS, cpm/dist/),
+# Out: outdir/cpm.cpio (usr/bin/startcpm, cpm/sys/CCP.68K, cpm/dist/),
 # owned by root.  CPMZIP names DRI's release zip (default:
 # media/cpm68k/68kv1_3.zip); without it the archive is empty.
 set -e
@@ -32,7 +32,7 @@ if [ -f "$CPMZIP" ]; then
 	B=$OUT/b/root/cpm
 	mkdir -p "$S/usr/bin" "$S/cpm/sys" "$S/cpm/dist" "$OUT/zip"
 	cp "$B/bin/startcpm" "$S/usr/bin/"
-	cp "$B/sys/CPM.SYS" "$S/cpm/sys/"
+	cp "$B/sys/CCP.68K" "$S/cpm/sys/"
 	cp "$B"/dist/* "$S/cpm/dist/"
 	# the other disks' files; a name already there (disk 1's) wins
 	unzip -q -o "$CPMZIP" -d "$OUT/zip"
@@ -43,7 +43,7 @@ if [ -f "$CPMZIP" ]; then
 	rm -rf "$OUT/b" "$OUT/zip"
 	chmod -R a+rX,go-w "$S"
 	chmod 755 "$S/usr/bin/startcpm"
-	chmod 444 "$S/cpm/sys/CPM.SYS" "$S"/cpm/dist/*
+	chmod 444 "$S/cpm/sys/CCP.68K" "$S"/cpm/dist/*
 	sh "$AUX/tests/cpm/links.sh" "$S/cpm/dist"
 	echo "[ok] CP/M-68K: startcpm, $(ls "$S/cpm/dist" | wc -l | tr -d ' ') files for P:"
 else

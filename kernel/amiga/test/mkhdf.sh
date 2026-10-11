@@ -103,6 +103,7 @@ d /etc/tos 755 0 3
 f /etc/tos/emutos.img 444 0 3 $T/emutos.img
 f /etc/tos/tosml.img 444 0 3 $T/tosml.img
 f /usr/bin/starttos 755 0 3 $T/starttos
+f /usr/bin/mintrun 755 0 3 $T/mintrun
 f /usr/bin/maketos 755 0 3 $T/maketos
 f /usr/bin/tosdrive 755 0 3 $T/tosdrive
 a $T/sys.cpio"

@@ -30,7 +30,7 @@
 #define	ALVLEN		(DSM / 8 + 1)
 
 int b3_retcode;
-unsigned long b3_dma;
+unsigned long b3_dma, b3_dma0;
 
 static int dflt, user, errmode, mltio = 1, curfx;
 static unsigned rodsk, logdsk;
@@ -349,10 +349,20 @@ lookup(f, h, wr)
 		return berr(4, d);
 	fcbname(f, n);
 	if (wild(n))
-		return 0xff;
+		return berr(9, d);
+	if ((FB(f, 8) & 0x80) && user) {
+		/* opened through the user-0 fallback: read-only */
+		if (hf_find(d, 0, n, h) < 0 || !h->sys)
+			return 0xff;
+		return wr ? berr(3, d) : 0;
+	}
 	if (hf_find(d, user, n, h) < 0) {
 		if (wr)
 			return 0xff;
+		if (user && hf_find(d, 0, n, h) == 0 && h->sys) {
+			FB(f, 8) |= 0x80;
+			return 0;
+		}
 		if (shimfind(d, user, n, h) == 0)
 			return 0;
 		if (sysdrv < 0 || d == sysdrv || !systype(n) ||
@@ -378,6 +388,7 @@ fopen3(f)
 	long r;
 	int lrbc = FB(f, 32) == 0xff;
 
+	FB(f, 8) &= 0x7f;
 	if ((r = lookup(f, &h, 0)) != 0)
 		return r;
 	if (hf_open(fcbdrv(f), &h, 0) < 0)
@@ -397,8 +408,11 @@ fclose3(f)
 	unsigned long f;
 {
 	struct hfile h;
+	long r;
 
-	return lookup(f, &h, 0);
+	if ((r = lookup(f, &h, 0)) == 0 && *b3_nlocks)
+		b3_hlock(fcbdrv(f), &h, 0L, 0L, LK_CLOSE);
+	return r;
 }
 
 static long
@@ -540,6 +554,8 @@ rw1(f, h, rec, wr, dma)
 	if ((fd = hf_open(d, h, wr)) < 0)
 		return errno == EACCES ? berr(wr ? 3 : 7, d) : 1;
 	if (wr) {
+		if (*b3_nlocks && b3_hlock(d, h, rec, 1L, LK_WRITE) == 8)
+			return 8;
 		if (lseek(fd, off, 0) != off || write(fd, B3MEM(dma), RECLEN) != RECLEN)
 			return 2;		/* disk full */
 		if (off + RECLEN > h->size)
@@ -593,7 +609,7 @@ static long
 ranrec(f)
 	unsigned long f;
 {
-	return FB(f, 33) | (long)FB(f, 34) << 8 | (long)FB(f, 35) << 16;
+	return (long)FB(f, 33) << 16 | (long)FB(f, 34) << 8 | FB(f, 35);
 }
 
 static void
@@ -601,9 +617,9 @@ setran(f, r)
 	unsigned long f;
 	long r;
 {
-	FB(f, 33) = r;
+	FB(f, 33) = r >> 16;
 	FB(f, 34) = r >> 8;
-	FB(f, 35) = r >> 16;
+	FB(f, 35) = r;
 }
 
 /* functions 33, 34, 40: random; the position follows, cr not advanced */
@@ -665,8 +681,12 @@ stamps(f)
 	unsigned long f;
 {
 	struct hfile h;
+	char n[11];
 	long r;
 
+	fcbname(f, n);
+	if (wild(n))
+		return berr(9, fcbdrv(f));
 	if ((r = lookup(f, &h, 0)) != 0)
 		return r;
 	FB(f, 12) = h.pwmode;
@@ -687,6 +707,26 @@ wrxfcb(f)
 	if (hf_protect(fcbdrv(f), &h, FB(f, 12)) < 0)
 		return berr(7, fcbdrv(f));
 	return 0;
+}
+
+/*
+ * functions 42, 43: mltio records from the random record, which must
+ * have been written; 8 when another process holds one.
+ */
+static long
+reclock(f, lock)
+	unsigned long f;
+	int lock;
+{
+	struct hfile h;
+	long r, rec = ranrec(f);
+	int d = fcbdrv(f);
+
+	if ((r = lookup(f, &h, 0)) != 0)
+		return r;
+	if (rec + mltio > recs(&h))
+		return 1;
+	return b3_hlock(d, &h, rec, (long)mltio, lock ? LK_LOCK : LK_UNLOCK);
 }
 
 /* ---- search ---- */
@@ -866,41 +906,24 @@ static unsigned char shimprg[] = {
 int b3_shim, b3_shimdrv;
 struct hfile b3_shimh;
 
-static long
-pgmld(lpb)
-	unsigned long lpb;
-{
-	unsigned long f = b3_get32(lpb), lo = b3_get32(lpb + 4), hi = b3_get32(lpb + 8);
-	unsigned long ts, ds, bs, ss, tst, dst, bst, tl, dl, bl, bp, img, w, v, delta;
+/*
+ * An image of size bytes at b, loaded with its base page at lo and its
+ * stack below hi; drv goes in the base page.  0, or 1 (no room or not a
+ * program) or 3 (bad relocation).
+ */
+long
+b3_ldimg(b, size, lo, hi, drv, bpp, spp)
 	unsigned char *b;
-	struct hfile h;
+	long size;
+	unsigned long lo, hi, *bpp, *spp;
+	int drv;
+{
+	unsigned long ts, ds, bs, ss, tst, dst, bst, tl, dl, bl, bp, img, w, v, delta;
 	long n, hl, i, nw;
-	int fd, rel, t;
+	int rel, t;
 
-	if (lookup(f, &h, 0) != 0)
-		return 2;
-	if ((b3_shim = shimtype(h.name)) != 0) {
-		/* the shim runs it: load a program that calls it */
-		b3_shimh = h;
-		b3_shimdrv = fcbdrv(f);
-		h.size = sizeof shimprg;
-		if ((b = malloc(h.size)) == 0)
-			return 1;
-		memcpy((char *)b, (char *)shimprg, sizeof shimprg);
-	} else {
-		if ((fd = hf_open(fcbdrv(f), &h, 0)) < 0)
-			return 2;
-		if (h.size < 28 || (b = malloc(h.size)) == 0)
-			return 1;
-		if (lseek(fd, 0L, 0) != 0 || read(fd, (char *)b, h.size) != h.size) {
-			free(b);
-			return 2;
-		}
-	}
-	if (hi > tpahi || lo < tpalo || hi <= lo + 256) {
-		free(b);
+	if (size < 28 || hi <= lo + 256)
 		return 1;
-	}
 	w = b[0] << 8 | b[1];
 	hl = w == 0x601b ? 36 : 28;
 #define	L(o)	((unsigned long)b[o] << 24 | (unsigned long)b[(o)+1] << 16 | b[(o)+2] << 8 | b[(o)+3])
@@ -908,11 +931,9 @@ pgmld(lpb)
 	rel = (b[26] << 8 | b[27]) == 0;
 	dst = w == 0x601b ? L(28) : tst + ts;
 	bst = w == 0x601b ? L(32) : dst + ds;
-	if ((w != 0x601a && w != 0x601b) || hl + ts + ds + ss > h.size ||
-	    (rel && hl + ts + ds + ss + ts + ds > h.size)) {
-		free(b);
+	if ((w != 0x601a && w != 0x601b) || hl + ts + ds + ss > size ||
+	    (rel && hl + ts + ds + ss + ts + ds > size))
 		return 1;
-	}
 	bp = lo;
 	if (rel) {
 		tl = lo + 256;
@@ -921,10 +942,8 @@ pgmld(lpb)
 	} else {
 		tl = tst, dl = dst, bl = bst;
 	}
-	if (tl < lo + 256 || tl + ts > hi || dl < lo + 256 || dl + ds > hi || bl < lo + 256 || bl + bs > hi - 64) {
-		free(b);
+	if (tl < lo + 256 || tl + ts > hi || dl < lo + 256 || dl + ds > hi || bl < lo + 256 || bl + bs > hi - 64)
 		return 1;
-	}
 	memcpy(B3MEM(tl), b + hl, ts);
 	memcpy(B3MEM(dl), b + hl + ts, ds);
 	memset(B3MEM(bl), 0, bs);
@@ -937,22 +956,17 @@ pgmld(lpb)
 			if (t == 5 && i + 1 < nw) {
 				t = b[img + 2 * i + 3] & 7;
 				delta = t == 1 ? dl - dst : t == 2 ? tl - tst : t == 3 ? bl - bst : 0;
-				if (t == 4) {
-					free(b);
+				if (t == 4)
 					return 3;
-				}
 				b3_put32(v, b3_get32(v) + delta);
 				i++;
 			} else if (t >= 1 && t <= 3) {
 				delta = t == 1 ? dl - dst : t == 2 ? tl - tst : bl - bst;
 				b3_put16(v, b3_get16(v) + delta);
-			} else if (t == 4) {
-				free(b);
+			} else if (t == 4)
 				return 3;
-			}
 		}
 	}
-	free(b);
 	memset(B3MEM(bp), 0, 0x38);
 	b3_put32(bp, lo);
 	b3_put32(bp + 4, hi);
@@ -963,11 +977,58 @@ pgmld(lpb)
 	b3_put32(bp + 24, bl);
 	b3_put32(bp + 28, bs);
 	b3_put32(bp + 32, hi - (bl + bs));
-	FB(bp, 36) = fcbdrv(f);
+	FB(bp, 36) = drv;
 	n = (hi - 4) & ~1L;
 	b3_put32((unsigned long)n, bp);
+	*bpp = bp;
+	*spp = n;
+	return 0;
+}
+
+/* the FCB's program at lo..hi */
+long
+b3_ldfile(f, lo, hi, bpp, spp)
+	unsigned long f, lo, hi, *bpp, *spp;
+{
+	unsigned char *b;
+	struct hfile h;
+	long r;
+	int fd;
+
+	if (lookup(f, &h, 0) != 0)
+		return 2;
+	if ((b3_shim = shimtype(h.name)) != 0) {
+		/* the shim runs it: load a program that calls it */
+		b3_shimh = h;
+		b3_shimdrv = fcbdrv(f);
+		return b3_ldimg(shimprg, (long)sizeof shimprg, lo, hi, fcbdrv(f), bpp, spp);
+	}
+	if ((fd = hf_open(fcbdrv(f), &h, 0)) < 0)
+		return 2;
+	if (h.size < 28 || (b = malloc(h.size)) == 0)
+		return 1;
+	if (lseek(fd, 0L, 0) != 0 || read(fd, (char *)b, h.size) != h.size) {
+		free(b);
+		return 2;
+	}
+	r = b3_ldimg(b, h.size, lo, hi, fcbdrv(f), bpp, spp);
+	free(b);
+	return r;
+}
+
+static long
+pgmld(lpb)
+	unsigned long lpb;
+{
+	unsigned long lo = b3_get32(lpb + 4), hi = b3_get32(lpb + 8), bp, sp;
+	long r;
+
+	if (hi > tpahi || lo < tpalo)
+		return 1;
+	if ((r = b3_ldfile(b3_get32(lpb), lo, hi, &bp, &sp)) != 0)
+		return r;
 	b3_put32(lpb + 12, bp);
-	b3_put32(lpb + 16, (unsigned long)n);
+	b3_put32(lpb + 16, sp);
 	return 0;
 }
 
@@ -1018,6 +1079,17 @@ rsxfn(pb)
 	return 0xff;
 }
 
+/* a process's own TPA, no modules */
+void
+b3_settpa(lo, hi)
+	unsigned long lo, hi;
+{
+	tpalo = lo;
+	tpahi0 = hi;
+	nrsx = 0;
+	rsxlink();
+}
+
 /* warm boot drops flagged modules from the top of the chain */
 static void
 rsxwarm()
@@ -1057,10 +1129,13 @@ scbfn(pb)
 	scb[0x3c] = b3_dma;
 	scb[0x3d] = b3_dma >> 8;
 	scb[0x3e] = dflt;
+	scb[0x43] = curfx;
 	scb[0x44] = user;
 	scb[0x4a] = mltio;
 	scb[0x4b] = errmode;
 	scb[0x57] = 0x80;
+	scb[0x62] = tpahi;
+	scb[0x63] = tpahi >> 8;
 	hf_stamp((long)t, scb + 0x58);
 	tm = localtime(&t);
 	scb[0x5c] = (tm->tm_sec / 10) << 4 | tm->tm_sec % 10;
@@ -1217,6 +1292,7 @@ cpm_bdos3(fn, d1, regs)
 		b3_list((int)(d1 & 0xff));
 		return 0;
 	case 6:
+		b3_conflush();
 		return b3_rawio((int)d1);
 	case 7:
 		return b3_bios(19L, 0L, 0L) & 0xff;
@@ -1230,6 +1306,7 @@ cpm_bdos3(fn, d1, regs)
 		b3_readline(d1 ? d1 : b3_dma);
 		return 0;
 	case 11:
+		b3_conflush();
 		return b3_constat() ? 0xff : 0;
 	case 12:
 		return VERSION;
@@ -1240,6 +1317,8 @@ cpm_bdos3(fn, d1, regs)
 	case 13:
 		b3_relog();
 		dflt = 0;
+		if (b3_dma0)
+			b3_dma = b3_dma0;
 		return 0;
 	case 14:
 		d = d1 & 0xff;
@@ -1263,7 +1342,10 @@ cpm_bdos3(fn, d1, regs)
 	case 29:
 		return rodsk;
 	case 31:
-		return dparams(dflt);
+		a = dparams(dflt);
+		if (d1)
+			memmove(B3MEM(d1), B3MEM(a), 16);
+		return a;
 	case 32:
 		if ((d1 & 0xff) == 0xff)
 			return user;
@@ -1274,8 +1356,6 @@ cpm_bdos3(fn, d1, regs)
 		return 0;
 	case 38:
 	case 39:
-	case 42:
-	case 43:
 	case 48:
 	case 98:
 		hf_flush();
@@ -1297,7 +1377,11 @@ cpm_bdos3(fn, d1, regs)
 		b3_put32(b3_dma, (unsigned long)hf_free(d));
 		return 0;
 	case 47:
+		if ((d1 & 0xff) == 0xff)
+			scb[0x17] |= 0x40;	/* the chained command keeps drive and user */
 		b3_chain();
+		warm();
+	case 143:
 		warm();
 	case 49:
 		return scbfn(d1);
@@ -1369,6 +1453,10 @@ cpm_bdos3(fn, d1, regs)
 	case 152:
 		return parsefn(d1);
 	}
+	if (fn >= 128)
+		return b3_xdos(fn, d1);
+	if ((fn >= 51 && fn <= 97) || (fn >= 113 && fn <= 127))
+		return 0xff;
 	curfcb = d1;
 	switch (fn) {
 	case 15:
@@ -1404,6 +1492,9 @@ cpm_bdos3(fn, d1, regs)
 		return 0;
 	case 99:
 		return ftrunc(d1);
+	case 42:
+	case 43:
+		return reclock(d1, fn == 42);
 	case 102:
 		return stamps(d1);
 	case 103:

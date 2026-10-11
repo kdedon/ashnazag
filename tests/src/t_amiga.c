@@ -563,7 +563,7 @@ ioctls()
 	ae.ae_fastsize = AMIGA_FAST_MAX + 0x100000;
 	t_check("enter_fastmax", E(ioctl(afd, AMIGAIOC_ENTER, &ae)) == EINVAL, "%s", T_ERR);
 	ae.ae_fastsize = 0;
-	ae.ae_flags = 8;
+	ae.ae_flags = 0x80;
 	t_check("enter_flags", E(ioctl(afd, AMIGAIOC_ENTER, &ae)) == EINVAL, "%s", T_ERR);
 	t_check("enter_efault", E(ioctl(afd, AMIGAIOC_ENTER, (char *)1)) == EFAULT, "%s", T_ERR);
 	unlink("/tmp/amiga1");

@@ -8,8 +8,13 @@
  * XATICK.PRG (the layer's process log), the pointer pulls TeraDesk's Desk
  * menu down, a double click opens drive C:'s window, XATICK.PRG keeps
  * counting meanwhile and, topped, gets a key typed on the host, and it
- * catches a signal; the guest's CPU use while all wait.  The layer's and XaAES's logs go to
- * the console.  Skips without guest support, the module, EmuTOS, fVDI
+ * catches a signal; the guest's CPU use while all wait.  XAMISC.PRG's
+ * Pfork, Pvfork, Fpoll and socket results; XABUSY.PRG spinning without
+ * system calls while XATICK.PRG counts on, and its alarm; a TOS program
+ * and a MiNT one (a Unix process) started from XATICK.PRG, each in a
+ * console window taking typed lines.  Without the host line only the
+ * checks needing no screen, pointer or keys run.  The layer's and
+ * XaAES's logs go to the console.  Skips without guest support, the module, EmuTOS, fVDI
  * or the XaAES build.
  */
 #include <sys/types.h>
@@ -31,14 +36,12 @@
 #include "tosio.h"
 #include "t.h"
 
-#define	MD	"/tests/aux/mod.d"
 #define	EMUTOS	"/etc/tos/emutos.img"
 #define	XADIR	"/tos/xaaes"
 #define	FVDIDIR	"/tos/fvdi"
-#define	TDDIR	"/tos/teradesk/TERADESK"
-#define	ACCPRG	"/tos/acc/SESSION.ACC"
 #define	TICKPRG	"/tos/xatick/XATICK.PRG"
-#define	RUNTICK	"run c:\\xatick.prg\r\n"	/* for XAAES.CNF */
+#define	RUNTICK	"run c:\\xatick.prg\r\nrun c:\\xabusy.prg\r\nrun c:\\xamisc.prg\r\n"
+#define	XTDIR	"/tos/xatick"
 #define	CDIR	"/tmp/xac"
 #define	UDIR	"/tmp/xau"
 #define	LOG	CDIR "/MINT/XAMINT.LOG"
@@ -46,6 +49,16 @@
 #define	TICKS	CDIR "/XATICK.TXT"	/* XATICK.PRG's count */
 #define	KEYS	CDIR "/XAKEY.TXT"	/* the last key it got */
 #define	SIGS	CDIR "/XASIG.TXT"	/* the signal it caught */
+#define	BUSY	CDIR "/XABUSY.TXT"	/* 1: XABUSY.PRG spins */
+#define	ALRM	CDIR "/XAALRM.TXT"	/* its alarm's signal */
+#define	MISC	CDIR "/XAMISC.TXT"
+#define	HELLO	CDIR "/XAHELLO.TXT"	/* the line XAHELLO.TOS read */
+#define	MPID	CDIR "/XAMINTP.PID"	/* XAMINTP.TTP's pid */
+#define	MLINE	CDIR "/XAMINTP.TXT"	/* the line it read */
+
+/* the test root's files, else a disk image's TOS environment */
+static char *md = "/tests/aux/mod.d", *starttos = "/tos/bin/starttos";
+static char *tddir = "/tos/teradesk/TERADESK", *accprg = "/tos/acc/SESSION.ACC";
 
 static int hfd = -1, hseq, tfd = -1, ofd = -1, outn;
 static char hrep[128], out[4096];
@@ -292,9 +305,13 @@ cmake()
 	tree(UDIR, (char *)0);
 	tree(XADIR, CDIR);
 	tree(FVDIDIR, CDIR);
-	tree(TDDIR, CDIR "/TERADESK");
-	fcopy(ACCPRG, CDIR "/SESSION.ACC");
+	tree(tddir, CDIR "/TERADESK");
+	fcopy(accprg, CDIR "/SESSION.ACC");
 	fcopy(TICKPRG, CDIR "/XATICK.PRG");
+	fcopy(XTDIR "/XABUSY.PRG", CDIR "/XABUSY.PRG");
+	fcopy(XTDIR "/XAMISC.PRG", CDIR "/XAMISC.PRG");
+	fcopy(XTDIR "/XAMINTP.TTP", CDIR "/XAMINTP.TTP");
+	fcopy(XTDIR "/XAHELLO.TOS", CDIR "/XAHELLO.TOS");
 	if ((fd = open(CDIR "/MINT/XAAES/XAAES.CNF", O_WRONLY | O_APPEND)) >= 0) {
 		write(fd, RUNTICK, strlen(RUNTICK));
 		close(fd);
@@ -316,7 +333,7 @@ start()
 		dup2(p[1], 1);
 		dup2(p[1], 2);
 		putenv("HOME=/tmp");
-		execl("/tos/bin/starttos", "starttos", "-v", "-u", UDIR, "-C", CDIR, (char *)0);
+		execl(starttos, "starttos", "-rom", EMUTOS, "-v", "-u", UDIR, "-C", CDIR, (char *)0);
 		_exit(127);
 	}
 	close(p[1]);
@@ -408,6 +425,77 @@ num(path)
 	return n > 0 ? atol(b) : -1;
 }
 
+/* the number after word in XAMISC.TXT; -99 for none */
+static long
+misc(word)
+	char *word;
+{
+	char b[256], *p;
+	int fd = open(MISC, O_RDONLY), n = 0;
+
+	if (fd >= 0) {
+		n = read(fd, b, sizeof b - 1);
+		close(fd);
+	}
+	b[n > 0 ? n : 0] = 0;
+	for (p = b; (p = strstr(p, word)) != 0; p++)
+		if ((p == b || p[-1] == '\n') && p[strlen(word)] == ' ')
+			return atol(p + strlen(word) + 1);
+	return -99;
+}
+
+/* the file's first line is s */
+static int
+holds(path, s)
+	char *path, *s;
+{
+	char b[64];
+	int fd = open(path, O_RDONLY), n = 0;
+
+	if (fd >= 0) {
+		n = read(fd, b, sizeof b - 1);
+		close(fd);
+	}
+	b[n > 0 ? n : 0] = 0;
+	b[strcspn(b, "\r\n")] = 0;
+	return strcmp(b, s) == 0;
+}
+
+/* the command name of host process pid */
+static char *
+pname(pid)
+	long pid;
+{
+	static prpsinfo_t ps;
+	char path[32];
+	int fd;
+
+	sprintf(path, "/proc/%05ld", pid);
+	ps.pr_fname[0] = 0;
+	if ((fd = open(path, O_RDONLY)) >= 0) {
+		if (ioctl(fd, PIOCPSINFO, &ps) < 0)
+			ps.pr_fname[0] = 0;
+		close(fd);
+	}
+	return ps.pr_fname;
+}
+
+/* host keys, one at a time */
+static void
+type(s)
+	char *s;
+{
+	char req[16];
+
+	for (; *s; s++) {
+		if (*s == '\r')
+			strcpy(req, "key ret");
+		else
+			sprintf(req, "key %c", *s);
+		host(req);
+	}
+}
+
 /*
  * pointer to x, y from the top left, by way of the bottom left corner:
  * crossing the menu bar would pull its menus down
@@ -448,6 +536,7 @@ run()
 {
 	long t0, t1, n0, n1, c0;
 	int i, up = 0, status;
+	struct stat sb;
 
 	start();
 	t0 = t_now_ms();
@@ -460,13 +549,14 @@ run()
 		nap(2000);
 		relay();
 		if (logged(LOG, "AES dispatcher"))
-			up = desktop("desk", 0);
+			up = hfd < 0 || desktop("desk", 0);
 	}
 	relay();
 	t_check("layer_started", logged(LOG, "XaMiNT: root"), "no layer log");
 	t_check("xaaes_init", logged(LOG, "AES dispatcher"), "XaAES did not register its trap");
-	t_check("desktop", up && desktop("desk", 1), "no XaAES desktop after %ld s",
-	    (t_now_ms() - t0) / 1000);
+	if (hfd >= 0)
+		t_check("desktop", up && desktop("desk", 1), "no XaAES desktop after %ld s",
+		    (t_now_ms() - t0) / 1000);
 	for (i = 0; i < 30 && (!alive("DESKTOP") || num(TICKS) < 4); i++) {
 		nap(1000);
 		relay();
@@ -476,12 +566,42 @@ run()
 	t_check("ticker", alive("XATICK") && num(TICKS) > 0, "XATICK.PRG not running, count %ld",
 	    num(TICKS));
 	t_check("signal", num(SIGS) == 29, "XATICK.PRG's SIGUSR1 handler: %ld", num(SIGS));
+	for (i = 0; i < 20 && misc("sock") == -99; i++) {
+		nap(1000);
+		relay();
+	}
+	t_check("pfork", misc("fork") == 43, "XAMISC.PRG fork: %ld", misc("fork"));
+	t_check("pvfork", misc("vfork") == 7, "XAMISC.PRG vfork: %ld", misc("vfork"));
+	t_check("fpoll", misc("poll") == 2, "XAMISC.PRG poll: %ld", misc("poll"));
+	/* without TCP/IP set up, connect finds no address after bind and listen */
+	if (stat("/etc/inet/strcf", &sb) < 0 && misc("sock") == -3)
+		t_skip("sockets", "no network: socket, bind and listen only");
+	else
+		t_check("sockets", misc("sock") == 4, "XAMISC.PRG sock: %ld", misc("sock"));
 	c0 = cputime();
 	t1 = t_now_ms();
 	nap(5000);
 	c0 = (cputime() - c0) * 100 / (t_now_ms() - t1);
 	t_info("cpu", "%ld%% while XaAES, TeraDesk and XATICK.PRG wait", c0);
 	t_check("cpu_quiet", c0 < 50, "the guest took %ld%% of the CPU", c0);
+	/* XABUSY.PRG spins: only preemption keeps the others going */
+	close(creat(CDIR "/XABUSY.GO", 0644));
+	for (i = 0; i < 20 && num(BUSY) != 1; i++) {
+		nap(500);
+		relay();
+	}
+	t_check("busy", num(BUSY) == 1, "XABUSY.PRG not spinning: %ld", num(BUSY));
+	n0 = num(TICKS);
+	nap(4000);
+	relay();
+	n1 = num(TICKS);
+	t_check("preempt", n0 > 0 && n1 >= n0 + 8, "XATICK.PRG counted %ld to %ld beside XABUSY.PRG",
+	    n0, n1);
+	t_check("talarm", num(ALRM) == 14, "XABUSY.PRG's alarm: %ld", num(ALRM));
+	if (hfd < 0) {
+		t_skip("screen", "no host line: no screen, pointer or key checks");
+		goto out;
+	}
 	n0 = num(TICKS);
 	desktop("td", 1);
 	/* Desk menu: TeraDesk's, with the accessory under it, pulled down by the pointer */
@@ -514,9 +634,40 @@ run()
 	host("key a");
 	nap(2000);
 	t_check("keyboard", num(KEYS) == 'a', "XATICK.PRG got key %ld", num(KEYS));
+	/* a TOS program in a console window */
+	shot("precon");
+	host("key t");
+	nap(4000);
+	relay();
+	shot("con");
+	t_check("console_window", differ("precon", "con", 100, 420) && differ("precon", "con", 600, 430),
+	    "no console window at 100,420-600,430");
+	type("ok\r");
+	nap(2000);
+	relay();
+	t_check("tos_console", holds(HELLO, "ok") && logged(LOG, "(XAHELLO) code 5"),
+	    "XAHELLO.TOS read no 'ok' or did not end");
+	/* a MiNT program, a Unix process, in another */
+	ptrto(690, 392);
+	host("click 1");
+	nap(1500);
+	host("key m");
+	for (i = 0; i < 20 && num(MPID) <= 0; i++) {
+		nap(500);
+		relay();
+	}
+	t_check("mint_unix", num(MPID) > 0 && strcmp(pname(num(MPID)), "mintrun") == 0,
+	    "XAMINTP.TTP: pid %ld, '%s'", num(MPID), pname(num(MPID)));
+	type("hi\r");
+	nap(3000);
+	relay();
+	t_check("mint_console", holds(MLINE, "hi") && logged(LOG, "status 300"),
+	    "XAMINTP.TTP read no 'hi' or did not end with 3");
+	shot("cons");
 	t_check("still_running", alive("DESKTOP") && alive("XATICK") && alive("SESSION"),
 	    "a GEM program ended");
 	shot("end");
+out:
 	relay();
 	kill(tpid, SIGTERM);
 	t0 = t_now_ms();
@@ -539,8 +690,14 @@ main()
 		t_skip("all", "kernel has no guest support");
 		return t_done();
 	}
-	if (stat(MD "/tosguest", &sb) < 0 || stat("/dev/tos", &sb) < 0 ||
-	    stat("/tos/bin/starttos", &sb) < 0 || stat(EMUTOS, &sb) < 0) {
+	if (stat("/tos/bin/starttos", &sb) < 0) {
+		md = "/usr/aux/lib/mod.d";
+		starttos = "/usr/bin/starttos";
+		tddir = "/tos/sys/TERADESK";
+		accprg = "/tos/sys/SESSION.ACC";
+	}
+	if (stat(md, &sb) < 0 || stat("/dev/tos", &sb) < 0 ||
+	    stat(starttos, &sb) < 0 || stat(EMUTOS, &sb) < 0) {
 		t_skip("all", "no tosguest module, starttos or EmuTOS on this root");
 		return t_done();
 	}
@@ -548,19 +705,17 @@ main()
 		t_skip("all", "no XaAES or fVDI build on this root");
 		return t_done();
 	}
-	modpath(MD);
+	modpath(md);
 	strcpy(reg.md_modname, "tosguest");
 	reg.md_typedata = (caddr_t)&mj;
-	if (!t_check("register_cdev", modadm(MOD_TY_CDEV, MOD_C_MREG, &reg) == 0 || errno == EEXIST,
+	/* a disk image registers its modules at boot */
+	if ((tfd = open("/dev/tos", O_RDWR)) < 0 &&
+	    !t_check("register_cdev", modadm(MOD_TY_CDEV, MOD_C_MREG, &reg) == 0 || errno == EEXIST,
 	    "modadm: %s", T_ERR))
 		return t_done();
-	if (!t_check("open", (tfd = open("/dev/tos", O_RDWR)) >= 0, "/dev/tos: %s", T_ERR))
+	if (!t_check("open", tfd >= 0 || (tfd = open("/dev/tos", O_RDWR)) >= 0, "/dev/tos: %s", T_ERR))
 		return t_done();
 	hostopen();
-	if (hfd < 0) {
-		t_skip("all", "no host line for screen dumps");
-		return t_done();
-	}
 	run();
 	return t_done();
 }

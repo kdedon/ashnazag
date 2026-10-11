@@ -186,9 +186,9 @@ main(argc, argv)
 	for (i = 0; i < 3; i++)
 		check("read", bdos(20L, F) == 0 && B3MEM(DMA)[127] == 'a' + i);
 	check("read_eof", bdos(20L, F) == 1);
-	B3MEM(F)[33] = 1;
+	B3MEM(F)[35] = 1;
 	check("random_read", bdos(33L, F) == 0 && B3MEM(DMA)[0] == 'b');
-	check("size", bdos(35L, F) == 0 && B3MEM(F)[33] == 3);
+	check("size", bdos(35L, F) == 0 && B3MEM(F)[35] == 3);
 
 	/* names */
 	check("search_txt", nsearch("????????TXT", 0, e) == 3);
@@ -263,12 +263,12 @@ main(argc, argv)
 	check("big_entries", nsearch("BIG     DAT", 0, e) == 3 && e[12] == 7 && e[15] == 128 &&
 	    e[32 + 12] == 15 && e[64 + 12] == 18 && e[64 + 15] == 96);
 	fcb(F, 0, "BIG     DAT");
-	B3MEM(F)[33] = 2000 & 0xff;
+	B3MEM(F)[35] = 2000 & 0xff;
 	B3MEM(F)[34] = 2000 >> 8;
 	check("big_random", bdos(15L, F) == 0 && bdos(33L, F) == 0 && B3MEM(F)[12] == 15 &&
 	    B3MEM(DMA)[0] == (char)((300L * 1024 - 1 - 2000L * 128) & 0x7f));
-	check("big_size", bdos(35L, F) == 0 && B3MEM(F)[33] == (2400 & 0xff) && B3MEM(F)[34] == 2400 >> 8);
-	B3MEM(F)[33] = 9;
+	check("big_size", bdos(35L, F) == 0 && B3MEM(F)[35] == (2400 & 0xff) && B3MEM(F)[34] == 2400 >> 8);
+	B3MEM(F)[35] = 9;
 	B3MEM(F)[34] = 0;
 	check("truncate", bdos(99L, F) == 0 && hsize("big.dat") == 1280);
 

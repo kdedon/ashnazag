@@ -3,7 +3,8 @@
  * others do.  It opens a window and, four times a second, counts in
  * its info line and in C:\XATICK.TXT, so a test reads from Unix that
  * it ran alongside the desktop; the last key it got goes to
- * C:\XAKEY.TXT.  A SIGUSR1 it sends itself at start, caught and
+ * C:\XAKEY.TXT, and keys t and m start C:\XAHELLO.TOS and C:\XAMINTP.TTP
+ * as TOS programs.  A SIGUSR1 it sends itself at start, caught and
  * returned from, writes C:\XASIG.TXT.  Ends on AP_TERM or its close
  * box.
  */
@@ -61,8 +62,13 @@ main(void)
 	for (;;) {
 		ev = evnt_multi(MU_MESAG | MU_TIMER | MU_KEYBD, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 		    0, 0, msg, 250, &d, &d, &d, &d, &key, &d);
-		if (ev & MU_KEYBD)
+		if (ev & MU_KEYBD) {
 			put("C:\\XAKEY.TXT", key & 0xff);
+			if ((key & 0xff) == 't')
+				shel_write(1, 0, 0, "C:\\XAHELLO.TOS", "\0");
+			if ((key & 0xff) == 'm')
+				shel_write(1, 0, 0, "C:\\XAMINTP.TTP", "\0");
+		}
 		if (ev & MU_TIMER) {
 			n++;
 			sprintf(info, " %ld ", n);

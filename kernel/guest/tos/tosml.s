@@ -39,6 +39,8 @@ p_tfd:	.long	-1			| /dev/tos, for socket calls
 	.long	hostcall		| host system calls for guest programs
 	.org	0x80
 p_dtab:	.space	0x1000			| host drives: letter, flags, path; ... 0
+	.globl	p_spawn
+p_spawn: .long	-1			| the spawner's pipe, for Unix programs
 
 init:
 	jsr	vminit

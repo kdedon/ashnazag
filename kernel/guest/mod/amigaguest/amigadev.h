@@ -9,11 +9,17 @@ struct amigacia {
 	unsigned char tod_stopped, tod_latched;
 };
 
+/* the A3000 board's SCSI DMA chip and its WD33C93, with no devices on the bus */
+struct amigascsi {
+	unsigned char on, cntr, sasr, irq, reg[32];
+};
+
 struct amigadev {
 	unsigned short intena, intreq, dmacon, adkcon, line;
 	unsigned long vbl_phase, frames;
 	unsigned char pal;
 	struct amigacia cia[2];
+	struct amigascsi scsi;
 };
 
 #define AMIGA_NOTHER 32
@@ -28,7 +34,7 @@ struct amigacensus {
 };
 
 void amigadev_reset(struct amigadev *);
-void amigadev_configure(struct amigadev *, int);
+void amigadev_configure(struct amigadev *, int, int);
 int amigadev_read(struct amigadev *, unsigned long, int, unsigned long *);
 int amigadev_write(struct amigadev *, unsigned long, int, unsigned long);
 void amigadev_tick(struct amigadev *, unsigned long);

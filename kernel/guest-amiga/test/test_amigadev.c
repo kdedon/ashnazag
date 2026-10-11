@@ -173,7 +173,7 @@ frames(void)
 	put(0xdff180, 2, 0xf42);
 	assert(get(0xdff180, 2) == 0);
 	amigadev_reset(&d);
-	amigadev_configure(&d, 0);
+	amigadev_configure(&d, 0, 0);
 	assert(get(0xdff004, 2) == 0x3200);
 	amigadev_tick(&d, 715909);
 	assert(d.frames == 60 && d.cia[0].tod == 60 && d.cia[1].tod == 15720);
@@ -226,6 +226,34 @@ cia_boot(void)
 	assert(get(0xbfed01, 1) & 8);
 }
 
+static void
+scsi(void)
+{
+	unsigned long v;
+	amigadev_reset(&d);
+	assert(amigadev_read(&d, 0xdd0043, 1, &v) < 0);
+	amigadev_configure(&d, 1, 1);
+	assert(get(0xdd001f, 1) == 1 && get(0xdd0006, 2) == 0);
+	put(0xdd000b, 1, 4);
+	put(0xdd0049, 1, 0);
+	put(0xdd0043, 1, 0x4f);
+	put(0xdd0049, 1, 0x18);
+	put(0xdd0043, 1, 0);
+	assert(get(0xdd0049, 1) == 0x80 && get(0xdd001f, 1) == 0x51);
+	put(0xdff09a, 2, 0xc008);
+	assert(amigadev_ipl(&d) == 2);
+	put(0xdd0049, 1, 0x17);
+	assert(get(0xdd0043, 1) == 1 && get(0xdd0049, 1) == 0);
+	put(0xdff09c, 2, 8);
+	assert(amigadev_ipl(&d) == 0);
+	put(0xdd0049, 1, 0x15);
+	put(0xdd0043, 1, 3);
+	put(0xdd0049, 1, 0x18);
+	put(0xdd0043, 1, 6);
+	put(0xdd0049, 1, 0x17);
+	assert(get(0xdd0043, 1) == 0x42);
+}
+
 int
 main(void)
 {
@@ -236,6 +264,7 @@ main(void)
 	isolation();
 	frames();
 	cia_boot();
-	puts("amigadev: IRQs, timers, isolation, frames, CIA ports/TOD/chaining pass");
+	scsi();
+	puts("amigadev: IRQs, timers, isolation, frames, CIA ports/TOD/chaining, empty SCSI bus pass");
 	return 0;
 }

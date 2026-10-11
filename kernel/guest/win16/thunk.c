@@ -62,7 +62,7 @@ findimpl(mod, name)
 
 	for (ip = impls; *ip; ip++)
 		for (i = *ip; i->im_mod; i++)
-			if (strcmp(i->im_mod, mod) == 0 && strcmp(i->im_name, name) == 0)
+			if (i->im_name[0] == name[0] && strcmp(i->im_name, name) == 0 && strcmp(i->im_mod, mod) == 0)
 				return i->im_fn;
 	return 0;
 }

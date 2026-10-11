@@ -236,13 +236,13 @@ A `-C` folder without its own AUTO boots with the system's fVDI (`/tos/fvdi`), a
 
 ## The CP/M-68K environment
 
-The Quadra image, and the Falcon image built with `TOSENV=1`, also run Digital Research's CP/M-68K 1.3 as an AMIX process. Type:
+The Quadra image, and the Falcon image built with `TOSENV=1`, also run Concurrent CP/M-68K: CP/M 3 and MP/M calls over AMIX processes, with Digital Research's CP/M-68K 1.3 programs on P:. Type:
 
 ```sh
 startcpm
 ```
 
-or pick "CP/M-68K environment" at the xdm session chooser (last in the list) or in the twm and XView menus, which open it in an xterm. Each drive is a directory of plain files: A: is `~/CPM` (user areas 1-15 are subdirectories `1` to `15`), H: your home, M: a private scratch directory emptied at each start, O: `/`, and P: the nine distribution disks' files (`/cpm/dist`, read-only; `X.REL` programs also as `X.68K`). Programs not on the current drive run from P:. Add drives with `X=path` lines in `~/CPM/DRIVES`, `startcpm -d X=path`, or `MOUNT X: path` inside CP/M (`MOUNT` alone lists them). Unix names that don't fit 8.3 show shortened, e.g. `MAKEFI~7.LIN`. CP/M-80 `.COM` and CP/M-86 `.CMD` programs run too, interpreted (no GSX graphics). `EXIT` ends the session, as does end of input. `startcpm -e NAME` uses `~/CPM/NAME/` for A:. The console is your terminal. One session per environment at a time.
+or pick "CP/M-68K environment" at the xdm session chooser (last in the list) or in the twm and XView menus, which open it in an xterm. Each drive is a directory of plain files: A: is `~/CPM` (user areas 1-15 are subdirectories `1` to `15`), H: your home, M: a private scratch directory emptied at each start, O: `/`, and P: the nine distribution disks' files (`/cpm/dist`, read-only; `X.REL` programs also as `X.68K`). Programs not on the current drive run from P:. Add drives with `X=path` lines in `~/CPM/DRIVES`, `startcpm -d X=path`, or `MOUNT X: path` inside CP/M (`MOUNT` alone lists them). Unix names that don't fit 8.3 show shortened, e.g. `MAKEFI~7.LIN`. CP/M-80 `.COM` and CP/M-86 `.CMD` programs run too, interpreted (no GSX graphics). `EXIT` ends the session, as does end of input. `startcpm -e NAME` uses `~/CPM/NAME/` for A:. The console is your terminal; `startcpm -c 1` (to 3) in another terminal joins the running session as another console, with its own command line. Programs can start others that run beside them (MP/M function 144) and share memory, flags, queues and record locks. `startcpm -m MB` sets the memory (16 MB).
 
 The image builds put in the files from DRI's release zip (`media/cpm68k/68kv1_3.zip`, `CPMZIP`); without it there is no CP/M. `images/cpmenv/mkcpm.sh` makes the archive; drive layout in `kernel/guest/cpm/LAYOUT-PLAN.md`.
 

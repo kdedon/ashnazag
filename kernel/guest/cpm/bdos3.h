@@ -63,7 +63,7 @@ struct hfile {
 /* guest memory and the BIOS below the BDOS */
 extern char *b3_mem;
 extern int b3_conin(), b3_const();
-extern void b3_conout(), b3_list(), b3_wboot();
+extern void b3_conout(), b3_list(), b3_wboot(), b3_conflush();
 extern long b3_bios();
 
 /* bdos3.c */
@@ -73,11 +73,20 @@ extern long b3_bios();
 extern int b3_shim, b3_shimdrv, shimtype();
 extern struct hfile b3_shimh;
 extern long cpm_bdos3();
-extern void b3_init(), b3_relog();
+extern void b3_init(), b3_relog(), b3_settpa();
 extern unsigned long b3_get16(), b3_get32();
 extern void b3_put16(), b3_put32();
 extern int b3_retcode;
-extern unsigned long b3_dma;
+extern unsigned long b3_dma, b3_dma0;
+extern long b3_ldimg(), b3_ldfile();
+
+/* the system around the BDOS: processes, record locks */
+#define	LK_UNLOCK	0
+#define	LK_LOCK		1
+#define	LK_WRITE	2		/* 8 when another process holds the record */
+#define	LK_CLOSE	3		/* this process's locks on the file go */
+extern int *b3_nlocks;		/* locks held in the environment */
+extern long b3_xdos(), b3_hlock();
 
 /* con3.c */
 extern int b3_column, b3_conwidth, b3_conpage, b3_conline, b3_pagemode;

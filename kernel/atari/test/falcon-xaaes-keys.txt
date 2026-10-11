@@ -1,0 +1,8 @@
+wait login:
+type root\n
+wait # 
+type /usr/aux/lib/auxreg /usr/aux/lib/mod.d 54 56; echo auxreg-rc=$?\n
+wait auxreg-rc=
+type /tests/t_xaaes; echo xaaes-rc=$?\n
+wait xaaes-rc=
+debug quit 0

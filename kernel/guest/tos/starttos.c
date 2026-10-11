@@ -24,12 +24,17 @@
  * folder lacks, such as AUTO, come from the system's fVDI folder, so
  * it boots with fVDI unless -M or -S asks for the ST screen.
  * A second child, the sound pump, plays the guest's DMA sound on the
- * host's sound service; with -P the machine's own sound is used.
+ * host's sound service; with -P the machine's own sound is used.  A
+ * third, the spawner, runs the MiNT command-line programs the guest
+ * starts as Unix processes under mintrun, each on a pseudo-terminal.
  */
 
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <sys/wait.h>
+#include <sys/ioctl.h>
+#include <termio.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -350,6 +355,153 @@ sndstart()
 }
 
 /* C: from the environment, locked for this session */
+/* ---- the spawner ---- */
+
+static long
+readn(fd, b, n)
+	int fd;
+	char *b;
+	long n;
+{
+	long r, got = 0;
+
+	while (got < n) {
+		r = read(fd, b + got, (unsigned)(n - got));
+		if (r <= 0)
+			return got;
+		got += r;
+	}
+	return got;
+}
+
+/*
+ * One request: directory, program and arguments, each ending in a zero,
+ * then an empty one.  The program runs under mintrun on a new
+ * pseudo-terminal; the guest gets {1, pid, 0} and the master, or
+ * {1, -errno, 0}.
+ */
+static void
+spawn1(fd, req, n)
+	int fd;
+	char *req;
+	long n;
+{
+	static char *av[66];
+	extern char *ptsname();
+	struct winsize ws;
+	long rec[3];
+	char *dir = req, *s, *name;
+	int m, sl, i, ac = 0;
+	pid_t me = getpid(), pid;
+
+	av[ac++] = "mintrun";
+	for (s = req + strlen(req) + 1; s < req + n && *s && ac < 65; s += strlen(s) + 1)
+		av[ac++] = s;
+	av[ac] = 0;
+	rec[0] = 1;
+	rec[2] = 0;
+	if (ac < 2 || (m = open("/dev/ptmx", O_RDWR)) < 0) {
+		rec[1] = -(ac < 2 ? EINVAL : errno);
+		write(fd, (char *)rec, sizeof rec);
+		return;
+	}
+	grantpt(m);
+	if (getpid() != me)
+		_exit(1);
+	unlockpt(m);
+	name = ptsname(m);
+	if (!name || (pid = fork()) < 0) {
+		rec[1] = -EAGAIN;
+		close(m);
+		write(fd, (char *)rec, sizeof rec);
+		return;
+	}
+	if (pid == 0) {
+		setsid();
+		if ((sl = open(name, O_RDWR)) < 0)
+			_exit(127);
+		ioctl(sl, I_PUSH, "ptem");
+		ioctl(sl, I_PUSH, "ldterm");
+		ioctl(sl, I_PUSH, "ttcompat");
+		memset((char *)&ws, 0, sizeof ws);
+		ws.ws_row = 24;
+		ws.ws_col = 80;
+		ioctl(sl, TIOCSWINSZ, &ws);
+		for (i = 0; i < 3; i++)
+			dup2(sl, i);
+		for (i = 3; i < 256; i++)
+			close(i);
+		chdir(dir);
+		putenv("TERM=vt52");
+		putenv("COLUMNS=80");
+		putenv("LINES=24");
+		signal(SIGPIPE, SIG_DFL);
+		execv("/tos/bin/mintrun", av);
+		execv("/usr/bin/mintrun", av);
+		_exit(127);
+	}
+	rec[1] = pid;
+	write(fd, (char *)rec, sizeof rec);
+	ioctl(fd, I_SENDFD, m);
+	close(m);
+}
+
+/* requests until the guest goes; each program's end reported */
+static void
+spawner(fd)
+	int fd;
+{
+	static char req[2048 + 4];
+	struct pollfd p;
+	long n, rec[3];
+	int st;
+	pid_t pid;
+
+	for (;;) {
+		p.fd = fd;
+		p.events = POLLIN;
+		p.revents = 0;
+		n = poll(&p, 1L, 250);
+		while ((pid = waitpid((pid_t)-1, &st, WNOHANG)) > 0) {
+			rec[0] = 2;
+			rec[1] = pid;
+			rec[2] = st;
+			write(fd, (char *)rec, sizeof rec);
+		}
+		if (n <= 0)
+			continue;
+		if (p.revents & (POLLHUP | POLLERR | POLLNVAL))
+			break;
+		if (readn(fd, (char *)&n, 4L) != 4 || n <= 0 || n > 2048 || readn(fd, req, n) != n)
+			break;
+		req[n] = 0;
+		spawn1(fd, req, n);
+	}
+	_exit(0);
+}
+
+static void
+spawnstart()
+{
+	int s[2];
+	pid_t pid;
+
+	if (pipe(s) < 0)
+		return;
+	if ((pid = fork()) == 0) {
+		close(s[0]);
+		close(tfd);
+		signal(SIGPIPE, SIG_IGN);
+		spawner(s[1]);
+	}
+	close(s[1]);
+	if (pid < 0) {
+		close(s[0]);
+		return;
+	}
+	put32((unsigned long)CART + 0x1080, (unsigned long)s[0]);
+}
+
 static int
 envsetup()
 {
@@ -519,6 +671,7 @@ main(argc, argv)
 	if (disk)
 		drivec();
 	drives();
+	spawnstart();
 
 	/* warm-boot system variables: TOS skips memory sizing */
 	put32(0x420L, 0x752019f3L);		/* memvalid */
