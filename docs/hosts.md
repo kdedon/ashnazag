@@ -51,7 +51,7 @@ BlueSCSI) in `/etc/inet/network-config`.
 
 ```sh
 PLATFORM=amiga sh kernel/build.sh       # kernel/build/unix-amiga
-sh kernel/amiga/stage.sh                # environment modules: kernel/build/amiga/package
+sh kernel/amiga/stage.sh                # display module, environment packages: kernel/build/amiga/package
 PKG=kernel/build/amiga/package UNIXBOOT=unix_boot040 OPENPCI=DIR \
   sh kernel/amiga/test/mkhdf.sh [kernel [outdir]]
 ```

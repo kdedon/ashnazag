@@ -6,9 +6,8 @@
 #
 #   sh images/winenv/mkwin.sh outdir
 #
-# Out: outdir/win.cpio (usr/bin/startwin, owned by root) and
-# outdir/guest.cpio (guest's ~/WIN16).  Without the AMIX toolchain both
-# archives are empty.
+# Out: outdir/root/usr/bin/startwin and outdir/guest/home/guest/WIN16.
+# Without the AMIX toolchain both are empty.
 set -e
 D=$(cd "$(dirname "$0")" && pwd)
 AUX=$(cd "$D/../.." && pwd)
@@ -17,9 +16,9 @@ SYS=$AUX/toolchain/amix/m68k-cbm-sysv4/sysroot
 O=$AUX/tests/build/obj
 case $OUT in ""|/) echo "usage: mkwin.sh outdir" >&2; exit 2 ;; esac
 rm -rf "$OUT"
-mkdir -p "$OUT/stage" "$OUT/guest"
+mkdir -p "$OUT/root" "$OUT/guest"
 OUT=$(cd "$OUT" && pwd)
-S=$OUT/stage
+S=$OUT/root
 if [ -x "$AUX/toolchain/amix/bin/m68k-cbm-sysv4-gcc" ]; then
 	if [ ! -f "$O/libextra.a" ]; then
 		mkdir -p "$O"; rm -rf "$O/extra"; mkdir -p "$O/extra"
@@ -36,8 +35,3 @@ if [ -x "$AUX/toolchain/amix/bin/m68k-cbm-sysv4-gcc" ]; then
 else
 	echo "[skip] Win16: no AMIX toolchain"
 fi
-chmod 755 "$S"
-(cd "$S" && find . -depth -print | cpio -o -H newc -R 0:3 --quiet) > "$OUT/win.cpio"
-(cd "$OUT/guest" && find home/guest/WIN16 -print 2> /dev/null |
-	cpio -o -H newc -R 100:1 --quiet) > "$OUT/guest.cpio"
-rm -rf "$S" "$OUT/guest"

@@ -1,0 +1,12 @@
+#!/bin/sh
+# The environment module path: this host's own builds first.
+case `uname -m` in
+Atari*)		d=/usr/aux/lib/mod.atari ;;
+A[0-9]*|[Aa]miga*)	d=/usr/aux/lib/mod.amiga ;;
+*)		d= ;;
+esac
+if [ -n "$d" ] && [ -d "$d" ]; then
+	echo "$d:/usr/aux/lib/mod.d"
+else
+	echo /usr/aux/lib/mod.d
+fi

@@ -8,7 +8,8 @@
 # Builds the server, client libraries, clients and package as needed.  BOOTX=1 boots to xdm (/etc/default/x).
 # XPKGS="manx xview" also installs those
 # packages (x11/NAME/build.sh, after build.sh clibs) as pkgadd would.
-# APKG=dir installs apkg from the datastreams getapkg.sh fetched.
+# APKG=dir installs apkg from the datastreams getapkg.sh fetched,
+# ENVPKGS the environment packages named (images/envpkg/mkenvpkgs.sh).
 # Tape segments from $AMIX_TAPE or, for 02 03 07 10, the live diskroot's
 # build/tape.
 set -e
@@ -47,9 +48,7 @@ ln -s "$X11W/pkg" "$R/x11pkg"
 if [ -n "$MACPKG" ]; then
 	ln -s "$MACPKG" "$R/macpkg"
 	(cd "$R" && patch -s -p4 < "$AUX/images/macenv/mac-diskroot.diff")
-	[ -f "$MACPKG/rom" ] || sed -i '\|^f /etc/aux/rom	|d' "$R/root.manifest"
-	[ -f "$MACPKG/a201.cpio" ] || sed -i '/a201\|mac6/d' "$R/root.manifest"
-	[ ! -f "$MACPKG/network.manifest" ] || cat "$MACPKG/network.manifest" >> "$R/root.manifest"
+	cat "$MACPKG/image.manifest" >> "$R/root.manifest"
 fi
 pk=
 for p in $XPKGS; do
@@ -58,6 +57,7 @@ for p in $XPKGS; do
 	pk="$pk $f"
 done
 [ -z "$APKG" ] || pk="$pk $(ls "$APKG"/APKGENG-*.pkg "$APKG"/APKG-*.pkg)"
+[ -z "$ENVPKGS" ] || pk="$pk $ENVPKGS"
 [ -z "$pk" ] || python3 "$R/pkg/pkginst.py" "$X11W/xpkgs" $pk >> "$R/root.manifest"
 # apkg on the stock pkgadd and pkgrm (the engine's pkginstall faults);
 # the repository is a name-based virtual host, found through the hosts file
@@ -67,6 +67,13 @@ if [ -n "$APKG" ]; then
 		-e 's,^# pkgrm=/usr/sbin/pkgrm$,pkgrm=/usr/sbin/pkgrm,' "$c"
 	[ "$(grep -c '^pkg\(add\|rm\)=/usr/sbin/' "$c")" = 2 ] ||
 		{ echo "[FAIL] apkg.conf changed"; exit 1; }
+	# the environment packages' admin file: no questions, needed packages kept
+	case $ENVPKGS in
+	*envcore*)
+		sed -i 's,^admin=/var/apkg/admin$,admin=/var/sadm/install/admin/envpkg,' "$c"
+		grep -q '^admin=/var/sadm/install/admin/envpkg$' "$c" ||
+			{ echo "[FAIL] apkg.conf changed"; exit 1; } ;;
+	esac
 	ip=$(getent hosts pkg.amigaux.org | awk '{ print $1; exit }')
 	[ -n "$ip" ] || { echo "[FAIL] cannot resolve pkg.amigaux.org"; exit 1; }
 	(cd "$R/build" && cpio -i --quiet --to-stdout etc/inet/hosts < tape/02) > "$X11W/xpkgs/hosts"

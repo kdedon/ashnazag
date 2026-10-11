@@ -1,0 +1,4 @@
+i pkginfo=pkginfo
+i depend=depend
+i preremove=preremove
+c none /dev/cpm 59 0 0660 root display

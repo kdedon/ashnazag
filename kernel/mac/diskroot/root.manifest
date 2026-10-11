@@ -71,6 +71,8 @@ f /etc/ioctl.syscon 644 0 3 etc/ioctl.syscon
 f /etc/inittab	644 0 3 etc/inittab
 f /etc/sysinit	744 0 3 etc/sysinit
 f /etc/TIMEZONE	444 0 3 etc/TIMEZONE
+# pkgrm refuses a package others need: going on past the check faults
+f /var/sadm/install/admin/default 444 0 3 etc/admin-default
 f /etc/nodename	644 0 3 etc/nodename
 f /etc/vfstab	744 0 3 build/vfstab
 f /etc/profile	644 0 3 build/profile

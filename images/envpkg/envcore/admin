@@ -1,0 +1,10 @@
+instance=overwrite
+partial=nocheck
+runlevel=nocheck
+idepend=quit
+rdepend=quit
+space=quit
+setuid=nocheck
+conflict=nocheck
+action=nocheck
+basedir=default

@@ -1,0 +1,8 @@
+i pkginfo=pkginfo
+i depend=depend
+i postinstall=postinstall
+i preremove=preremove
+f none /etc/rc2.d/S05tos 0744 root sys
+f none /etc/tos/emutos.img 0444 root sys
+f none /etc/tos/tosml.img 0444 root sys
+c none /dev/tos 56 0 0660 root display

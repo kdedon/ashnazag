@@ -4,12 +4,13 @@
 #
 #   pkginst.py outdir stream.pkg ...  > manifest lines
 #
-# One package per stream, class "none", no install scripts; files with
-# absolute paths.  outdir receives the files the manifest lines name.
+# One package per stream, class "none"; files with absolute paths.  Install
+# scripts are kept for pkgrm, not run: what they do must also happen at
+# boot.  outdir receives the files the manifest lines name.
 import os, sys
 
 UID = {'root': 0, 'daemon': 1, 'bin': 2, 'sys': 3, 'adm': 4}
-GID = {'root': 0, 'other': 1, 'bin': 2, 'sys': 3, 'adm': 4}
+GID = {'root': 0, 'other': 1, 'bin': 2, 'sys': 3, 'adm': 4, 'display': 25}
 INSTDATE = 'Nov 29 1992 00:00'	# the root's fixed build time
 
 def die(msg):
@@ -65,8 +66,10 @@ def main():
 			if not f:
 				continue
 			if f[1] == 'i':
-				if f[2] != 'pkginfo':
-					die('%s: install file %s' % (pkg, f[2]))
+				if f[2] not in ('pkginfo', 'pkgmap'):
+					src = os.path.join(out, pkg + '.' + f[2])
+					open(src, 'wb').write(files['install/' + f[2]][1])
+					print('f %s/install/%s 644 0 0 %s' % (sav, f[2], src))
 				continue
 			part, t, cls, path = f[:4]
 			if cls != 'none':
@@ -76,6 +79,10 @@ def main():
 				print('%s %s %s' % ('l' if t == 's' else 'h', p, target))
 				entry = '%s=%s %s none' % (p, target, t)
 				path = p
+			elif t in 'cb':
+				mj, mn, mode, own, grp = f[4:9]
+				print('%s %s %s %d %d %s %s' % (t, path, mode, UID[own], GID[grp], mj, mn))
+				entry = '%s %s none %s %s %s %s %s' % (path, t, mj, mn, mode, own, grp)
 			else:
 				mode, own, grp = f[4:7]
 				m = '%s %s %d %d' % (path, mode, UID[own], GID[grp])

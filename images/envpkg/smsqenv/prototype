@@ -1,0 +1,5 @@
+i pkginfo=pkginfo
+i depend=depend
+f none /smsqe/SMSQE.PRG 0444 root sys
+f none /smsqe/SMSQLOAD.PRG 0444 root sys
+f none /smsqe/readme.txt 0444 root sys

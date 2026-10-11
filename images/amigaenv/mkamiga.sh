@@ -4,50 +4,25 @@ umask 077
 
 D=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 AUX=$(cd "$D/../.." && pwd)
-if [ "$#" -lt 1 ] || [ "$#" -gt 4 ]; then
-	echo "usage: mkamiga.sh new-output-directory [AmigaOS-CD.iso [module-directory [Picasso96.lha|Picasso96-directory]]]" >&2
+if [ "$#" -lt 1 ] || [ "$#" -gt 3 ]; then
+	echo "usage: mkamiga.sh new-output-directory [AmigaOS-CD.iso [Picasso96.lha|Picasso96-directory]]" >&2
 	exit 2
 fi
 OUT=$1
 ISO=${2:-$AUX/AmigaOS3.2CD.iso}
-MODULES=${3:-}
-PICASSO=${4:-$AUX/Picasso96.lha}
+PICASSO=${3:-$AUX/Picasso96.lha}
 # MUI, AmiSSL and IBrowse, installed as their installers would
 AMIGAAPPS=${AMIGAAPPS-$AUX/media/amiga}
-[ "$#" -lt 4 ] || [ -e "$PICASSO" ] || { echo "missing Picasso96 archive: $PICASSO" >&2; exit 1; }
+[ "$#" -lt 3 ] || [ -e "$PICASSO" ] || { echo "missing Picasso96 archive: $PICASSO" >&2; exit 1; }
 [ -f "$ISO" ] || { echo "missing CD: $ISO" >&2; exit 1; }
-if [ -n "$MODULES" ]; then
-	for m in guestcore amigaguest; do
-		[ -f "$MODULES/$m" ] || { echo "missing module: $MODULES/$m" >&2; exit 1; }
-	done
-fi
 mkdir -- "$OUT"
 OUT=$(cd "$OUT" && pwd)
 nice -n 19 python3 "$AUX/tools/amiga/media.py" extract "$ISO" "$OUT/media" > "$OUT/extraction.json"
-sh "$AUX/kernel/guest/amiga/build.sh" "$OUT/bin"
 sh "$AUX/kernel/guest/amiga/rtg/build.sh" "$OUT/rtg"
 cp "$AUX/kernel/guest/amiga/rtg/README.md" "$AUX/kernel/guest/amiga/rtg/NOTICE" "$OUT/rtg/"
 
-TC=$AUX/toolchain/amix
-SYS=$TC/m68k-cbm-sysv4/sysroot
-O=$OUT/registration
-mkdir "$O"
-nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -Wall -D__STDC__=0 \
-	-I"$AUX/kernel/dlm/include" -I"$AUX/kernel/guest/include" \
-	-c "$D/amigareg.c" -o "$O/amigareg.o"
-for s in modpath modadm; do
-	"$TC/bin/m68k-cbm-sysv4-as" -o "$O/$s.o" "$AUX/kernel/dlm/libmod/$s.s"
-done
-"$TC/bin/m68k-cbm-sysv4-ld" -o "$OUT/bin/amigareg" \
-	"$SYS/usr/ccs/lib/crt1.o" "$SYS/usr/ccs/lib/crti.o" "$O/amigareg.o" \
-	"$O/modpath.o" "$O/modadm.o" "$SYS/usr/lib/libc.so.1" "$SYS/usr/ccs/lib/crtn.o"
-
 ROOT=$OUT/root
-cp "$D/installmig" "$OUT/"
-mkdir -p "$ROOT/usr/bin" "$ROOT/usr/sbin" "$ROOT/etc/amiga" "$ROOT/amiga/media"
-cp "$OUT/bin/startmig" "$ROOT/usr/bin/"
-cp "$D/makeamiga" "$ROOT/usr/bin/"
-cp "$OUT/bin/amigareg" "$ROOT/usr/sbin/"
+mkdir -p "$ROOT/etc/amiga" "$ROOT/amiga/media"
 cp "$OUT/media/ROM/kicka4000.rom" "$OUT/media/ROM/kicka3000.rom" "$ROOT/etc/amiga/"
 cp "$OUT/media/ADF/"*.adf "$ROOT/amiga/media/"
 cp "$OUT/media/manifest.json" "$ROOT/amiga/media/"
@@ -85,12 +60,5 @@ if [ -f "$PICASSO" ] || [ -d "$PICASSO/Picasso96Install" ]; then
 fi
 if [ -n "$AMIGAAPPS" ] && [ -f "$AMIGAAPPS/SHA256SUMS" ]; then
 	nice -n 19 python3 "$AUX/tools/amiga/apps.py" "$AMIGAAPPS" "$ROOT/amiga/sys"
-fi
-if [ -n "$MODULES" ]; then
-	mkdir -p "$ROOT/usr/lib/amiga/mod.d"
-	cp "$MODULES/guestcore" "$MODULES/amigaguest" "$ROOT/usr/lib/amiga/mod.d/"
-	if [ -f "$MODULES/../kernel.sha256" ]; then
-		cp "$MODULES/../kernel.sha256" "$OUT/kernel.sha256"
-	fi
 fi
 printf '%s\n' 'Local staging complete; see images/amigaenv/README.md for installation and limits.'

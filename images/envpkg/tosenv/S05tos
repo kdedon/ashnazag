@@ -1,0 +1,6 @@
+# The TOS environment's module: /dev/tos (56).
+PATH=/usr/bin:/sbin:/usr/sbin
+case $1 in
+'start')
+	modadmin -r cdev tosguest 56 > /dev/null ;;
+esac

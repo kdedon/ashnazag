@@ -19,18 +19,21 @@
 # (e.g. TESTS=t_page).  MODS: a module directory (guest/build.sh -m's
 # mod.d) to put in /tests/mod.d, with /tests/auxreg, /dev/uinter0 and
 # /dev/tos.  TOSOUT: mktos.sh's outdir; starttos and the cartridge go in /tests.
+# TOSENV and MACENV install the environment packages
+# (images/envpkg/mkenvpkgs.sh), their modules the Mac kernel's (MACKERNEL,
+# default kernel/build/unix-mac.elf, else this one) with this kernel's
+# where they differ.
 # TESTROOT: a directory whose tree goes on the root too (e.g. tests/build/root's
 # tos/xatick for t_xaaes).
 # X11: x11/package.sh's pkg directory, or 1 for the Atari X work tree
 # (images/work/x11-atari), built or refreshed here; X goes on the root with the AMIX
 # clients (tape segments 13, 14) and the server options in etc/xoptions.
 # BOOTX=1 boots to xdm.  XPKGS="xview": packages built next to X11 (x11/NAME/build.sh).
-# TOSENV=1: the TOS environment (images/tosenv/mktos.sh) with starttos,
-# and the guest modules built for this kernel, registered at boot; with
-# DRI's release (CPMZIP), CP/M-68K too (images/cpmenv/mkcpm.sh).
+# TOSENV=1: the TOS, Win16 and, with DRI's release (CPMZIP), CP/M-68K
+# environments; CUBASE (mkcubase.sh's) adds Cubase to guest's ~/TOS.
 # MACENV=1: System 6 (A/UX 2.0.1's startmac, System 6.0.7, from CD201,
 # default media/AUX_2.0.1_CD_Image.iso) in its own root /a201 on the ROM
-# file ROM6 (default the IIci's), with startmac6 and the guest modules.
+# file ROM6 (default the IIci's), with startmac6.
 # With X11, TOSENV or MACENV, guest is in group display.
 # /etc/motd lists what the image holds and how to start it.
 # The tape segments come from the Mac build or $AMIX_TAPE.
@@ -98,6 +101,7 @@ printf 'TZ=%s\nexport TZ\n' "$ZONE" > "$W/src/build/TIMEZONE"
   echo 'f /etc/inittab 644 0 3 build/inittab'
   echo 'f /etc/inet/network-config 644 0 3 atari/network-config'
   echo 'f /etc/vfstab 744 0 3 vfstab'; } > "$W/root.manifest"
+pk=
 if [ "$X11" = 1 ]; then
 	X11W=${X11W:-$(cd "$K/.." && pwd)/images/work/x11-atari}
 	[ -f "$X11W/src/xc/programs/Xserver/Xamix" ] || PLATFORM=atari X11W=$X11W sh "$K/../x11/build.sh"
@@ -132,54 +136,31 @@ if [ -n "$X11" ]; then
 		sed 's/^BOOT=.*/BOOT=xdm/' "$X11/xdm/default-x" > "$W/src/build/default-x"
 		echo 'f /etc/default/x 644 0 3 build/default-x' >> "$W/root.manifest"
 	fi
-	pk=
 	for p in $XPKGS; do
 		f=$X11/../$p/$(echo "$p" | tr a-z A-Z).pkg
 		[ -f "$f" ] || { echo "[FAIL] no $f (x11/$p/build.sh)"; exit 1; }
 		pk="$pk $f"
 	done
-	[ -z "$pk" ] || $PY "$DR/pkg/pkginst.py" "$W/xpkgs" $pk >> "$W/root.manifest"
 fi
 E=$W/env
+EP=$E/envpkg/pkgs/env
 if [ -n "$TOSENV$MACENV" ]; then
 	rm -rf "$E"
 	mkdir -p "$E"
-	sh "$K/guest/build.sh" -m "$KERNEL" "$E/guest" > "$E/guest.log" 2>&1 ||
-		{ tail "$E/guest.log"; exit 1; }
-	{ echo 'd /usr/aux 755 0 3'
-	  echo 'd /usr/aux/lib 755 0 3'
-	  echo 'd /usr/aux/lib/mod.d 755 0 3'
-	  for m in guestcore auxcore auxexec uinter tosguest cpmguest; do
-		echo "f /usr/aux/lib/mod.d/$m 644 0 3 $E/guest/mod.d/$m"
-	  done
-	  echo 'f /usr/aux/lib/auxreg 755 0 3 build/auxreg'
-	  echo 'f /etc/rc2.d/S05aux 744 0 3 atari/S05aux'
-	  echo 'c /dev/uinter0 660 0 25 54 0'
-	  echo 'c /dev/tos 660 0 25 56 0'
-	  echo 'c /dev/cpm 660 0 25 59 0'; } >> "$W/root.manifest"
+	MK=${MACKERNEL:-$K/build/unix-mac.elf}
+	[ -f "$MK" ] || MK=$KERNEL
+	ATARIKERNEL=$KERNEL KERNEL=$MK AMIGAKERNEL=/nonexistent \
+		sh "$K/../images/envpkg/mkenvpkgs.sh" "$E/envpkg" > "$E/envpkg.log" 2>&1 ||
+		{ tail "$E/envpkg.log"; exit 1; }
+	pk="$pk $EP/envcore-1.0.pkg"
+	[ "$MACENV" != 1 ] || pk="$pk $EP/macenv-1.0.pkg"
+	if [ "$TOSENV" = 1 ]; then
+		for p in tosenv cpmenv win16env; do [ ! -f "$EP/$p-1.0.pkg" ] || pk="$pk $EP/$p-1.0.pkg"; done
+		[ ! -d "$E/envpkg/dri/cpm" ] || printf 't\t/cpm\t0\t3\t%s\n' "$E/envpkg/dri/cpm" >> "$W/root.manifest"
+	fi
 fi
-if [ "$TOSENV" = 1 ]; then
-	sh "$K/../images/tosenv/mktos.sh" "$E/tos" > "$E/tos.log" 2>&1 ||
-		{ tail "$E/tos.log"; exit 1; }
-	sh "$K/../images/cpmenv/mkcpm.sh" "$E/cpm" > "$E/cpm.log" 2>&1 ||
-		{ tail "$E/cpm.log"; exit 1; }
-	sh "$K/../images/winenv/mkwin.sh" "$E/win" > "$E/win.log" 2>&1 ||
-		{ tail "$E/win.log"; exit 1; }
-	# guest's folders go on /home, which is mounted over the root's
-	mkdir -p "$E/gt"
-	for a in tos win; do (cd "$E/gt" && cpio -id --quiet < "$E/$a/guest.cpio"); done
-	(cd "$E/gt/home" && find guest/TOS guest/WIN16 2> /dev/null |
-		cpio -o -H newc -R 100:1 --quiet) > "$E/homeguest.cpio"
-	rm -rf "$E/gt"
-	{ echo 'd /etc/tos 755 0 3'
-	  echo "f /etc/tos/emutos.img 444 0 3 $E/tos/emutos.img"
-	  echo "f /etc/tos/tosml.img 444 0 3 $E/tos/tosml.img"
-	  for f in starttos mintrun maketos tosdrive; do echo "f /usr/bin/$f 755 0 3 $E/tos/$f"; done
-	  echo "a $E/tos/sys.cpio"
-	  echo "a $E/tos/games.cpio"
-	  echo "a $E/cpm/cpm.cpio"
-	  echo "a $E/win/win.cpio"; } >> "$W/root.manifest"
-fi
+# one package database for X's and the environments' packages
+[ -z "$pk" ] || $PY "$DR/pkg/pkginst.py" "$W/xpkgs" $pk >> "$W/root.manifest"
 if [ "$MACENV" = 1 ]; then
 	R6=$E/mac6/a201
 	sh "$K/../images/macenv/mksys6.sh" "${CD201:-$K/../media/AUX_2.0.1_CD_Image.iso}" "$R6" \
@@ -189,11 +170,9 @@ if [ "$MACENV" = 1 ]; then
 	# root runs the Mac: nothing in its root writable by others
 	chmod -R go-w "$R6"
 	chmod 1777 "$R6/tmp"
-	(cd "$E/mac6" && find a201 | LC_ALL=C sort | cpio -o -H newc -R 0:3 --quiet) > "$E/a201.cpio"
-	{ echo "a $E/a201.cpio"
+	{ printf 't\t/a201\t0\t3\t%s\n' "$R6"
 	  echo 'c /a201/dev/uinter0 660 0 25 54 0'
-	  echo 'c /a201/dev/console 620 0 7 0 0'
-	  echo 'f /usr/bin/startmac6 755 0 3 atari/startmac6'; } >> "$W/root.manifest"
+	  echo 'c /a201/dev/console 620 0 7 0 0'; } >> "$W/root.manifest"
 fi
 if [ -n "$X11$TOSENV$MACENV" ]; then
 	T2=${AMIX_TAPE:-$W/src/build/tape}
@@ -202,7 +181,7 @@ if [ -n "$X11$TOSENV$MACENV" ]; then
 	grep -q '^other:' "$W/src/build/group.display" || { echo "[FAIL] no group file on tape 02"; exit 1; }
 	echo 'f /etc/group 444 0 3 build/group.display' >> "$W/root.manifest"
 fi
-if [ -n "$MODS$TOSENV$MACENV" ]; then
+if [ -n "$MODS" ]; then
 	TC=$K/../toolchain/amix SYS=$K/../toolchain/amix/m68k-cbm-sysv4/sysroot
 	for f in "$K"/dlm/libmod/*.s; do
 		"$TC/bin/m68k-cbm-sysv4-as" -o "$W/src/build/lm_${f##*/}.o" "$f"
@@ -234,17 +213,17 @@ if [ -n "$TESTS" ]; then
 		echo 'c /dev/uinter0 666 0 3 54 0'
 		echo 'c /dev/tos 660 0 25 56 0'
 		for m in "$MODS"/*; do echo "f /tests/mod.d/${m##*/} 644 0 3 $m"; done
-		[ -z "$TOSOUT" ] || { echo "f /tests/starttos 755 0 3 $TOSOUT/starttos"
-			echo "f /tests/tosml.img 644 0 3 $TOSOUT/tosml.img"; }
+		[ -z "$TOSOUT" ] || { echo "f /tests/starttos 755 0 3 $TOSOUT/root/usr/bin/starttos"
+			echo "f /tests/tosml.img 644 0 3 $TOSOUT/root/etc/tos/tosml.img"; }
 	  fi; } >> "$W/root.manifest"
 fi
 { printf '\tSystem V Release 4.0\t\tAsh Nazag\n\n'
   [ "$MACENV" != 1 ] || echo ' Mac    startmac6       System 6.0.7 (root); leave with Special > Logout'
   [ "$TOSENV" != 1 ] || { echo ' TOS    starttos        EmuTOS and TeraDesk; -P this machine'"'"'s TOS, -M mono'
-	cpio -it < "$E/cpm/cpm.cpio" 2> /dev/null | grep -q CCP.68K &&
+	[ -f "$EP/cpmenv-1.0.pkg" ] &&
 		printf '%s\n' ' CP/M   startcpm        Concurrent CP/M-68K; EXIT ends it, -c N joins' \
 		"                        A: ~/CPM, H: home, M: temp, O: /, P: DRI's programs"
-	cpio -it < "$E/win/win.cpio" 2> /dev/null | grep -q startwin &&
+	[ -f "$EP/win16env-1.0.pkg" ] &&
 		printf '%s\n' ' Win16  startwin        Windows 3.x programs; startwin -install your disks first'
 	:; }
   [ -z "$X11" ] || echo ' X      startx          twm; or  xsession  for a menu of sessions'
@@ -283,7 +262,18 @@ else
 	[ -f "$G/.profile" ] || { echo "[FAIL] no $G/.profile (run mkroot.sh)"; exit 1; }
 	printf '%s\n' 'd /lost+found 755 0 0' 'd /guest 755 100 1' \
 		"f /guest/.profile 644 100 1 $G/.profile" > "$W/home.manifest"
-	[ "$TOSENV" != 1 ] || echo "a $W/env/homeguest.cpio" >> "$W/home.manifest"
+	if [ "$TOSENV" = 1 ]; then
+		for d in TOS WIN16; do
+			[ ! -d "$E/envpkg/guest/home/guest/$d" ] ||
+				printf 't\t/guest/%s\t100\t1\t%s\n' $d "$E/envpkg/guest/home/guest/$d"
+		done >> "$W/home.manifest"
+		CUBASE=${CUBASE:-$K/../images/work/cubase/cubase.cpio}
+		if [ -f "$CUBASE" ]; then
+			mkdir -p "$E/cubase"
+			(cd "$E/cubase" && cpio -id --quiet < "$CUBASE")
+			printf 't\t/guest/TOS/CUBASE\t100\t1\t%s\n' "$E/cubase/home/guest/TOS/CUBASE" >> "$W/home.manifest"
+		fi
+	fi
 	$PY "$DR/mkufs.py" -s $HOMEMB -t 723000000 -m /home "$W/home.manifest" "$W/home.img"
 	HOMEID=AXU HOMES=s3
 fi

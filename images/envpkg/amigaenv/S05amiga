@@ -1,0 +1,6 @@
+# The Amiga environment's module: /dev/amigaguest (57).
+PATH=/usr/bin:/sbin:/usr/sbin
+case $1 in
+'start')
+	/usr/sbin/amigareg `/usr/aux/lib/moddirs` ;;
+esac

@@ -1,0 +1,7 @@
+PKG=amigaenv
+NAME=Amiga environment: startmig, its module and Workbench drivers
+ARCH=m68k
+VERSION=1.0
+CATEGORY=system
+CLASSES=none
+VENDOR=Ash Nazag

@@ -391,9 +391,20 @@ long check_token(char *token, const char **ptr)
 	return 0;
 }
 
+/* the ROM's screen */
+static long logbase(void)
+{
+	register long r __asm__("d0");
+
+	__asm__ volatile("move.w #3,-(%%sp)\n\ttrap #14\n\taddq.l #2,%%sp"
+	    : "=r"(r) : : "d1", "d2", "a0", "a1", "a2", "memory", "cc");
+	return r;
+}
+
 long CDECL initialize(Virtual *vwk)
 {
 	struct tfbcart *fc = (struct tfbcart *)TFB_CART;
+	static struct tfbcart rom;
 	static signed char tos[16] = { 0, -1, 1, 2, 4, 6, 3, 5, 7, 8, 9, 10, 12, 14, 11, 13 };
 	Workstation *wk;
 	long i, d = fc->fc_depth;
@@ -402,6 +413,11 @@ long CDECL initialize(Virtual *vwk)
 	    (fc->fc_plane8 ? d < 1 || d > 8 : d != 8)) {
 		access->funcs.error("ashfb: no frame buffer", 0);
 		return 0;
+	}
+	if (fc->fc_addr == 1) {
+		rom = *fc;
+		rom.fc_addr = logbase();
+		fc = &rom;
 	}
 	/* VDI colour to pixel: TOS's first 16, black last, beyond the palette black */
 	ncol = 1L << d;

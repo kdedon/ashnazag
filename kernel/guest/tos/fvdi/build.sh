@@ -32,6 +32,7 @@ fi
 patch -s -p1 -d "$W/src" < "$H/wheelv.patch"
 patch -s -p1 -d "$W/src" < "$H/linea.patch"
 patch -s -p1 -d "$W/src" < "$H/trnfm.patch"
+patch -s -p1 -d "$W/src" < "$H/nonf.patch"
 cat > "$W/bin/cc" <<CC
 #!/bin/sh
 exec nice -n 19 $B/m68k-linux-gnu-gcc -m68020 -Wa,--register-prefix-optional \\

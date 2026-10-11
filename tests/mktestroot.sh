@@ -79,7 +79,7 @@ AMIB=$B/amiga
 KDIR=$KDIR sh "$T/amiga/build.sh" "$AMIB"
 # t_win16's startwin and volume (run-qemu.sh adds it as SCSI disk 3)
 W16B=$B/w16
-case " $ONLY " in "  "|*/t_win16.c*) sh "$T/win16/mkvol.sh" "$W16B" ;; *) rm -rf "$W16B" ;; esac
+case " $ONLY " in "  "|*/t_win16.c*|*/t_stable.c*) sh "$T/win16/mkvol.sh" "$W16B" ;; *) rm -rf "$W16B" ;; esac
 # t_ufs's volume: /d/f0../d/f3 in t_pattern (run-qemu.sh adds it as SCSI disk 2)
 UFSB=$B/ufs
 if [ -z "$NET" ]; then
@@ -134,6 +134,8 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 	# t_arith's FP through awk
 	grep -q '^f /usr/bin/awk ' "$M" || echo "f /usr/bin/awk 755 0 3 $RD/build/core/usr/bin/nawk"
 	[ -z "$ONLY" ] || { : > "$B/.group"; echo "f /tests/.group 444 0 3 $B/.group"; }
+	# STABLE: t_stable's environments and idle=SECONDS
+	[ -z "$STABLE" ] || { echo "$STABLE" > "$B/stable.envs"; echo "f /tests/stable.envs 444 0 3 $B/stable.envs"; }
 	for f in "$B"/bin/*; do
 		# GROUP/ONLY: only the chosen tests (helpers that are not t_* stay)
 		case " $ONLY " in "  ") ;; *t_*) case $(basename "$f") in t_*)

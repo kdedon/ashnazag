@@ -67,6 +67,7 @@ static struct {
 	{ "t_amiga", 680 },
 	{ "t_win16", 2400 },
 	{ "t_env", 240 },
+	{ "t_stable", 14400 },
 	{ 0, 0 }
 };
 

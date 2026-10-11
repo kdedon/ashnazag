@@ -1,0 +1,11 @@
+mail=root
+instance=unique
+partial=ask
+runlevel=ask
+idepend=ask
+rdepend=quit
+space=ask
+setuid=ask
+conflict=ask
+action=ask
+basedir=default

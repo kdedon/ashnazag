@@ -1,0 +1,13 @@
+--- a/engine/utility.c
++++ b/engine/utility.c
+@@ -357,10 +357,6 @@
+             nf_ops = &_nf_ops;
+         }
+     }
+-#ifndef __mcoldfire__
+-    if (Supexec(_nf_detect))
+-        nf_ops = &_nf_ops;
+-#endif
+     nf_print_id = nf_get_id(NF_ID_STDERR);
+     /*
+      * default to NatFeats logging when detected.

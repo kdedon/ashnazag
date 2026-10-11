@@ -12,6 +12,7 @@
 
 #include "uinter.h"
 #include "sys/poll.h"
+#include "sys/sysinfo.h"
 #include "dsio.h"
 #define	printf	ds_printf	/* ds.h declares it int */
 #include "ds.h"
@@ -602,6 +603,31 @@ ev_put(b, e)
 int uin_evdiag;
 long uin_evstats[8], uin_evlast[8];
 
+/*
+ * Empty polls allowed per tick before the next one waits for an event
+ * or the tick: a Mac that spins on GetOSEvent, with no other system
+ * call in between, is idle.  0 disables.
+ */
+int uin_pollidle = 4;
+long uin_pollnaps;
+static long ev_polltick, ev_pollsc;
+static int ev_polls;
+
+static int
+ev_spinning()
+{
+	struct guest_proc *gp = GUESTP(u.u_procp);
+
+	if (lbolt != ev_polltick || sysinfo.syscall - ev_pollsc > 1) {
+		ev_polltick = lbolt;
+		ev_polls = 0;
+	}
+	ev_pollsc = sysinfo.syscall;
+	return uin_pollidle > 0 && ++ev_polls > uin_pollidle && ui.l_tid &&
+	    gp == ui.l_active && !(gp->gp_vsr & 0x700) &&
+	    !(in_flags & (IN_MOVED | IN_KEYS | IN_BTN)) && in_btn == in_btnw;
+}
+
 long uin_evtracecount, uin_evtrace[4][32];
 
 static void
@@ -637,7 +663,7 @@ ui_getosevent(b)
 	char *b;
 {
 	struct uiev *e, n;
-	int blk = b[0], mask = G16(b + 2), s, i, j;
+	int blk = b[0], mask = G16(b + 2), s, i, j, nap = 0;
 	long end = lbolt + (long)G32(b + 20);
 	if (uin_evdiag) {
 		if(blk==2 && mask==4)ui_evtrace();
@@ -681,6 +707,16 @@ ui_getosevent(b)
 			return 0;
 		}
 		bcopy(b + 24, (caddr_t)ev_rect, sizeof ev_rect);
+		/* the tick's signal ends the wait */
+		if (!nap && (!(blk & 1) || (long)(lbolt - end) >= 0) && ev_spinning()) {
+			nap = 1;
+			uin_pollnaps++;
+			ev_wait = 1;
+			i = sleep((caddr_t)ev_q, (PZERO + 1) | PCATCH);
+			ev_wait = 0;
+			if (!i)
+				continue;
+		}
 		if (!(blk & 1) || (long)(lbolt - end) >= 0 || ui_isnew(ev_rect)) {
 			if (uin_evdiag) uin_evstats[!(blk&1) ? 3 :
 			    (long)(lbolt-end)>=0 ? 4 : 5]++;

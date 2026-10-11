@@ -10,6 +10,8 @@
 #   c|b PATH MODE UID GID MAJ MIN    device
 #   l PATH TARGET                    symbolic link
 #   h PATH EXISTING                  hard link
+#   t PATH UID GID SRC               the file or tree SRC at PATH, its modes and
+#                                    mtimes, owned UID GID; tab-separated
 # A later line for a path replaces the earlier entry; a directory replaced by a
 # directory keeps its contents.  Missing parent directories are made 755 root.
 # Archive entries keep their owner, mode and mtime; others get the builder's time.
@@ -74,8 +76,37 @@ def cpio(tree, fname):
 			groups[ino] = path
 		put(tree, path, e)
 
+def copytree(tree, path, uid, gid, top):
+	if os.path.isfile(top):
+		st = os.stat(top)
+		put(tree, path, Ent('f', st.st_mode & 0o7777, uid, gid, open(top, 'rb').read(),
+			mtime=int(st.st_mtime)))
+		return
+	# names as bytes, kept as the archive reader keeps them
+	top = os.fsencode(top)
+	for d, ds, fs in os.walk(top):
+		ds.sort()
+		for n in [b''] + sorted(ds + fs):
+			h = os.path.join(d, n) if n else d
+			if not n and d != top:
+				continue
+			st = os.lstat(h) if n else os.stat(h)
+			p = norm(path + '/' + os.path.relpath(h, top).decode('latin1'))
+			e = Ent('d', st.st_mode & 0o7777, uid, gid, mtime=int(st.st_mtime))
+			if n and os.path.islink(h):
+				e.t, e.mode, e.data = 'l', 0o777, os.readlink(h)
+			elif os.path.isfile(h):
+				e.t, e.data = 'f', open(h, 'rb').read()
+			elif not os.path.isdir(h):
+				die('%r: not a file or directory' % h)
+			put(tree, p, e)
+
 def load(tree, man, src):
 	for ln in open(man):
+		if ln.startswith('t\t'):
+			f = ln.rstrip('\n').split('\t')
+			copytree(tree, norm(f[1]), int(f[2]), int(f[3]), os.path.join(src, f[4]))
+			continue
 		f = ln.split('#')[0].split()
 		if not f:
 			continue

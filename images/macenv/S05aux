@@ -1,13 +1,10 @@
 # A/UX programs and the Mac environment: modules, File ID daemon.
-# 54: the major of /dev/uinter0, 56 of /dev/tos.
+# 54: the major of /dev/uinter0.
 umask 022
 PATH=/usr/bin:/sbin:/usr/sbin
 case $1 in
 'start')
-	/usr/aux/lib/auxreg /usr/aux/lib/mod.d 54 56 || exit 1
-	[ ! -x /usr/sbin/otreg ] || /usr/sbin/otreg /usr/aux/lib/mod.d || exit 1
-	# the Amiga environment, when installed: /dev/amiga (57)
-	[ ! -x /usr/sbin/amigareg ] || /usr/sbin/amigareg /usr/aux/lib/mod.d
+	/usr/aux/lib/auxreg `/usr/aux/lib/moddirs` 54 || exit 1
 	# fidd finds the root in an A/UX mount table: A/UX's name, this device
 	if [ ! -s /etc/mtab ]; then
 		ls -lL /dev/dsk/c0d0s1 | nawk '{ sub(",", "", $5)
@@ -20,6 +17,6 @@ case $1 in
 	# physical memory in MB, for startmac's default Mac memory
 	/usr/bin/macdiag -m > /etc/aux/memsize.$$ && mv /etc/aux/memsize.$$ /etc/aux/memsize
 	rm -f /etc/aux/memsize.$$
-	# forks and returns
-	/etc/aux/fidd < /dev/null ;;
+	# forks and returns; A/UX's own, from the user
+	[ ! -x /etc/aux/fidd ] || /etc/aux/fidd < /dev/null ;;
 esac

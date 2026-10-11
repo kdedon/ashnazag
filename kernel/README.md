@@ -52,8 +52,9 @@ sh kernel/amiga/stage.sh
 
 `build/unix-amiga` is the relocatable boot artifact. The companion
 `build/unix-amiga.elf` supplies module checks and must not be used as the boot
-artifact. Staging produces the environment modules and an additive device manifest
-(`build/amiga/package`); `amiga/test/mkhdf.sh` merges it into the root,
+artifact. Staging produces the display module, its device manifest and the
+environment packages with this kernel's modules in `mod.amiga`
+(`build/amiga/package`); `amiga/test/mkhdf.sh` installs them on the root,
 preserving the stock `/dev/amiga` node. The guest node is `/dev/amigaguest`.
 Real Amiga hardware is untested.
 

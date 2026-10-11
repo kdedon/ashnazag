@@ -192,6 +192,23 @@ sh kernel/mac/diskroot/pkg/mkpkgimage.sh -p DIR WORK [kernel.elf [out.img]]
 `mkpkgimage.sh` builds from a copy of `kernel/mac/diskroot` in `WORK` with `root.manifest` plus `pkg/root.manifest.add`. It needs the A/UX root named in `tests/aux/auxroot`, `tests/build/net07` (`tests/net/getnet.sh`) and the tape segments in `kernel/mac/diskroot/build/tape`. `-q` configures the Ethernet for an emulator's user-mode network (10.0.2.15, gateway 10.0.2.2).
 
 
+## Environment packages
+
+Each environment is an SVR4 package, built from source by `images/envpkg/mkenvpkgs.sh OUTDIR` (datastreams in `OUTDIR/pkgs/env`, an apkg catalog in `OUTDIR/catalog`) and installed on Mac, Atari and Amiga hosts with `pkgadd -d FILE all` or apkg:
+
+| Package | Contents |
+|---|---|
+| `envcore` | the guest module, the module path (`/etc/rc2.d/S04envcore`) |
+| `macenv` | `startmac`, `makemac`, `startmac6`, the A/UX modules, `/dev/uinter0` (`S05aux`) |
+| `macnet` | the Open Transport bridge, `/dev/otbridge` (`S06macnet`) |
+| `tosenv` | `starttos`, EmuTOS, fVDI, TeraDesk, XaAES, `/tos`, `/dev/tos` (`S05tos`) |
+| `amigaenv` | `startmig`, `makeamiga`, the Workbench drivers, `/dev/amigaguest` (`S05amiga`) |
+| `cpmenv` | `startcpm`, `/dev/cpm` |
+| `smsqenv` | `startsmsq`, SMSQ/E |
+| `win16env` | `startwin` |
+
+Install scripts register the modules at once; the rc2 scripts do it at each boot. `pkgrm` unloads them; a registration lasts until the next boot. `pkgadd -n -a envpkg` and `pkgrm -n -a envpkg` (`envcore`'s admin file, which apkg uses too) run without questions. `pkgrm` refuses a package another one needs: remove `smsqenv` before `tosenv`. Images carry the datastreams in `/var/spool/pkg`; `images/envpkg/roundtrip.sh` checks the refusal, a removal and a reinstall. Modules built for the Mac kernel serve every host, except those `mod.atari` and `mod.amiga` replace. The image builders pre-install the packages. ROMs, OS media and other files of yours never go in a package: the image builders add them, or you copy them in.
+
 ## The Mac environment
 
 `q800-mac.img` is the X disk image plus A/UX 3.1's Mac environment as A/UX installs it, with Mac OS 7.6.1 from its CD (`media/Mac OS 7.6.1.iso`, `CD761`) as the System Folder, plus 7.6.1's control panels from its installer and A/UX's CommandShell tools, MacTCP and desk accessories: `/mac` (CommandShell, TeachText, MacX, the Commando tools), the Finder's folders at `/` (Applications, Documentation, Shared Data) and `systemfolder`. Log in as `root` and type:
@@ -202,7 +219,7 @@ startmac
 
 The Finder desktop appears in about a minute; the image carries the Finder's desktop database, so there is no rebuild.  Ctrl-Option-Command-0 shows the console, Ctrl-Option-Command-1 the Mac again.  Special > Log Out (root: the Apple menu) leaves the Mac and goes back to the shell; root's Shut Down halts Unix.  Keys typed while the Mac runs do not reach the shell.  Faults the Mac handles itself print nothing; `macdiag` counts them (`quiet`).
 
-The guest modules are registered at run level 2 (`/etc/rc2.d/S05aux`), which also starts the File ID daemon (`/etc/aux/fidd`).  The template is `/mac/lib/System Folder`. root's System Folder is `/mac/sys/System Folder`; other users (group `display`) get `$HOME/System Folder` from `makemac` on their first `startmac`. Both are refreshed when the template changes (`makemac -f`, which keeps Preferences, the desktop database, MacTCP settings and added files); guest already has one; the Mac's PRAM is kept in `/etc/aux/pram`.
+The A/UX modules are registered at run level 2 (`/etc/rc2.d/S05aux`), which also starts the File ID daemon (`/etc/aux/fidd`).  The template is `/mac/lib/System Folder`. root's System Folder is `/mac/sys/System Folder`; other users (group `display`) get `$HOME/System Folder` from `makemac` on their first `startmac`. Both are refreshed when the template changes (`makemac -f`, which keeps Preferences, the desktop database, MacTCP settings and added files); guest already has one; the Mac's PRAM is kept in `/etc/aux/pram`.
 
 Mac OS 8.1 is a separate environment with its own template, `/mac/lib/env/8.1/System Folder`, from the 8.1 CD (`CD81`): `makemac -e 8.1` once, then `startmac -e 8.1`.
 
@@ -232,7 +249,7 @@ A `-C` folder without its own AUTO boots with the system's fVDI (`/tos/fvdi`), a
 
 `starttos -rom FILE` runs your own TOS ROM image instead. The image never contains one.
 
-`/etc/rc2.d/S05aux` registers the `tosguest` module (`/dev/tos`, major 56, group `display`) with the A/UX modules. Rebuild with `images/macenv/mkmacimage.sh`; `images/tosenv/mktos.sh` makes the container's files.
+`/etc/rc2.d/S05tos` registers the `tosguest` module (`/dev/tos`, major 56, group `display`). Rebuild with `images/macenv/mkmacimage.sh`; `images/tosenv/mktos.sh` makes the files of the `tosenv` package.
 
 ## The CP/M-68K environment
 
@@ -244,7 +261,7 @@ startcpm
 
 or pick "CP/M-68K environment" at the xdm session chooser (last in the list) or in the twm and XView menus, which open it in an xterm. Each drive is a directory of plain files: A: is `~/CPM` (user areas 1-15 are subdirectories `1` to `15`), H: your home, M: a private scratch directory emptied at each start, O: `/`, and P: the nine distribution disks' files (`/cpm/dist`, read-only; `X.REL` programs also as `X.68K`). Programs not on the current drive run from P:. Add drives with `X=path` lines in `~/CPM/DRIVES`, `startcpm -d X=path`, or `MOUNT X: path` inside CP/M (`MOUNT` alone lists them). Unix names that don't fit 8.3 show shortened, e.g. `MAKEFI~7.LIN`. CP/M-80 `.COM` and CP/M-86 `.CMD` programs run too, interpreted (no GSX graphics). `EXIT` ends the session, as does end of input. `startcpm -e NAME` uses `~/CPM/NAME/` for A:. The console is your terminal; `startcpm -c 1` (to 3) in another terminal joins the running session as another console, with its own command line. Programs can start others that run beside them (MP/M function 144) and share memory, flags, queues and record locks. `startcpm -m MB` sets the memory (16 MB).
 
-The image builds put in the files from DRI's release zip (`media/cpm68k/68kv1_3.zip`, `CPMZIP`); without it there is no CP/M. `images/cpmenv/mkcpm.sh` makes the archive; drive layout in `kernel/guest/cpm/LAYOUT-PLAN.md`.
+The image builds put in the files from DRI's release zip (`media/cpm68k/68kv1_3.zip`, `CPMZIP`); without it there is no CP/M. `images/cpmenv/mkcpm.sh` makes the `cpmenv` package's files; drive layout in `kernel/guest/cpm/LAYOUT-PLAN.md`.
 
 
 ## The Amiga environment
@@ -261,4 +278,4 @@ startwin -install DISK1.IMG DISK2.IMG DISK3.IMG DISK4.IMG DISK5.IMG DISK6.IMG /c
 
 Then `startwin` alone starts Program Manager (its groups are made on the first run, as Setup made them, and Wabi's "Wabi Tools" group with them), `startwin notepad.exe` one program; or pick "Windows 3.x programs (Win16)" at the xdm session chooser. C: is `~/WIN16`, H: your home directory, R: `/`; with Wabi, W: is Wabi's home (`~/WIN16/wabihome`) and WABI.INI's drive settings apply, changed in Wabi's Configuration Manager (Control Panel, "Wabi Config"). `-D X=dir` adds a drive for one run, `-C dir` uses another C: folder; on a screen more than 640 pixels wide Windows' large fonts are used, as under Wabi (`-SF` small, `-LF` large). Printing goes through Wabi's LaserJet and Epson drivers (installed from Control Panel's Printers) to `lp`, or to the command WABI.INI's `Printers.command_lptN` names. Closing Program Manager ends the session.
 
-No Windows or Wabi files are in the image; `images/winenv/mkwin.sh` makes the archive with `startwin`. Details in `docs/win16-design.md`.
+No Windows or Wabi files are in the image; `images/winenv/mkwin.sh` makes the `win16env` package's `startwin`. Details in `docs/win16-design.md`.

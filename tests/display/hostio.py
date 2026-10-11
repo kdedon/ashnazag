@@ -313,6 +313,18 @@ def serve(q, cmd, a):
                     f.write('%08x %d %d\n' % (pc, sup, c))
         threading.Thread(target=run).start()
         return 'started'
+    if cmd == 'cpu':
+        # the emulator's CPU time and the host clock, ms
+        q = os.environ.get('AUX_QPID', '')
+        try:
+            with open('/proc/%s/task/%s/children' % (q, q)) as f:
+                q = f.read().split()[0]
+        except (OSError, IndexError):
+            pass
+        with open('/proc/%s/stat' % q) as f:
+            v = f.read().rsplit(')', 1)[1].split()
+        hz = os.sysconf('SC_CLK_TCK')
+        return '%d %d' % ((int(v[11]) + int(v[12])) * 1000 // hz, int(time.time() * 1000) % 1000000000)
     if cmd == 'button':
         q.hmp('mouse_button %d' % int(a[0]))
         time.sleep(int(a[1]) / 1000. if len(a) > 1 else 0.3)

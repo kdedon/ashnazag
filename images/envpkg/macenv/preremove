@@ -1,0 +1,10 @@
+# The File ID daemon and the modules, unless in use; their registrations
+# end at the next boot.
+for p in `ps -e | nawk '$4 == "fidd" { print $1 }'`; do
+	kill $p
+done
+for m in auxexec uinter auxcore; do
+	/sbin/modadmin -U $m > /dev/null 2>&1
+done
+rm -f /etc/aux/memsize
+exit 0

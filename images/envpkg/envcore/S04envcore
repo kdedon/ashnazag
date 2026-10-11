@@ -1,0 +1,6 @@
+# Environment modules: their directories on the module search path.
+PATH=/usr/bin:/sbin:/usr/sbin
+case $1 in
+'start')
+	modadmin -d `/usr/aux/lib/moddirs` ;;
+esac

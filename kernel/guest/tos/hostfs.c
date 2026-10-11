@@ -46,7 +46,7 @@ extern long sys_lseek(), sys_utime(), sys_access(), sys_rmdir(), sys_mkdir();
 extern long sys_getdents(), sys_readlink(), sys_statvfs();
 extern long sys_rename();
 /* GEMDOS, through the vector */
-extern long Pexec(), Mfree();
+extern long Pexec(), Mfree(), Tgetdrv();
 
 extern char p_dtab[];			/* set by the launcher: letter, flags, path; ... 0 */
 extern long p_tz;			/* seconds east of UTC */
@@ -176,7 +176,7 @@ Dgetdrv()
 {
 	char *bp = run();
 
-	return bp && bp < *(char **)0x42e ? bp[0x37] : -1;
+	return bp && bp < *(char **)0x42e ? Tgetdrv() : -1;
 }
 #define	Fgetdta()	(*(char **)(run() + 0x20))
 

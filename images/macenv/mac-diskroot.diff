@@ -20,71 +20,10 @@
  f /sbin/shutdown 755 0 3 build/shutdown
  h /usr/sbin/shutdown /sbin/shutdown
  f /sbin/rc0	744 0 3 build/rc0
-@@ -56,6 +56,69 @@
+@@ -56,6 +56,8 @@
  # date(1) runs setclk -s after stime(2); the kernel keeps the RTC
  f /usr/amiga/bin/setclk 755 0 3 etc/setclk
  
-+# A/UX Mac environment and TOS container: guest modules registered at run level 2, the
-+# File ID daemon, startmac and A/UX's Mac files
-+d /usr/aux	755 0 3
-+d /usr/aux/lib	755 0 3
-+d /usr/aux/lib/mod.d 755 0 3
-+f /usr/aux/lib/mod.d/guestcore 644 0 3 macpkg/mod.d/guestcore
-+f /usr/aux/lib/mod.d/auxcore	644 0 3 macpkg/mod.d/auxcore
-+f /usr/aux/lib/mod.d/auxexec	644 0 3 macpkg/mod.d/auxexec
-+f /usr/aux/lib/mod.d/uinter	644 0 3 macpkg/mod.d/uinter
-+f /usr/aux/lib/mod.d/cpmguest 644 0 3 macpkg/mod.d/cpmguest
-+f /usr/aux/lib/mod.d/tosguest 644 0 3 macpkg/mod.d/tosguest
-+f /usr/aux/lib/mod.d/amigaguest 644 0 3 macpkg/mod.d/amigaguest
-+f /usr/aux/lib/auxreg	755 0 3 macpkg/auxreg
-+f /etc/rc2.d/S05aux	744 0 3 macpkg/S05aux
-+c /dev/uinter0	660 0 25 54 0 	# major as in S05aux
-+c /dev/cpm	660 0 25 59 0
-+c /dev/tos	660 0 25 56 0
-+c /dev/amiga	660 0 25 57 0
-+d /shlib	755 0 3
-+f /shlib/libc1_s	755 0 3 macpkg/libc1_s
-+f /shlib/libmac1_s	755 0 3 macpkg/libmac1_s
-+d /etc/aux	755 0 3
-+f /etc/aux/fidd	755 0 3 macpkg/fidd
-+f /etc/aux/rom	444 0 3 macpkg/rom
-+# A/UX's Mac files: /mac, the Finder's folders at /, systemfolder
-+a macpkg/mac.cpio
-+f /usr/bin/startmac 755 0 3 macpkg/startmac.sh
-+f /usr/bin/makemac 755 0 3 macpkg/makemac
-+# System 6: A/UX 2.0.1's root, guest's System Folder there
-+f /usr/bin/startmac6 755 0 3 macpkg/startmac6
-+f /usr/aux/lib/mac6 4750 0 25 macpkg/mac6
-+a macpkg/a201.cpio
-+a macpkg/a201guest.cpio
-+c /a201/dev/uinter0 660 0 25 54 0
-+c /a201/dev/console 622 0 3 0 0
-+# guest's ~/System Folder, as makemac makes it
-+a macpkg/macguest.cpio
-+a macpkg/amiga.cpio
-+a macpkg/amigaprv.cpio
-+# guest's ~/Amiga, as makeamiga makes it
-+a macpkg/amigaguest.cpio
-+f /usr/bin/macdiag 750 0 3 macpkg/macdiag
-+f /usr/bin/macscrn 755 0 3 macpkg/macscrn
-+f /usr/bin/envlock 755 0 3 macpkg/envlock
-+# TOS container: EmuTOS, its cartridge, the C: folder template /tos/sys,
-+# guest's ~/TOS and the system's apps (drive G:)
-+d /etc/tos	755 0 3
-+f /etc/tos/emutos.img 444 0 3 macpkg/tos/emutos.img
-+f /etc/tos/tosml.img 444 0 3 macpkg/tos/tosml.img
-+f /usr/bin/starttos 755 0 3 macpkg/tos/starttos
-+f /usr/bin/mintrun 755 0 3 macpkg/tos/mintrun
-+f /usr/bin/maketos 755 0 3 macpkg/tos/maketos
-+f /usr/bin/tosdrive 755 0 3 macpkg/tos/tosdrive
-+a macpkg/tos/sys.cpio
-+a macpkg/tos/games.cpio
-+a macpkg/tos/guest.cpio
-+# CP/M-68K: startcpm, CPM.SYS and DRI's programs (P:)
-+a macpkg/cpm/cpm.cpio
-+# Win16: startwin (its own KERNEL, USER and GDI; no Windows files)
-+a macpkg/win/win.cpio
-+a macpkg/win/guest.cpio
 +c /dev/kmem	640 0 3 3 1	# macdiag relies on root-only kernel memory
 +
  # no Amiga port monitors (screens, serial boards)

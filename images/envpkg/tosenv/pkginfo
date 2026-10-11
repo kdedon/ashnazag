@@ -1,0 +1,7 @@
+PKG=tosenv
+NAME=TOS environment: EmuTOS, fVDI, XaAES, TeraDesk and starttos
+ARCH=m68k
+VERSION=1.0
+CATEGORY=system
+CLASSES=none
+VENDOR=Ash Nazag

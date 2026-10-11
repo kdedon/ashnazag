@@ -21,8 +21,7 @@ for script in "$AUX/kernel/guest/amiga/build.sh" \
     "$AUX/kernel/guest/amiga/input/build.sh" \
     "$AUX/kernel/guest/mod/amigaguest/compile.sh" \
     "$AUX/kernel/guest/mod/amigaguest/build.sh" \
-    "$AUX/images/amigaenv/mkamiga.sh" "$AUX/images/amigaenv/makeamiga" \
-    "$AUX/images/amigaenv/installmig"; do
+    "$AUX/images/amigaenv/mkamiga.sh" "$AUX/images/amigaenv/makeamiga"; do
 	sh -n "$script"
 done
 if [ "$#" -eq 1 ]; then

@@ -1,0 +1,3 @@
+# What boot does from now on, done now.
+sh /etc/rc2.d/S05aux start || echo "$PKGINST: modules usable after a reboot"
+exit 0

@@ -1,18 +1,16 @@
 #!/bin/sh
-# mktos.sh -- the TOS container's files for the disk image: starttos,
-# maketos, tosdrive, EmuTOS, the machine-layer cartridge, the C: folder
-# template /tos/sys, guest's copy of it, /tos/fvdi and the system apps
-# (drive G:).
+# mktos.sh -- the TOS environment's files: starttos, mintrun, maketos, tosdrive,
+# EmuTOS, the machine-layer cartridge, the C: folder template /tos/sys,
+# /tos/fvdi and the system apps (drive G:); guest's copy of /tos/sys.
 #
 #   sh images/tosenv/mktos.sh outdir
 #
-# Out: outdir/{starttos,mintrun,maketos,tosdrive,emutos.img,tosml.img} and
-# outdir/{sys,guest,games}.cpio, rooted at /.  EMUTOS names the EmuTOS
+# Out: outdir/root, the files at their installed paths, and
+# outdir/guest/home/guest/TOS.  EMUTOS names the EmuTOS
 # 512 KB release zip, EMUTOSLANG its image (us); FVDI the fVDI tree
 # (kernel/guest/tos/fvdi/build.sh).  TOSAPPS names the
 # unpacked apps of APPS.md (default ref/tosapps); without them the
-# image has none.  CUBASE names mkcubase.sh's cubase.cpio (default
-# images/work/cubase), added to guest's ~/TOS when it exists.
+# image has none.
 # XaAES and its MiNT layer go to /tos/xaaes (maketos -x adds them to a
 # C: folder) and make guest's environment xaaes.
 # NOTERADESK=1 leaves TeraDesk out, NOFVDI=1 fVDI, NOXAAES=1 XaAES.
@@ -22,17 +20,17 @@ AUX=$(cd "$D/../.." && pwd)
 G=$AUX/kernel/guest
 EMUTOS=${EMUTOS:-$AUX/ref/emutos-release/emutos-512k-1.4.zip}
 TOSAPPS=${TOSAPPS:-$AUX/ref/tosapps}
-CUBASE=${CUBASE:-$AUX/images/work/cubase/cubase.cpio}
 TC=$AUX/toolchain/amix
 SYS=$TC/m68k-cbm-sysv4/sysroot
 BIN=$AUX/toolchain/bin
 OUT=$1
 [ -n "$OUT" ] || { echo "usage: mktos.sh outdir"; exit 1; }
 O=$OUT/obj
+T=$OUT/root
 rm -rf "$OUT"
-mkdir -p "$O/extra"
-unzip -p "$EMUTOS" "*/etos512${EMUTOSLANG:-us}.img" > "$OUT/emutos.img"
-[ -s "$OUT/emutos.img" ] || { echo "[FAIL] no EmuTOS image in $EMUTOS"; exit 1; }
+mkdir -p "$O/extra" "$T/usr/bin" "$T/etc/tos"
+unzip -p "$EMUTOS" "*/etos512${EMUTOSLANG:-us}.img" > "$T/etc/tos/emutos.img"
+[ -s "$T/etc/tos/emutos.img" ] || { echo "[FAIL] no EmuTOS image in $EMUTOS"; exit 1; }
 LIBGCC=$(ls "$TC"/lib/gcc-lib/m68k-cbm-sysv4/*/libgcc.a | tail -1)
 # nonshared libc members
 (cd "$O/extra" && ar x "$SYS/usr/ccs/lib/libc.so" && rm -f libc.so.1 &&
@@ -42,7 +40,7 @@ for c in tos/starttos tos/tosdisp tos/tossnd sndout; do
 		-I"$G/include" -I"$AUX/kernel/mac/display" -I"$AUX/kernel/mac/sound" \
 		-c "$G/$c.c" -o "$O/${c#tos/}.o"
 done
-"$TC/bin/m68k-cbm-sysv4-ld" -o "$OUT/starttos" "$SYS/usr/ccs/lib/crt1.o" \
+"$TC/bin/m68k-cbm-sysv4-ld" -o "$T/usr/bin/starttos" "$SYS/usr/ccs/lib/crt1.o" \
 	"$SYS/usr/ccs/lib/crti.o" "$O/starttos.o" "$O/tosdisp.o" "$O/tossnd.o" "$O/sndout.o" \
 	"$SYS/usr/lib/libc.so.1" \
 	"$O/libextra.a" "$LIBGCC" "$SYS/usr/ccs/lib/crtn.o"
@@ -50,7 +48,7 @@ done
 nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -w -D__STDC__=0 -I"$G/mod/tosguest" \
 	-c "$G/tos/mintrun.c" -o "$O/mintrun.o"
 "$TC/bin/m68k-cbm-sysv4-as" -o "$O/mintent.o" "$G/tos/mintent.s"
-"$TC/bin/m68k-cbm-sysv4-ld" -o "$OUT/mintrun" "$SYS/usr/ccs/lib/crt1.o" \
+"$TC/bin/m68k-cbm-sysv4-ld" -o "$T/usr/bin/mintrun" "$SYS/usr/ccs/lib/crt1.o" \
 	"$SYS/usr/ccs/lib/crti.o" "$O/mintrun.o" "$O/mintent.o" "$SYS/usr/lib/libc.so.1" \
 	"$O/libextra.a" "$LIBGCC" "$SYS/usr/ccs/lib/crtn.o"
 # cartridge: machine layer, the U: drive and STiK
@@ -64,10 +62,9 @@ nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -m68020 -Wall -Wno-implicit -fno-buil
 "$BIN/m68k-elf-ld" --no-warn-rwx-segments -N -Ttext=0xfa0000 -o "$O/tosml.elf" "$O/tosml.o" "$O/hostfs.o" "$O/stik.o" "$O/xsnd.o"
 end=$("$BIN/m68k-elf-nm" "$O/tosml.elf" | awk '$3 == "_end" { print $1 }')
 [ $((0x$end)) -le $((0xfa0000 + 0x20000)) ] || { echo "[FAIL] cartridge ends at $end" >&2; exit 1; }
-"$BIN/m68k-elf-objcopy" -O binary "$O/tosml.elf" "$OUT/tosml.img"
-cp "$D/maketos" "$D/tosdrive" "$OUT/"
+"$BIN/m68k-elf-objcopy" -O binary "$O/tosml.elf" "$T/etc/tos/tosml.img"
+cp "$D/maketos" "$D/tosdrive" "$T/usr/bin/"
 # /tos/sys: README.TXT, SESSION.ACC, AUTO, the user's apps (C:\APPS), G: in the drive table
-T=$O/root
 mkdir -p "$T/tos/sys/AUTO" "$T/tos/sys/APPS" "$T/usr/games/tos"
 sed 's/$/\r/' "$D/c-readme.txt" > "$T/tos/sys/README.TXT"
 # the Desk menu's Session...: Log Out, and Shut Down for root
@@ -129,10 +126,11 @@ else
 	exit 1
 fi
 # guest's TOS folder, as maketos makes it, and environment xaaes, as maketos -x -e xaaes
-mkdir -p "$T/home/guest"
-(cd "$T/tos/sys" && find . | grep -v -x ./drives | cpio -pdm --quiet "$T/home/guest/TOS")
+H=$OUT/guest/home/guest
+mkdir -p "$H"
+(cd "$T/tos/sys" && find . | grep -v -x ./drives | cpio -pdm --quiet "$H/TOS")
 if [ -d "$T/tos/xaaes" ]; then
-	X=$T/home/guest/TOS/xaaes
+	X=$H/TOS/xaaes
 	mkdir -p "$X"
 	printf 'id=xaaes\nname=xaaes\nprofile=tos\ntemplate=/tos/sys\ncreated=%s\n' \
 		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$X/.env"
@@ -140,11 +138,9 @@ if [ -d "$T/tos/xaaes" ]; then
 	(cd "$T/tos/xaaes" && find . | cpio -pdmu --quiet "$X")
 	mkdir -p "$X/CLIPBRD"
 fi
-[ ! -f "$CUBASE" ] || (cd "$T" && cpio -idm --quiet < "$CUBASE")
-find "$T" -type d -exec chmod 755 {} +
-find "$T" -type f -exec chmod 644 {} +
-(cd "$T" && find tos | cpio -o -H newc -R 0:3 --quiet) > "$OUT/sys.cpio"
-(cd "$T" && find usr/games | cpio -o -H newc -R 0:3 --quiet) > "$OUT/games.cpio"
-(cd "$T" && find home/guest/TOS | cpio -o -H newc -R 100:1 --quiet) > "$OUT/guest.cpio"
+find "$T" "$OUT/guest" -type d -exec chmod 755 {} +
+find "$T" "$OUT/guest" -type f -exec chmod 644 {} +
+chmod 755 "$T"/usr/bin/*
+chmod 444 "$T"/etc/tos/*
 rm -rf "$O"
 echo "[ok] starttos, EmuTOS, cartridge, /tos/sys, apps"

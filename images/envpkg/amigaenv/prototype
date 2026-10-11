@@ -1,0 +1,7 @@
+i pkginfo=pkginfo
+i depend=depend
+i postinstall=postinstall
+i preremove=preremove
+f none /etc/rc2.d/S05amiga 0744 root sys
+c none /dev/amigaguest 57 0 0660 root display
+d none /amiga/media 0750 root display

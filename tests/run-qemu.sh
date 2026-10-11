@@ -17,7 +17,7 @@
 # line), screen.png, summary.txt.
 # AMIGANET=1 (direct boot): the root also has TCP/IP, for t_amiga's
 # bsdsocket.library checks (user-mode network, no echo service).
-# GROUP=smoke|core|mac|tos|mint|cpm|smsqe|amiga|display|sound|win16 runs that set only.
+# GROUP=smoke|core|mac|tos|mint|cpm|smsqe|amiga|display|sound|win16|stable runs that set only.
 # Exit: 0 all PASS, 1 any FAIL, 2 timeout, panic or no TESTS DONE.
 # up to QSLOTS QEMUs at once (tools/qslot.sh)
 # one run per checkout at a time: they share tests/build
@@ -42,7 +42,7 @@ done
 export KDIR
 KERNEL=${KERNEL:-$KDIR/build/unix-mac.elf}
 ROM=${ROM:-$AUX/Quadra 800.ROM}
-TMO=${TMO:-3600}
+TMO0=$TMO TMO=${TMO:-3600}
 OUT=$T/results/$(date +%Y%m%d-%H%M%S)-$MODE
 mkdir -p "$OUT"
 
@@ -60,7 +60,8 @@ amiga)	G="t_amiga t_env" ;;
 display) G="t_display" ;;
 sound)	G="t_sound" ;;
 win16)	G="t_win16" ;;
-*)	echo "GROUP: smoke core mac tos mint cpm smsqe amiga display sound win16"; exit 2 ;;
+stable)	G="t_stable"; TMO=${TMO0:-14400} ;;
+*)	echo "GROUP: smoke core mac tos mint cpm smsqe amiga display sound win16 stable"; exit 2 ;;
 esac
 if [ -n "${G:-}" ]; then
 	ONLY="$T/src/runall.c"
@@ -155,7 +156,7 @@ LD_LIBRARY_PATH=$Q/lib timeout "$TMO" nice -n 19 $QEMU "$@" \
 QPID=$!
 HPID=
 if [ $MODE = direct ]; then
-	nice -n 19 python3 "$T/display/hostio.py" "$OUT" "$SK" 2> "$OUT/hostio.err" &
+	AUX_QPID=$QPID nice -n 19 python3 "$T/display/hostio.py" "$OUT" "$SK" 2> "$OUT/hostio.err" &
 	HPID=$!
 fi
 # host timestamp per console line, to check the guest clock against

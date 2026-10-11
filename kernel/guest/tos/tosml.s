@@ -65,6 +65,7 @@ init:
 	move.l	#mc,0x47e
 	or.l	#4,0x4c2		| _drvbits: C:
 3:	move.w	#2,0x446		| _bootdev
+	st	defdrv
 	move.l	0x4f2,a0		| _sysbase
 	move.l	8(a0),a0		| os_beg
 	move.l	0x28(a0),a0		| os_run
@@ -359,11 +360,22 @@ pkt3:	lea	pkt,a0
 	addq.l	#1,pv_npkt(a5)
 	rts
 
+defdrv:	.word	0
+
 | GEMDOS: calls for U: to gemdos(args, &result), others to TOS
 	.long	0x58425241		| XBRA
 	.long	0x41555855		| AUXU
 old_gd:	.long	0
-gd:	move.l	a1,-(sp)
+gd:	tst.b	defdrv
+	beq.s	1f
+	sf	defdrv			| the first call: C: for AUTO, also on TOS 4
+	movem.l	d0-d2/a0-a2,-(sp)
+	move.w	#2,-(sp)
+	move.w	#0x0e,-(sp)		| Dsetdrv
+	trap	#1
+	addq.l	#4,sp
+	movem.l	(sp)+,d0-d2/a0-a2
+1:	move.l	a1,-(sp)
 	move.l	sp,a1			| on a stack of our own: a caller in
 	cmp.l	#hstk,sp		| supervisor mode may have little room
 	bls.s	3f
@@ -468,7 +480,14 @@ stik_busy: .space 4
 	.text
 
 | GEMDOS from C: arguments as longs
-	.globl	Pexec, Mfree
+	.globl	Pexec, Mfree, Tgetdrv
+Tgetdrv: movem.l	d2/a2,-(sp)
+	move.w	#0x19,-(sp)		| Dgetdrv
+	trap	#1
+	addq.l	#2,sp
+	ext.l	d0
+	movem.l	(sp)+,d2/a2
+	rts
 Pexec:	movem.l	d2/a2,-(sp)		| (mode, name, cmd, env)
 	move.l	24(sp),-(sp)
 	move.l	24(sp),-(sp)

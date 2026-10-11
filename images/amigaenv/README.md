@@ -17,19 +17,19 @@ counts to `.startmig.log` in a writable SYS: (`~/Amiga`), otherwise to
 `/tmp/startmig.<uid>.log`. After the hot key, the console shows startmig's
 messages; errors (ROM, `/dev/amigaguest`, module, display) go there too.
 
-Build a new private staging directory:
+`startmig`, `makeamiga`, `amigareg` and the drivers are the `amigaenv`
+package (`images/envpkg/mkenvpkgs.sh`). Kickstart, the floppies and the
+`SYS:` template come from your AmigaOS 3.2 CD, in a new private staging
+directory:
 
 ```sh
-sh kernel/guest/mod/amigaguest/build.sh kernel/build/unix-mac.elf images/work/amiga-modules
-sh images/amigaenv/mkamiga.sh images/work/amiga-stage AmigaOS3.2CD.iso images/work/amiga-modules/mod.d
+sh images/amigaenv/mkamiga.sh images/work/amiga-stage AmigaOS3.2CD.iso
 ```
 
-The output directory must be new. The optional second argument selects the
-CD; the third selects a directory containing `guestcore` and `amigaguest`.
-An optional fourth argument selects a local Picasso96 archive or an unpacked
-one (the directory holding `Picasso96Install`), otherwise `Picasso96.lha` at
-the repository root is used if present. An archive and its checksum are
-retained under `root/amiga/rtg/`.
+The optional second argument selects the CD. An optional third argument
+selects a local Picasso96 archive or an unpacked one (the directory holding
+`Picasso96Install`), otherwise `Picasso96.lha` at the repository root is used
+if present. An archive and its checksum are retained under `root/amiga/rtg/`.
 
 Sound: the template carries `DEVS:AHI/container.audio`, its audio mode and
 an AHI preferences default selecting it. AHI itself is user-supplied: an
@@ -46,7 +46,6 @@ for remote pages; local files open now.
 `root/` holds the target installation layout. Media hashes are in
 `media/manifest.json`; `/amiga/sys/.container-template.json` records each
 prepared file's source. Proprietary media and the prepared OS stay local.
-`kernel.sha256` identifies the kernel used to link supplied modules.
 
 The template follows the installer disk's file selection for an English
 A4000 setup. It omits physical-device mounts and CPU/MMU/ROM patching in the
@@ -61,19 +60,12 @@ Lightweight host checks:
 sh kernel/guest-amiga/test/check.sh images/work/amiga-stage/media/ROM/kicka4000.rom
 ```
 
-Transfer the staging directory to the target Unix system. As root there:
+The image builders take Kickstart, the floppies and `SYS:` from the staging
+directory (`AMIGASTAGE`). On a running system with `amigaenv` installed, as
+root, from a copy of the staging directory:
 
 ```sh
-sh /path/to/amiga-stage/installmig /path/to/amiga-stage
-```
-
-The installer copies the utilities, template, ROMs and modules, creates
-`/dev/amigaguest`, and grants device/media access to the display group. It also
-updates the shared `guestcore` in the existing Mac module directory when
-present. Reboot after updating modules, then register as root:
-
-```sh
-/usr/sbin/amigareg /usr/lib/amiga/mod.d
+cd amiga-stage/root && find etc/amiga/kicka*.rom amiga/media amiga/sys | cpio -pdm /
 ```
 
 As the intended display-group user:

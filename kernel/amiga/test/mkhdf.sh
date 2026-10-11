@@ -16,9 +16,10 @@
 # openpci.library, ENVARC/PCI-Configuration).  ROOTMB (default 128).
 # LOADBASE: where the loader puts the kernel (default 0x08000000, the
 # A3000's accelerator RAM); /stand/unix is linked there.
-# PKG: stage.sh's outdir, for the environment modules and devices.
-# AMIGAENV: mkamiga.sh's outdir, copied to /amiga-stage for
-# installmig.  TOSENV: mktos.sh's outdir, installed as on other hosts.
+# PKG: stage.sh's outdir, for the display module and the environment
+# packages.  ENVPKG: images/envpkg/mkenvpkgs.sh's outdir (AMIGAKERNEL this
+# kernel's .elf), whose packages are installed instead.  AMIGAENV:
+# mkamiga.sh's outdir, for Kickstart, the floppies and SYS:.
 set -e
 A=$(cd "$(dirname "$0")/.." && pwd)
 K=$(cd "$A/.." && pwd)
@@ -87,26 +88,22 @@ $PY "$A/test/namelist.py" "$KERNEL" "$S/unix.linked" "$S/unix"
 ENV=
 if [ -n "$PKG" ]; then
 	ENV=$(sed -e "s, etc/conf/mod.d/, $PKG/root/etc/conf/mod.d/," "$PKG/root.manifest.add")
+	ENVPKG=${ENVPKG:-$PKG/envpkg}
+fi
+if [ -n "$ENVPKG" ]; then
+	EP=$(cd "$ENVPKG/pkgs/env" && pwd)
+	ENV="$ENV
+`$PY "$DR/pkg/pkginst.py" "$S/pkgs" $(ls "$EP"/*.pkg | grep -v macnet)`"
 fi
 if [ -n "$AMIGAENV" ]; then
-	rm -rf "$S/stage"; mkdir -p "$S/stage"
-	cp -R "$AMIGAENV" "$S/stage/amiga-stage"
-	(cd "$S/stage" && chmod -R u=rwX,go=rX amiga-stage &&
-	 find amiga-stage | cpio -o -H newc -R 0:3 --quiet) > "$S/amigaenv.cpio"
+	A=$(cd "$AMIGAENV/root" && pwd)
+	rm -rf "$S/amigasys"
+	cp -R "$A/amiga/sys" "$S/amigasys"
+	chmod -R a+rX,go-w,u+w "$S/amigasys"
 	ENV="$ENV
-a amigaenv.cpio"
-fi
-if [ -n "$TOSENV" ]; then
-	T=$(cd "$TOSENV" && pwd)
-	ENV="$ENV
-d /etc/tos 755 0 3
-f /etc/tos/emutos.img 444 0 3 $T/emutos.img
-f /etc/tos/tosml.img 444 0 3 $T/tosml.img
-f /usr/bin/starttos 755 0 3 $T/starttos
-f /usr/bin/mintrun 755 0 3 $T/mintrun
-f /usr/bin/maketos 755 0 3 $T/maketos
-f /usr/bin/tosdrive 755 0 3 $T/tosdrive
-a $T/sys.cpio"
+f /etc/amiga/kicka4000.rom 640 0 25 $A/etc/amiga/kicka4000.rom
+`for f in "$A"/amiga/media/*; do echo "f ${f#$A} 640 0 25 $f"; done`
+`printf 't\t/amiga/sys\t0\t3\t%s' "$S/amigasys"`"
 fi
 
 cat > "$S/root.manifest" <<EOF
@@ -122,6 +119,7 @@ f /etc/vfstab 744 0 3 vfstab
 f /etc/nodename 644 0 3 nodename
 f /etc/group 444 0 3 group
 f /etc/TIMEZONE 444 0 3 $DR/etc/TIMEZONE
+f /var/sadm/install/admin/default 444 0 3 $DR/etc/admin-default
 e /var/adm/utmp 644 0 2
 e /var/adm/utmpx 644 0 2
 f /sbin/modadmin 555 0 3 bin/modadmin
