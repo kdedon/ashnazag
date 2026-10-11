@@ -119,6 +119,7 @@ extern int tos_trace;
 extern int splhi_();
 extern void splx_();
 extern void tos_kick();
+extern int tos_irqwait();
 extern void mfp_pend();
 extern int tos_berr();
 

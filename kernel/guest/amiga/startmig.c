@@ -23,6 +23,7 @@ static char *amiga_device;
 #include "inputshare.h"
 #include "hostfswire.h"
 #include "sndshare.h"
+#include "floppyshare.h"
 #include "earlyshare.h"
 #include "sysroot.h"
 #include "envroot.h"
@@ -897,6 +898,37 @@ startsound(dev)
     close(ready[0]);
 }
 
+/* the floppy helper: DF0-DF3 on host drives or ADF files */
+static void
+startfloppy(dev, spec)
+    int dev;
+    char **spec;
+{
+    int ready[2], life[2], n;
+    pid_t pid;
+    char success;
+    struct pollfd p;
+    if (pipe(ready) < 0 || pipe(life) < 0)
+        fail("floppy pipe");
+    pid = fork();
+    if (pid < 0) fail("floppy fork");
+    if (pid == 0) {
+        close(ready[0]); close(life[1]); close(gofd);
+        if (ackfd >= 0) close(ackfd);
+        if (displaylife >= 0) close(displaylife);
+        _exit(mig_fd_helper(ready[1], life[0], dev, spec));
+    }
+    close(ready[1]); close(life[0]);
+    p.fd = ready[0]; p.events = POLLIN;
+    do { n = poll(&p, 1, 5000); } while (n < 0 && errno == EINTR);
+    if (n <= 0 || read(ready[0], &success, 1) != 1 || success != 1) {
+        miglog(1, "floppy helper did not become ready");
+        kill(pid, SIGTERM);
+        exit(1);
+    }
+    close(ready[0]);
+}
+
 /*
  * The log goes in a writable SYS:, otherwise /tmp; a black screen
  * leaves the startup's progress there.
@@ -965,6 +997,7 @@ main(argc, argv)
 	struct sigaction sa;
 	struct rlimit rl;
 	int i, check = 0, probe = 0, fd, lockfd = -1;
+	char *df[MIG_FD_UNITS] = { "drive", 0, 0, 0 };
 
 	miglog_start(-1);
 	memset((char *)&ae, 0, sizeof ae);
@@ -984,7 +1017,11 @@ main(argc, argv)
 			rom = argv[++i], romarg = 1;
 		else if (!strcmp(argv[i], "-e") && i + 1 < argc)
 			env = argv[++i];
-		else if (!strcmp(argv[i], "-boot") && i + 1 < argc)
+		else if (argv[i][0] == '-' && argv[i][1] == 'd' && argv[i][2] == 'f' &&
+		    argv[i][3] >= '0' && argv[i][3] <= '3' && !argv[i][4] && i + 1 < argc) {
+			n = argv[i][3] - '0';
+			df[n] = strcmp(argv[++i], "none") ? argv[i] : 0;
+		} else if (!strcmp(argv[i], "-boot") && i + 1 < argc)
 			boot = argv[++i];
 		else if (!strcmp(argv[i], "-m") && i + 1 < argc) {
 			char *value = argv[++i];
@@ -1099,6 +1136,7 @@ main(argc, argv)
 		region(MIG_INPUT_BASE, MIG_INPUT_MAP_SIZE, 1);
 		region(MIG_FS_BASE, MIG_FS_MAP_SIZE, 1);
 		region(MIG_SND_BASE, MIG_SND_MAP_SIZE, 1);
+		region(MIG_FD_BASE, MIG_FD_MAP_SIZE, 1);
 		if ((dfd = migdisp_open(&fi)) < 0)
 			return 1;
 		if (!native(&fi, sysroot, &w, &h))
@@ -1130,6 +1168,7 @@ main(argc, argv)
 		/* the driver's mixing task is woken by the helper, never polls */
 		if (migkick >= 0 && (info.ai_features & AMIGA_FEAT_SNDBELL))
 			startsound(fd);
+		startfloppy(fd, df);
 		if (direct)
 			region(VRAMEND(&fi), MIG_RTG_EXTRA, 0);
 		close(go[0]);
@@ -1208,6 +1247,6 @@ main(argc, argv)
 #endif
 	return 0;
 usage:
-	fprintf(stderr, "usage: startmig [-rom file] [-boot file] [-e env] [-m fast-MB] [--readonly] [--census] [--nokick] [--nopv] [--menu] [--screens] [--check | --probe]\n");
+	fprintf(stderr, "usage: startmig [-rom file] [-boot file] [-e env] [-m fast-MB] [-dfN drive|file.adf|none] [--readonly] [--census] [--nokick] [--nopv] [--menu] [--screens] [--check | --probe]\n");
 	return 2;
 }

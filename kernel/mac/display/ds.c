@@ -72,7 +72,6 @@ extern void am_dsclut(), am_vminfo(), am_planes();
 extern char *am_dsname;
 extern int am_dscmapbits;
 extern unsigned long am_dsvsize;
-extern void (*am_passfn)();
 #endif
 
 struct dsdisp ds_disp;
@@ -639,18 +638,6 @@ int *errp, vid;
 		return 0;
 	}
 #else
-#ifdef DS_AMIGA
-	/* one session at a time takes the chipset, from a provider */
-	if (vid && am_passfn) {
-		for (i = 1; i <= DS_NSESS; i++)
-			if (ds_sess[i].s_used && !ds_sess[i].s_dead && ds_sess[i].s_chip) {
-				s->s_used = 0;
-				*errp = EBUSY;
-				return 0;
-			}
-		s->s_chip = 1;
-	} else
-#endif
 	if (vid) {
 		s->s_used = 0;
 		*errp = EINVAL;
@@ -859,11 +846,6 @@ register struct dssess *to;
 		ds_sndload(to);
 	if (DS_GUEST(from) && !DS_GUEST(to) && ds_sndown)
 		(*ds_sndown)(0);
-#endif
-#ifdef DS_AMIGA
-	/* the provider saves the chipset state of one and loads the other's */
-	if (am_passfn && (from->s_chip || to->s_chip))
-		(*am_passfn)(from, to);
 #endif
 	ds_lcopy((unsigned long *)vram, (unsigned long *)to->s_shadow, to->s_size);
 	if (to == &ds_sess[0])

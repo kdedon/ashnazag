@@ -31,7 +31,6 @@ struct am_rtg *am_rtg;
 char *am_dsname = "Amiga ECS";
 int am_dscmapbits = 4;
 unsigned long am_dsvsize;
-void (*am_passfn)();		/* (from, to): chipset passthrough at a switch */
 static int am_lines;		/* display lines, interlace doubles them */
 
 /*
@@ -186,12 +185,6 @@ struct dssess *s;
 {
 	struct screen *sp;
 
-	/* the chipset is the session's: the card shows it */
-	if (s->s_chip) {
-		if (am_rtg)
-			(*am_rtg->r_show)(0);
-		return;
-	}
 	if (s != &ds_sess[0]) {
 		am_planes(s);
 		if (activescreen != am_screen)
@@ -208,32 +201,6 @@ struct dssess *s;
 	SelectScreen(sp);
 	if (am_rtg)
 		(*am_rtg->r_show)(s != &ds_sess[0]);
-}
-
-/* the chipset passthrough provider; 0 or an errno */
-int
-am_passattach(fn)
-void (*fn)();
-{
-	if (am_passfn)
-		return EBUSY;
-	am_passfn = fn;
-	return 0;
-}
-
-int
-am_passdetach(fn)
-void (*fn)();
-{
-	int i;
-
-	if (am_passfn != fn)
-		return 0;
-	for (i = 1; i <= DS_NSESS; i++)
-		if (ds_sess[i].s_used && ds_sess[i].s_chip)
-			return EBUSY;
-	am_passfn = 0;
-	return 0;
 }
 
 int

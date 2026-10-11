@@ -753,6 +753,35 @@ writebacks(r)
 	return n;
 }
 
+/*
+ * 1: the instruction at pc makes just the faulted access, with no
+ * address register changed before it, so emulating it whole repeats
+ * nothing.
+ */
+static int
+lone(pc, ssw)
+	unsigned long pc;
+	int ssw;
+{
+	char b[2];
+	int op, sm, dm;
+
+	if (copyin((caddr_t)pc, b, 2))
+		return 0;
+	op = G16(b);
+	sm = (op >> 3) & 7;
+	if (op >> 12 >= 1 && op >> 12 <= 3) {		/* move */
+		dm = (op >> 6) & 7;
+		if (sm == 3 || sm == 4 || dm == 3 || dm == 4)
+			return 0;
+		/* a faulted write after a memory read would read again */
+		return (ssw & 0x100) || sm < 2 || (sm == 7 && (op & 7) == 4);
+	}
+	if ((op & 0xffc0) == 0x0800 || ((op & 0xff00) == 0x4a00 && (op & 0xc0) != 0xc0))
+		return sm != 3 && sm != 4;		/* btst #n, tst */
+	return 0;
+}
+
 int
 tos_fault(gp, r, v)
 	struct guest_proc *gp;
@@ -763,7 +792,7 @@ tos_fault(gp, r, v)
 	int ssw, e, sz;
 	struct ix x;
 	char save[64];
-	int sr;
+	int sr, irq;
 
 	if ((gp->gp_flags & TGF_SOLO) || (e = guest_bfault(r, &fa, &ssw)) < 0)
 		return 1;		/* a lone guest has no machine registers */
@@ -780,7 +809,15 @@ tos_fault(gp, r, v)
 		return tos_berr(gp, r, (long)fa, ssw, 0);
 	x.r = r;
 	x.ba = 0;
-	if (guest_bfcycle(r, &d)) {		/* 68030: the faulted cycle, here */
+	/*
+	 * The DMA chip's: with an interrupt waiting, the whole instruction, so
+	 * it can follow.  TOS's SCSI scan polls it, timing out by the 200 Hz
+	 * clock.  Not elsewhere: inside TOS's blitter or Videl setup an
+	 * interrupt left a zero X count or a wrong mode.
+	 */
+	irq = (fa & 0xfffff0) == 0xff8600 && tos_irqwait(gp) && lone(GR_PC(r), ssw);
+	if (!irq && guest_bfcycle(r, &d)) {	/* 68030: the faulted cycle, here */
+cycle:
 		sz = (ssw >> 5) & 3;
 		sz = sz ? sz : 4;
 		if (ssw & 0x100 ? mget(&x, fa, sz, &d) : mput(&x, fa, sz, d & szmask(sz)))
@@ -813,6 +850,8 @@ tos_fault(gp, r, v)
 	}
 	bcopy(save, r, sizeof save);
 	GR_SR(r) = sr;
+	if (e == -1 && irq && guest_bfcycle(r, &d))
+		goto cycle;
 	if (e == -1) {
 		trace("unhandled instruction at", x.pc, x.pc);
 		return tos_berr(gp, r, (long)fa, ssw, 0);
@@ -899,13 +938,12 @@ static int
 hibit(v)
 	unsigned int v;
 {
-	int n = -1;
+	int n;
 
-	while (v) {
-		v >>= 1;
-		n++;
-	}
-	return n;
+	if (!v)
+		return -1;
+	__asm__("bfffo %1{#0:#32},%0" : "=d" (n) : "d" (v));
+	return 31 - n;
 }
 
 /* the channel the MFP would raise now, -1 none */

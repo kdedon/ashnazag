@@ -78,13 +78,6 @@ int main()
 	CHECK(service.depth == 4 && service.height == 400 && (service.modes & Sm_ILACE));
 	ds_sess[1].s_vmode = 0; am_front(&ds_sess[1]);
 	CHECK(service.depth == 1 && service.height == 200 && !(service.modes & Sm_ILACE));
-	/* a chipset session: the provider shows it, the service stays out */
-	CHECK(am_passattach(mouse) == 0 && am_passattach(mouse) == EBUSY);
-	ds_sess[1].s_used = ds_sess[1].s_chip = 1; displayed = 0;
-	am_front(&ds_sess[1]); CHECK(displayed == 0);
-	CHECK(am_passdetach(mouse) == EBUSY);
-	ds_sess[1].s_used = ds_sess[1].s_chip = 0;
-	CHECK(am_passdetach(mouse) == 0 && am_passfn == 0);
 	am_front(&ds_sess[0]);
 	for (i = 0; i < 128; i++) CHECK(am_toraw[i] == 255 || am_toraw[i] < 0x68);
 	s.s_blank = 0; s.s_cmap[0][0] = 0xf000; s.s_cmap[1][0] = 0xa000; s.s_cmap[2][0] = 0x5000;

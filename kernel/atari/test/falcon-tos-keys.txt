@@ -6,8 +6,7 @@ wait auxreg-rc=
 type [ ! -d /tests ] || { /tests/modadmin -l /tests/mod.d/guestcore; /tests/modadmin -s | grep -c tosguest; }; mkdir -p /tmp/c; echo mods-done\n
 wait mods-done
 type T=/tests; [ -d /tests ] || T=/usr/bin; C=$T/tosml.img; [ -f $C ] || C=/etc/tos/tosml.img; $T/starttos -P -C /tmp/c -c $C -v 2> /tmp/st.log; echo starttos-rc=$?\n
-sleep 120
-debug screenshot OUT/1-desktop.png
+shot OUT/1-desktop.png desktop
 sleep 1
 debug info videl
 event keydown 0x38

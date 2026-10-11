@@ -71,7 +71,9 @@ static unsigned long lvbl;		/* the cartridge's VBL count */
 static unsigned long lvg;		/* gvbl() when it last changed */
 static long tkey, tmove;		/* -v: when the last key and motion came */
 static unsigned long *scr;		/* -v: the session's screen, read-only */
+static unsigned long scrlast;		/* -v: its sum, sampled while timing a redraw */
 static long now();
+static unsigned long scrsum();
 
 /* keys, motion and buttons to the kernel, which makes the mouse packets */
 static void
@@ -239,8 +241,10 @@ events(fd)
 	for (i = 0; i < n / (int)sizeof ev[0]; i++)
 		switch (ev[i].ie_type) {
 		case IE_KEY:
-			if (scr && ev[i].ie_value)
+			if (scr && ev[i].ie_value) {
 				tkey = now();
+				scrlast = scrsum();
+			}
 			if (ev[i].ie_code >= 128 ||
 			    (k = native ? ev[i].ie_code : adb2ikbd[ev[i].ie_code]) == 0)
 				break;
@@ -527,15 +531,17 @@ scrsum()
 static void
 measure()
 {
-	static unsigned long sum;
-	static long tdraw;
+	static long tdraw, tsum;
 	unsigned long v, la = pv->pv_la;
 	long t = now();
 
-	if ((v = scrsum()) != sum) {
-		sum = v;
-		if (tkey)
+	/* sampled, as summing the screen costs the guest */
+	if (tkey && t - tsum >= 100) {
+		tsum = t;
+		if ((v = scrsum()) != scrlast) {
+			scrlast = v;
 			tdraw = t;
+		}
 	}
 	if (tkey && t - (tdraw ? tdraw : tkey) > 2000) {
 		if (tdraw)

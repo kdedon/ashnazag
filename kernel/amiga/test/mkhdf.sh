@@ -9,7 +9,7 @@
 # UNIX_Root ufs = c6d0s1, UNIX_Swap = c6d0s2) and outdir/boot/, the
 # AmigaDOS volume: S/Startup-Sequence runs unix_boot040 on the kernel.
 # A login runs on the serial port.  The root holds the amilib, opci, pci
-# ne and zz9000 modules (zz9000 loaded at boot when the card is there), modadmin, lspci, tcpcat, /dev/pci and /dev/ne0, registered at
+# ne, zz9000 and floppy modules (floppy loaded at boot, zz9000 when the card is there), modadmin, lspci, fltool, tcpcat, /dev/pci and /dev/ne0, registered at
 # run level 2; ne0 comes up as 10.0.2.15 (Amiberry's user-mode network).
 # AMIX_TAPE: tape segments (default media/amix-tape).  UNIXBOOT: the
 # unix_boot040 executable.  OPENPCI: openpci's unpacked archive (Libs/
@@ -48,7 +48,7 @@ x() { (cd "$S" && cpio -i --quiet --to-stdout "$1" < tape/02); }
 x etc/vfstab | sed -e 's,^/dev/dsk/c0d0s1[	 ].*,/dev/dsk/c6d0s1	/dev/rdsk/c6d0s1	/	ufs	1	no	-,' > "$S/vfstab"
 grep -q '^/dev/dsk/c6d0s1.*ufs' "$S/vfstab" || { echo "[FAIL] tape vfstab changed"; exit 1; }
 printf 'amiga\n' > "$S/nodename"
-printf '/sbin/modadmin -r cdev pci 60 >/dev/null\n/sbin/modadmin -r sdev ne 61 >/dev/null\n/sbin/modadmin -r cdev zz9000 49 >/dev/null\n/sbin/modadmin -l zz9000 >/dev/null 2>&1\n' > "$S/S05dlm"
+printf '/sbin/modadmin -r cdev pci 60 >/dev/null\n/sbin/modadmin -r sdev ne 61 >/dev/null\n/sbin/modadmin -r cdev zz9000 49 >/dev/null\n/sbin/modadmin -l zz9000 >/dev/null 2>&1\n/sbin/modadmin -r cdev floppy 62 >/dev/null\n/sbin/modadmin -l floppy >/dev/null\n' > "$S/S05dlm"
 cat > "$S/network-config" <<'NC'
 /usr/sbin/slink addaen /dev/ne0 ne0 &&
 	/usr/sbin/ifconfig ne0 10.0.2.15 netmask 255.255.255.0 up -trailers &&
@@ -63,6 +63,7 @@ done
 CC="nice -n 19 m68k-cbm-sysv4-gcc -O"
 $CC -I"$DLM/include" -o "$S/bin/modadmin" "$DLM/modadmin.c" "$S/bin"/mod*.o "$S/bin/getksym.o"
 $CC -I"$A/include" -o "$S/bin/lspci" "$A/pci/lspci.c"
+$CC -I"$K/guest/include" -o "$S/bin/fltool" "$A/floppy/fltool.c"
 $CC -o "$S/bin/kread" "$A/test/kread.c"
 # libc.so is an archive: the shared part and the static rest
 SYS=$AMIX_SYSROOT
@@ -124,6 +125,7 @@ e /var/adm/utmp 644 0 2
 e /var/adm/utmpx 644 0 2
 f /sbin/modadmin 555 0 3 bin/modadmin
 f /usr/bin/lspci 555 2 2 bin/lspci
+f /usr/bin/fltool 555 2 2 bin/fltool
 f /usr/bin/tcpcat 555 2 2 bin/tcpcat
 f /usr/bin/kread 555 2 2 bin/kread
 f /etc/rc2.d/S05dlm 744 0 3 S05dlm
@@ -137,6 +139,11 @@ f /etc/conf/mod.d/opci 644 0 3 mods/mod.d/opci
 f /etc/conf/mod.d/pci 644 0 3 mods/mod.d/pci
 f /etc/conf/mod.d/ne 644 0 3 mods/mod.d/ne
 f /etc/conf/mod.d/zz9000 644 0 3 mods/mod.d/zz9000
+f /etc/conf/mod.d/floppy 644 0 3 mods/mod.d/floppy
+c /dev/floppy0 666 0 3 62 0
+c /dev/floppy1 666 0 3 62 1
+c /dev/floppy2 666 0 3 62 2
+c /dev/floppy3 666 0 3 62 3
 c /dev/zz9000 660 0 25 49 0
 d /etc/conf/pci 755 0 3
 f /etc/conf/pci/openpci.library 644 0 3 openpci.library

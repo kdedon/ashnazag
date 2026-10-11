@@ -139,8 +139,8 @@ for s in $STAGES; do
 		# each start must find its ST-RAM again after the last one's SIGINT
 		{ sed -n '1,/^wait mods-done/p' "$T/falcon-tos-keys.txt"
 		for i in 1 2 3; do
-			printf '%s\n' 'type T=/tests; [ -d /tests ] || T=/usr/bin; C=$T/tosml.img; [ -f $C ] || C=/etc/tos/tosml.img; $T/starttos -P -C /tmp/c -c $C 2> /tmp/st.log\n' 'sleep 120'
-			echo "debug screenshot $OUT/tosint-$i.png"
+			printf '%s\n' 'type T=/tests; [ -d /tests ] || T=/usr/bin; C=$T/tosml.img; [ -f $C ] || C=/etc/tos/tosml.img; $T/starttos -P -C /tmp/c -c $C 2> /tmp/st.log\n'
+			echo "shot $OUT/tosint-$i.png desktop"
 			printf 'event keydown 0x1d\nevent keydown 0x38\nevent keypress 0x01\nevent keyup 0x38\nevent keyup 0x1d\nsleep 5\n'
 			printf 'event keydown 0x1d\nevent keypress 0x2e\nevent keyup 0x1d\nwait ^C\n'
 			# a process that outlives the session, as a daemon would
@@ -155,12 +155,12 @@ for s in $STAGES; do
 		n=${BOOTS:-15}
 		{ sed -n '1,/^wait mods-done/p' "$T/falcon-tos-keys.txt"
 		i=1; while [ $i -le $n ]; do
-			printf '%s\n' 'type /tests/starttos -P -C /tmp/c -c /tests/tosml.img -v 2> /tmp/st.log\n' 'sleep 120'
-			echo "debug screenshot $OUT/tosloop-$i.png"
+			printf '%s\n' 'type T=/tests; [ -d /tests ] || T=/usr/bin; C=$T/tosml.img; [ -f $C ] || C=/etc/tos/tosml.img; $T/starttos -P -C /tmp/c -c $C -v 2> /tmp/st.log\n'
+			echo "shot $OUT/tosloop-$i.png desktop"
 			# the hot key to the console, then Ctrl-C there ends the session
 			printf 'event keydown 0x1d\nevent keydown 0x38\nevent keypress 0x01\nevent keyup 0x38\nevent keyup 0x1d\nsleep 5\n'
 			printf 'event keydown 0x1d\nevent keypress 0x2e\nevent keyup 0x1d\nwait ^C\n'
-			printf 'type tail -1 /tmp/st.log; echo boot-%s-done\\n\nwait boot-%s-done\n' $i $i
+			printf 'type cat /tmp/st.log; echo boot-%s-done\\n\nwait boot-%s-done\n' $i $i
 			i=$((i + 1))
 		done
 		echo "debug quit 0"; } > "$OUT/tosloop-keys.txt"

@@ -238,6 +238,7 @@ extern u32 w16_ticks();		/* milliseconds since start */
 extern char windir[], sysdir[];	/* DOS paths of the Windows and system directories */
 extern int profile_get();	/* (file or 0 = WIN.INI, section, key, default, out, size) */
 extern int profile_put();	/* (file or 0, section, key, value) */
+extern void profile_touch();	/* (dos full path, or 0 = all): a file changed */
 
 /* ---- dos.c ---- */
 

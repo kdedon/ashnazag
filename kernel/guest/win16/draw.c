@@ -728,7 +728,7 @@ text_width(f, s, n)
 		c = (u8)*s++;
 		if (c < f->f_first || c > f->f_last)
 			c = f->f_first == 0x20 ? '?' : f->f_first;
-		w += f->f_adv ? f->f_adv[c - f->f_first] : f->f_w[c - f->f_first];
+		w += f->f_tt ? ttf_adv(f, c - f->f_first) : f->f_w[c - f->f_first];
 	}
 	return w;
 }
@@ -758,9 +758,10 @@ glyphs(dc, f, x, y, s, n, dx, bold, underline, strike)
 			c = '?';
 		c -= f->f_first;
 		if (f->f_tt) {
-			struct ttglyph *t = ttf_glyph(f, c);
+			struct ttglyph *t;
 
-			w = f->f_adv[c];
+			w = ttf_adv(f, c);
+			t = ttf_glyph(f, c);
 			bits = t->bits;
 			bw = t->bw;
 			ox = t->ox;

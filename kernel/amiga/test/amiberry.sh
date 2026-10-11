@@ -10,7 +10,8 @@
 # PCI bus (default "ne2000_pci es1370 fm801").  GFX: a graphics card
 # (default ZZ9000_Z2; S3VIRGE_PCI puts one on PCI; empty for none).
 # The NE2000 is on the user-mode network; host port ECHOPORT (default
-# 2307) reaches the guest's TCP echo service.  Runs until killed, or
+# 2307) reaches the guest's TCP echo service.  DF0-DF3: ADF files in
+# the floppy drives.  Runs until killed, or
 # for the given seconds.
 set -e
 A=$(cd "$(dirname "$0")/.." && pwd)
@@ -56,6 +57,15 @@ done
 case " $CARDS " in *" ne2000_pci "*)
 	printf 'ne2000_pci=slirp\nslirp_redir=tcp:%s:7:10.0.2.15\n' "${ECHOPORT:-2307}" >> "$C" ;;
 esac
+n=0
+for d in "${DF0-}" "${DF1-}" "${DF2-}" "${DF3-}"; do
+	if [ -n "$d" ]; then
+		printf 'floppy%d=%s\nfloppy%dtype=0\n' $n "$d" $n >> "$C"
+		last=$n
+	fi
+	n=$((n + 1))
+done
+[ -z "${last-}" ] || echo "nr_floppies=$((last + 1))" >> "$C"
 if [ -n "$GFX" ]; then
 	printf 'gfxcard_type=%s\ngfxcard_size=4\n' "$GFX" >> "$C"
 fi

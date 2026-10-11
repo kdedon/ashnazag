@@ -346,12 +346,11 @@ LaserJet III and the Epson FX-80 drivers, their output decoded and checked.
   Manager's first start, groups made, 65 -> 23 s; later starts 20 -> 8.3 s;
   a full redraw 0.53 -> 0.48 s; Notepad 1.9 -> 1.6 s, Calculator 1.1 ->
   0.75 s, Minesweeper 1.5 -> 1.2 s, Solitaire 3.5 -> 2.2 s, Clock 11.6 ->
-  11.5 s; `-install` 2.5 minutes. A loop of compiled code's kind takes 62
+  2.8 s; `-install` 2.5 minutes. A loop of compiled code's kind takes 62
   host instructions per x86 instruction in the 68k loop, 254 in the C core
-  (`x86diff -t`). What is left is mostly the host's: system calls and
-  interrupts while Program Manager reads its .INI files a line at a time
-  on every GetProfileString (no cache yet), disk writes on the first start,
-  and TrueType hinting (Clock).
+  (`x86diff -t`). System time is about a tenth. Program Manager's own
+  group checksum (a word sum over each .GRP, again for every item added)
+  is 70 to 90% of its x86 instructions.
 - Serial ports (COMM.DRV's OpenComm and the rest over the host's ttys:
   Terminal), MIDI output, recording, printing to FILE: ports.
 - Scaled raster fonts (a bitmap face stretched to a size it lacks), the

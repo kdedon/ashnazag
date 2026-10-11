@@ -46,6 +46,8 @@ p6int:
 	rte
 
 | MFP timer A at 240 Hz; every fourth interrupt is the 60 Hz clock tick.
+| The tick runs at IPL 5: the IKBD's ACIA holds one byte, which the
+| tick's work outlasts.  A tick still running defers the next.
 	.globl	ata_clkint
 ata_clkint:
 	moveml	&0xfffe,%sp@-
@@ -55,7 +57,11 @@ ata_clkint:
 	addql	&1,ata_ticks
 	subql	&1,ata_tdiv
 	bgt.w	Lckdone
+	tstl	ata_inclk
+	bne.w	Lckbusy
 	movel	&4,ata_tdiv
+	movel	&1,ata_inclk
+	movew	&0x2500,%sr
 	clrl	%sp@-
 	pea	%sp@
 	jsr	clock_int
@@ -64,7 +70,12 @@ ata_clkint:
 	jsr	addupc_clk
 Lckpop:
 	addql	&8,%sp
+	oriw	&0x0700,%sr
+	clrl	ata_inclk
 Lckdone:
+	jmp	intret
+Lckbusy:
+	movel	&1,ata_tdiv
 	jmp	intret
 
 | MFP GPIP4: keyboard/MIDI ACIAs.
@@ -442,5 +453,6 @@ ata_spurious:	.long	0, 0, 0, 0, 0, 0, 0, 0
 ata_ttfn:	.space	128
 ata_ticks:	.long	0
 ata_tdiv:	.long	4
+ata_inclk:	.long	0
 ata_vbls:	.long	0
 	.balign	4

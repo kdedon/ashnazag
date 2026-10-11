@@ -1,0 +1,2 @@
+# floppy: the floppy service, /dev/floppyN
+floppy	floppy	m	0	0	0

@@ -60,7 +60,7 @@ for c in "$K/mac/display/ds.c" "$A/atads.c"; do
 done
 
 # the disk layer runs only after main() has cleared BSS
-for c in ataide ahdi atartc; do
+for c in ataide ahdi atartc atafsflush; do
 	$CC $CFLAGS -I"$AMIX_ROOT/usr/sys/amiga/alien" -c "$A/$c.c" -o "$W/$c.o" 2> "$W/$c.o.warn" || {
 		cat "$W/$c.o.warn"; exit 1; }
 	[ -s "$W/$c.o.warn" ] && { cat "$W/$c.o.warn"; echo "[FAIL] $c.c: warnings"; exit 1; }
@@ -114,7 +114,7 @@ sh "$K/dlm/build.sh" -k "$W/dlm"
 sh "$K/guest/build.sh" -k "$BASE" "$W/guest"
 
 OBJS="$W/dlm/dlm.o $W/guest/guest.o $W/ataentry.o $W/ataintr.o $W/ataconf.o $W/ikbd.o $W/fbcons.o $W/fbfont.o
-$W/atadevsw.o $W/atacons.o $W/ds.o $W/atads.o $W/ataide.o $W/ahdi.o $W/atartc.o $W/rd.o $RDB/rdimage.o
+$W/atadevsw.o $W/atacons.o $W/ds.o $W/atads.o $W/ataide.o $W/ahdi.o $W/atartc.o $W/atafsflush.o $W/rd.o $RDB/rdimage.o
 $W/fpe030.o $FPEOBJS $W/fpe-obj/fpe_glue.o $W/fpe040.o"
 
 OVR="config putchar getchar callrom sysdump haltsys rtnfirm hw_clkstart clkreld
@@ -122,7 +122,7 @@ p1int p2int p3int p4int p5int p6int parinit qlintr slpoll autocon delayus
 ramopen ramclose ramstrategy ramprint ramsize backtrace fpu_setup inituname
 sdopen sdqueue sdhardwarename sdpartition sdvalid sdblkno sddevsize
 prhasfp fpuinit fpu_save fpu_restore setregs clkset
-dmainit ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig mdboot"
+dmainit ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig mdboot fsflush"
 # Amiga data replaced: the console streamtab, the device switches and the
 # exec and STREAMS module switches.
 OVRD="coinfo cdevsw bdevsw execsw fmodsw"

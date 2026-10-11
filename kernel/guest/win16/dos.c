@@ -307,6 +307,7 @@ dos_creat(p, attr)
 		return -doserr(errno);
 	fds[h] = fd;
 	dos_fullpath(p, fnames[h]);
+	profile_touch(fnames[h]);
 	return h;
 }
 
@@ -382,6 +383,7 @@ dos_write(h, a, n)
 			fwrite(M + a, 1, n, stderr);
 		return n;
 	}
+	profile_touch(fnames[h]);
 	if (n == 0) {
 		/* a zero-byte write truncates there */
 		off_t o = lseek(fds[h], 0, SEEK_CUR);
@@ -416,6 +418,7 @@ dos_delete(p)
 
 	if ((e = dos_hostpath(p, host, sizeof host, 0)) != 0)
 		return e;
+	profile_touch((char *)0);
 	return unlink(host) < 0 ? doserr(errno) : 0;
 }
 
@@ -847,6 +850,7 @@ dos_int21(c)
 				fail(c, e);
 				return 1;
 			}
+			profile_touch((char *)0);
 			if (rename(host, h2) < 0)
 				fail(c, doserr(errno));
 		}

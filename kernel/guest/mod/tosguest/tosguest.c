@@ -95,6 +95,14 @@ vipl(gp)
 	return (gp->gp_vsr & SR_IPL) >> 8;
 }
 
+/* 1: an interrupt above the guest's IPL waits */
+int
+tos_irqwait(gp)
+	struct guest_proc *gp;
+{
+	return tosc.t_state == 1 && !tosc.t_paused && tosc.t_gp == gp && tos_level() > vipl(gp);
+}
+
 /*
  * Something may want the guest.  A masked request waits for the IPL to
  * drop (gp_vpend sends that through the trap tail); a sleeping guest is
@@ -184,11 +192,13 @@ tos_intr(gp, r)
 	/*
 	 * A fault frame resumes its instruction part way through; restarting
 	 * it would repeat its side effects.  The CPU takes interrupts between
-	 * instructions, so these wait for the next tick.
+	 * instructions, so these wait for the next tick, unless the handler
+	 * finished the instruction (its frame goes).
 	 */
 	switch (GR_FV(r) >> 12) {
 	case 9: case 0xa: case 0xb:
-		return;
+		if (!(u.u_sigflag & USTKCLEAR))
+			return;
 	}
 	s = splhi_();
 	while (!t->t_paused && (l = tos_level()) > vipl(gp)) {
@@ -376,6 +386,7 @@ tos_priv(gp, r, v)
 	int v;
 {
 	char sr[2];
+	int op;
 
 	if (gp->gp_flags & TGF_SOLO)
 		return guest_lone_trap(gp, r, v);
@@ -383,17 +394,18 @@ tos_priv(gp, r, v)
 	TST(gp)->ts_lastpc = GR_PC(r);
 	if (!(gp->gp_vsr & SR_S))
 		return tos_refl(gp, r, v);
-	if ((opword(r) & 0xffc0) == 0xf000)	/* a 68030's MMU instructions */
+	op = opword(r);
+	if ((op & 0xffc0) == 0xf000)	/* a 68030's MMU instructions */
 		return tos_fline(gp, r, v);
-	if (!fpu_present && (opword(r) & 0xfe00) == 0xf200 && (opword(r) >> 7 & 3) == 2)
+	if (!fpu_present && (op & 0xfe00) == 0xf200 && (op >> 7 & 3) == 2)
 		return tos_refl0(gp, r, 11, GR_PC(r));	/* fsave, frestore: no FPU */
 	TST(gp)->ts_priv++;
-	if (opword(r) == 0x4e70) {		/* reset */
+	if (op == 0x4e70) {		/* reset */
 		GR_PC(r) += 2;
 		guest_trapret();
 		return 0;
 	}
-	if (opword(r) == 0x4e72 && copyin((caddr_t)GR_PC(r) + 2, sr, 2) == 0) {
+	if (op == 0x4e72 && copyin((caddr_t)GR_PC(r) + 2, sr, 2) == 0) {
 		guest_setsr(gp, r, (int)G16(sr));
 		GR_PC(r) += 4;
 		if (!(gp->gp_flags & TGF_SOLO))
@@ -401,7 +413,7 @@ tos_priv(gp, r, v)
 		guest_trapret();
 		return 0;
 	}
-	if (opword(r) >> 8 == 0xf4 || (opword(r) == 0x4e7b &&
+	if (op >> 8 == 0xf4 || (op == 0x4e7b &&
 	    copyin((caddr_t)GR_PC(r) + 2, sr, 2) == 0 && (G16(sr) & 0xfff) == 2))
 		TST(gp)->ts_cache++;	/* cinv, cpush, CACR: pushed for real */
 	if (guest_priv(gp, r, v) == 0)

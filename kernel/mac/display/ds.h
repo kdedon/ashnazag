@@ -124,7 +124,6 @@ struct dssess {
 #endif
 #ifdef DS_AMIGA
 	int		s_vmode;	/* FBIOSMODE's mode, index + 1; 0 the display's */
-	int		s_chip;		/* owns the chipset (FBA_VIDEL) while in front */
 #endif
 };
 

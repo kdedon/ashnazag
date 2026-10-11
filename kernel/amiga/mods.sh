@@ -3,7 +3,7 @@
 #
 #   sh amiga/mods.sh kernel.elf outdir
 #
-# Out: outdir/mod.d/{amilib,opci,pci,ne,zz9000}, built for that kernel's CPU; amilib is
+# Out: outdir/mod.d/{amilib,opci,pci,ne,zz9000,floppy}, built for that kernel's CPU; amilib is
 # checked against the kernel's exports (it must carry DLM: dlm_cacheflush),
 # opci against those and amilib's.  Install them in /etc/conf/mod.d;
 # /etc/conf/pci gets openpci.library (the openpci archive's
@@ -30,7 +30,7 @@ $HCC -o "$O/tools/modfix" "$DLM/tools/modfix.c"
 grep -qw dlm_cacheflush "$O/exports" ||
 	{ echo "mods.sh: $KERNEL has no DLM" >&2; exit 1; }
 CC="$NICE m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -fno-common -Wall -Wno-comment"
-CC="$CC -I$DLM/include -I$A/include -I$A/amilib -I$K/atari/netusbee -DNU_PCI"
+CC="$CC -I$DLM/include -I$A/include -I$K/guest/include -I$A/amilib -I$K/atari/netusbee -DNU_PCI"
 
 srcs() {
 	case $1 in
@@ -40,11 +40,12 @@ srcs() {
 	opci)	echo "$A/opci/opci.c $A/mod/opci/opcimod.c" ;;
 	pci)	echo "$A/pci/pcidev.c" ;;
 	zz9000)	echo "$A/zz9000/zz9000.c $A/zz9000/zzds.c $A/mod/zz9000/zz9000mod.c" ;;
+	floppy)	echo "$A/floppy/flsvc.c" ;;
 	ne)	echo "$K/atari/netusbee/nuchip.c $K/atari/netusbee/nudlpi.c $A/mod/ne/nemod.c" ;;
 	esac
 }
 rm -rf "$O/mod.d"
-for m in amilib opci pci ne zz9000; do	# each after the module it depends on
+for m in amilib opci pci ne zz9000 floppy; do	# each after the module it depends on
 	d=$O/src/$m
 	rm -rf "$d"; mkdir -p "$d"
 	objs=

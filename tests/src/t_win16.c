@@ -354,6 +354,23 @@ cpums(p)
 	return r < 0 ? -1 : ps.pr_time.tv_sec * 1000L + ps.pr_time.tv_nsec / 1000000;
 }
 
+/* system CPU time of a process, ms; -1 unknown */
+static long
+sysms(p)
+	pid_t p;
+{
+	char path[32];
+	prstatus_t st;
+	int fd, r;
+
+	sprintf(path, "/proc/%05ld", (long)p);
+	if ((fd = open(path, O_RDONLY)) < 0)
+		return -1;
+	r = ioctl(fd, PIOCSTATUS, &st);
+	close(fd);
+	return r < 0 ? -1 : st.pr_stime.tv_sec * 1000L + st.pr_stime.tv_nsec / 1000000;
+}
+
 /* Exit Windows: File Exit, then OK */
 static void
 exitwin(p, name)
@@ -387,7 +404,7 @@ again()
 	host("prof 40 progman_restart");
 	nap(1000);
 	settle(400);
-	t_info("progman_restart", "%ld ms CPU", cpums(p));
+	t_info("progman_restart", "%ld ms CPU, %ld system", cpums(p), sysms(p));
 	shot("progman_restart");
 	exitwin(p, "progman_restart_exit");
 }
@@ -399,7 +416,7 @@ progman()
 	char *argv[2];
 	pid_t p;
 	int i;
-	long t0, ms, f0, sess, c0;
+	long t0, ms, f0, sess, c0, s0;
 	char line[64];
 	static char *apps[] = { "notepad", "calc", "sol", "winmine", "clock", 0 };
 
@@ -416,7 +433,7 @@ progman()
 		nap(100);
 	t_info("progman_front", "%ld ms", t_now_ms() - t0);
 	ms = settle(400);
-	t_info("progman_start", "%ld ms CPU, idle %ld ms after start", cpums(p), ms);
+	t_info("progman_start", "%ld ms CPU, %ld system, idle %ld ms after start", cpums(p), sysms(p), ms);
 	shot("progman");
 	t_check("progman_running", kill(p, 0) == 0, "exited");
 
@@ -438,11 +455,12 @@ progman()
 		nap(1500);
 		type(apps[i]);
 		c0 = cpums(p);
+		s0 = sysms(p);
 		host("key ret");
 		sprintf(line, "prof 20 %s", apps[i]);
 		host(line);
 		settle(300);
-		t_info(apps[i], "%ld ms CPU from Run's OK to idle", cpums(p) - c0);
+		t_info(apps[i], "%ld ms CPU from Run's OK to idle, %ld system", cpums(p) - c0, sysms(p) - s0);
 		shot(apps[i]);
 		host("key alt+f4");
 		settle(60);

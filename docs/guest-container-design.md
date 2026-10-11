@@ -42,7 +42,7 @@ Inputs: public documentation: Amiga Hardware Reference Manual and ROM Kernel Man
 | Profile | ROM | Replacement layer | Passthrough | Fallback |
 |---|---|---|---|---|
 | Mac | Quadra/IIci ROM file | `Patch.067C` + uinter + fake NuBus card (existing A/UX design) | on Mac hosts the physical ROM and frame buffer; devices stay with the A/UX kernel, as in A/UX | — |
-| Amiga | Kickstart 3.x (target 3.2, A1200 image first) | resident modules injected as RomTags at `$F00000` (KickTags as fallback) + custom/CIA/probe pages (§6) | AMIX on A3000/A2500 with the matching Kickstart image (§8) | AROS 68k |
+| Amiga | Kickstart 3.x (target 3.2, A1200 image first) | resident modules injected as RomTags at `$F00000` (KickTags as fallback) + custom/CIA/probe pages (§6) | none: an Amiga guest never touches the chipset; floppy through the host floppy service | AROS 68k |
 | Atari | TOS 2.06 (ST/STE), 3.06 (TT), 4.04 (Falcon) | cartridge-image drivers at TOS's hook points + MFP/ACIA/Shifter pages (§7) | ASV on TT030 with TOS 3.06 (§8) | EmuTOS |
 
 In the Mac profile the ROM is the user's, `Patch.067C` is the machine layer, and on non-Mac hosts the ROM is a private copy and video is a fake NuBus card. Amiga and Atari use the same shape with our own machine layer in `Patch.067C`'s place.
@@ -326,7 +326,7 @@ Target: the user's **Kickstart 3.2** (A1200 image first, then A4000, A500/A600),
 | keyboard.device | CIA-A serial port, level 2 | **replace**: `GUEST_INPUT` raw keys; reset handlers kept (`KBD_ADDRESETHANDLER`) |
 | gameport.device | `JOYxDAT`, `POTGOR`, CIA-A fire bits | **replace**: host mouse on unit 0, host joystick/keys on unit 1 |
 | input.device, console.device, keymap | none | keep |
-| trackdisk.device, disk.resource | Paula disk DMA, CIA-B drive control | **replace** trackdisk by an ADF-backed driver (DF0:–DF3:, `GUEST_BLK`, disk-change); disk.resource: stub owner |
+| trackdisk.device, disk.resource | Paula disk DMA, CIA-B drive control | **replace** trackdisk (DF0:–DF3: on ADF files or, on Amiga hosts, raw tracks from the host floppy service; disk change); disk.resource: stub owner |
 | scsi.device (IDE on A1200/A600/A4000/A4000T, SDMAC on A3000); `NCR scsi.device` (A4000T, 53C710) | Gayle/IDE/SCSI chips | **replace** both names by `GUEST_BLK` units (HDF files): RDB scan, ConfigDev with a DiagArea boot point, `MakeDosNode`/`AddBootNode` (§9.1; analysis §7) |
 | card.resource, carddisk.device | Gayle PCMCIA | keep: without a Gayle ID card.resource adds nothing |
 | filesystem, FileSystem.resource | none | keep (3.2 FFS); PFS3 etc. from the RDB or `L:` |
@@ -399,9 +399,9 @@ Added modules: `containerinit` (`RTF_COLDSTART`, priority 106–109, before `dia
 | native-screen OS-friendly apps | promoted to RTG |
 | audio.device / AHI apps | through the sound service |
 | AGA/OCS chip-banging games and demos | no (bus error or silent) |
-| trackdisk-level copy protection, raw MFM | through the floppy service |
-| direct serial/parallel hardware | no | yes | yes |
-| networking (`bsdsocket`) | yes | yes | while interrupts enabled |
+| trackdisk-level copy protection, raw MFM | through the host floppy service; ADF elsewhere |
+| direct serial/parallel hardware | no |
+| networking (`bsdsocket`) | yes |
 
 3.2 requirements: 2 MB RAM, a 3.1/3.1.4/3.2 ROM. On an 040/060 host CPU the install needs its `68040.library`/`68060.library` (3.2's MMU libraries *(verify)*); their MMU setup is recorded, not applied (§2.2).
 
@@ -487,10 +487,10 @@ Passthrough exists only on the TT under ASV, with TOS 3.06; TOS 2.06 and 4.04 al
 
 ## 8. Hardware passthrough
 
-Only on the matching machine, with a root-granted, exclusive raw-hardware capability, and a ROM image for that model (A3000 Kickstart on an A3000; TOS 3.06 on a TT).
+Atari only (Amiga chipset passthrough dropped): on the matching machine, with a root-granted, exclusive raw-hardware capability, and a ROM image for that model (TOS 3.06 on a TT).
 
 ```
- host (AMIX / ASV)                     guest container
+ host (ASV)                            guest container
  -----------------                     ---------------
  keeps: disk controller, network,      gets: display chips, audio, floppy, keyboard/mouse
         its clock source, memory             ports, serial/parallel as granted
@@ -498,14 +498,13 @@ Only on the matching machine, with a root-granted, exclusive raw-hardware capabi
            interrupt demultiplexing          (DMA sees guest addresses)
 ```
 
-- **Memory**: chip RAM (Amiga) or ST-RAM (Atari) is mapped 1:1 at guest address 0, because the chips' DMA uses those addresses. The host must boot with that RAM reserved *(verify AMIX/ASV use of chip RAM/ST-RAM and their vector base)*. Fast/TT RAM stays container shm.
+- **Memory**: ST-RAM is mapped 1:1 at guest address 0, because the chips' DMA uses those addresses. The host must boot with that RAM reserved *(verify ASV's ST-RAM and vector base use)*. TT RAM stays container shm.
 - **ROM**: the user's image copy at the native address; the machine's physical ROM is not used.
-- **Host-owned devices stay replaced**: the guest's `scsi.device` (A3000 SDMAC) or TOS's SCSI/ACSI must not touch the host's disk controller, so disks remain `GUEST_BLK` images even under passthrough.
+- **Host-owned devices stay replaced**: TOS's SCSI/ACSI must not touch the host's disk controller, so disks remain `GUEST_BLK` images even under passthrough.
 - **Grades**:
-  - *shared*: register pages forwarded (§5): reads direct where a page holds only guest-owned registers, writes trapped and checked. `INTENA` (Amiga) and the MFP (Atari) stay virtual because host interrupts share them (A3000 SCSI and Zorro cards on level 2, host clock). CIA ICR reads clear the flags, so the kernel reads them and keeps a latch for the guest. OS-friendly native-display software runs; blitter-heavy code is slow.
-  - *take-over*: custom-chip (or ST I/O) pages mapped directly, guest owns the interrupt enables. Unix stalls whenever the guest masks all interrupts; the host resynchronises its clock from the RTC when the guest exits. For games and demos only, by explicit choice.
+  - *shared*: register pages forwarded (§5): reads direct where a page holds only guest-owned registers, writes trapped and checked. The MFP stays virtual because host interrupts share it (host clock). OS-friendly native-display software runs; blitter-heavy code is slow.
+  - *take-over*: ST I/O pages mapped directly, guest owns the interrupt enables. Unix stalls whenever the guest masks all interrupts; the host resynchronises its clock from the RTC when the guest exits. For games and demos only, by explicit choice.
 - Atari I/O shares pages between devices (`$FF8000` page: video, DMA, YM, sound), so the shared grade forwards per register with an owner table *(verify ASV page size)*.
-- Amiga passthrough uses the ROM's own drivers for guest-owned hardware (keyboard.device, trackdisk.device, audio.device); only host-owned ones are replaced.
 - Timers: the guest uses the real timers the host does not own. If the ROM's timer.device needs a host-owned one (AMIX's CIA-A timer A), timer.device stays replaced.
 
 ## 9. Real installs
@@ -613,7 +612,7 @@ Kernel `HZ` stays 60. A small platform module, `hrtimer`, programs one spare har
 
 ### 10.7 Passthrough with other guests
 
-At most one container holds any raw-hardware range system-wide, and only on matching hardware; others run on the replacement layer at the same time (an A3000 running a passthrough Kickstart 3.2 next to a Mac and a TOS container). Replacement guests then need a display the passthrough guest does not own (an RTG board, or windowed mode on a remote X server), or switch in only while the passthrough guest's display is stopped.
+At most one container holds any raw-hardware range system-wide, and only on matching hardware; others run on the replacement layer at the same time (a TT running TOS 3.06 in passthrough next to a Mac and an Amiga container). Replacement guests then need a display the passthrough guest does not own (an RTG board, or windowed mode on a remote X server), or switch in only while the passthrough guest's display is stopped.
 
 ## 11. Mac
 
@@ -695,7 +694,7 @@ Static pass criteria per milestone (builds, image checks, host harnesses in the 
 | G7 | TOS 2.06 → GEM desktop | G1; `tosguest`, `tosexec`, MFP/ACIA/video/RTC pages, cartridge image, `hdv_*` over AHDI images, GEMDOS host layer, `guestmk ahdi` | PRG header harness; AHDI/ICD parser; IKBD encoder tables; sysvar preset checker | user's TOS 2.06 boots an AHDI image in ST-high on the Q800 (zero-copy): AUTO runs, an ACC loads, desktop opens, a GEM program runs from a host directory |
 | G8 | TOS 3.06 and 4.04 | G7; MMU/cache emulation, Videl via `VsetMode`, XBIOS sound filter, RTG VDI (NVDI or fVDI driver on a surface) | per-image patch/filter lists | TT and Falcon desktops in a TT/Falcon mode and on an RTG VDI |
 | G9 | Three guests at once | G2, G4, G7; `hrtimer` (VIA1 T2), RT class, screen switching, focus, polling detector, budgets | budget checker; hotkey not routable to guests; deadline-queue harness (ordering, coalescing, chaining, rate cap) | Mac Finder, TOS desktop and Amiga Workbench run concurrently in QEMU `q800`; hotkey switches screens with contents intact; all three idle together use < 10 % CPU; **timer accuracy**: with all three running, guest test programs measure 1 ms MICROHZ requests, TOS Timer C and a 50 Hz VBL against host time for 10 min: period error < 1 %, 99th-percentile lateness < 2 ms *(provisional; QEMU timing noise)*; expiry cost counted in instructions |
-| G11 | Atari passthrough | ASV on TT | same | TOS 3.06 desktop on the TT's own video; a YM/DMA-sound program plays |
+| G11 | Atari passthrough | ASV on TT; raw-hardware grants, ownership table, ST-RAM reservation | grant exclusivity harness; forward table | TOS 3.06 desktop on the TT's own video; a YM/DMA-sound program plays |
 | G12 | Free fallback | G3/G7 infrastructure; EmuTOS and AROS container targets | EmuTOS/AROS target builds | the G4/G7 pass tests without user ROMs |
 | G13 | 030 and 060 | Amiga platform kernel; generic 060 trap-and-patch | helper page per profile | exception counts per second on 030 and 060 hosts |
 
@@ -712,7 +711,7 @@ Dependencies:
 
 1. `CA_INIT` stage bits and cartridge call order in TOS 2.06/3.06/4.04; TOS 4.04's DSP and codec initialisation without the chips.
 2. Carrier signal number for vector-mode delivery; launcher link address; HAT acceptance of segments above `UVEND`; `gexec` hunk magic.
-3. AMIX/ASV: chip RAM/ST-RAM and vector-base use, page size (for passthrough); AMIX's CIA-B timer use; ASV's MFP timer use.
+3. ASV: ST-RAM and vector-base use, page size (for passthrough); AMIX's CIA-B timer use; ASV's MFP timer use.
 4. The longest non-preemptible kernel path (RT latency bound); QEMU `q800` VIA T2 one-shot accuracy.
 5. Windowed display backend owner (X server helper vs kernel).
 6. P96 SDK licence for publishing our board driver's source.

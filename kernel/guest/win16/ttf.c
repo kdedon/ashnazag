@@ -53,6 +53,7 @@ struct ttsize {
 	unsigned char w[NCH];
 	struct ttglyph g[NCH];
 	char	done[NCH];
+	char	hasadv[NCH];
 };
 
 static struct ttfile *files;
@@ -406,6 +407,28 @@ ftload(ts, gi)
 	return face->glyph;
 }
 
+/* the advance of character c (0 = FIRST) at this size */
+int
+ttf_adv(f, c)
+	struct bfont *f;
+	int c;
+{
+	struct ttsize *ts = f->f_tt;
+	FT_GlyphSlot slot;
+	int g;
+
+	if (ts->hasadv[c])
+		return ts->adv[c];
+	ts->hasadv[c] = 1;
+	g = gindex(ts->tf, c + FIRST);
+	if ((slot = ftload(ts, g)) != 0)
+		ts->adv[c] = (unsigned short)((slot->advance.x + 32) >> 6);	/* hinted */
+	else
+		ts->adv[c] = (unsigned short)((rdiv(advance(ts->tf, g) * ts->xn, ts->xd) + 32) / 64);
+	ts->w[c] = ts->adv[c] > 255 ? 255 : ts->adv[c];
+	return ts->adv[c];
+}
+
 /* the glyph of character c (0 = FIRST) at this size, rendered now if not yet */
 struct ttglyph *
 ttf_glyph(f, c)
@@ -553,18 +576,15 @@ ttf_fontx(face, bold, italic, height, width, xdpi, ydpi)
 	f->f_break = ' ';
 	f->f_avgw = (int)(rdiv(tf->avgw * xn, xd) + 32) / 64;
 	f->f_maxw = (int)(rdiv(tf->maxw * xn, xd) + 32) / 64;
+	/* hinted advances wait for ttf_adv: a size is often made only to be measured */
 	hd = width > 0 || stretched ? 0 : hdmx(tf, ppem);
 	for (c = 0; c < NCH; c++) {
-		FT_GlyphSlot slot;
-
 		g = gindex(tf, c + FIRST);
-		if (hd && g < tf->nglyph)
+		if (hd && g < tf->nglyph) {
 			ts->adv[c] = hd[2 + g];
-		else if ((slot = ftload(ts, g)) != 0)
-			ts->adv[c] = (unsigned short)((slot->advance.x + 32) >> 6);	/* hinted */
-		else
-			ts->adv[c] = (unsigned short)((rdiv(advance(tf, g) * xn, xd) + 32) / 64);
-		ts->w[c] = ts->adv[c] > 255 ? 255 : ts->adv[c];
+			ts->w[c] = ts->adv[c] > 255 ? 255 : ts->adv[c];
+			ts->hasadv[c] = 1;
+		}
 	}
 	f->f_w = ts->w;
 	f->f_adv = ts->adv;
