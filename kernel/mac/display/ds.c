@@ -67,8 +67,12 @@ extern int ata_svfb;
 #endif
 extern int fbp_nmode, fbp_cur;
 #ifdef DS_AMIGA
-extern int am_dsinit();
-extern void am_dsclut();
+extern int am_dsinit(), am_nvmode(), am_vmfind();
+extern void am_dsclut(), am_vminfo(), am_planes();
+extern char *am_dsname;
+extern int am_dscmapbits;
+extern unsigned long am_dsvsize;
+extern void (*am_passfn)();
 #endif
 
 struct dsdisp ds_disp;
@@ -126,6 +130,12 @@ register struct fbinfo *fi;
 		fi->fi_flags |= FBF_SETMODE;
 	if (s && s->s_vmode)
 		ata_vminfo(s->s_vmode - 1, fi);
+#endif
+#ifdef DS_AMIGA
+	if (am_nvmode())
+		fi->fi_flags |= FBF_SETMODE;
+	if (s && s->s_vmode)
+		am_vminfo(s->s_vmode - 1, fi);
 #endif
 	if (s)
 		fi->fi_size = s->s_size;
@@ -328,6 +338,8 @@ ds_vblintr()
 }
 
 #ifdef DS_AMIGA
+static caddr_t ds_shadow();
+
 void
 ds_am_console()
 {
@@ -335,6 +347,55 @@ ds_am_console()
 		ds_pend = 0;
 		qenable(&ds_q);
 	}
+}
+
+/*
+ * s takes mode id: its own depth and size, its shadow sized to match.
+ * A new size needs s unmapped.  Process context.
+ */
+int
+ds_setmode(s, id)
+register struct dssess *s;
+unsigned long id;
+{
+	struct fbinfo fi;
+	caddr_t mem, shadow;
+	unsigned long *pfn, size, msize;
+	register int n;
+
+	if ((n = am_vmfind(id)) < 0)
+		return ENXIO;
+	am_vminfo(n, &fi);
+	if (fi.fi_size > ds_disp.d_vsize)
+		return ENXIO;
+	if (!fbcons_grab())
+		return EBUSY;
+	if (fi.fi_size != s->s_size) {
+		if (ds_segcount(s)) {
+			fbcons_unlock();
+			return EBUSY;
+		}
+		mem = s->s_mem, msize = s->s_memsize, shadow = s->s_shadow;
+		pfn = s->s_pfn, size = s->s_size;
+		s->s_size = fi.fi_size;
+		if (ds_shadow(s) == 0) {
+			s->s_mem = mem, s->s_memsize = msize, s->s_shadow = shadow;
+			s->s_pfn = pfn, s->s_size = size;
+			fbcons_unlock();
+			return ENOMEM;
+		}
+		kmem_free((caddr_t)pfn, (size >> DS_PGSHIFT) * 4);
+		kmem_free(mem, msize);
+	}
+	s->s_vmode = n + 1;
+	ds_stdcmap(s, (int)fi.fi_depth);
+	if (s == ds_front) {
+		am_planes(s);
+		ds_clutload(s, 0, ds_ncmap(s));
+	}
+	fbcons_unlock();
+	ds_note(s, FBN_MODE);
+	return 0;
 }
 #endif
 
@@ -578,6 +639,18 @@ int *errp, vid;
 		return 0;
 	}
 #else
+#ifdef DS_AMIGA
+	/* one session at a time takes the chipset, from a provider */
+	if (vid && am_passfn) {
+		for (i = 1; i <= DS_NSESS; i++)
+			if (ds_sess[i].s_used && !ds_sess[i].s_dead && ds_sess[i].s_chip) {
+				s->s_used = 0;
+				*errp = EBUSY;
+				return 0;
+			}
+		s->s_chip = 1;
+	} else
+#endif
 	if (vid) {
 		s->s_used = 0;
 		*errp = EINVAL;
@@ -786,6 +859,11 @@ register struct dssess *to;
 		ds_sndload(to);
 	if (DS_GUEST(from) && !DS_GUEST(to) && ds_sndown)
 		(*ds_sndown)(0);
+#endif
+#ifdef DS_AMIGA
+	/* the provider saves the chipset state of one and loads the other's */
+	if (am_passfn && (from->s_chip || to->s_chip))
+		(*am_passfn)(from, to);
 #endif
 	ds_lcopy((unsigned long *)vram, (unsigned long *)to->s_shadow, to->s_size);
 	if (to == &ds_sess[0])
@@ -1048,6 +1126,11 @@ ds_init()
 	fi->fi_offset = m->fm_base - ds_disp.d_page;
 	fi->fi_size = (fi->fi_offset + m->fm_row * m->fm_height + DS_PGOFF) & ~DS_PGOFF;
 	ds_disp.d_vsize = fi->fi_size;
+#ifdef DS_AMIGA
+	/* room for the deepest mode a session may take */
+	if (am_dsvsize > ds_disp.d_vsize)
+		ds_disp.d_vsize = am_dsvsize;
+#endif
 #ifdef DS_ATARI
 	/* the console's screen opens the pool, which ends at the top of ST-RAM */
 	if (ds_disp.d_page >= ata_pool && ds_disp.d_page - ata_pool < DS_VPOOL &&
@@ -1088,10 +1171,10 @@ ds_init()
 	fi->fi_cmapbits = 8;
 	fi->fi_mode = (fbp_cur >= 0 && fbp_cur < fbp_nmode) ? fbp_mode[fbp_cur].pm_id : 0x80;
 #ifdef DS_AMIGA
-	fi->fi_cmapbits = 4;
+	fi->fi_cmapbits = am_dscmapbits;
 	fi->fi_flags = FBF_BLANK | FBF_CMAP;
-	for (i = 0; "Amiga ECS"[i]; i++)
-		fi->fi_name[i] = "Amiga ECS"[i];
+	for (i = 0; am_dsname[i] && i < sizeof fi->fi_name - 1; i++)
+		fi->fi_name[i] = am_dsname[i];
 #elif defined(DS_ATARI)
 	fi->fi_cmapbits = DS_SV ? 8 : ata_tt ? 4 : 6;
 	fi->fi_flags = d <= 8 ? FBF_BLANK | FBF_CMAP : 0;

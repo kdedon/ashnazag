@@ -12,7 +12,7 @@ The build checks the 32-bit ABI, both HUNK files and the extension ROM, includin
 
 Implemented packets: startup, locate/free/copy/parent lock, open/close, read/write/seek, examine/next, create directory, rename/delete, disk information, current volume, flush and filesystem query. Unsupported packets return `ERROR_ACTION_NOT_KNOWN`. FileInfoBlock names use the packet-level BSTR convention; `dos.library` converts them for callers.
 
-The mailbox rejects a second handler process. Startup publishes a DOS volume and retains a root lock. Host volume zero is the configured root. Metadata setters, concurrent directory enumerations still need work. Guest execution and Workbench compatibility remain unverified.
+The mailbox rejects a second handler process. Startup publishes a DOS volume and retains a root lock. Host volume zero is the configured root. Metadata setters, concurrent directory enumerations still need work.
 
 ## Mount after DOS starts
 
@@ -36,7 +36,7 @@ The extension invokes this hook with an allocated ConfigDev and persistent handl
 
 ## Verification
 
-Small builds and static checks validate resident discovery, priorities, handler relocation and the diagnostic route. No emulator has run; booting Workbench is not yet runtime-verified.
+Small builds and static checks validate resident discovery, priorities, handler relocation and the diagnostic route.
 
 `kernel/guest-amiga/test/check.sh` given the ROM path also checks the supported ROM revision.
 

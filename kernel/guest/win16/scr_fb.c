@@ -150,7 +150,8 @@ scr_open(w, h, flags)
 	screen.h = fi.fi_height > 1024 ? 1024 : fi.fi_height;
 	screen.rowb = screen.w;
 	screen.pix = (u8 *)calloc(1, screen.w * screen.h);
-	/* colours */
+	/* colours: the system palette, before GDI sets it up */
+	pal_init();
 	ncol = fi.fi_visual == FBV_PSEUDO ? (fi.fi_cmapsize < 256 ? fi.fi_cmapsize : 256) : 0;
 	if (ncol) {
 		for (i = 0; i < 256; i++) {

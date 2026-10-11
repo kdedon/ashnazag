@@ -1,6 +1,6 @@
 # QEMU q800 test harness
 
-QEMU 8.2.2 (`Debian 1:8.2.2+ds-0ubuntu1.18`), unpacked from the Ubuntu 24.04 `qemu-system-misc`, `qemu-system-data` and `qemu-system-common` packages (`apt-get download`, `dpkg-deb -x`) into `toolchain/qemu/`. Libraries missing on the host (libslirp, liburing, libaio, libpmem, librdmacm and their dependencies) are unpacked into `toolchain/qemu/lib` and found through `LD_LIBRARY_PATH`; the packages are kept in `toolchain/qemu/debs/`.
+QEMU 8.2.2 with `toolchain/qemu-patches` (the 68040 modified-bit fix), built by `toolchain/build-qemu.sh` into `toolchain/qemu-local/`; the scripts fall back to an unpacked distribution QEMU in `toolchain/qemu/`. Concurrent runs are limited by `tools/qslot.sh`.
 
 All runs are headless under `nice -n 19` and `timeout`, drive QEMU over QMP for screen dumps and keys, and open disks with `-snapshot`, so images are never modified.
 
@@ -8,7 +8,7 @@ All runs are headless under `nice -n 19` and `timeout`, drive QEMU over QMP for 
 
 | File | Purpose |
 |---|---|
-| `run-direct.sh [OUT] [STEP...]` | direct ELF boot (`-kernel`, no ROM); `KERNEL=` selects the ELF (default `kernel/build/unix-mac.elf`) |
+| `run-direct.sh [OUT] [STEP...]` | direct ELF boot (`-kernel`, no ROM); `KERNEL=` selects the ELF (default `kernel/build/unix-mac.elf`); `NET=1` adds user-mode networking |
 | `run-mac.sh [--net] [--sock] [--tmo S] ROM DISK MB OUT [STEP...]` | ROM boot with the disk at SCSI ID 0; `--net` user-mode network, `--sock` serial A on `OUT/serial.sock` for `serial:` steps, `--tmo` timeout; `GDB=1` adds a gdbstub socket `OUT/gdb.sock`, `QEXTRA=` adds QEMU options, `TMO=` sets the timeout (260 s) |
 | `run-rom.sh ROM [DISK] [OUT]` | minimal ROM boot, optional disk |
 | `qmp.py` | QMP steps: `wait:N`, `shot:NAME`, `type:TEXT` (ADB keys), `serial:TEXT`, `hmp:CMD`, `quit` |

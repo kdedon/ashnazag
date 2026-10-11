@@ -122,6 +122,10 @@ struct dssess {
 	unsigned long	s_gpa, s_gtop;	/* s_gtop bounds guest DMA addresses */
 	int		s_vmode;	/* FBIOSMODE's mode, index + 1; 0 a guest's or none */
 #endif
+#ifdef DS_AMIGA
+	int		s_vmode;	/* FBIOSMODE's mode, index + 1; 0 the display's */
+	int		s_chip;		/* owns the chipset (FBA_VIDEL) while in front */
+#endif
 };
 
 struct dsfbh {			/* one open of /dev/fbN */
@@ -172,10 +176,12 @@ void	ds_now();		/* (sec, usec) */
 void	ds_vblintr();
 void	ds_sinfo();		/* (s, fi): what FBIOGINFO reports for s */
 int	ds_ncmap();		/* (s) -> its colour table's entries */
+#if defined(DS_ATARI) || defined(DS_AMIGA)
+int	ds_setmode();		/* (s, id) -> errno */
+#endif
 #ifdef DS_ATARI
 void	ds_relmouse();		/* (buttons, dx, dy) */
 int	ds_vidpass();		/* (s, window) -> errno */
-int	ds_setmode();		/* (s, id) -> errno */
 /* a guest's Videl session: its own mode and palette, IKBD key codes */
 #define DS_GUEST(s)	((s)->s_vid && !(s)->s_vmode)
 void	ds_vidput();		/* (addr, size, value) */

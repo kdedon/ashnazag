@@ -1,6 +1,6 @@
 # Driver reuse: NetBSD and Linux sources for our 68k hardware
 
-State 2026-09-30. Reference trees (local only, sparse, depth 1): `ref/netbsd` (NetBSD src HEAD: `sys/arch/{mac68k,atari,m68k}`, the `sys/dev/ic`, `sys/dev/scsipi` headers and `sys/dev/adb` files those ports use) and `ref/linux` (torvalds HEAD: `arch/m68k`, `drivers/macintosh`, the Mac/Atari SCSI, SONIC, MACE, fbdev, pata_falcon, atakbd and pmac_zilog files). Real-Q800 discrepancies in our current drivers: [kernel/mac/HWQUIRKS.md](../kernel/mac/HWQUIRKS.md).
+Reference trees (sparse, depth 1): `ref/netbsd` (NetBSD src HEAD: `sys/arch/{mac68k,atari,m68k}`, the `sys/dev/ic`, `sys/dev/scsipi` headers and `sys/dev/adb` files those ports use) and `ref/linux` (torvalds HEAD: `arch/m68k`, `drivers/macintosh`, the Mac/Atari SCSI, SONIC, MACE, fbdev, pata_falcon, atakbd and pmac_zilog files). Real-Q800 discrepancies in our current drivers: [kernel/mac/HWQUIRKS.md](../kernel/mac/HWQUIRKS.md).
 
 ## Licences
 
@@ -9,7 +9,7 @@ State 2026-09-30. Reference trees (local only, sparse, depth 1): `ref/netbsd` (N
 | NetBSD, 2-clause (TNF, most `dev/ic`, `if_mc`, `iop.c`, `psc.c`, atari `ncr5380.c`, `kbd.c`, `grfabs_*`) | BSD-2 | copy with notice |
 | NetBSD, UCB 4-clause (`z8530sc.c`, `z8530tty.c`, atari `zs.c`) | clause 3 rescinded by UCB 1999 | copy with notice |
 | NetBSD, individual-author 4-clause (`adb_direct.c`, `pm_direct.c`, `akbd.c`, `ams.c`, `adb_kbd.c`, `macfb.c`, `grf_obio.c`, `asc.c`, `esp.c`, `nubus.c`, `via.c`, `pram.c`, `pramasm.s`, atari `ms.c`, `ser.c`, `ncr5380sbc.c`, Galbavy part of `ncr53c9x.c`) | advertising clause; GPL-incompatible | keep as a separate BSD module, get a relicence from the author, or use as reference and rewrite |
-| Linux | GPL-2 only | fine for the GPL-2 repo, conflicts with PLAN's "our modules stay MIT/BSD"; reference for quirks unless that rule is relaxed |
+| Linux | GPL-2 only | fine for the GPL-2 repo, conflicts with keeping modules MIT/BSD; reference for quirks only |
 
 Check each file's header before copying; several mix holders.
 
@@ -59,7 +59,7 @@ Effort: S ≤ 2 days, M ≤ 1 week, L > 1 week, for an SVR4 DDI driver on the sh
 
 ## Shim: NetBSD chip code on AMIX SVR4
 
-Keep NetBSD's chip files (`dev/ic/*`, attachments' register code) nearly unchanged; compile them against a small `nbshim.h` + `nbshim.c`.
+Keep NetBSD's chip files (`dev/ic/*`, attachments' register code) nearly unchanged; compile them against a small `nbshim.h` + `nbshim.c` (to be written).
 
 | NetBSD API | AMIX SVR4 mapping |
 |---|---|

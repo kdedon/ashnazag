@@ -15,6 +15,10 @@
 FT_BEGIN_HEADER
 
 #define FT_CONFIG_OPTION_NO_ASSEMBLER
+/* set here: older preprocessors reject FreeType's ULL test */
+#ifndef FT_SIZEOF_LONG_LONG
+#define FT_SIZEOF_LONG_LONG	8
+#endif
 #define FT_RENDER_POOL_SIZE	16384L
 #define FT_MAX_MODULES		8
 

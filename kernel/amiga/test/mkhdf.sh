@@ -9,14 +9,16 @@
 # UNIX_Root ufs = c6d0s1, UNIX_Swap = c6d0s2) and outdir/boot/, the
 # AmigaDOS volume: S/Startup-Sequence runs unix_boot040 on the kernel.
 # A login runs on the serial port.  The root holds the amilib, opci, pci
-# and ne modules, modadmin, lspci, tcpcat, /dev/pci and /dev/ne0, registered at
+# ne and zz9000 modules (zz9000 loaded at boot when the card is there), modadmin, lspci, tcpcat, /dev/pci and /dev/ne0, registered at
 # run level 2; ne0 comes up as 10.0.2.15 (Amiberry's user-mode network).
 # AMIX_TAPE: tape segments (default media/amix-tape).  UNIXBOOT: the
 # unix_boot040 executable.  OPENPCI: openpci's unpacked archive (Libs/
 # openpci.library, ENVARC/PCI-Configuration).  ROOTMB (default 128).
+# LOADBASE: where the loader puts the kernel (default 0x08000000, the
+# A3000's accelerator RAM); /stand/unix is linked there.
 # PKG: stage.sh's outdir, for the environment modules and devices.
-# AMIGAENV: mkamiga.sh's outdir, installed as installmig would (root
-# in group display).
+# AMIGAENV: mkamiga.sh's outdir, copied to /amiga-stage for
+# installmig.  TOSENV: mktos.sh's outdir, installed as on other hosts.
 set -e
 A=$(cd "$(dirname "$0")/.." && pwd)
 K=$(cd "$A/.." && pwd)
@@ -26,6 +28,7 @@ KERNEL=${1:-$K/build/unix-amiga}
 O=${2:-$K/build/amiga/hdf}
 TAPE=${AMIX_TAPE:-$AUX/media/amix-tape}
 ROOTMB=${ROOTMB:-128}
+LOADBASE=${LOADBASE:-0x08000000}
 PY="nice -n 19 python3"
 . "$AUX/toolchain/src/gcc-cross-amix/build/env.sh"
 PATH="$AUX/toolchain/linux/bin:$AUX/toolchain/bin:$PATH"
@@ -45,7 +48,7 @@ x() { (cd "$S" && cpio -i --quiet --to-stdout "$1" < tape/02); }
 x etc/vfstab | sed -e 's,^/dev/dsk/c0d0s1[	 ].*,/dev/dsk/c6d0s1	/dev/rdsk/c6d0s1	/	ufs	1	no	-,' > "$S/vfstab"
 grep -q '^/dev/dsk/c6d0s1.*ufs' "$S/vfstab" || { echo "[FAIL] tape vfstab changed"; exit 1; }
 printf 'amiga\n' > "$S/nodename"
-printf '/sbin/modadmin -r cdev pci 60 >/dev/null\n/sbin/modadmin -r sdev ne 61 >/dev/null\n' > "$S/S05dlm"
+printf '/sbin/modadmin -r cdev pci 60 >/dev/null\n/sbin/modadmin -r sdev ne 61 >/dev/null\n/sbin/modadmin -r cdev zz9000 49 >/dev/null\n/sbin/modadmin -l zz9000 >/dev/null 2>&1\n' > "$S/S05dlm"
 cat > "$S/network-config" <<'NC'
 /usr/sbin/slink addaen /dev/ne0 ne0 &&
 	/usr/sbin/ifconfig ne0 10.0.2.15 netmask 255.255.255.0 up -trailers &&
@@ -60,6 +63,7 @@ done
 CC="nice -n 19 m68k-cbm-sysv4-gcc -O"
 $CC -I"$DLM/include" -o "$S/bin/modadmin" "$DLM/modadmin.c" "$S/bin"/mod*.o "$S/bin/getksym.o"
 $CC -I"$A/include" -o "$S/bin/lspci" "$A/pci/lspci.c"
+$CC -o "$S/bin/kread" "$A/test/kread.c"
 # libc.so is an archive: the shared part and the static rest
 SYS=$AMIX_SYSROOT
 rm -rf "$S/libc"; mkdir -p "$S/libc"
@@ -74,23 +78,33 @@ if [ -f "$OPENPCI/ENVARC/PCI-Configuration" ]; then
 	cp "$OPENPCI/ENVARC/PCI-Configuration" "$S/PCI-Configuration"
 	CONF="f /etc/conf/pci/PCI-Configuration 644 0 3 PCI-Configuration"
 fi
-cp "$KERNEL.elf" "$S/unix"
+# the namelist for netstat, arp and crash: symbols where the loader puts them
+sed -e "s/^	\\. = 0;/	. = $LOADBASE;/" "$A/amiga.ld" > "$S/unix.ld"
+m68k-elf-ld -T "$S/unix.ld" -o "$S/unix.linked" "$KERNEL"
+$PY "$A/test/namelist.py" "$KERNEL" "$S/unix.linked" "$S/unix"
 { x etc/group; echo "display::25:root"; } > "$S/group"
 ENV=
 if [ -n "$PKG" ]; then
 	ENV=$(sed -e "s, etc/conf/mod.d/, $PKG/root/etc/conf/mod.d/," "$PKG/root.manifest.add")
 fi
 if [ -n "$AMIGAENV" ]; then
-	E=$AMIGAENV/root
-	rm -rf "$S/amigaenv"
-	mkdir -p "$S/amigaenv/usr/lib/amiga" "$S/amigaenv/amiga/media"
-	cp -R "$E/usr" "$E/etc" "$E/amiga" "$S/amigaenv/"
-	cp "$AMIGAENV/media/"*.adf "$AMIGAENV/media/manifest.json" "$S/amigaenv/amiga/media/" 2>/dev/null || true
-	(cd "$S/amigaenv" && chmod -R u=rwX,go=rX . && chmod 755 usr/bin/* usr/sbin/* &&
-	 find usr/bin/* usr/sbin/* usr/lib/amiga etc/amiga amiga |
-	 cpio -o -H newc -R 0:25 --quiet) > "$S/amigaenv.cpio"
+	rm -rf "$S/stage"; mkdir -p "$S/stage"
+	cp -R "$AMIGAENV" "$S/stage/amiga-stage"
+	(cd "$S/stage" && chmod -R u=rwX,go=rX amiga-stage &&
+	 find amiga-stage | cpio -o -H newc -R 0:3 --quiet) > "$S/amigaenv.cpio"
 	ENV="$ENV
 a amigaenv.cpio"
+fi
+if [ -n "$TOSENV" ]; then
+	T=$(cd "$TOSENV" && pwd)
+	ENV="$ENV
+d /etc/tos 755 0 3
+f /etc/tos/emutos.img 444 0 3 $T/emutos.img
+f /etc/tos/tosml.img 444 0 3 $T/tosml.img
+f /usr/bin/starttos 755 0 3 $T/starttos
+f /usr/bin/maketos 755 0 3 $T/maketos
+f /usr/bin/tosdrive 755 0 3 $T/tosdrive
+a $T/sys.cpio"
 fi
 
 cat > "$S/root.manifest" <<EOF
@@ -111,6 +125,7 @@ e /var/adm/utmpx 644 0 2
 f /sbin/modadmin 555 0 3 bin/modadmin
 f /usr/bin/lspci 555 2 2 bin/lspci
 f /usr/bin/tcpcat 555 2 2 bin/tcpcat
+f /usr/bin/kread 555 2 2 bin/kread
 f /etc/rc2.d/S05dlm 744 0 3 S05dlm
 f /etc/inet/network-config 444 0 3 network-config
 c /dev/pci 444 0 3 60 0
@@ -121,6 +136,8 @@ f /etc/conf/mod.d/amilib 644 0 3 mods/mod.d/amilib
 f /etc/conf/mod.d/opci 644 0 3 mods/mod.d/opci
 f /etc/conf/mod.d/pci 644 0 3 mods/mod.d/pci
 f /etc/conf/mod.d/ne 644 0 3 mods/mod.d/ne
+f /etc/conf/mod.d/zz9000 644 0 3 mods/mod.d/zz9000
+c /dev/zz9000 660 0 25 49 0
 d /etc/conf/pci 755 0 3
 f /etc/conf/pci/openpci.library 644 0 3 openpci.library
 $CONF
@@ -128,11 +145,13 @@ $ENV
 EOF
 (cd "$DR" && $PY mkufs.py -s "$ROOTMB" -t 723000000 -r "$S" "$S/root.manifest" "$S/root.img")
 $PY "$DR/ufscheck.py" "$S/root.img" -l > "$S/root.lst" || { tail -20 "$S/root.lst"; exit 1; }
-$PY "$A/test/rdb.py" "$O/amix.hdf" "UNIX_Root:UNI\\1:$ROOTMB:$S/root.img" "UNIX_Swap:resv:32"
+# a new file: an emulator still running keeps writing to the old one
+$PY "$A/test/rdb.py" "$O/amix.hdf.new" "UNIX_Root:UNI\\1:$ROOTMB:$S/root.img" "UNIX_Swap:resv:32"
+mv "$O/amix.hdf.new" "$O/amix.hdf"
 rm -f "$S/root.img"
 
 mkdir -p "$O/boot/S"
 cp "$UNIXBOOT" "$O/boot/unix_boot040"
 cp "$KERNEL" "$O/boot/unix"
-printf 'DH0:unix_boot040 DH0:unix\n' > "$O/boot/S/Startup-Sequence"
+printf 'DH0:unix_boot040 DH0:unix %s\n' "$LOADBASE" > "$O/boot/S/Startup-Sequence"
 echo "[OK] $O/amix.hdf, $O/boot"

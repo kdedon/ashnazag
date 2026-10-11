@@ -1,6 +1,7 @@
 /*
  * ashfb.c -- fVDI driver for the container's frame buffer: 8-bit
- * chunky pixels at the address the launcher put in the cartridge.
+ * chunky pixels or separate bitplanes at the address the launcher put
+ * in the cartridge.
  * The palette goes to the display process through ST-RAM (tosfb.h).
  */
 #include "fvdi.h"
@@ -18,11 +19,14 @@ static char const none[] = { 0 };
 static Mode const mode[1] = {
 	{ 8, CHUNKY, { red, green, blue, none, none, none }, 0, 2, 1, 1 }
 };
+/* separate planes: the VDI's standard format is the device's */
+static Mode planes = { 1, 0, { red, green, blue, none, none, none }, 0, 1, 1, 1 };
 
 char driver_name[] = "Ash Nazag frame buffer";
 
 static struct tfbshare *share;
 static Pix pens[256];
+static long ncol = 256;
 
 static long pen(long c)
 {
@@ -56,7 +60,7 @@ void CDECL c_set_colours(Virtual *vwk, long start, long entries, unsigned short 
 
 	(void)vwk;
 	requested = (unsigned short *)((long)requested & ~1L);
-	for (i = 0; i < entries; i++) {
+	for (i = 0; i < entries && start + i < ncol; i++) {
 		if (fine)
 			requested++;
 		c = &palette[start + i];
@@ -392,20 +396,24 @@ long CDECL initialize(Virtual *vwk)
 	struct tfbcart *fc = (struct tfbcart *)TFB_CART;
 	static signed char tos[16] = { 0, -1, 1, 2, 4, 6, 3, 5, 7, 8, 9, 10, 12, 14, 11, 13 };
 	Workstation *wk;
-	long i;
+	long i, d = fc->fc_depth;
 
-	if (*(long *)0xfa0000 != 0xabcdef42L || !fc->fc_addr || fc->fc_depth != 8) {
+	if (*(long *)0xfa0000 != 0xabcdef42L || !fc->fc_addr ||
+	    (fc->fc_plane8 ? d < 1 || d > 8 : d != 8)) {
 		access->funcs.error("ashfb: no frame buffer", 0);
 		return 0;
 	}
+	/* VDI colour to pixel: TOS's first 16, black last, beyond the palette black */
+	ncol = 1L << d;
 	for (i = 0; i < 256; i++)
-		pens[i] = i < 16 ? (tos[i] < 0 ? 255 : tos[i]) : i == 255 ? 15 : i;
+		pens[i] = i >= ncol ? ncol - 1 : i < 16 ? (tos[i] < 0 ? ncol - 1 : tos[i]) :
+		    i == ncol - 1 ? 15 : i;
 	vwk = me->default_vwk;
 	wk = vwk->real_address;
 	wk->screen.mfdb.address = (void *)fc->fc_addr;
 	wk->screen.mfdb.width = fc->fc_width;
 	wk->screen.mfdb.height = fc->fc_height;
-	wk->screen.mfdb.bitplanes = 8;
+	wk->screen.mfdb.bitplanes = d;
 	wk->screen.mfdb.wdwidth = (fc->fc_width + 15) / 16;
 	wk->screen.mfdb.standard = 0;
 	wk->screen.wrap = fc->fc_rowbytes;
@@ -414,7 +422,7 @@ long CDECL initialize(Virtual *vwk)
 	wk->screen.coordinates.max_y = fc->fc_height - 1;
 	wk->screen.pixel.width = 25400 / 72;
 	wk->screen.pixel.height = 25400 / 72;
-	wk->screen.palette.size = 256;
+	wk->screen.palette.size = ncol;
 	wk->screen.palette.colours = (Colour *)access->funcs.malloc(256 * sizeof(Colour), 3);
 	share = (struct tfbshare *)access->funcs.malloc(sizeof *share, 0);
 	if (!wk->screen.palette.colours || !share) {
@@ -425,12 +433,19 @@ long CDECL initialize(Virtual *vwk)
 	share->fs_seq = 0;
 	if (loaded_palette)
 		access->funcs.copymem(loaded_palette, default_vdi_colors, 256 * 3 * sizeof(short));
-	c_set_colours(vwk, 0, 256, (unsigned short *)default_vdi_colors, wk->screen.palette.colours);
-	/* packed pixels: palette calls stay here instead of going to the ROM's VDI */
-	device.format = 2;
-	device.clut = 1;
-	device.bit_depth = 8;
-	device.colours = 256;
+	c_set_colours(vwk, 0, ncol, (unsigned short *)default_vdi_colors, wk->screen.palette.colours);
+	if (fc->fc_plane8) {
+		planes.bpp = d;
+		graphics_mode = &planes;
+		setup_scrninfo(&device, graphics_mode);
+		pfb_init(wk, fc);
+	} else {
+		/* packed pixels: palette calls stay here instead of going to the ROM's VDI */
+		device.format = 2;
+		device.clut = 1;
+		device.bit_depth = 8;
+		device.colours = 256;
+	}
 	device.byte_width = wk->screen.wrap;
 	device.address = wk->screen.mfdb.address;
 	wk->mouse.position.x = fc->fc_width / 2;
@@ -439,7 +454,8 @@ long CDECL initialize(Virtual *vwk)
 	access->funcs.set_cookie("AshF", (long)share);
 	fb_wk = wk;
 	do_init(access->funcs.get_cookie("_CPU", 0));
-	linea_init(wk);
+	if (!fc->fc_plane8)
+		linea_init(wk);
 	return 1;
 }
 

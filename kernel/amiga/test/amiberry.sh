@@ -7,11 +7,11 @@
 # AMIBERRY: the install prefix (default toolchain/amiberry/usr).
 # KICK: an A3000 Kickstart ROM.  STATE: config, home and IPC socket
 # directory (default hdfdir/run).  CARDS: Amiberry board names on the
-# PCI bus (default "ne2000_pci es1370 fm801"); GFX: a PCI graphics card
-# type (default S3VIRGE_PCI, empty for none).  The NE2000 is on the
-# user-mode network; host port ECHOPORT (default 2307) reaches the
-# guest's TCP echo service.  Runs until killed, or for
-# the given seconds.
+# PCI bus (default "ne2000_pci es1370 fm801").  GFX: a graphics card
+# (default ZZ9000_Z2; S3VIRGE_PCI puts one on PCI; empty for none).
+# The NE2000 is on the user-mode network; host port ECHOPORT (default
+# 2307) reaches the guest's TCP echo service.  Runs until killed, or
+# for the given seconds.
 set -e
 A=$(cd "$(dirname "$0")/.." && pwd)
 AUX=$(cd "$A/../.." && pwd)
@@ -19,7 +19,7 @@ H=$(cd "$1" && pwd)
 AB=${AMIBERRY:-$AUX/toolchain/amiberry/usr}
 ST=${STATE:-$H/run}
 CARDS=${CARDS-ne2000_pci es1370 fm801}
-GFX=${GFX-S3VIRGE_PCI}
+GFX=${GFX-ZZ9000_Z2}
 [ -f "$KICK" ] || { echo "[FAIL] KICK: no Kickstart ROM"; exit 1; }
 mkdir -p "$ST/home/.config" "$ST/xdg"
 chmod 700 "$ST/xdg"

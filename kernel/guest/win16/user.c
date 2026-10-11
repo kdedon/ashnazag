@@ -1646,7 +1646,7 @@ input(e)
 
 			if (e->down) {
 				if (!(asyncstate[vk] & 0x80))
-					user_alttap = vk == VK_MENU;
+					user_alttap = vk == VK_MENU && !(asyncstate[VK_CONTROL] & 0x80);
 				if (asyncstate[vk] & 0x80)
 					lp |= 0x40000000;	/* repeat */
 				else
@@ -1695,9 +1695,22 @@ input(e)
 			user_exitwindows();
 		}
 		return;
+	case EV_HIDDEN:
 	case EV_SHOWN:
-		vis_epoch++;
-		expose(&desktop->wr);
+		/* keys pressed for the switch went elsewhere: nothing is held, an Alt release is no tap */
+		{
+			int k;
+
+			for (k = 0; k < 256; k++) {
+				asyncstate[k] &= ~0x80;
+				keystate[k] &= ~0x80;
+			}
+		}
+		user_alttap = 0;
+		if (e->type == EV_SHOWN) {
+			vis_epoch++;
+			expose(&desktop->wr);
+		}
 		return;
 	}
 }
@@ -1755,12 +1768,19 @@ user_poll(e, timeout)
 	struct ev *e;
 	int timeout;
 {
+	int r = 1;
+
 	if (rhead != rtail) {
 		*e = rawq[rhead];
 		rhead = (rhead + 1) % RAWQ;
-		return 1;
+	} else
+		r = scr_poll(e, timeout);
+	/* a key let go inside our loops (Alt after Alt+F) is up for the messages after them */
+	if (r == 1 && e->type == EV_KEY && !e->down) {
+		asyncstate[e->vk & 0xff] &= ~0x80;
+		keystate[e->vk & 0xff] &= ~0x80;
 	}
-	return scr_poll(e, timeout);
+	return r;
 }
 
 /* ---- getting messages ---- */

@@ -78,16 +78,15 @@ if [ -f "$OUT/mod.d/uinter" ] && [ -f "$AUXROOT/mac/bin/startmac" ] && [ -f "$SY
 	sh "$T/aux/mac81probe/build.sh" "$OUT/obj/mac81probe"
 	mkdir -p "$OUT/root/mac/lib/Mac81Probe"
 	cp "$OUT/obj/mac81probe/Mac81Probe" "$OUT/root/mac/lib/Mac81Probe/"
+    # CommandShell as the image has it: the native façade over the COFF data
+    COFFRSRC="$AUXROOT/mac/bin/%CommandShell" sh "$T/aux/coffcarrier/build.sh" "$OUT/obj/coffcarrier"
+    python3 "$T/aux/coffcarrier/check-carrier.py" "$OUT/obj/coffcarrier/COFFCarrier"
+    python3 "$T/aux/coffcarrier/install.py" "$AUXROOT/mac/bin/CommandShell" \
+        "$AUXROOT/mac/bin/%CommandShell" "$OUT/obj/coffcarrier/COFFCarrier" "$OUT/root"
     if [ -n "${COFFCARRIER:-}${COFFADAPTER:-}" ]; then
-        COFFRSRC="$AUXROOT/mac/bin/%CommandShell" sh "$T/aux/coffcarrier/build.sh" "$OUT/obj/coffcarrier"
-        python3 "$T/aux/coffcarrier/check-carrier.py" "$OUT/obj/coffcarrier/COFFCarrier"
         mkdir -p "$OUT/root/mac/lib/COFFCarrier" "$OUT/root/etc/aux"
         cp "$OUT/obj/coffcarrier/COFFCarrier" "$OUT/root/mac/lib/COFFCarrier/"
         touch "$OUT/root/etc/aux/CoffProbe"
-        if [ -n "${COFFADAPTER:-}" ]; then
-            python3 "$T/aux/coffcarrier/install.py" "$AUXROOT/mac/bin/CommandShell" \
-                "$AUXROOT/mac/bin/%CommandShell" "$OUT/obj/coffcarrier/COFFCarrier" "$OUT/root"
-        fi
     fi
 	sh "$T/net/otprobe/build.sh" "$OUT/obj/otprobe"
 	mkdir -p "$OUT/root/mac/lib/OTProbe"

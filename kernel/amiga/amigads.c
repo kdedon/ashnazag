@@ -5,6 +5,7 @@
 #include "adb.h"
 #include "sys/poll.h"
 #include "ds.h"
+#include "sys/amrtg.h"
 
 extern void *AllocMem();
 extern void FreeMem(), normcop(), __amix_kbintr();
@@ -26,6 +27,21 @@ static unsigned short *am_copper;
 static void (*am_key)(), (*am_mouse)();
 static unsigned char am_toadb[128];
 static int am_busy, am_button;
+struct am_rtg *am_rtg;
+char *am_dsname = "Amiga ECS";
+int am_dscmapbits = 4;
+unsigned long am_dsvsize;
+void (*am_passfn)();		/* (from, to): chipset passthrough at a switch */
+static int am_lines;		/* display lines, interlace doubles them */
+
+/*
+ * Session modes: 640 wide, 1 to AM_PLANES bitplanes, interlaced from
+ * AM_NMODE / 2 on.  The planes lie plane-height apart in one chip RAM
+ * block, so a session maps them all at once.
+ */
+#define AM_PLANES	4
+#define AM_NMODE	(2 * AM_PLANES)
+#define AM_MODEID	0x90	/* + 8 interlaced, + planes */
 static unsigned char am_toraw[128] = {
  0x20,0x21,0x22,0x23,0x25,0x24,0x31,0x32,
  0x33,0x34,0x30,0x35,0x10,0x11,0x12,0x13,
@@ -101,13 +117,83 @@ unsigned long code, qual;
 	}
 }
 
+int
+am_nvmode()
+{
+	return am_rtg ? 0 : AM_NMODE;
+}
+
+void
+am_vminfo(n, fi)
+int n;
+struct fbinfo *fi;
+{
+	int d = n % AM_PLANES + 1, lace = n >= AM_PLANES;
+
+	*fi = ds_disp.d_info;
+	fi->fi_layout = FBL_PLANES;
+	fi->fi_mode = AM_MODEID + (lace ? 8 : 0) + d;
+	fi->fi_height = am_lines << lace;
+	fi->fi_depth = d;
+	fi->fi_planebytes = fi->fi_rowbytes * fi->fi_height;
+	fi->fi_size = (fi->fi_offset + d * fi->fi_planebytes + DS_PGOFF) & ~DS_PGOFF;
+	fi->fi_cmapsize = 1 << d;
+	fi->fi_visual = d == 1 ? FBV_MONO : FBV_PSEUDO;
+}
+
+int
+am_vmfind(id)
+unsigned long id;
+{
+	int n;
+
+	for (n = 0; n < am_nvmode(); n++)
+		if (id == AM_MODEID + (n >= AM_PLANES ? 8 : 0) + n % AM_PLANES + 1)
+			return n;
+	return -1;
+}
+
+/* the screen shows s's planes: its mode's, else one */
+void
+am_planes(s)
+struct dssess *s;
+{
+	struct fbinfo fi;
+	int i;
+
+	if (am_rtg)
+		return;
+	if (s->s_vmode)
+		am_vminfo(s->s_vmode - 1, &fi);
+	else {
+		fi = ds_disp.d_info;
+		fi.fi_planebytes = 0;
+	}
+	am_bitmap.depth = am_screen->depth = fi.fi_depth;
+	am_bitmap.height = am_screen->height = fi.fi_height;
+	for (i = 0; i < fi.fi_depth; i++)
+		am_bitmap.bpl[i] = (unsigned char *)ds_disp.d_base + i * fi.fi_planebytes;
+	if (fi.fi_height > am_lines)
+		am_screen->modes |= Sm_ILACE;
+	else
+		am_screen->modes &= ~Sm_ILACE;
+	am_rebuild();
+}
+
 static void
 am_front(s)
 struct dssess *s;
 {
 	struct screen *sp;
 
+	/* the chipset is the session's: the card shows it */
+	if (s->s_chip) {
+		if (am_rtg)
+			(*am_rtg->r_show)(0);
+		return;
+	}
 	if (s != &ds_sess[0]) {
+		am_planes(s);
 		if (activescreen != am_screen)
 			am_console = activescreen;
 		sp = am_screen;
@@ -120,6 +206,56 @@ struct dssess *s;
 	}
 	DisplayScreen(sp);
 	SelectScreen(sp);
+	if (am_rtg)
+		(*am_rtg->r_show)(s != &ds_sess[0]);
+}
+
+/* the chipset passthrough provider; 0 or an errno */
+int
+am_passattach(fn)
+void (*fn)();
+{
+	if (am_passfn)
+		return EBUSY;
+	am_passfn = fn;
+	return 0;
+}
+
+int
+am_passdetach(fn)
+void (*fn)();
+{
+	int i;
+
+	if (am_passfn != fn)
+		return 0;
+	for (i = 1; i <= DS_NSESS; i++)
+		if (ds_sess[i].s_used && ds_sess[i].s_chip)
+			return EBUSY;
+	am_passfn = 0;
+	return 0;
+}
+
+int
+am_rtgattach(r)
+struct am_rtg *r;
+{
+	if (am_screen || am_rtg)
+		return EBUSY;
+	am_rtg = r;
+	return 0;
+}
+
+int
+am_rtgdetach(r)
+struct am_rtg *r;
+{
+	if (am_rtg != r)
+		return 0;
+	if (am_screen)
+		return EBUSY;
+	am_rtg = 0;
+	return 0;
 }
 
 int
@@ -132,7 +268,8 @@ am_dsinit()
 	if (am_screen)
 		return 0;
 	height = (displaytype & DT_PAL) ? 256 : 200;
-	size = (80 * height + DS_PGOFF) & ~DS_PGOFF;
+	size = am_rtg ? 80 * height : 80 * 2 * height * AM_PLANES;
+	size = (size + DS_PGOFF) & ~DS_PGOFF;
 	mem = (unsigned char *)AllocMem(size + DS_PGOFF, 2 | 0x10000);
 	if (!mem)
 		return ENOMEM;
@@ -161,9 +298,19 @@ am_dsinit()
 	for (i = 0; i < 128; i++)
 		if (am_toraw[i] != 255) am_toadb[am_toraw[i]] = i;
 	am_console = activescreen;
-	fbcons.fc_m.fm_base = (unsigned long)am_bitmap.bpl[0];
-	fbcons.fc_m.fm_width = 640; fbcons.fc_m.fm_height = height;
-	fbcons.fc_m.fm_depth = 1; fbcons.fc_m.fm_row = 80;
+	am_lines = height;
+	am_dsvsize = am_rtg ? 0 : size;
+	if (am_rtg) {
+		fbcons.fc_m.fm_base = am_rtg->r_base;
+		fbcons.fc_m.fm_width = am_rtg->r_width; fbcons.fc_m.fm_height = am_rtg->r_height;
+		fbcons.fc_m.fm_depth = am_rtg->r_depth; fbcons.fc_m.fm_row = am_rtg->r_row;
+		am_dsname = am_rtg->r_name;
+		am_dscmapbits = 8;
+	} else {
+		fbcons.fc_m.fm_base = (unsigned long)am_bitmap.bpl[0];
+		fbcons.fc_m.fm_width = 640; fbcons.fc_m.fm_height = height;
+		fbcons.fc_m.fm_depth = 1; fbcons.fc_m.fm_row = 80;
+	}
 	fbcons.fc_on = 1;
 	ds_frontfn = am_front;
 	return 0;
@@ -177,7 +324,16 @@ int lo, hi;
 	int i;
 
 	if (!am_screen) return;
-	for (i = lo; i < hi && i < 2; i++)
+	if (am_rtg) {
+		for (i = lo; i < hi && i < 256; i++)
+			if (s->s_blank)
+				(*am_rtg->r_clut)(i, 0, 0, 0);
+			else
+				(*am_rtg->r_clut)(i, s->s_cmap[0][i] >> 8, s->s_cmap[1][i] >> 8,
+				    s->s_cmap[2][i] >> 8);
+		return;
+	}
+	for (i = lo; i < hi && i < 1 << am_screen->depth; i++)
 		am_screen->color[i] = s->s_blank ? 0 :
 		    (s->s_cmap[0][i] >> 12) << 8 | (s->s_cmap[1][i] >> 12) << 4 |
 		    (s->s_cmap[2][i] >> 12);

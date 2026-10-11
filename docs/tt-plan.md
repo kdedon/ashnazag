@@ -15,7 +15,7 @@ Sources: TT030 Hardware Reference Manual (Atari, June 1990); Atari Compendium re
 | Video | TT shifter: ST low/med/high, TT low 320x480x8, TT med 640x480x4, TT high 1280x960x1 (TT mono monitor); mode 0xFFFF8262, palette 0xFFFF8400 (256 x 12-bit) | Videl | console + session modes (TT0) |
 | MFPs | ST MFP 0xFFFFFA01 (as Falcon; GPIP7 = mono detect XOR sound); TT MFP 0xFFFFFA81: GPIP5 SCSI DMA, GPIP6 RTC, GPIP7 5380 (active high), GPIP2 SCC DMA, GPIP3 SCC B ring, USART = serial 2 | one MFP | TT MFP quiet, vectors 80-95, handler table (TT0) |
 | SCU | 0xFFFF8E01 system mask, 0xFFFF8E0D VME mask: gates VBL/HBL, MFPs, SCC | none | masks set as Linux does: 0x10, 0x60 (TT0) |
-| SCSI | 5380 regs 0xFFFF8781 + 2n, own DMA 0xFFFF8701-8717, reaches ST-RAM and TT-RAM | 5380 behind the ST DMA chip | SCSI agent's `tt.c` (PIO), not yet run |
+| SCSI | 5380 regs 0xFFFF8781 + 2n, own DMA 0xFFFF8701-8717, reaches ST-RAM and TT-RAM | 5380 behind the ST DMA chip | `kernel/atari/scsi/tt.c` (PIO), not yet run |
 | ACSI, floppy | ST DMA chip, ST-RAM only | floppy only | later |
 | IDE | none | yes | `ata_busprobe` finds none |
 | Blitter, DSP | none | yes | display service skips the blitter on a TT |

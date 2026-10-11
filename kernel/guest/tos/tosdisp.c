@@ -65,6 +65,7 @@ static volatile struct tospv *pv = (struct tospv *)TOSPV;
 static unsigned short px, py;		/* motion posted to the cartridge */
 static unsigned char kdown[128];	/* scan codes held */
 static int hidden;			/* in the background: input is dropped */
+static int planar;			/* bitplanes: only fVDI draws */
 static int pvs;				/* PV_* in use */
 static unsigned long lvbl;		/* the cartridge's VBL count */
 static unsigned long lvg;		/* gvbl() when it last changed */
@@ -549,6 +550,27 @@ measure()
 	}
 }
 
+/* the deepest bitplane mode; 1 if set */
+static int
+planes()
+{
+	struct fbmodeinfo mi[16];
+	struct fbmodes ms;
+	unsigned long i, best = 0;
+
+	if (fi.fi_layout == FBL_PLANES)
+		return 1;
+	ms.ms_count = 16;
+	ms.ms_modes = mi;
+	if (ioctl(fbfd, FBIOGMODES, &ms) < 0)
+		return 0;
+	for (i = 1; i < ms.ms_count && i < 16; i++)
+		if (mi[i].mi_depth <= 8 && mi[i].mi_depth > mi[best].mi_depth)
+			best = i;
+	return best && ioctl(fbfd, FBIOSMODE, mi[best].mi_id) == 0 &&
+	    ioctl(fbfd, FBIOGINFO, &fi) == 0 && fi.fi_layout == FBL_PLANES;
+}
+
 void
 disp(fd, verbose, ram)
 	int fd, verbose;
@@ -581,8 +603,10 @@ disp(fd, verbose, ram)
 		perror("starttos: display session");
 		return;
 	}
-	if (vpass) {
-		if (verbose && (scr = (unsigned long *)mmap((caddr_t)0, fi.fi_size, PROT_READ,
+	if (!vpass && fi.fi_type == FBT_AMIGA && fi.fi_depth != 8)
+		planar = planes();
+	if (vpass || planar) {
+		if (vpass && verbose && (scr = (unsigned long *)mmap((caddr_t)0, fi.fi_size, PROT_READ,
 		    MAP_SHARED, fbfd, 0)) == (unsigned long *)-1)
 			scr = 0;
 		if (fbpipe >= 0) {
@@ -655,7 +679,7 @@ input:
 				continue;
 			return;
 		}
-		if (fvdi(&tv) || !geom(&tv, &g)) {
+		if (fvdi(&tv) || planar || !geom(&tv, &g)) {
 			have = 0;
 			continue;
 		}

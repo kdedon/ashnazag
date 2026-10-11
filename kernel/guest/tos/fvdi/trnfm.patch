@@ -1,0 +1,31 @@
+--- a/engine/blit.s
++++ b/engine/blit.s
+@@ -1001,6 +1001,28 @@
+ 	move.w	mfdb_wdwidth(a1),d1
+ 	move.w	mfdb_bitplanes(a1),d2
+ 
++	move.l	vwk_real_address(a0),a5	; Separate planes are both formats
++	move.l	wk_driver(a5),a5
++	move.l	driver_device(a5),a5
++	cmp.w	#1,dev_format(a5)
++	bne	.interleaved
++	cmp.l	a3,a4
++	beq	end_vr_trnfm
++	move.w	d1,d3
++	mulu	d0,d3			; d3 = words/plane
++	beq	end_vr_trnfm
++	move.w	d2,d5
++	subq.w	#1,d5
++.plane:
++	move.l	d3,d4
++.word:
++	move.w	(a3)+,(a4)+
++	subq.l	#1,d4
++	bne	.word
++	dbra	d5,.plane
++	bra	end_vr_trnfm
++
++.interleaved:
+ 	cmp.l	a3,a4
+ 	beq	in_place
+ 

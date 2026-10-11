@@ -162,9 +162,21 @@ lookup(dir, name, out)
 {
 	DIR *dp;
 	struct dirent *de;
-	char dn[16];
+	struct stat st;
+	char dn[16], lc[16], path[1100], *s, *d;
 	int found = 0;
 
+	if (strlen(name) < sizeof dn && strlen(dir) + sizeof dn + 1 < sizeof path) {
+		/* the usual case without a scan: the name in lower case */
+		for (s = name, d = lc; (*d = *s) != 0; s++, d++)
+			if (*d >= 'A' && *d <= 'Z')
+				*d += 32;
+		sprintf(path, "%s/%s", dir, lc);
+		if (dosname(lc, dn) && strcmp(dn, name) == 0 && stat(path, &st) == 0) {
+			strcpy(out, lc);
+			return 1;
+		}
+	}
 	if ((dp = opendir(dir)) == 0)
 		return 0;
 	while ((de = readdir(dp)) != 0)

@@ -1,20 +1,18 @@
 # Browser image builder: implementation research
 
-Research date: 2026-10-03.
-
 ## Direction
 
 Use Go for the shared build planner, manifests, validation, checksums and new image-processing code. Run it as `js/wasm` in a browser worker and as a native CLI for reproducibility. Keep HTML/CSS and a small JavaScript bridge for browser files, workers and downloads. [Go documents this browser target and requires matching `wasm_exec.js` and compiler versions](https://go.dev/wiki/WebAssembly).
 
-A browser cross compiler is technically plausible, but unnecessary for the first builder. Follow the existing design in the project plan: CI builds redistributable m68k objects; the browser combines them with the user's media using a ported m68k linker and local image tools. User-selected modules/packages normally change the installed files and configuration, not their source code.
+A browser cross compiler is technically plausible, but unnecessary for the first builder. Design: CI builds redistributable m68k objects; the browser combines them with the user's media using a ported m68k linker and local image tools. User-selected modules/packages normally change the installed files and configuration, not their source code.
 
-This is a proposed execution architecture. The website scaffold does not establish that the legacy linker, filesystem tools or complete image pipeline work in browsers.
+The Quadra console recipe in `webapp/` already builds a complete image in the browser from a prebuilt kernel. Browser linking, relinking and compilation are proposed, not established.
 
 ## Existing build inventory
 
 | Area | Current implementation | Browser approach |
 |---|---|---|
-| Planner and UI | Previously a design in `PLAN.md` | Go shared core; HTML/CSS/JavaScript UI |
+| Planner and UI | `webapp/` (Go planner, forge UI) | Go shared core; HTML/CSS/JavaScript UI |
 | Kernel, drivers, guests | C and m68k assembly; `kernel/build.sh`, `kernel/mac/relink-mac.sh`, `kernel/guest/build.sh` | Compile owned source in CI; consume versioned objects |
 | AMIX target toolchain | GCC 2.7.2.3, binutils 2.8.1; `toolchain/src/gcc-cross-amix/README.md` | Preserve ABI and link semantics; port only required binutils first |
 | Kernel relink and patches | Shell, Python, native binutils | Explicit manifest operations; WASM linker; port patches to Go incrementally |

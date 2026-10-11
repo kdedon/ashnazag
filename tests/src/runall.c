@@ -60,10 +60,12 @@ static struct {
 	{ "t_display", 360 },
 	{ "t_sound", 300 },
 	{ "t_tos", 700 },
+	{ "t_xaaes", 500 },
 	{ "t_mint", 300 },
 	{ "t_cpm", 2400 },
 	{ "t_smsqe", 400 },
 	{ "t_amiga", 680 },
+	{ "t_win16", 2400 },
 	{ "t_env", 240 },
 	{ 0, 0 }
 };

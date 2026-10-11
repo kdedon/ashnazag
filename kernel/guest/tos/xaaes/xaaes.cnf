@@ -1,0 +1,13 @@
+# XaAES in the TOS environment
+setenv ACCEXT ACC,ACX
+setenv GEMEXT PRG,APP,GTP,OVL,SYS
+setenv TOSEXT TOS,TTP
+focus = shell
+usehome = yes
+naes_cookie = yes
+clipboard = c:\clipbrd\
+accpath = c:\
+launchpath = c:\
+lang = en
+app_options = default,thinwork = true, winframe_size = 2, xa_nomove = false, nolive = true
+shell = c:\teradesk\desktop.prg

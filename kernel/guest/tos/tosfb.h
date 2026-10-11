@@ -18,7 +18,8 @@ struct tfbcart {
 	unsigned long	fc_addr;	/* 0: no frame buffer */
 	unsigned short	fc_width, fc_height;
 	unsigned long	fc_rowbytes;
-	unsigned short	fc_depth, fc_pad;
+	unsigned short	fc_depth;	/* bits a pixel; planes when fc_plane8 is set */
+	unsigned short	fc_plane8;	/* separate planes: bytes between them / 8 */
 };
 
 struct tfbshare {

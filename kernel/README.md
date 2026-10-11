@@ -1,6 +1,15 @@
-# kernel/ — Macintosh kernel (AMIX 2.1c + 68040 port + Mac layer)
+# kernel/ — AMIX 2.1c + 68040/060 port + platform layers
 
-Local work area. AMIX binaries, relinked kernels and ROMs stay here and are never published.
+AMIX binaries, relinked kernels and ROMs stay local and are never published.
+
+| `PLATFORM` | Output | Base |
+|---|---|---|
+| `mac` (default) | `build/unix-mac.elf`, `unix-mac.coff` | `unix-040` + `mac/` |
+| `atari` | `build/unix-atari030.elf` (Falcon030) | stock 030 kernel + `atari/` |
+| `atari060` | `build/unix-atari060.elf` (CT60/CT63; `SVIDEL=0` without SuperVidel) | `unix-040` + `atari/` |
+| `amiga` | `build/unix-amiga` | `unix-040` + `amiga/` |
+
+Booting each: `docs/hosts.md`. Modules: `docs/modules.md`.
 
 ## Build
 
@@ -37,16 +46,16 @@ binutils and gcc in `linux/`, `m68k-elf` binutils in `bin/`), the tape link kit 
 After preparing the same `unix-040` base:
 
 ```sh
-sh kernel/amiga/relink-amiga.sh
+PLATFORM=amiga sh kernel/build.sh
 sh kernel/amiga/stage.sh
 ```
 
 `build/unix-amiga` is the relocatable boot artifact. The companion
 `build/unix-amiga.elf` supplies module checks and must not be used as the boot
-artifact. Staging produces eight DLM modules and an additive device manifest;
-merge it into the host root while preserving the stock `/dev/amiga` node.
-The guest node is `/dev/amigaguest`. Physical Amiga boot and display/input
-qualification remain pending.
+artifact. Staging produces the environment modules and an additive device manifest
+(`build/amiga/package`); `amiga/test/mkhdf.sh` merges it into the root,
+preserving the stock `/dev/amiga` node. The guest node is `/dev/amigaguest`.
+Real Amiga hardware is untested.
 
 ## Guest RAM
 

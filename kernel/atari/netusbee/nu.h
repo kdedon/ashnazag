@@ -35,6 +35,8 @@ struct nu_softc {
 	unsigned char	prom[6];
 	unsigned char	rcr;		/* RCR_AB, RCR_AM, RCR_PRO */
 	unsigned char	imr;		/* interrupts enabled while running */
+	unsigned char	crcprobe;	/* the counts may leave out the CRC */
+	unsigned char	nocrc;		/* they do */
 	unsigned char	mar[8];
 	int		nmc;
 	unsigned char	mc[NU_NMC][6];

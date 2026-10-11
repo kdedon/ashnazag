@@ -16,6 +16,7 @@
  */
 
 #include <setjmp.h>
+#include <stdio.h>
 #include <string.h>
 #include "x86.h"
 
@@ -2065,6 +2066,44 @@ exec()
 	fault(X_UD, 0);
 }
 
+/* instructions the 68k run loop left to exec(), by opcode (0F xx at 0x100 + xx) */
+u32 x86_nslow, x86_slowop[512];
+
+/* one instruction, for the 68k run loop */
+void
+x86_exec1()
+{
+	u32 a = cpu->s[S_CS].base + cpu->eip;
+
+	x86_nslow++;
+	if (a + 1 < cpu->memsize)
+		x86_slowop[mem[a] == 0x0f ? 0x100 | mem[a + 1] : mem[a]]++;
+	exec();
+}
+
+/* the counts above, the largest first, on stderr */
+void
+x86_prof()
+{
+	int i, j, n;
+
+	fprintf(stderr, "x86: %lu instructions to exec()\n", (unsigned long)x86_nslow);
+	for (n = 0; n < 24; n++) {
+		for (i = j = 0; i < 512; i++)
+			if (x86_slowop[i] > x86_slowop[j])
+				j = i;
+		if (!x86_slowop[j])
+			break;
+		fprintf(stderr, "x86:  %s%02x %lu\n", j & 0x100 ? "0f " : "", j & 0xff, (unsigned long)x86_slowop[j]);
+		x86_slowop[j] = 0;
+	}
+}
+
+#ifdef X86ASM
+int x86_useasm = 1;		/* the 68k run loop (x86a.s) */
+extern void x86runa();
+#endif
+
 /* ---- running ---- */
 
 void
@@ -2159,7 +2198,7 @@ loop(c, one)
 	jmp_buf jb, *ojb = trapjb;
 	struct x86 *o = cpu;
 	u8 *om = mem;
-	int r;
+	int r, k;
 
 	cpu = c;
 	mem = c->mem;
@@ -2173,9 +2212,17 @@ loop(c, one)
 				if (!r || one)
 					break;
 			}
-			if (one)
-				exec();
-			else if (c->trace)
+#ifdef X86ASM
+			if (x86_useasm && !c->trace)
+				x86runa(c, one);
+			else
+#endif
+			if (one) {
+				k = one;
+				do
+					exec();
+				while (--k > 0 && !c->stop);
+			} else if (c->trace)
 				while (!c->stop) {
 					(*c->trace)(c);
 					exec();
@@ -2205,6 +2252,17 @@ x86_step(c)
 {
 	c->stop = 0;
 	loop(c, 1);
+	return c->stop;
+}
+
+/* up to n instructions; a fault ends them */
+int
+x86_stepn(c, n)
+	struct x86 *c;
+	int n;
+{
+	c->stop = 0;
+	loop(c, n);
 	return c->stop;
 }
 

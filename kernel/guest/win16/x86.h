@@ -141,7 +141,9 @@ struct x86 {
 #define	REG16(c, i)	((c)->r[i] & 0xffff)
 
 extern void x86_init();		/* (cpu, mem, size, ldt) */
+extern void x86_prof();		/* what the 68k run loop left to exec(), on stderr */
 extern int x86_step();		/* (cpu): one instruction; 0 ok, else stopped */
+extern int x86_stepn();		/* (cpu, n): up to n */
 extern void x86_run();		/* (cpu): until stop */
 extern int x86_call();		/* (cpu, sel, off): far call from the host, until it returns */
 extern u32 x86_flags();		/* (cpu): flags, arithmetic ones made */

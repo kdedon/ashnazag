@@ -1,6 +1,6 @@
 # Guest layout and packages: decisions and work split
 
-This answers [filesystem-package-handover.md](filesystem-package-handover.md). The decisions below were made on 4 October 2026. The target side covers the launchers, layout, locking and the on-target installer. The builder side covers the recipe schema, resolver, adapters and image generation.
+This answers [filesystem-package-handover.md](filesystem-package-handover.md). The target side covers the launchers, layout, locking and the on-target installer. The builder side covers the recipe schema, resolver, adapters and image generation.
 
 ## Decisions
 
@@ -128,14 +128,7 @@ The builder tests include native/WASM package and image byte parity, independent
 UFS extraction, malformed archives, source hashes, unsafe paths and planned
 recipe refusal. They do not substitute for the pending target acceptance tests.
 
-Verified on 4 October 2026: native tests, Go/WASM package/import/provisioning tests,
-all Node bridge/storage tests, and the complete Quadra worker with synthetic and
-local real media. The worker builds an approximately 324 MiB image; independent UFS, HFS and
-boot-block checks pass. Its policies are included automatically. The
-output is generated media, excluded from publication. Browser UI execution and
-target boot remain unverified.
-
-## Machine presets and exportable build recipes (2026-10-04)
+## Machine presets and exportable build recipes
 
 The forge offers one preset per supported computer, so a first image takes one choice plus the user's media. A preset is a versioned build recipe: machine, devices, disk layout, kernel options, guest environments and packages, each with defaults the user can change.
 
@@ -150,7 +143,7 @@ The forge offers one preset per supported computer, so a first image takes one c
 | B8 | Recipe export and import in UI and CLI; recipe embedded in the image | Export → import → rebuild is byte-identical; malformed or newer-format recipes are refused with a clear message |
 | B9 | Falcon preset, once the forge can write the Atari disk layout (AHDI, root-sector boot, AXB loader) as `kernel/atari/mkdisk.sh` does | Forge Falcon image boots in Hatari |
 
-### Tape input (2026-10-04)
+### Tape input
 
 The forge and `tools/setup.sh` take the AMIX tape the way users have it: usually the two archives `amix_2.1_tape_part1.tar.bz2` and `part2.tar.bz2` (segments 00–28), read directly. Go's standard library decodes bzip2, so WASM can read them too. A directory of segments or a SIMH `.tap` image is also accepted. They split and verify it themselves against a table of AMIX 2.1 segment sizes and SHA-256 values, which holds hashes only, and name any missing segment.
 
@@ -158,7 +151,7 @@ The forge and `tools/setup.sh` take the AMIX tape the way users have it: usually
 |---|---|---|
 | B10 | The forge accepts a whole tape image or archive (via the shared splitter `tools/amixtape.py`, ported to Go/WASM) and stops asking for segments 02/03/10 | The same image results from a `.tap`, an archive set or a directory; a missing segment is named |
 
-### Time zone (2026-10-04)
+### Time zone
 
 `/etc/TIMEZONE` comes from the host where one exists. On a Mac, the kernel sets it at boot from the GMT offset the Map control panel keeps in PRAM. Elsewhere, such as the Falcon, it comes from the build: the forge defaults to the browser's own zone, and the user can change it. `mkdisk.sh` takes `ZONE=`, defaulting to `CST6CDT`.
 
@@ -167,6 +160,6 @@ The forge and `tools/setup.sh` take the AMIX tape the way users have it: usually
 | B11 | Forge time-zone option, defaulting to the browser's zone (`Intl.DateTimeFormat().resolvedOptions().timeZone` mapped to a System V TZ string), recorded in the recipe | The image's `/etc/TIMEZONE` matches the choice |
 | L9 | Mac kernel: TZ from PRAM's GMT offset at boot, when the image leaves it unset | The `date` local time matches the Mac's Map setting |
 
-### Amiga packages: MUI version (2026-10-05)
+### Amiga packages: MUI version
 
 MUI 3.9 (2015R1) is the Amiga environment's MUI (user; 3.8 dropped). MUI 5 is a forge choice once Amiga package recipes exist. The first packages (MUI 3.9, AmiSSL 5.27, IBrowse 3.0a demo) are installed into the system template by mkamiga.sh from local archives. Each installer's actions are recorded so they can become recipes (B6).

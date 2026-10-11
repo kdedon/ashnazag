@@ -7,7 +7,7 @@ updates reach the disk even when the MMU leaves the page's M bit clear.
 - `relink-mac.diff`: builds it and adds `uiomove` to the overrides and aliases of
   `relink-mac.sh` (applied).
 
-Test: `tests/s5disk/` (1 KB and 2 KB s5 on disk slices; see its README).
+Test: `t_file` (`tests/src/t_file.c`).
 
 ## Why
 

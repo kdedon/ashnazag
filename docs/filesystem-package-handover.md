@@ -1,6 +1,6 @@
 # Filesystem layout and installer package handover
 
-For the Ash Nazag layout and installer work, 4 October 2026. This is a design proposal, not an implemented filesystem contract. It builds on the current guest templates and Go image builder. No website layout or runtime paths were changed for this handover.
+For the Ash Nazag layout and installer work. This is a design proposal, not an implemented filesystem contract. It builds on the current guest templates and Go image builder.
 
 Recommended rule: select applications per persistent OS environment; deduplicate their source media; share installed files only when a tested package recipe permits it. Keep writable OS configuration and application state isolated. Use one versioned declarative recipe format across native Go and browser WASM, with adapters for existing distribution formats.
 
@@ -10,7 +10,7 @@ Recommended rule: select applications per persistent OS environment; deduplicate
 - `webapp/rootfs` imports layered cpio archives; `webapp/ufs` writes UFS; `webapp/recipes` applies the fixed Quadra recipe. These are useful execution primitives, not a generic package manager.
 - `kernel/mac/diskroot/fstree.py` defines archive, removal, file, directory, link and device operations. `root.manifest` uses them to assemble an installation.
 - `kernel/mac/diskroot/pkg/pkginst.py` imports a restricted SVR4 datastream: one package, class `none`, absolute paths, no installation scripts. It emits filesystem entries and package database records. Preserve this compatibility rather than replacing apkg's database with an unrelated one.
-- Amiga currently uses `/amiga/sys` as the root-owned template and `~/Amiga` as the writable user installation. `makeamiga` and `startmig` implement that convention. This is not yet an installation-per-environment model. See [Amiga package instructions](../images/amigaenv/README.md) and [guest volume design](guest-container-design.md#9-real-installs).
+- Amiga currently uses `/amiga/sys` as the root-owned template and `~/Amiga` as the writable user installation. `makeamiga` and `startmig` implement that convention; `-e env` selects `~/Amiga/env` instead. See [Amiga package instructions](../images/amigaenv/README.md) and [guest volume design](guest-container-design.md#9-real-installs).
 
 ## Identities and sharing boundaries
 

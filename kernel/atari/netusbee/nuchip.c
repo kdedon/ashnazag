@@ -367,7 +367,7 @@ nu_rxdrain(sc)
 register struct nu_softc *sc;
 {
 	unsigned char h[4];
-	register int n, cnt, nxt, dist, pages, ring, curr;
+	register int n, cnt, nxt, dist, pages, ring, curr, crc;
 
 	ring = sc->rxstop - sc->rxstart;
 	for (n = 0; n < NU_RXBURST; n++) {
@@ -390,13 +390,19 @@ register struct nu_softc *sc;
 			nu_setbnry(sc);
 			break;
 		}
-		/* the count includes the CRC, except on some NE2000 clones */
-		if (cnt < 4 + NU_MINFRAME || cnt > 4 + NU_MAXFRAME + 4)
+		/*
+		 * The count includes the CRC.  Where some clones leave it out
+		 * (crcprobe), a count too short for it says so, from then on.
+		 */
+		if (sc->crcprobe && cnt >= 4 + NU_MINFRAME && cnt < 4 + NU_MINFRAME + 4)
+			sc->nocrc = 1;
+		crc = sc->nocrc ? 0 : 4;
+		if (cnt < 4 + NU_MINFRAME + crc || cnt > 4 + NU_MAXFRAME + crc)
 			sc->st.ierrors++;
 		else if (h[0] & RSR_PRX) {
 			nu_rdring(sc, sc->rxnext, 4, sc->rxbuf, cnt - 4);
 			sc->st.ipackets++;
-			nu_input(sc, sc->rxbuf, cnt - 4 > NU_MAXFRAME ? NU_MAXFRAME : cnt - 4);
+			nu_input(sc, sc->rxbuf, cnt - 4 - crc);
 		} else
 			sc->st.ierrors++;
 		sc->rxnext = nxt;

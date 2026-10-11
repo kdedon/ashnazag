@@ -22,6 +22,7 @@ sh tests/win16/build.sh out      # the AMIX binary (display service, sound servi
 | `startwin.c` | the command: options, drives, the session's start and end |
 | `install.c` | `startwin -install`: the user's Windows disks or directory, and Wabi 2.2 by its own rules |
 | `x86.c`, `x86.h` | the 80386 integer core |
+| `x86a.s` | its run loop in 68k assembly (the AMIX build), on `../x86com`'s shared pieces |
 | `x87.c` | the 80387, on the host's floating point |
 | `thunk.c` | where x86 code meets native code: API entry points, callbacks |
 | `ne.c` | the NE loader: executables, DLLs and our own system modules |

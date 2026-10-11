@@ -140,6 +140,17 @@ quit.
   SingleStepTests' 80386 suite (1,758,600 cases pass; the 35 differences
   are listed in `tests/win16/x86known.txt`). The thunk opcode `0F FF lo hi`
   calls host function `lo|hi<<8`; every API entry point is one.
+- **68k run loop (`x86a.s`)**: on AMIX the frequent instructions of 16-bit
+  code (moves, ALU with lazy flags, stack, jumps and calls near and far,
+  segment loads through the LDT, string moves) run in assembly; anything
+  else, and anything that would fault, goes to `x86.c` one instruction at a
+  time. Each segment register has a shadow (host base, readable and
+  writable extent). Conditions, flags from a lazy record, the ALU, 16-bit
+  addressing and string moves are `kernel/guest/x86com`'s, shared with the
+  CP/M-86 shim. `x86diff` (in `t_win16`) runs both cores from random
+  protected- and real-mode states and from the 80386 suite's initial
+  states and compares them instruction by instruction. `W16_X86C=1` runs
+  the C core alone; `W16_X86PROF=1` lists, at exit, what went to it.
 - **x87 (`x87.c`)**: the 80387 on the host's floating point. Registers are
   `long double` (the 68881's extended format has the x87's 64-bit
   significand); arithmetic is the compiler's; transcendental functions are
@@ -289,6 +300,13 @@ recorded and played back pixel for pixel as drawn directly, EnumMetaFile,
 the metafile's bits, a disk metafile, one metafile played into another).
 `sh tests/win16/x86suite.sh` runs the 80386 instruction suite.
 `sh tests/win16/build.sh out` cross-builds the AMIX binary.
+`GROUP=win16 sh tests/run-qemu.sh` runs it on the Quadra 800 model
+(`t_win16`): the test programs but sock (the test root has no TCP/IP),
+then, given the user's Windows 3.11 disks and Wabi 2.2 package
+(`tests/win16/mkvol.sh`, on a volume of their own), `-install`, Program
+Manager, a redraw after a session switch, Notepad, Calculator, Solitaire,
+Minesweeper and Clock from File Run, Exit Windows and a second start, with
+screen dumps and startwin's CPU time for each.
 
 With the user's Windows 3.11 (not in the repository), on the memory screen:
 Program Manager with its groups and icons, launching programs and Exit
@@ -323,9 +341,17 @@ LaserJet III and the Epson FX-80 drivers, their output decoded and checked.
 
 ## Not done yet
 
-- The AMIX binary is not built or timed on a Quadra here (no AMIX toolchain
-  in the container used): `tests/win16/build.sh` and `images/winenv/mkwin.sh`
-  are written to the repository's conventions but unrun.
+- Speed. CPU time at 15.6 MIPS (QEMU's instruction counting; a Quadra 800
+  runs roughly 15 to 25), C core alone (`W16_X86C=1`) -> now: Program
+  Manager's first start, groups made, 65 -> 23 s; later starts 20 -> 8.3 s;
+  a full redraw 0.53 -> 0.48 s; Notepad 1.9 -> 1.6 s, Calculator 1.1 ->
+  0.75 s, Minesweeper 1.5 -> 1.2 s, Solitaire 3.5 -> 2.2 s, Clock 11.6 ->
+  11.5 s; `-install` 2.5 minutes. A loop of compiled code's kind takes 62
+  host instructions per x86 instruction in the 68k loop, 254 in the C core
+  (`x86diff -t`). What is left is mostly the host's: system calls and
+  interrupts while Program Manager reads its .INI files a line at a time
+  on every GetProfileString (no cache yet), disk writes on the first start,
+  and TrueType hinting (Clock).
 - Serial ports (COMM.DRV's OpenComm and the rest over the host's ttys:
   Terminal), MIDI output, recording, printing to FILE: ports.
 - Scaled raster fonts (a bitmap face stretched to a size it lacks), the

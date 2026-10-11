@@ -130,15 +130,16 @@ cc -std=gnu89 -O -w -I"$S" -o "$O/gentab" "$S/gentab.c" "$S/z80dec.c"
 cc -std=gnu89 -O -w -I"$S" -o "$O/gentab86" "$S/gentab86.c"
 "$O/gentab86" > "$O/i86tab.s"
 for a in z80deca z80runa i86deca i86runa segclra; do
-	$AS68 -o "$O/$a.o" "$S/$a.s"
+	$AS68 -I"$G" -o "$O/$a.o" "$S/$a.s"
 done
+$AS68 -o "$O/x86com.o" "$G/x86com/x86com.s"
 $AS68 -o "$O/z80tab.o" "$O/z80tab.s"
 $AS68 -o "$O/i86tab.o" "$O/i86tab.s"
 COMMON="$O/startcpm.o $O/bdos3.o $O/con3.o $O/hostfs.o $O/cpment.o $O/cpmshim.o $O/cpmshim80.o \
 	$O/s_z80mnem.o $O/s_z80exec.o $O/s_z80load.o $O/s_z80bdos.o $O/s_z80gsx.o \
 	$O/s_gdpb.o $O/s_i86exec.o $O/s_i86load.o $O/s_i86bdos.o $O/s_i86gsx.o"
 FAST80="$O/z80deca.o $O/z80runa.o $O/z80tab.o $O/s_z80decc.o $O/segclra.o"
-FAST="$FAST80 $O/i86deca.o $O/i86runa.o $O/i86tab.o $O/s_i86decc.o"
+FAST="$FAST80 $O/i86deca.o $O/i86runa.o $O/i86tab.o $O/s_i86decc.o $O/x86com.o"
 link68 "$R/cpm/bin/startcpm" $COMMON $FAST "$O/cpmshim86.o"
 # the C interpreters alone, for timing against the fast paths
 link68 "$R/tests/cpm/startcpm-c" $COMMON "$O/s_z80dec.o" "$O/s_z80run.o" "$O/s_segclr.o" \
@@ -147,7 +148,7 @@ $CC68 -I"$S" -c "$T/cpm/shim/zdiff.c" -o "$O/zdiff.o"
 link68 "$R/tests/cpm/zdiff" "$O/zdiff.o" $FAST80 "$O/s_z80mnem.o" "$O/s_z80exec.o" \
 	"$O/c_z80exec.o" "$O/c_z80run.o"
 $CC68 -I"$S" -c "$T/cpm/shim/idiff.c" -o "$O/idiff.o"
-link68 "$R/tests/cpm/idiff" "$O/idiff.o" "$O/i86deca.o" "$O/i86runa.o" "$O/i86tab.o" \
+link68 "$R/tests/cpm/idiff" "$O/idiff.o" "$O/i86deca.o" "$O/i86runa.o" "$O/i86tab.o" "$O/x86com.o" \
 	"$O/s_i86decc.o" "$O/s_i86exec.o"
 # t_cpm's CP/M-80 and CP/M-86 programs
 if [ -d "$SHIMCORPUS/z80corpus" ]; then

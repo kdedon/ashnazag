@@ -15,6 +15,9 @@
 | segment's base and the instruction's bytes, which are compared on
 | every hit: code that rewrites itself decodes again.
 |
+| Addressing, the ALU, flags and conditions of a lazy record, and string
+| moves and fills are those the Win16 core's loop uses (x86com).
+|
 |	a5	m		a4	the decode (a cache entry)
 |	a3	in		d6	steps left
 |	d5	effective address	d3 a, d4 b
@@ -34,6 +37,12 @@ M_LR	=	60
 M_FAULT	=	63
 M_CX	=	2
 M_SP	=	8
+M_SI	=	12
+M_DI	=	14
+RBX	=	6
+RBP	=	10
+RSI	=	12
+RDI	=	14
 
 | struct i86in
 I_LEN	=	0
@@ -51,6 +60,7 @@ I_IMM	=	12
 IN_MEM	=	2
 IN_IMM	=	0x40
 IN_DIR	=	0x80
+IN_REPS	=	0x18
 F_CF	=	1
 S_CS	=	1
 S_SS	=	2
@@ -162,30 +172,12 @@ Lgo:
 	cmpib	&6,%d0
 	beq	9f
 1:	addw	%d0,%d0
-	lea	Leat,%a0
+	lea	Lea16,%a0
 	movew	%a0@(0,%d0:w),%d0
 	jmp	%a0@(0,%d0:w)
-Leat:	.word	2f-Leat, 3f-Leat, 4f-Leat, 5f-Leat, 6f-Leat, 7f-Leat, 8f-Leat, 10f-Leat
-2:	addw	%a5@(6),%d5		| BX + SI
-	addw	%a5@(12),%d5
-	rts
-3:	addw	%a5@(6),%d5		| BX + DI
-	addw	%a5@(14),%d5
-	rts
-4:	addw	%a5@(10),%d5		| BP + SI
-	addw	%a5@(12),%d5
-	rts
-5:	addw	%a5@(10),%d5		| BP + DI
-	addw	%a5@(14),%d5
-	rts
-6:	addw	%a5@(12),%d5		| SI
-	rts
-7:	addw	%a5@(14),%d5		| DI
-	rts
-8:	addw	%a5@(10),%d5		| BP
-	rts
-10:	addw	%a5@(6),%d5		| BX
 9:	rts
+
+	.include "x86com/ea16.s"
 
 Lnext:
 	subqw	&1,%d6
@@ -322,49 +314,39 @@ Lpop:
 Lfold:
 	tstb	%a5@(M_LZ)
 	beq	1f
-	movel	%a5,%sp@-
-	jsr	i86flags
-	addql	&4,%sp
+	moveml	%d2-%d4,%sp@-
+	bsr	Lrecld
+	jsr	x86c_flags
+	movew	%d0,%a5@(M_FL)
+	clrb	%a5@(M_LZ)
+	addql	&1,i86nflag
+	moveml	%sp@+,%d2-%d4
 1:	rts
 
-| d0 nonzero when condition d0 holds (i86lcond).  Complete flags and
-| E/NE on a record are read here; the rest asks the reference.
+| the record in x86com's registers
+Lrecld:
+	moveq	&0,%d1
+	moveb	%a5@(M_LZ),%d1
+	moveq	&0,%d2
+	moveb	%a5@(M_LW),%d2
+	moveq	&0,%d3
+	movew	%a5@(M_LA),%d3
+	moveq	&0,%d4
+	movew	%a5@(M_LB),%d4
+	moveq	&0,%d0
+	movew	%a5@(M_LR),%d0
+	movew	%a5@(M_FL),%a1
+	rts
+
+| d0 nonzero when condition d0 holds (i86lcond); keeps d2-d7
 Lcond:
-	movew	%d0,%d1
-	lsrw	&1,%d1
-	tstb	%a5@(M_LZ)
-	bne	3f
-	cmpib	&5,%d1			| complete flags: B E BE S P
-	bhi	4f
-	tstb	%d1
-	beq	4f
-	lea	Lcmask-1,%a0
-	moveb	%a0@(0,%d1:w),%d1
-	andb	%a5@(M_FL+1),%d1
-	bra	5f
-3:	cmpib	&2,%d1			| E on a record: the result is zero
-	bne	4f
-	movew	%a5@(M_LR),%d1
-	tstb	%a5@(M_LW)
-	bne	7f
-	andw	&0xff,%d1
-7:	tstw	%d1
-	seq	%d1			| t
-	bra	8f
-5:	sne	%d1			| t
-8:	btst	&0,%d0
-	beq	6f
-	notb	%d1
-6:	moveq	&1,%d0
-	andb	%d1,%d0
+	moveml	%d2-%d4,%sp@-
+	movel	%d0,%sp@-
+	bsr	Lrecld
+	movel	%sp@+,%a0
+	jsr	x86c_cond
+	moveml	%sp@+,%d2-%d4
 	rts
-4:	movel	%d0,%sp@-
-	movel	%a5,%sp@-
-	jsr	i86lcond
-	addql	&8,%sp
-	rts
-Lcmask:	.byte	0x01, 0x40, 0x41, 0x80, 0x04	| CF ZF CF|ZF SF PF
-	.even
 
 | a record: class d1, a d3, b d4, result d0, carry in d2
 Lrec:
@@ -405,52 +387,24 @@ Lh_alu:
 	bsr	Lrgrd
 	movel	%d0,%d4
 3:	moveq	&0,%d2			| carry in
-	moveq	&0,%d0
+	cmpib	&2,%a4@(I_X)		| ADC, SBB
+	beq	4f
+	cmpib	&3,%a4@(I_X)
+	bne	5f
+4:	bsr	Lfold
+	moveq	&F_CF,%d2
+	andb	%a5@(M_FL+1),%d2
+5:	moveq	&0,%d0
 	moveb	%a4@(I_X),%d0
-	addw	%d0,%d0
-	lea	Lalut,%a0
-	movew	%a0@(0,%d0:w),%d0
-	jmp	%a0@(0,%d0:w)
-Lalut:	.word	Ladd-Lalut, Lor-Lalut, Ladc-Lalut, Lsbb-Lalut
-	.word	Land-Lalut, Lsub-Lalut, Lxor-Lalut, Lcmp-Lalut
-Ladc:	bsr	Lfold
-	moveq	&F_CF,%d2
-	andb	%a5@(M_FL+1),%d2
-Ladd:	movew	%d3,%d0
-	addw	%d4,%d0
-	addw	%d2,%d0
-	moveq	&1,%d1
-	bra	Lalust
-Lsbb:	bsr	Lfold
-	moveq	&F_CF,%d2
-	andb	%a5@(M_FL+1),%d2
-Lsub:	movew	%d3,%d0
-	subw	%d4,%d0
-	subw	%d2,%d0
-	moveq	&2,%d1
-	bra	Lalust
-Lor:	movew	%d3,%d0
-	orw	%d4,%d0
-	moveq	&3,%d1
-	bra	Lalust
-Land:	movew	%d3,%d0
-	andw	%d4,%d0
-	moveq	&3,%d1
-	bra	Lalust
-Lxor:	movew	%d3,%d0
-	eorw	%d4,%d0
-	moveq	&3,%d1
-Lalust:	bsr	Lrec
+	jsr	x86c_alu
+	bsr	Lrec
+	cmpib	&7,%a4@(I_X)		| CMP
+	beq	Lnext
 	tstb	%a4@(I_FL)
 	bpl	1f
 	bsr	Lrgwr
 	bra	Lnext
 1:	bsr	Lrmwr
-	bra	Lnext
-Lcmp:	movew	%d3,%d0
-	subw	%d4,%d0
-	moveq	&2,%d1
-	bsr	Lrec
 	bra	Lnext
 
 Lh_test:
@@ -516,14 +470,11 @@ Lh_dec:
 	bne	Lfall
 1:	bsr	Lgo
 	moveb	%a5@(M_LZ),%d0
-	beq	2f
 	cmpib	&4,%d0
 	beq	2f
 	cmpib	&5,%d0
 	beq	2f
-	movel	%a5,%sp@-
-	jsr	i86flags
-	addql	&4,%sp
+	bsr	Lfold
 2:	bsr	Lrmrd
 	movel	%d0,%d3
 	moveq	&1,%d4
@@ -755,6 +706,162 @@ Lh_popf:
 	clrb	%a5@(M_LZ)
 	bra	Lnext
 
+| MOVS, STOS and LODS through unbiased segments, a word one from even
+| offsets so that none straddles the wrap; the rest is the reference's
+Lh_str:
+	moveq	&0,%d0
+	moveb	%a4@(I_X),%d0
+	cmpib	&1,%d0			| CMPS
+	beq	Lfall
+	cmpib	&3,%d0
+	bhi	Lfall			| SCAS
+	bne	1f
+	moveb	%a4@(I_FL),%d1		| REP LODS
+	andb	&IN_REPS,%d1
+	bne	Lfall
+1:	moveq	&3,%d1
+	andb	%a4@(I_SEG),%d1
+	addw	%d1,%d1
+	tstw	%a5@(M_SO,%d1:w)
+	bne	Lfall
+	tstw	%a5@(M_SO)		| ES
+	bne	Lfall
+	tstb	%a4@(I_W)
+	beq	2f
+	cmpib	&2,%d0			| STOS: DI only
+	beq	3f
+	btst	&0,%a5@(M_SI+1)
+	bne	Lfall
+	cmpib	&3,%d0			| LODS: SI only
+	beq	2f
+3:	btst	&0,%a5@(M_DI+1)
+	bne	Lfall
+2:	bsr	Lgo
+	moveq	&1,%d3			| d3 the unit, d4 how many
+	tstb	%a4@(I_W)
+	beq	4f
+	moveq	&2,%d3
+4:	moveq	&1,%d4
+	moveb	%a4@(I_FL),%d1
+	andb	&IN_REPS,%d1
+	beq	5f
+	moveq	&0,%d4
+	movew	%a5@(M_CX),%d4
+	beq	Lnext
+	clrw	%a5@(M_CX)
+5:	tstb	%a4@(I_X)
+	beq	Lsmovs
+	cmpib	&2,%a4@(I_X)
+	beq	Lsstos
+	bsr	Lssrc			| LODS
+	cmpib	&2,%d3
+	beq	6f
+	moveb	%a0@,%a5@(1)
+	bra	7f
+6:	moveb	%a0@+,%a5@(1)
+	moveb	%a0@,%a5@(0)
+7:	moveq	&1,%d0
+	bsr	Lsstep
+	addw	%d0,%a5@(M_SI)
+	bra	Lnext
+
+| a chunk at a time, up to where SI or DI wraps
+Lsmovs:
+	movew	%a5@(M_SI),%d0
+	bsr	Lspan16
+	movel	%d1,%d7
+	movew	%a5@(M_DI),%d0
+	bsr	Lspan16
+	cmpl	%d1,%d7
+	bls	1f
+	movel	%d1,%d7
+1:	cmpl	%d4,%d7
+	bls	2f
+	movel	%d4,%d7
+2:	bsr	Lssrc
+	bsr	Lsdst
+	movel	%d7,%d0
+	movel	%d3,%d1
+	moveq	&0,%d2
+	btst	&2,%a5@(M_FL)
+	sne	%d2
+	jsr	x86c_movs
+	movel	%d7,%d0
+	bsr	Lsstep
+	addw	%d0,%a5@(M_SI)
+	addw	%d0,%a5@(M_DI)
+	subl	%d7,%d4
+	bne	Lsmovs
+	bra	Lnext
+
+Lsstos:
+	movew	%a5@(M_DI),%d0
+	bsr	Lspan16
+	movel	%d1,%d7
+	cmpl	%d4,%d7
+	bls	1f
+	movel	%d4,%d7
+1:	bsr	Lsdst
+	movel	%d3,%d1
+	movew	%a5@(0),%d3		| AL, or AX in memory order
+	cmpib	&2,%d1
+	bne	2f
+	rorw	&8,%d3
+2:	movel	%d7,%d0
+	moveq	&0,%d2
+	btst	&2,%a5@(M_FL)
+	sne	%d2
+	jsr	x86c_stos
+	movel	%d1,%d3
+	movel	%d7,%d0
+	bsr	Lsstep
+	addw	%d0,%a5@(M_DI)
+	subl	%d7,%d4
+	bne	Lsstos
+	bra	Lnext
+
+| a0 = the source at SI, a1 = ES:DI
+Lssrc:	moveq	&3,%d1
+	andb	%a4@(I_SEG),%d1
+	lslw	&2,%d1
+	movel	%a5@(M_SB,%d1:w),%a0
+	moveq	&0,%d1
+	movew	%a5@(M_SI),%d1
+	addl	%d1,%a0
+	rts
+Lsdst:	movel	%a5@(M_SB),%a1
+	moveq	&0,%d1
+	movew	%a5@(M_DI),%d1
+	addl	%d1,%a1
+	rts
+
+| d1 = units of d3 bytes from offset d0 before it wraps, as DF goes
+Lspan16:
+	moveq	&0,%d1
+	movew	%d0,%d1
+	btst	&2,%a5@(M_FL)
+	bne	1f
+	negl	%d1
+	addl	&0x10000,%d1
+	cmpib	&2,%d3
+	bne	2f
+	lsrl	&1,%d1
+2:	rts
+1:	cmpib	&2,%d3
+	bne	3f
+	lsrl	&1,%d1
+3:	addql	&1,%d1
+	rts
+
+| d0 = d0 units of d3 bytes, negative going down
+Lsstep:	cmpib	&2,%d3
+	bne	1f
+	addl	%d0,%d0
+1:	btst	&2,%a5@(M_FL)
+	beq	2f
+	negl	%d0
+2:	rts
+
 | byte register n's offset in the word file: AL CL DL BL AH CH DH BH
 Lboff:	.byte	1, 3, 5, 7, 0, 2, 4, 6
 
@@ -780,7 +887,7 @@ Ltab:
 	.word	Lfall-Ltab		| MOVSR
 	.word	Lfall-Ltab		| LXS
 	.word	Lfall-Ltab		| MULDIV
-	.word	Lfall-Ltab		| STRING 20
+	.word	Lh_str-Ltab		| STRING 20
 	.word	Lh_loop-Ltab
 	.word	Lh_flag-Ltab
 	.word	Lfall-Ltab		| INT

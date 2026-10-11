@@ -13,7 +13,9 @@
 # unpacked apps of APPS.md (default ref/tosapps); without them the
 # image has none.  CUBASE names mkcubase.sh's cubase.cpio (default
 # images/work/cubase), added to guest's ~/TOS when it exists.
-# NOTERADESK=1 leaves TeraDesk out, NOFVDI=1 fVDI.
+# XaAES and its MiNT layer go to /tos/xaaes (maketos -x adds them to a
+# C: folder) and make guest's environment xaaes.
+# NOTERADESK=1 leaves TeraDesk out, NOFVDI=1 fVDI, NOXAAES=1 XaAES.
 set -e
 D=$(cd "$(dirname "$0")" && pwd)
 AUX=$(cd "$D/../.." && pwd)
@@ -108,9 +110,29 @@ else
 	echo "[FAIL] TeraDesk: $(tail -1 "$O/teradesk.log"); NOTERADESK=1 builds without it"
 	exit 1
 fi
-# guest's TOS folder, as maketos makes it
+# XaAES over its MiNT layer: C: files for maketos -x; its source beside it (GPL)
+if [ -n "$NOXAAES" ]; then
+	echo "[warn] XaAES left out"
+elif AUX=$AUX MINT=$O/mint sh "$G/tos/xaaes/build.sh" "$O/xaaes" > "$O/xaaes.log" 2>&1; then
+	mkdir -p "$T/tos/xaaes" "$T/tos/src"
+	cp -r "$O/xaaes/C/." "$T/tos/xaaes/"
+	cp "$O/xaaes/xaaes-src.tar.gz" "$T/tos/src/"
+else
+	echo "[FAIL] XaAES: $(tail -1 "$O/xaaes.log"); NOXAAES=1 builds without it"
+	exit 1
+fi
+# guest's TOS folder, as maketos makes it, and environment xaaes, as maketos -x -e xaaes
 mkdir -p "$T/home/guest"
 (cd "$T/tos/sys" && find . | grep -v -x ./drives | cpio -pdm --quiet "$T/home/guest/TOS")
+if [ -d "$T/tos/xaaes" ]; then
+	X=$T/home/guest/TOS/xaaes
+	mkdir -p "$X"
+	printf 'id=xaaes\nname=xaaes\nprofile=tos\ntemplate=/tos/sys\ncreated=%s\n' \
+		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$X/.env"
+	(cd "$T/tos/sys" && find . | grep -v -x ./drives | cpio -pdm --quiet "$X")
+	(cd "$T/tos/xaaes" && find . | cpio -pdmu --quiet "$X")
+	mkdir -p "$X/CLIPBRD"
+fi
 [ ! -f "$CUBASE" ] || (cd "$T" && cpio -idm --quiet < "$CUBASE")
 find "$T" -type d -exec chmod 755 {} +
 find "$T" -type f -exec chmod 644 {} +

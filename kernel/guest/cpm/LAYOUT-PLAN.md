@@ -1,4 +1,4 @@
-# CP/M drive layout (decided 2026-10-10, implemented)
+# CP/M drive layout
 
 ## Drives
 

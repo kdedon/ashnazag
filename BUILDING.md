@@ -64,13 +64,19 @@ instead of building it.
 | `--q700-rom FILE` | Quadra 700 ROM `420DBFF3` | A/UX guest tests, Mac environment on hosts without a ROM |
 | `--aux-cd FILE` | A/UX 3.1 CD | Apple driver and map for ROM-bootable disks, `images/mkimage.sh`, the A/UX root tree |
 | `--macos761 FILE` | Mac OS 7.6.1 CD (`.iso` or `.7z`) | Mac environment, Mac guest tests |
-| `--macos81 FILE` | Mac OS 8.1 CD | Mac OS 8 guest tests, Open Transport bridge tests |
+| `--macos81 FILE` | Mac OS 8.1 CD | Mac OS 8.1 environment, its tests, Open Transport bridge tests |
 | `--tos FILE` | TOS 3.06 ROM zip | optional TOS test (EmuTOS is the default) |
 | `--amiga-cd FILE` | AmigaOS 3.2 CD | Amiga environment (Kickstart from the CD) |
 
 Pass your tape image or archive as it is; setup finds segments `00`…`28` by size and
 sha256, writes them to `media/amix-tape` and names any that are missing. The kernel needs
 02, 04 and 19; the first archive part alone (00–19) is enough for the kernel and the suite.
+
+The image builders also take, as variables: `CD201` (A/UX 2.0.1 CD) and `AUXROM6` (IIci
+ROM) for System 6, `CD81` (Mac OS 8.1 CD, default `media/MacOS8_1.iso`), `CPMZIP` (Digital
+Research's CP/M-68K 1.3 release zip, `media/cpm68k/68kv1_3.zip`), `AMIGASTAGE`
+(`images/amigaenv/mkamiga.sh`'s output). An environment whose media
+is missing is left out of the image.
 
 Optional open-source downloads: `--tos-src` (EmuTOS 1.4, fVDI), `--x11` (X11R6.3, x11r6.3-amix).
 
@@ -84,10 +90,11 @@ Optional open-source downloads: `--tos-src` (EmuTOS 1.4, fVDI), `--x11` (X11R6.3
 | suite (minimum) | `sh tests/run-qemu.sh` | kernel + patched QEMU. No ROM: QEMU boots the kernel directly. Guest tests skip without their media. |
 | disk | `sh images/mkimage.sh --small`, `images/mkboot.sh`, `kernel/mac/diskroot/mkdiskimage.sh` | suite + A/UX 3.1 CD, hfsutils, tape 03, 07 and 10; Quadra 800 ROM to boot it |
 | x11 | `x11/build.sh`, `x11/mkimage.sh` | disk + tape 13, 14, `--x11` |
-| mac | `images/macenv/mkmacimage.sh` | x11 + Mac OS 7.6.1 CD, Quadra 700 ROM, the A/UX root tree (`tests/aux/auxroot`, from `--aux-cd`) |
+| mac | `images/macenv/mkmacimage.sh` | x11 + Mac OS 7.6.1 CD, Quadra 700 ROM, the A/UX root tree (`tests/aux/auxroot`, from `--aux-cd`); optional 8.1, System 6 and CP/M media above |
 | tos | `tests/run-qemu.sh` (t_tos) | suite + `--tos-src` |
 | amiga | `tests/run-qemu.sh` (t_amiga), `images/amigaenv/mkamiga.sh` | suite + AmigaOS 3.2 CD |
-| falcon | `PLATFORM=atari sh kernel/build.sh`, `kernel/atari/mkdisk.sh` | kernel + tape 02, 03, 10, `--tos-src`; Hatari for tests (`kernel/atari/build-hatari.sh`) |
+| falcon | `PLATFORM=atari sh kernel/build.sh` (`atari060` for a CT60), `kernel/atari/mkdisk.sh` | kernel + tape 02, 03, 10, `--tos-src`; Hatari for tests (`kernel/atari/build-hatari.sh`); TOS 4.04 for `starttos -P` |
+| amiga host | `PLATFORM=amiga sh kernel/build.sh`, `kernel/amiga/stage.sh`, `kernel/amiga/test/mkhdf.sh` | kernel + tape; `unix_boot040`, openpci.library; Amiberry and an A3000 Kickstart for tests (`kernel/amiga/test/amiberry.sh`) |
 | win16 | `sh tests/win16/run.sh` (on the host), `sh tests/win16/build.sh out`, `images/winenv/mkwin.sh` | the host's C compiler; Open Watcom 2 (`WATCOM`, default `toolchain/watcom`; not built by setup.sh) for the test programs; the AMIX toolchain for the AMIX binary. No Windows or Wabi files: each user installs theirs at run time (`startwin -install`, `docs/win16-design.md`) |
 
 ## The A/UX disk
@@ -106,4 +113,4 @@ HFS partition.
 partition) into `images/work/auxroot-cd`, the tree `tests/aux/auxroot` names. Device nodes
 become `NAME.__special__` files; `auxroot-cd.meta` lists every entry's mode, owner and time.
 
-A/UX 2.x media will be needed later for a System 6 environment on smaller machines.
+Booting each host: `docs/hosts.md`.

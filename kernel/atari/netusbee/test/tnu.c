@@ -205,10 +205,12 @@ sim_txdone()
 }
 
 /* A frame arrives: stored at CURR unless it would reach BNRY. */
+static int sim_nocrc;		/* a clone whose counts leave out the CRC */
+
 static int
 sim_rx(unsigned char *f, int len)
 {
-	int cnt = 4 + len + 4, pages = (cnt + 255) >> 8, ring, room, a, i;
+	int cnt = 4 + len + (sim_nocrc ? 0 : 4), pages = (cnt + 255) >> 8, ring, room, a, i;
 
 	if (!(c.cr & CR_STA) || (c.tcr & TCR_LOOP) || (c.rcr & RCR_MON))
 		return 0;
@@ -436,6 +438,20 @@ main()
 	nu_poll(&sc);
 	CHECK(sc.st.reinit == k + 1 && (c.cr & CR_STA), "stopped chip restarted");
 	CHECK(c.badaddr == 0, "every access decodes");
+
+	/* counts without the CRC: the first short one switches to them */
+	CHECK(!sc.nocrc, "CRC counted so far");
+	sc.crcprobe = 1;
+	sim_nocrc = 1;
+	ngot = 0;
+	mkframe(f, 60, 7);
+	sim_rx(f, 60);
+	mkframe(sent[0], 1514, 8);
+	sim_rx(sent[0], 1514);
+	nu_poll(&sc);
+	CHECK(sc.nocrc && ngot == 2 && gotlen[0] == 60 && gotlen[1] == 1514 &&
+	    memcmp(got[0], f, 60) == 0 && memcmp(got[1], sent[0], 1514) == 0,
+	    "counts without CRC: lengths exact");
 
 	printf("%d checks, %d failed\n", checks, fails);
 	return fails != 0;

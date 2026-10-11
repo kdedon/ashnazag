@@ -14,7 +14,17 @@ sh tests/run-qemu.sh --net      # direct boot, network root: t_net on QEMU's use
 
 Direct boot also runs `display/hostio.py`: `t_display` sends it requests on SCC channel B (`/dev/term/b`, a socket on the host) and it answers with QEMU input events, screen dumps and their comparison with the expected pattern (`results/<run>/display/`). `--net` runs `t_display` before `t_net`, so the network runs with video VBL interrupts on.
 
-`--no-build` reuses what is in `build/`. `--kernel-dir DIR` tests a built copy of `kernel/` (its ELF, RAM-disk manifest and, for `--rom`, its relink). `KERNEL`, `MEM` (default 128, ROM 32), `TMO` (default 300 s) and `ROM` override the defaults. All runs use `nice -n 19` and `timeout`; run one at a time.
+`--no-build` reuses what is in `build/`. `--kernel-dir DIR` tests a built copy of `kernel/` (its ELF, RAM-disk manifest and, for `--rom`, its relink). `KERNEL`, `MEM` (default 128, ROM 32), `TMO` (default 3600 s) and `ROM` override the defaults. All runs use `nice -n 19` and `timeout`; run one at a time.
+
+`GROUP=NAME` runs one set; `ONLY="src/t_x.c ..."` lists programs explicitly:
+
+| Group | Programs |
+|---|---|
+| `smoke` | t_sys t_file t_proc t_pipe t_dlm t_guestdlm t_envram t_gate t_vtop |
+| `core` | smoke plus t_arith t_mem t_sig t_streams t_time t_tty t_page t_moddemo t_stress t_env t_ufs |
+| `mac` | t_aux t_mac t_mac6 t_mac76 t_mac81 t_env |
+| `tos` | t_tos t_xaaes t_env |
+| `mint`, `cpm`, `amiga`, `display`, `sound`, `win16` | t_mint; t_cpm; t_amiga t_env; t_display; t_sound; t_win16 |
 
 Exit status: 0 all PASS, 1 any FAIL, 2 timeout, panic or no `TESTS DONE`.
 
@@ -67,6 +77,16 @@ INFO time.clk_tck: 60
 | `t_mac76` | `t_mac`'s `startmac` run (`t_mac.c` built with `SYS76`) on Mac OS 7.6.1: the System Folder `/mac/sys/S761` made from the CD image (`CD761`, local only) by `images/macenv/mksys76.sh`, the model set to a Quadra 800 (`uinter_boxflag` 29); checks `'boot'` 3's `_AUXDispatch(36, 0)` (it makes `/tmp/.mac/unix`), the Finder desktop, `SysVersion` `$0761`, the model, About This Computer, SimpleText (linked into `/Desktop Folder`) opened by keyboard and quit, the disk window and the Special menu; skips without the CD |
 | `t_vtop` | raw `rd0` read/write and `/proc` read/write with user buffers below 1 GB, each at the address equal to the physical address of the RAM-disk block it moves, so a kernel that takes it for a physical one only copies that block onto itself; raw SCSI read when a disk is present |
 | `t_display` | `/dev/fb0` ioctls (info, modes, bounds, `EFAULT`), VBL wait, sessions, `mmap` limits, CLUT round trip, pattern and CLUT rotation checked in screen dumps, blank, keys and mouse through QEMU with rising timestamps, background session gets no input, hotkey switch with contents and key releases, a forked mapping following a switch, partial `munmap` refused, close with a mapping keeping the session, emergency key, node modes and group `display` permissions, `kill -9` of `dstest` in front returns the console screen unchanged. Host parts need `hostio.py` (direct boot); elsewhere they are skipped |
+| `t_mac6`, `t_mac81` | `t_mac76`'s run on System 6.0.7 (A/UX 2.0.1's Mac environment in `/a201`) and on Mac OS 8.1 |
+| `t_tos` | TOS environment: `starttos`, its display session, 200 Hz and VBL timers, GEM desktop on screen, keys and mouse, TeraDesk, ending and logging out |
+| `t_xaaes` | XaAES over the MiNT layer: desktop and menu bar, TeraDesk as shell, menus, drive window, a background program keeps running and takes keys, idle CPU |
+| `t_mint` | MiNT programs as Unix processes through `/tos/bin/mintrun` |
+| `t_amiga` | `amigaguest` load and unload, ioctl validation, small guests |
+| `t_cpm` | CP/M-68K: `startcpm`, drives on host directories |
+| `t_sound` | `/dev/asc`, the sound service and its front-session rule, `/dev/snd` and Sound Manager in System 6 and 7.6.1 |
+| `t_win16` | `startwin` and the Win16 test programs on SCSI disk 3; with your Windows and Wabi, install and Program Manager |
+| `t_gate` | cost of the guest vector gates on native system calls |
+| `t_guestdlm`, `t_envram` | guest modules under DLM; environment RAM allocation and return |
 | `t_env` | guest environments: record locks on s5 and ufs released by `SIGKILL`; `maketos -e` makes distinct roots, refuses reserved and bad names and existing ones, `--import` copies `~/TOS` without its environments and leaves it unchanged; `starttos -e`, `startmig -e` (on the ufs volume) hold the lock on `.env`, and `envlock` on the legacy System Folder's `.stamp`, while running, a second session is refused, other environments and the legacy tree lock separately, and the lock goes on `SIGKILL` and on exit |
 
 Floating point: when the kernel reports no FPU (`fpu_present` 0), FP failures are SKIPs, not FAILs.
@@ -94,4 +114,4 @@ Tests see `/tests/ksyms` (kernel symbol addresses, for `t_kmem("freemem")` or `t
 
 ## The Windows 3.x environment
 
-`tests/win16/` runs on the build host, not in QEMU: `sh tests/win16/run.sh` builds `startwin` with its in-memory screen, checks `startwin -install` on synthetic compressed disks and runs the Win16 test programs in `tests/win16/src` (built with Open Watcom 2, `WATCOM`) with their input scripts against `tests/win16/expect`; `sh tests/win16/x86suite.sh` runs the 80386 instruction suite. Details in `docs/win16-design.md`.
+`tests/win16/` also runs on the build host: `sh tests/win16/run.sh` builds `startwin` with its in-memory screen, checks `startwin -install` on synthetic compressed disks and runs the Win16 test programs in `tests/win16/src` (built with Open Watcom 2, `WATCOM`) with their input scripts against `tests/win16/expect`; `sh tests/win16/x86suite.sh` runs the 80386 instruction suite. Details in `docs/win16-design.md`.

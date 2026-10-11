@@ -3,7 +3,7 @@
 #
 #   sh amiga/mods.sh kernel.elf outdir
 #
-# Out: outdir/mod.d/{amilib,opci,pci,ne}, built for that kernel's CPU; amilib is
+# Out: outdir/mod.d/{amilib,opci,pci,ne,zz9000}, built for that kernel's CPU; amilib is
 # checked against the kernel's exports (it must carry DLM: dlm_cacheflush),
 # opci against those and amilib's.  Install them in /etc/conf/mod.d;
 # /etc/conf/pci gets openpci.library (the openpci archive's
@@ -39,17 +39,20 @@ srcs() {
 		    "$A/amilib/amxplat.c $A/mod/amilib/amilibmod.c" ;;
 	opci)	echo "$A/opci/opci.c $A/mod/opci/opcimod.c" ;;
 	pci)	echo "$A/pci/pcidev.c" ;;
+	zz9000)	echo "$A/zz9000/zz9000.c $A/zz9000/zzds.c $A/mod/zz9000/zz9000mod.c" ;;
 	ne)	echo "$K/atari/netusbee/nuchip.c $K/atari/netusbee/nudlpi.c $A/mod/ne/nemod.c" ;;
 	esac
 }
 rm -rf "$O/mod.d"
-for m in amilib opci pci ne; do	# each after the module it depends on
+for m in amilib opci pci ne zz9000; do	# each after the module it depends on
 	d=$O/src/$m
 	rm -rf "$d"; mkdir -p "$d"
 	objs=
 	for c in $(srcs $m); do
 		o=$d/$(basename "$c" | sed 's/\.[cs]$//').o
-		$CC -c "$c" -o "$o" 2> "$o.warn" || { cat "$o.warn"; exit 1; }
+		cc=$CC
+		case $c in */zz9000/zz9000.c) cc=$(echo "$CC" | sed 's/ -Wall//') ;; esac	# upstream, as it is
+		$cc -c "$c" -o "$o" 2> "$o.warn" || { cat "$o.warn"; exit 1; }
 		if grep -v 'types.h:182\|strsubr.h:70\|In file included\|^ *from ' "$o.warn" | grep .; then
 			echo "[FAIL] warnings in $c"; exit 1
 		fi

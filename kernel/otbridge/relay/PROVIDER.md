@@ -18,5 +18,3 @@ Shipping echo code uses a 52-byte queue mate offset, while an MPS method uses 64
 - [OpenTransportKernel.h](http://www.cs.vu.nl/~eliens/research/media/lib-of-vs-libs-QTDevWin-CIncludes-OpenTransportKernel.h.html)
 
 Run `test/provider-host.sh PRIVATE_OUTPUT` for sanitizer fixtures and AMIX 68020 builds. `test/install-evidence.py` checks locally extracted cd70 resources; it writes only metadata facts. Neither check qualifies a live Mac provider.
-
-The original import ordinals and shipping install attribution were incorrect: A5 jump pointers map to raw disk entries at v-18, and import ordinals are one-based. The new resource replay checks named export linkage and shipping echo import call sites.

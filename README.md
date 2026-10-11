@@ -1,62 +1,91 @@
 # Ash Nazag - The One Distribution
 
-One SVR4 kernel and userland for 68k Macintosh, Amiga and Atari machines, built on
-Commodore's AMIX 2.1 and the community AMIX 68040/68060 port, with A/UX's Macintosh
-environment running on top.
+One SVR4 kernel and userland for 68k Macintosh, Atari and Amiga machines, built on
+Commodore's AMIX 2.1 and the community AMIX 68040/68060 port. Other 68k systems run on
+top of it as environments: ordinary Unix processes with their own display session.
 
-Status: a Quadra 800 boots this kernel straight from disk to a multi-user login on its
-built-in screen, with SCSI, Ethernet, a clock, loadable kernel modules and support for
-A/UX programs (static and shared-library, e.g. `sh`, `ls`, `more`, `vi`). A/UX's Mac
-environment runs in its own screen session up to an idle Finder desktop, with mouse, keyboard
-and Ctrl-Opt-Cmd-digit switching between the Mac and the console. Tested in
-QEMU's `q800` machine with a real Quadra 800 ROM; hardware testing is in progress.
+## Hosts
+
+| Host | Tested on | Status |
+|---|---|---|
+| Quadra 800 (68040) | QEMU `q800` with a Quadra 800 ROM; real Quadra 800 | Boots from disk to a multi-user login on the built-in screen and ADB keyboard. SCSI, SONIC Ethernet, clock, swap, ufs, loadable modules, display and sound services, X11. All environments below. |
+| Falcon030 (68030, no FPU) | Hatari (TOS 4.04); real Falcon | Boots from IDE to a login on VGA or RGB monitors. X11 and xdm, TOS, CP/M and System 6 environments. Slow on real hardware. |
+| CT60/CT63 Falcon (68060) | Hatari 060 with FastRAM | Kernel boots from FastRAM; SuperVidel or Videl console. Real-hardware testing in progress. |
+| Amiga A3000 (68040) | Amiberry | Started from AmigaDOS by `unix_boot040`; login on the serial port. PCI through openpci.library (Prometheus), NE2000 Ethernet, ZZ9000 RTG. Real hardware untested. |
+
+## Environments
+
+Start commands, run as an ordinary user. Ctrl-Option-Command-0 shows the console,
+-1 to -9 the sessions. Details: [docs/environments.md](docs/environments.md).
+
+| Environment | Command | Hosts | Status |
+|---|---|---|---|
+| Mac System 7.6.1 | `startmac` | Quadra | Works: Finder, applications, Open/Save, CommandShell, sound, Log Out and Shut Down. |
+| Mac OS 8.1 | `makemac -e 8.1`, then `startmac -e 8.1` | Quadra | Works, with known issues: Finder idles at about 60% CPU after an application has shown an Open or Save dialog; asynchronous sound never completes. |
+| Mac System 6.0.7 | `startmac6` | Quadra, Falcon | Works; slow, no colour. Needs A/UX 2.0.1 and a IIci ROM. |
+| TOS (EmuTOS, TeraDesk) | `starttos` | Quadra, Falcon, Amiga | Works. fVDI at the screen's size; XaAES with `starttos -e xaaes`; Cubase 3.1/Score/Audio Falcon with `starttos -C`. On a Falcon, `starttos -P` runs the machine's own TOS ROM (slow redraws). |
+| Amiga (Kickstart 3.2, Workbench) | `startmig` | Quadra, Amiga | Partial: Workbench on RTG (Picasso96 or ZZ9000); slow start; stock chipset display not supported. |
+| CP/M-68K 1.3 | `startcpm` | Quadra, Falcon | Works, in the terminal; Z80 and 8086 programs too. Disk I/O on host folders is slow. |
+| Windows 3.x programs (Win16) | `startwin` | Quadra | Works for Program Manager and the tested programs. Each user installs their own Windows 3.1/3.11 and Wabi 2.2 with `startwin -install`. |
+| X11R6.3 | `startx`, `xsession` | Quadra, Falcon | Works: twm, XView, xdm session chooser; sessions for each environment. |
+
+SMSQ/E, TI calculators, TT and more are planned (`docs/*-plan.md`).
+
+## What you need
+
+Nothing proprietary is in this repository and nothing proprietary is ever distributed.
+You supply:
+
+- the AMIX 2.1 tape archive (both parts) and its 2.1 patch disk
+- Mac: Quadra 800 and Quadra 700 ROMs, the A/UX 3.1 CD, Mac OS 7.6.1 and 8.1 CDs; System 6 needs the A/UX 2.0.1 CD and a IIci ROM
+- Falcon: TOS 4.04 for passthrough (EmuTOS is fetched)
+- Amiga environment: the AmigaOS 3.2 CD and Picasso96; Amiga host: its Kickstart ROM and openpci.library
+- CP/M-68K: Digital Research's 1.3 release zip
+- Win16, at run time: Windows 3.1 or 3.11 and Wabi 2.2
+- Cubase: your own copies
+
+`tools/setup.sh` builds the toolchains and fetches the open-source parts; see `BUILDING.md`.
+
+## Build
+
+```
+sh kernel/build.sh                      # Quadra kernel: kernel/build/unix-mac.elf
+GROUP=smoke sh tests/run-qemu.sh        # tests in QEMU q800; groups: smoke core mac tos cpm amiga display sound win16
+sh images/macenv/mkmacimage.sh          # Quadra disk image with every environment
+PLATFORM=atari sh kernel/build.sh       # Falcon030 kernel (PLATFORM=atari060: CT60)
+sh kernel/atari/mkdisk.sh               # Falcon disk image
+PLATFORM=amiga sh kernel/build.sh       # Amiga kernel
+sh kernel/amiga/test/mkhdf.sh           # Amiga disk
+```
+
+`BUILDING.md` lists the media each target needs; `sh tools/check-env.sh` reports what is
+missing. [docs/hosts.md](docs/hosts.md) covers booting each host.
 
 ## Layout
 
 | Path | Contents |
 |---|---|
-| `kernel/mac/` | Quadra 800 platform layer: boot, MMU map, SCC, 53C96 SCSI, DAFB console, ADB, SONIC, RTC, device tables, root selection, boot blocks |
-| `kernel/dlm/` | SVR4.2-style loadable kernel modules |
-| `kernel/amiga/` | Amiga host: amilib (AmigaOS libraries run in the kernel) and the opci module, the PCI bus through openpci.library |
-| `kernel/guest/` | A/UX personality: trap gates, A/UX system calls, COFF and shared-library exec, Mac environment interface (screens, events, cursor, PRAM); the TOS (`tos/`), CP/M-68K (`cpm/`) and Windows 3.x (`win16/`, see `docs/win16-design.md`) environments |
-| `kernel/otbridge/` | Open Transport bridge: STREAMS module, virtual Ethernet stations on the SONIC, ASLM library builder, Mac `.ENET` driver |
-| `x11/` | X11R6.3 server for the Mac screen (build, patches, session scripts, image builder) |
-| `kernel/tools/`, `kernel/build.sh` | build: AMIX link kit relink, port build, Mac overlay, checks |
-| `kernel/port-local.diff` | three local changes to the 040/060 port |
-| `images/` | disk-image builders (A/UX Startup, direct boot, disk root) and QEMU scripts |
+| `kernel/mac/` | Quadra 800 platform layer: boot, MMU, SCC, SCSI, console, ADB, SONIC, RTC, display and sound services |
+| `kernel/atari/` | Falcon030 and CT60 platform layer, loader, disk image, Hatari tests |
+| `kernel/amiga/` | Amiga host: amilib (AmigaOS libraries in the kernel), openpci, PCI and RTG drivers |
+| `kernel/dlm/` | SVR4.2-style loadable kernel modules ([docs/modules.md](docs/modules.md)) |
+| `kernel/guest/` | environments: A/UX personality and Mac (`mod/`), TOS (`tos/`), Amiga (`amiga/`), CP/M (`cpm/`), Win16 (`win16/`) |
+| `kernel/otbridge/` | Open Transport bridge for Mac OS 8 networking |
+| `x11/` | X11R6.3 server, clients, xdm and session scripts |
+| `images/` | disk-image builders and QEMU scripts |
 | `tests/` | functional test suite run under QEMU |
-| `tools/` | COFF/ELF converter and binary tools |
+| `webapp/` | disk image forge: builds images in the browser from your media |
+| `tools/` | COFF/ELF converter, setup and media tools |
 | `docs/` | design documents |
-
-## What you need
-
-Nothing proprietary is in this repository. To build you supply:
-
-- the AMIX 2.1 tape archive (both parts) and its 2.1 patch disk
-- for disk images and the Mac environment: A/UX 3.1, Mac OS CDs and Quadra ROM images
-- for the Windows 3.x environment, at run time (each user installs it with `startwin -install`): Windows 3.1 or 3.11 and, for Wabi's tools and printer drivers, Wabi 2.2
-
-`tools/setup.sh` builds the toolchains and fetches the rest; see `BUILDING.md`.
 
 ## Built on
 
 - [amix-040-060-port](https://github.com/asokero/amix-040-060-port): 68040/68060 support for AMIX
 - [gcc-cross-amix](https://github.com/isoriano1968/gcc-cross-amix): AMIX cross toolchain
-- [x11r6.3-amix](https://github.com/isoriano1968/x11r6.3-amix): X11R6.3 for AMIX, base of our Mac server
-- [amigaux.org](https://amigaux.org/): AMIX packages
-- [FreeType](https://freetype.org/): TrueType hinting and scan conversion for the Windows 3.x environment (fetched at build time)
-
-## Build
-
-```
-sh kernel/build.sh          # kernel/build/unix-mac.elf, unix-mac.coff
-sh images/mkboot.sh         # images/q800-unix.img (direct boot, RAM root)
-sh kernel/mac/diskroot/mkdiskimage.sh   # disk-root image
-sh tests/run-qemu.sh        # test suite in QEMU q800
-```
-
-`BUILDING.md` lists the media each target needs; `sh tools/check-env.sh` reports what is
-missing.
+- [x11r6.3-amix](https://github.com/isoriano1968/x11r6.3-amix): X11R6.3 for AMIX, base of our server
+- [amigaux.org](https://amigaux.org/): AMIX packages, zz9000-amix
+- [EmuTOS](https://emutos.sourceforge.io/), fVDI, TeraDesk, XaAES: the TOS environment
+- [FreeType](https://freetype.org/): TrueType for the Win16 environment (fetched at build time)
 
 ## AI disclosure
 

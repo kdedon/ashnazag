@@ -42,6 +42,7 @@
 /* fi_layout */
 #define FBL_PACKED	1
 #define FBL_IPLAN2	4	/* interleaved bitplanes, 16-pixel words */
+#define FBL_PLANES	5	/* separate bitplanes, fi_planebytes apart */
 /* fi_visual */
 #define FBV_MONO	1	/* pixel 0 white */
 #define FBV_PSEUDO	2

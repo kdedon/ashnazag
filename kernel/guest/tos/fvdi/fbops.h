@@ -24,9 +24,12 @@ struct fbops {
 extern struct fbops const *fb;
 extern Workstation *fb_wk;
 long fb_pen(long colour);
+void CDECL c_get_colours(Virtual *vwk, long colour, unsigned long *fg, unsigned long *bg);
 Pix fb_op(long o, Pix s, Pix d);
 long CDECL c_mouse_draw(Workstation *wk, long x, long y, Mouse *mouse);
 void linea_init(Workstation *wk);
 long la_alias(void *a);
+struct tfbcart;
+void pfb_init(Workstation *wk, struct tfbcart *fc);
 
 #endif

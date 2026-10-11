@@ -267,6 +267,7 @@ nu_start()
 		}
 	}
 	nu_sc.imr = ISR_PRX | ISR_PTX | ISR_RXE | ISR_TXE | ISR_OVW | ISR_CNT;
+	nu_sc.crcprobe = 1;
 #endif
 	nu_bstate = BOARD_IN_INIT_CODE;
 	if (nu_init(&nu_sc) < 0) {

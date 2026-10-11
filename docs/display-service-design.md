@@ -5,7 +5,7 @@ text console, the X server, A/UX's Mac environment and the guest containers are 
 clients. Target: the Quadra 800 (DAFB, ADB) now, Amiga and Atari later, with one X
 server binary for all three.
 
-Status: design. Nothing here is built.
+Status: `ds` core, `/dev/fb0`, `/dev/kbd`, `/dev/mouse` and sessions are built for the Quadra 800 (`kernel/mac/display`), with Amiga (`kernel/amiga/amigads.c`) and Atari (`kernel/atari/atads.c`) backends; the X server is in `x11/`. Stages in §7 beyond that are open.
 
 ## 0. Summary
 
@@ -33,10 +33,10 @@ Reference trees (not built):
 |---|---|
 | Console | `kernel/mac/video`: 8×16 text renderer at 1–32 bpp on the mode the firmware left; `fbprobe.c` finds it (boot record, or A/UX low memory + declaration ROM sResources, sense lines); resets the 1-bpp CLUT (index register `0xF9800200` long 0, then R, G, B bytes at `+0x213`); masks the DAFB VBL interrupt (`+0x104`, `+0x10C`) |
 | ADB | `kernel/mac/adb`: key consumer `(unit, KC_CHAR, code, more)`, code = raw ADB, bit 7 up; mouse consumer `(unit, MOUSE_CHANGE, r0, changed)`; console path with its own auto-repeat |
-| VRAM mapping | kernel: DTT1, supervisor, cache-inhibited. No user mapping yet |
+| VRAM mapping | kernel: DTT1, supervisor, cache-inhibited; user mapping through `/dev/fb0` (`dsseg.c`) |
 | A/UX Startup | leaves every display at its **lowest depth (1 bpp)**; a direct boot (QEMU `-kernel`) keeps the Monitors depth |
-| Mac environment | designed: fake NuBus card + Slot Manager over a synthetic declaration ROM, kernel cursor at VBL, `ui_key_intr`/`ui_mouse_intr` |
-| Containers | designed ([guest-container-design.md](guest-container-design.md) §4.2, §10.3): surfaces, zero-copy or converted, full-screen switching by hotkey |
+| Mac environment |: fake NuBus card + Slot Manager over a synthetic declaration ROM, kernel cursor at VBL, `ui_key_intr`/`ui_mouse_intr` |
+| Containers | ([guest-container-design.md](guest-container-design.md) §4.2, §10.3): surfaces, zero-copy or converted, full-screen switching by hotkey |
 
 ## 2. Kernel service
 

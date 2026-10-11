@@ -1,4 +1,5 @@
 # SMSQ/E environment plan
+Status: stage 1, the prebuilt Atari `SMSQE.PRG` in the TOS environment, is in development; the later stages are open.
 Checked against the source (github.com/CodeDreamer/SMSQE, v3.43).
 ## Source and licence
 - `licence_txt`: BSD 2-clause (Tebby, Kilgus, Lenerz et al., 1989-2016).
@@ -72,7 +73,7 @@ with display-service events and a block-device service; keep the rest.
 4. aux driver set on the Quadra in QEMU: desktop, text, window, pointer;
    4b. image and folder drives.
 5. `startsmsq -e ENV` switching, second session, memory limit.
-Tests: GROUP=smsq in tests/run-qemu.sh and a Hatari case.
+Tests: GROUP=smsqe in tests/run-qemu.sh and a Hatari case.
 
 ## Media
 - SMSQ/E source and binaries: BSD, redistributable with the notice.

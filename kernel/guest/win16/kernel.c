@@ -19,6 +19,12 @@
 #include "w16.h"
 #include "apitab.h"
 
+#if defined(__GNUC__) && __STDC__ == 0
+/* the system's va_start is for its own compiler */
+#undef va_start
+#define va_start(ap, last)	((ap) = (va_list)__builtin_next_arg(last))
+#endif
+
 int w16_debug;
 int w16_dpi = 96;
 char windir[128] = "C:\\WINDOWS", sysdir[128] = "C:\\WINDOWS\\SYSTEM";

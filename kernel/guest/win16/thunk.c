@@ -406,13 +406,14 @@ thunk_dispatch(c, n)
 	}
 	api_depth--;
 	{
-		static u32 wsel, woff, wval, armed;
+		static u32 wsel, woff, wval, armed, looked;
 		char *e2;
 
-		if (!armed && (e2 = getenv("W16_WATCH")) != 0) {
+		if (!looked && (e2 = getenv("W16_WATCH")) != 0) {
 			sscanf(e2, "%x:%x", &wsel, &woff);
 			armed = 1;
 		}
+		looked = 1;
 		if (armed == 1 && g_block(wsel)) {
 			wval = GL(sel_base(wsel) + woff);
 			armed = 2;

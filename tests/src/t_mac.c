@@ -2143,7 +2143,7 @@ sdskipped()
 #define	SPECIALH	232
 #define	SHUTH		250
 #define	SHUTV		139
-#define	LOGOUTV		60
+#define	LOGOUTV		168
 #endif
 
 /* Special > Shut Down as root: the Mac ends by itself, with no panic */

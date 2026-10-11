@@ -204,6 +204,11 @@ caddr_t arg;
 	extern int ata_nvmode();
 	extern void ata_vminfo();
 #endif
+#ifdef DS_AMIGA
+	struct fbinfo vf;
+	extern int am_nvmode();
+	extern void am_vminfo();
+#endif
 
 	if (copyin(arg, (caddr_t)&ms, sizeof ms))
 		return EFAULT;
@@ -211,10 +216,17 @@ caddr_t arg;
 #ifdef DS_ATARI
 	n = 1 + ata_nvmode();
 #endif
+#ifdef DS_AMIGA
+	n = 1 + am_nvmode();
+#endif
 	for (i = 0; i < n && i < ms.ms_count; i++) {
-#ifdef DS_ATARI
+#if defined(DS_ATARI) || defined(DS_AMIGA)
 		if (i > 0) {
+#ifdef DS_AMIGA
+			am_vminfo((int)i - 1, &vf);
+#else
 			ata_vminfo((int)i - 1, &vf);
+#endif
 			mi.mi_id = vf.fi_mode;
 			mi.mi_width = vf.fi_width;
 			mi.mi_height = vf.fi_height;
@@ -348,7 +360,7 @@ int *rvalp;
 	case FBIOGMODES:
 		return ds_gmodes((caddr_t)arg);
 	case FBIOSMODE:
-#ifdef DS_ATARI
+#if defined(DS_ATARI) || defined(DS_AMIGA)
 		if (s)
 			return ds_setmode(s, (unsigned long)arg);
 #endif

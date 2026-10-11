@@ -2,12 +2,12 @@
 
 Design: `docs/guest-container-design.md` (§2, §3, §13, §15 G0).
 
-The other environments here: `tos/`, `cpm/` and `win16/` (`README.md`, `docs/win16-design.md`).
+The other environments here: `tos/`, `cpm/`, `amiga/`, `win16/` (`README.md`, `docs/win16-design.md`) and `x86com/`.
 
 ## Pieces
 
 ```
- static (relinked)                     modules (/tests/aux/mod.d, auto-loaded)
+ static (relinked)                     modules (mod.d, auto-loaded)
  --------------------------------      ----------------------------------------
  35 vector gates  -> guest_gate_c      guestcore  MOD_HOOK_WRAPPER: guest_proc life,
  hooksw[6], guest_trap                            dispositions, sendsig/vur dispatch

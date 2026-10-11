@@ -9,7 +9,8 @@
 #
 #   sh tests/tos/build.sh outdir
 #
-# Out: outdir/root/tos/bin/{starttos,maketos,pingd}, outdir/root/tos/{sys,stik,exit,acc,fvdi,teradesk,qed}/,
+# Out: outdir/root/tos/bin/{starttos,maketos,pingd},
+# outdir/root/tos/{sys,stik,exit,acc,fvdi,teradesk,qed,xaaes,xatick}/,
 # outdir/root/etc/tos/{emutos.img,rom,tosml.img}.
 # EMUTOS names the EmuTOS 512 KB release zip (default: ref/emutos-release),
 # EMUTOSLANG its image (us).  TOSROM names the user's ROM: an image, or a
@@ -134,6 +135,17 @@ if AUX=$AUX MINT=$O/mint sh "$G/tos/teradesk/build.sh" "$O/teradesk" > "$O/terad
 	sed 's/$/\r/' "$AUX/images/tosenv/emudesk.inf" > "$R/tos/teradesk/EMUDESK.INF"
 else
 	echo "[skip] TeraDesk: $(tail -1 "$O/teradesk.log")"
+fi
+# XaAES over the MiNT layer: its C: files
+if AUX=$AUX MINT=$O/mint sh "$G/tos/xaaes/build.sh" "$O/xaaes" > "$O/xaaes.log" 2>&1; then
+	mkdir -p "$R/tos/xaaes" "$R/tos/xatick"
+	cp -r "$O/xaaes/C/." "$R/tos/xaaes/"
+	# XATICK.PRG: a GEM program that keeps counting beside the desktop
+	B=$(AUX=$AUX sh "$G/tos/mintgcc.sh" "$O/mint")
+	PATH=$B:$PATH nice -n 19 m68k-atari-mint-gcc -O2 -s -o "$R/tos/xatick/XATICK.PRG" \
+		"$T/tos/xatick.c" -lgem
+else
+	echo "[skip] XaAES: $(tail -1 "$O/xaaes.log")"
 fi
 rm -rf "$O/mint"
 # Qed, the desktop's text viewer, when its files are at hand

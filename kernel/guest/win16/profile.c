@@ -47,10 +47,18 @@ issection(line, out)
 	char *line, *out;
 {
 	char buf[MAXLINE], *l, *e;
+	int n;
 
+	for (l = line; *l == ' ' || *l == '\t'; l++)
+		;
+	if (*l != '[')
+		return 0;
 	/* a copy: the line is written back as it is */
-	strncpy(buf, line, sizeof buf - 1);
-	buf[sizeof buf - 1] = 0;
+	n = strlen(line);
+	if (n > sizeof buf - 1)
+		n = sizeof buf - 1;
+	memcpy(buf, line, n);
+	buf[n] = 0;
 	l = trim(buf);
 	if (*l != '[' || (e = strchr(l, ']')) == 0)
 		return 0;

@@ -9,3 +9,4 @@ mint-binutils|tar|https://ppa.launchpadcontent.net/vriviere/ppa/ubuntu/pool/main
 mint-gcc|tar|https://ppa.launchpadcontent.net/vriviere/ppa/ubuntu/pool/main/g/gcc-m68k-atari-mint/gcc-m68k-atari-mint_4.6.4-mint-20251014-1ppa20251013221905~noble_amd64.deb|e326cbc1d6d69047033dc8b03920ce016d9a4b4ae7b508c4418e5dec0e86ff7f|GPL-3.0, libgcc with runtime exception
 mint-mintlib|tar|https://ppa.launchpadcontent.net/vriviere/ppa/ubuntu/pool/main/m/mintlib-m68k-atari-mint/mintlib-m68k-atari-mint_0.60.1.Git-20220821-1ppa20240524094504~noble_all.deb|4365d740c7ad0277b50bf223970816ce9ea5c5d6b3883673117fe801a69dce6c|LGPL-2.1 and others
 mint-gemlib|tar|https://ppa.launchpadcontent.net/vriviere/ppa/ubuntu/pool/main/g/gemlib-m68k-atari-mint/gemlib-m68k-atari-mint_0.44.0-Git-20230112-1ppa20240524094547~noble_all.deb|a95595f95bfad30ca91424a129bf5903fa0804bad08e3076c907d85078712bcc|LGPL-2.1
+freemint|git|https://github.com/freemint/freemint|cd0b07fd0f3654d79bcaad38b8d995f0d2e08179|GPL-2.0

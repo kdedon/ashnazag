@@ -30,6 +30,9 @@
 #include "scr.h"
 
 static struct x86 thecpu;
+#ifdef X86ASM
+extern int x86_useasm;
+#endif
 struct x86 *cpu;
 extern int w16_strict;
 extern void initdeps();
@@ -498,6 +501,12 @@ main(argc, argv)
 	cpu->intr = intr;
 	cpu->fault = fault;
 	cpu->thunk = thunk_dispatch;
+	if (getenv("W16_X86PROF"))	/* what the 68k run loop left to the C core */
+		atexit(x86_prof);
+#ifdef X86ASM
+	if (getenv("W16_X86C"))		/* the C core alone */
+		x86_useasm = 0;
+#endif
 	if (getenv("W16_TRACE") && sscanf(getenv("W16_TRACE"), "%15[^:]:%d:%x-%x", trmod, &trseg, &trfrom, &trto) >= 2)
 		cpu->trace = trace;
 	if (scr_open(w, h, 0) != 0) {

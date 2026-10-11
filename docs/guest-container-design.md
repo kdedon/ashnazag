@@ -1,6 +1,6 @@
 # 68k guest containers: design
 
-Paper design. Generalises the A/UX Mac-environment mechanism into a framework that runs other 68k operating systems as ordinary SVR4 processes. A profile is the **user's own system ROM** plus a **machine layer** supplied by the container: A/UX's model (Mac ROM + `Patch.067C`) applied to Amiga Kickstart and Atari TOS. The machine layer either passes the real chips through (matching host only) or replaces the hardware-bound parts with host services (any host). Real OS installs (AmigaOS 3.2, TOS/GEM hard-disk setups) boot as on the real machine. EmuTOS and AROS are the free fallback for users without ROMs.
+Design. The implementation is in `kernel/guest` (see its NOTES.md); module, tool and milestone names below are the design's and differ in places. Generalises the A/UX Mac-environment mechanism into a framework that runs other 68k operating systems as ordinary SVR4 processes. A profile is the **user's own system ROM** plus a **machine layer** supplied by the container: A/UX's model (Mac ROM + `Patch.067C`) applied to Amiga Kickstart and Atari TOS. The machine layer either passes the real chips through (matching host only) or replaces the hardware-bound parts with host services (any host). Real OS installs (AmigaOS 3.2, TOS/GEM hard-disk setups) boot as on the real machine. EmuTOS and AROS are the free fallback for users without ROMs.
 
 Inputs: public documentation: Amiga Hardware Reference Manual and ROM Kernel Manuals, AmigaOS 3.2 release notes, the public Kickstart 3.2.x module inventory, LoadModule and P96 documentation, Atari Compendium, published TOS boot-sequence descriptions, EmuTOS/AROS/ARAnyM project documentation. *(verify)* marks a fact to check before implementing.
 
@@ -139,7 +139,7 @@ Guest windows sit in quadrant 0 (and 1 for the Mac ROM, `/shlib` and the Amiga R
 
 | Range | Content |
 |---|---|
-| 0 … 0x1FFFFF | chip RAM (2 MB shm; physical chip RAM under passthrough) |
+| 0 … 0x1FFFFF | chip RAM (2 MB shm) |
 | 0x00A00000, 0x00BFA000, 0x00C00000–0x00D9FFFF | PCMCIA attribute, CIA-A alias, slow-RAM probe windows (trapped: boot-phase rule, §5) |
 | 0x00BFD000, 0x00BFE000 | CIA-B, CIA-A register pages (trapped, §6.4) |
 | 0x00DA0000–0x00DEFFFF | Gayle/IDE/PCMCIA, RTC, Gary/Ramsey probe windows (trapped: boot-phase rule, §5) |
@@ -387,19 +387,19 @@ Added modules: `containerinit` (`RTF_COLDSTART`, priority 106–109, before `dia
 
 - At init graphics reads the chip IDs, builds the native display database, allocates copper lists and `LoadView`s a blank view; its VBL server runs on the virtual VERTB. The copper and DMA writes are absorbed: the native display is invisible.
 - **Workbench on RTG**: P96 (commercial, user-supplied, installed in the user's 3.2 install) with our **P96 board driver** (`container.card`, written against P96's board-driver interface): `FindCard`/`InitCard` report a board whose memory is a `GUEST_SURFACE` window; mode set, palette, panning and sprite functions become surface calls. The setup tool installs the driver and monitor file, sets `ENVARC:Picasso96/DisableAmigaBlitter=Yes` (P96's CPU fallback for blitter work, bitmaps in fast RAM) and the Workbench ScreenMode to the container mode. P96 screen-mode promotion moves native-mode screens onto RTG.
-- **Before P96 loads** (early startup, requesters, the 3.2 installer) rendering uses the native display and the blitter. Milestone G6 adds, if its logs show the need: (a) a **frame-level native display**: once per frame, walk the active copper list executing only `MOVE`s into a shadow register file, then convert the bitplanes (OCS/ECS/AGA, EHB, HAM) to the surface; no raster timing; (b) a **synchronous blitter**: a blit runs completely when its size register is written (HRM minterms, shifts, masks, fill, line mode). Both are bounded, memory-to-memory, and off by default.
+- **Before P96 loads** (early startup, requesters, the 3.2 installer): the boot extension binds `container.card` as early as it can, so these show on RTG. There is no native display model: no copper walk, no blitter, no planar conversion. Milestone G6 binds RTG before DOS.
 
 ### 6.6 Compatibility matrix
 
-| Software | Replacement (any host) | Passthrough, shared (AMIX Amiga) | Passthrough, take-over |
-|---|---|---|---|
-| Shell, dos/exec tools, OS-friendly apps | yes | yes | yes |
-| Workbench | yes, on RTG (native display after G6) | yes, native chipset | yes |
-| RTG apps (P96/CGX API) | yes | with an RTG board | with an RTG board |
-| native-screen OS-friendly apps | promoted to RTG; native after G6 | yes | yes |
-| audio.device / AHI apps | host audio | real Paula | real Paula |
-| AGA/OCS chip-banging games and demos | no (bus error or silent) | slow, timing-sensitive code fails (writes trapped) | yes |
-| trackdisk-level copy protection, raw MFM | no (ADF only) | yes, real floppy | yes |
+| Software | Amiga environment (any host) |
+|---|---|
+| Shell, dos/exec tools, OS-friendly apps | yes |
+| Workbench | yes, on RTG |
+| RTG apps (P96/CGX API) | yes |
+| native-screen OS-friendly apps | promoted to RTG |
+| audio.device / AHI apps | through the sound service |
+| AGA/OCS chip-banging games and demos | no (bus error or silent) |
+| trackdisk-level copy protection, raw MFM | through the floppy service |
 | direct serial/parallel hardware | no | yes | yes |
 | networking (`bsdsocket`) | yes | yes | while interrupts enabled |
 
@@ -467,7 +467,7 @@ All ST I/O is decoded at both aliases (`$00FF8xxx`, `$FFFF8xxx`).
 ### 7.5 Host directories and floppies
 
 - TOS's GEMDOS knows only FAT, so host directories are a GEMDOS layer in the machine layer: an XBRA-chained TRAP #1 handler that services path and handle calls for host drives with SVR4 calls and passes the rest on. `Pexec` from a host drive is serviced by the layer (create basepage via TOS, load and relocate with host reads). The kernel `FILTER` path (§3.3) is an optional speed-up of the same calls.
-- `Floprd`/`Flopwr`/`Flopfmt` go to the drive's image. Raw FDC access (copy protection) needs passthrough.
+- `Floprd`/`Flopwr`/`Flopfmt` go to the drive's image. Raw FDC access (copy protection) goes through the floppy service.
 
 ### 7.6 Compatibility matrix
 
@@ -535,7 +535,7 @@ Hard-disk images with AHDI/ICD root-sector partition tables (GEM/BGM/XGM), FAT12
 | `guestcfg` | container descriptor: ROM file, volumes, boot order, RAM, display, capabilities; checks the ROM hash |
 | `guestp96` | copy our P96 driver and monitor file into an install, set the environment variables and ScreenMode |
 
-Install routes: (1) boot an **existing** 3.2 or TOS install (HDF or image from another machine or emulator): first milestone. (2) Run the **official 3.2 installer** from the user's ADFs in DF0: onto a new HDF: needs the native display (G6). (3) TOS: copy AUTO/ACC/desktop files into a partition or host directory (TOS has no installer).
+Install routes: (1) boot an **existing** 3.2 or TOS install (HDF or image from another machine or emulator): first milestone. (2) Run the **official 3.2 installer** from the user's ADFs in DF0: onto a new HDF: needs RTG before DOS (G6). (3) TOS: copy AUTO/ACC/desktop files into a partition or host directory (TOS has no installer).
 
 ### 9.4 Launching one program
 
@@ -691,11 +691,10 @@ Static pass criteria per milestone (builds, image checks, host harnesses in the 
 | G3 | Kickstart 3.2 → AmigaDOS | G1; `amigaguest`, custom/CIA/probe pages, `$F00000` RomTag image (KickTag builder as fallback), `containerinit`, timer, battclock, `scsi.device` over HDF, host-tty serial | `$F00000` image and ExecBase/KickTag builder; RDB parser harness; ROM hash table | user's A1200 3.2 ROM boots the user's 3.2 HDF; a Shell on `AUX:` at the host tty lists and writes files; absorbed-access log shows no unexpected registers |
 | G4 | 3.2 Workbench on RTG | G3; surfaces, P96 board driver, keyboard/gameport replacements, VBL, `guestp96` | board-driver function table vs P96 interface; input mapping tables | Workbench on the P96 container screen (converted to the Q800 frame buffer), mouse and keyboard, a Shell window, Workbench icons from the HDF |
 | G5 | Amiga host services | G4; `guestfs-handler`, ADF trackdisk, `audio.device`, parallel, `bsdsocket` thunks (`GUEST_SOCK`, shared with A/UX M6) | DOS packet table; thunk generator (`bsdsocket` LVOs) | boot from a host directory; ADF read/write; a sample plays; a TCP client reaches a host |
-| G6 | Amiga native display, installer | G4; frame-level native display; synchronous blitter if G4/G5 logs require it; `guestmk hdf` | copper-walk and planar conversion harness; blitter harness vs HRM examples | official 3.2 installer from the user's ADFs installs onto a new HDF, which then boots to Workbench |
+| G6 | Amiga RTG from boot, installer | G4; `container.card` bound before DOS; `guestmk hdf` | boot-order check: first requester on RTG | official 3.2 installer from the user's ADFs installs onto a new HDF, which then boots to Workbench |
 | G7 | TOS 2.06 → GEM desktop | G1; `tosguest`, `tosexec`, MFP/ACIA/video/RTC pages, cartridge image, `hdv_*` over AHDI images, GEMDOS host layer, `guestmk ahdi` | PRG header harness; AHDI/ICD parser; IKBD encoder tables; sysvar preset checker | user's TOS 2.06 boots an AHDI image in ST-high on the Q800 (zero-copy): AUTO runs, an ACC loads, desktop opens, a GEM program runs from a host directory |
 | G8 | TOS 3.06 and 4.04 | G7; MMU/cache emulation, Videl via `VsetMode`, XBIOS sound filter, RTG VDI (NVDI or fVDI driver on a surface) | per-image patch/filter lists | TT and Falcon desktops in a TT/Falcon mode and on an RTG VDI |
 | G9 | Three guests at once | G2, G4, G7; `hrtimer` (VIA1 T2), RT class, screen switching, focus, polling detector, budgets | budget checker; hotkey not routable to guests; deadline-queue harness (ordering, coalescing, chaining, rate cap) | Mac Finder, TOS desktop and Amiga Workbench run concurrently in QEMU `q800`; hotkey switches screens with contents intact; all three idle together use < 10 % CPU; **timer accuracy**: with all three running, guest test programs measure 1 ms MICROHZ requests, TOS Timer C and a 50 Hz VBL against host time for 10 min: period error < 1 %, 99th-percentile lateness < 2 ms *(provisional; QEMU timing noise)*; expiry cost counted in instructions |
-| G10 | Amiga passthrough | AMIX on A3000; raw-hardware grants, ownership table, chip RAM reservation | grant exclusivity harness; forward table | shared grade: 3.2 Workbench on the native display with Unix alongside; take-over grade: a chipset demo runs and Unix resumes after |
 | G11 | Atari passthrough | ASV on TT | same | TOS 3.06 desktop on the TT's own video; a YM/DMA-sound program plays |
 | G12 | Free fallback | G3/G7 infrastructure; EmuTOS and AROS container targets | EmuTOS/AROS target builds | the G4/G7 pass tests without user ROMs |
 | G13 | 030 and 060 | Amiga platform kernel; generic 060 trap-and-patch | helper page per profile | exception counts per second on 030 and 060 hosts |
@@ -725,7 +724,7 @@ Dependencies:
 3. **Exception cost on unmodified ROM code**: SR writes, `rte`, trapped `INTENA` writes on every `Disable`/`Enable`. Hot-site patching is required for usable speed on 030/040; sites shorter than 6 bytes stay trapped.
 4. **Timing**: accuracy depends on a spare hardware timer and RT preemption; without them guests fall back to 60 Hz bursts. Beam-counter busy-waits stay approximate. Many short guest timers across containers cost ≈ 100 µs each on an 040/25.
 5. **3.2's own requirements**: SetPatch and MMU libraries on 040/060 expect a real MMU; recorded-only MMU state may not satisfy them.
-6. **Native display dependence**: early boot, requesters and the installer are invisible until G6; a requester there blocks boot silently (the absorbed log shows it).
+6. **RTG binding order**: early boot, requesters and the installer are invisible until RTG binds before DOS (G6); a requester there blocks boot silently (the absorbed log shows it).
 7. **Single process, many Exec tasks**: blocking host calls must be asynchronous in every replacement module.
 8. **Instruction decoder** for trapped pages must cover compiler and ROM forms; 040/060 fault frames differ and the 060 lacks store data.
 9. **030 logical caches** with shared pages: cache-inhibit on 030, pushes on 040/060 copyback.

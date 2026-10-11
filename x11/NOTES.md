@@ -25,7 +25,6 @@ with the `m68k-cbm-sysv4` toolchain; clients are the stock AMIX X11R4 ones (tape
 | `diskroot/x11-diskroot.diff` | `-p1` from the repository root: `mkdiskroot.sh` copies segments 13, 14; `root.manifest` adds them (minus the Amiga servers) and `/usr/x11r6` |
 | `mkimage.sh` | disk image with X from a scratch copy of `kernel/mac/diskroot` |
 | `runtest.sh` | QEMU run: serial login, `startx`, keys and mouse by QMP, hotkeys, `kill -9`, restart, twm Exit (`DEPTH=n` passes `-g 640x480xn`) |
-| `results/` | QEMU screen dumps |
 
 ## Build
 
@@ -84,18 +83,18 @@ Xamix :0 [-fb /dev/fb0] [-mb3] [-rtg fb|zz9000] [-fp path] [-depth n] [-kbd us|d
 QEMU q800, Quadra 800 ROM, 64 MB, kernel `kernel/build/unix-mac.elf`, disk from `mkimage.sh`,
 `runtest.sh`. The ROM leaves DAFB at **640×480×8** (row 1024); `-g 640x480x1` does not change it,
 so the server runs the **8 bpp cfb path** (PseudoColor, default map loaded through
-`FBIOPUTCMAP`), not mfb. Screens in `results/8bpp/`:
+`FBIOPUTCMAP`), not mfb:
 
 | Check | Result |
 |---|---|
-| `startx` as root | twm (colour title bars), xterm, xclock (`x1`) |
-| typing in xterm (ADB → `/dev/kbd` → X) | `xdpyinfo`: depth 1 and 8 formats, keycodes 8–135, 10 extensions (`x2`); shifted characters right |
-| server log in xterm | only `fb` card lines (no probe of another card), `/dev/fb0 DAFB 640x480 depth 8 rowbytes 1024`, no time warnings (`x3-log`) |
-| Control-Option-Command-0 / -1 | console with its text; X back intact (`console`, `xback`) |
-| mouse | pointer moves, twm root menu on button 1 (`menu`) |
-| twm Exit | session ends, server stopped, console in front (`twmexit`, `twmexit-after-restart`) |
-| `kill -9` of the server | console in front, clients get broken pipe (`kill9`) |
-| second `startx` | runs again (`restart`) |
+| `startx` as root | twm (colour title bars), xterm, xclock |
+| typing in xterm (ADB → `/dev/kbd` → X) | `xdpyinfo`: depth 1 and 8 formats, keycodes 8–135, 10 extensions; shifted characters right |
+| server log in xterm | only `fb` card lines (no probe of another card), `/dev/fb0 DAFB 640x480 depth 8 rowbytes 1024`, no time warnings |
+| Control-Option-Command-0 / -1 | console with its text; X back intact |
+| mouse | pointer moves, twm root menu on button 1 |
+| twm Exit | session ends, server stopped, console in front |
+| `kill -9` of the server | console in front, clients get broken pipe |
+| second `startx` | runs again |
 
 ## Known limits
 

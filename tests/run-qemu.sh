@@ -17,7 +17,7 @@
 # line), screen.png, summary.txt.
 # AMIGANET=1 (direct boot): the root also has TCP/IP, for t_amiga's
 # bsdsocket.library checks (user-mode network, no echo service).
-# GROUP=smoke|core|mac|tos|mint|cpm|smsqe|amiga|display|sound runs that set only.
+# GROUP=smoke|core|mac|tos|mint|cpm|smsqe|amiga|display|sound|win16 runs that set only.
 # Exit: 0 all PASS, 1 any FAIL, 2 timeout, panic or no TESTS DONE.
 # up to QSLOTS QEMUs at once (tools/qslot.sh)
 # one run per checkout at a time: they share tests/build
@@ -52,14 +52,15 @@ case ${GROUP:-} in
 smoke)	G="t_sys t_file t_proc t_pipe t_dlm t_guestdlm t_envram t_gate t_vtop" ;;
 core)	G="t_arith t_file t_mem t_pipe t_proc t_sig t_streams t_sys t_time t_tty t_vtop t_dlm t_guestdlm t_envram t_gate t_page t_moddemo t_stress t_env t_ufs" ;;
 mac)	G="t_aux t_mac t_mac6 t_mac76 t_mac81 t_env" ;;
-tos)	G="t_tos t_env" ;;
+tos)	G="t_tos t_xaaes t_env" ;;
 mint)	G="t_mint" ;;
 cpm)	G="t_cpm"; CPM_NO_TOS=1; export CPM_NO_TOS ;;
 smsqe)	G="t_smsqe" ;;
 amiga)	G="t_amiga t_env" ;;
 display) G="t_display" ;;
 sound)	G="t_sound" ;;
-*)	echo "GROUP: smoke core mac tos mint cpm smsqe amiga display sound"; exit 2 ;;
+win16)	G="t_win16" ;;
+*)	echo "GROUP: smoke core mac tos mint cpm smsqe amiga display sound win16"; exit 2 ;;
 esac
 if [ -n "${G:-}" ]; then
 	ONLY="$T/src/runall.c"
@@ -121,6 +122,10 @@ if [ $MODE = direct ]; then
 	[ -f "$T/build/aux/macsys.img" ] && set -- "$@" \
 		-drive file="$T/build/aux/macsys.img",format=raw,if=none,id=hd1,snapshot=on \
 		-device scsi-hd,scsi-id=1,drive=hd1
+	# t_win16's volume, writes discarded
+	[ -f "$T/build/w16/win16.img" ] && set -- "$@" \
+		-drive file="$T/build/w16/win16.img",format=raw,if=none,id=hd3,snapshot=on \
+		-device scsi-hd,scsi-id=3,drive=hd3
 elif [ $MODE = net ]; then
 	MEM=${MEM:-128}
 	set -- -m "$MEM" -kernel "$KERNEL" -initrd "$T/build/netroot.img" \
@@ -128,6 +133,9 @@ elif [ $MODE = net ]; then
 	[ -f "$T/build/aux/macsys.img" ] && set -- "$@" \
 		-drive file="$T/build/aux/macsys.img",format=raw,if=none,id=hd1,snapshot=on \
 		-device scsi-hd,scsi-id=1,drive=hd1
+	[ -f "$T/build/w16/win16.img" ] && set -- "$@" \
+		-drive file="$T/build/w16/win16.img",format=raw,if=none,id=hd3,snapshot=on \
+		-device scsi-hd,scsi-id=3,drive=hd3
 else
 	MEM=${MEM:-32}
 	DISK=$T/build/rom/q800-test-small-tests.img

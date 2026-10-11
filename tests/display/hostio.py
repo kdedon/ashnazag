@@ -390,6 +390,10 @@ def serve(q, cmd, a):
     if cmd == 'tos':
         w, h, px = readppm(os.path.join(D, os.path.basename(a[0]) + '.ppm'))
         return tosscreen(w, h, px)
+    if cmd == 'pix':
+        w, h, px = readppm(os.path.join(D, os.path.basename(a[0]) + '.ppm'))
+        x, y = int(a[1]), int(a[2])
+        return px[3 * (y * w + x):3 * (y * w + x) + 3].hex() if 0 <= x < w and 0 <= y < h else 'none'
     if cmd == 'ref':
         name, shot = os.path.basename(a[0]), os.path.basename(a[1])
         depth, seed, k = int(a[2]), int(a[3]), int(a[4])

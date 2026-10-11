@@ -145,7 +145,9 @@ static unsigned char hot[] = {
 	0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7a, 0x7b,
 	0x7c, 0x7d, 0x7e, 0x7f, 0xd0, 0xd1, 0xd2, 0xd3, 0xd0, 0xd1,
 	0xd0, 0xd1, 0xd0, 0xd1, 0xd0, 0xd1, 0x90, 0x98, 0x99, 0x9e,
-	0x9f, 0xf5, 0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0x9c, 0x9d
+	0x9f, 0xf5, 0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0x9c, 0x9d,
+	0xa4, 0xa5, 0xaa, 0xab, 0xac, 0xad, 0xa6, 0xae, 0xa4, 0xa5,
+	0xaa, 0xab
 };
 #define	NHOT	(sizeof hot / sizeof hot[0])
 
@@ -175,8 +177,8 @@ put(p)
 	k = rnd() & 31;
 	if (k < 3)
 		b[n++] = 0x26 + ((rnd() & 3) << 3);
-	else if (k == 3)
-		b[n++] = rnd() & 1 ? 0xf0 : 0xf3;
+	else if (k <= 5)
+		b[n++] = k == 3 ? 0xf0 : k == 4 ? 0xf3 : 0xf2;
 	k = rnd() & 31;
 	if (k == 0) {
 		/* a delay loop, or nearly one */
@@ -239,14 +241,14 @@ gen()
 	t.lr = rval();
 	if ((rnd() & 7) == 0)
 		t.lb = t.lz == LZ_SUB ? t.la : 0;
-	if (rnd() & 1)
-		switch (t.lz) {
-		case LZ_ADD: t.lr = t.la + t.lb + t.lc; break;
-		case LZ_SUB: t.lr = t.la - t.lb - t.lc; break;
-		case LZ_LOG: t.lc = 0; t.lr = t.la & t.lb; break;
-		case LZ_INC: t.lc = 0; t.lb = 1; t.lr = t.la + 1; break;
-		case LZ_DEC: t.lc = 0; t.lb = 1; t.lr = t.la - 1; break;
-		}
+	/* as instructions leave them: the result follows from the operands */
+	switch (t.lz) {
+	case LZ_ADD: t.lr = t.la + t.lb + t.lc; break;
+	case LZ_SUB: t.lr = t.la - t.lb - t.lc; break;
+	case LZ_LOG: t.lc = 0; t.lr = t.la & t.lb; break;
+	case LZ_INC: t.lc = 0; t.lb = 1; t.lr = t.la + 1; break;
+	case LZ_DEC: t.lc = 0; t.lb = 1; t.lr = t.la - 1; break;
+	}
 	t.halt = rnd() & 1;
 	t.fault = rnd() & 1;
 	t.foff = rnd();

@@ -1,6 +1,6 @@
 # Real Quadra 800 quirks QEMU may not model
 
-Our Mac drivers compared with NetBSD mac68k and Linux m68k (`ref/netbsd`, `ref/linux`). Static review; ranked by risk on real hardware. Fixed items are listed in `bootdiag/NOTES.md` and `adb/NOTES.md`.
+Our Mac drivers compared with NetBSD mac68k and Linux m68k. Static review; ranked by risk on real hardware. Fixed items are listed in `bootdiag/NOTES.md` and `adb/NOTES.md`.
 
 | # | Risk | Area | NetBSD / Linux | Ours | Change | Status |
 |---|---|---|---|---|---|---|

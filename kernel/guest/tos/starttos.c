@@ -285,7 +285,7 @@ fbmap(fd)
 	struct strrecvfd rf;
 	struct fbinfo fi;
 	unsigned char *p = (unsigned char *)TFB_CART;
-	unsigned long a;
+	unsigned long a, pl;
 
 	if (ioctl(fd, I_RECVFD, &rf) < 0) {
 		close(fd);
@@ -303,8 +303,11 @@ fbmap(fd)
 		close(rf.fd);
 		return;
 	}
-	if (!stscreen && ioctl(rf.fd, FBIOGINFO, &fi) == 0 && fi.fi_depth == 8 &&
+	if (!stscreen && ioctl(rf.fd, FBIOGINFO, &fi) == 0 &&
+	    (fi.fi_layout == FBL_PLANES ? fi.fi_depth <= 8 && fi.fi_planebytes % 8 == 0 &&
+	    fi.fi_planebytes < 0x80000 : fi.fi_depth == 8) &&
 	    fi.fi_width < 0x10000 && fi.fi_height < 0x10000) {
+		pl = fi.fi_layout == FBL_PLANES ? fi.fi_planebytes / 8 : 0;
 		ioctl(rf.fd, FBIOCACHE, FBC_WT);	/* NuBus refuses; it stays inhibited */
 		a = (unsigned long)mmap((caddr_t)0x1000000, fi.fi_size, PROT_READ | PROT_WRITE,
 		    MAP_SHARED, rf.fd, 0);
@@ -313,7 +316,8 @@ fbmap(fd)
 			p[4] = fi.fi_width >> 8; p[5] = fi.fi_width;
 			p[6] = fi.fi_height >> 8; p[7] = fi.fi_height;
 			put32((unsigned long)p + 8, fi.fi_rowbytes);
-			p[12] = 0; p[13] = 8;
+			p[12] = 0; p[13] = fi.fi_depth;
+			p[14] = pl >> 8; p[15] = pl;
 		} else if (a != (unsigned long)-1)
 			munmap((caddr_t)a, fi.fi_size);
 	}

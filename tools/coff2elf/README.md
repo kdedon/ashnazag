@@ -59,7 +59,7 @@ and an old ILP32 native cc.
 
 ## Files
 
-- `coff2elf.c` — the converter.
+- `coff2elf.c` — the converter; `Makefile` builds it (`make`, `make test`).
 - `check.py` — independent check of an m68k conversion: section bytes,
   symbols, each relocation's symbol/addend, entry and segment coverage.
 - `test.sh` — `make test [AUXROOT=<A/UX root>]`: i386 fixtures built,

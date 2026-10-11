@@ -5,7 +5,7 @@ umask 077
 D=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 AUX=$(cd "$D/../.." && pwd)
 if [ "$#" -lt 1 ] || [ "$#" -gt 4 ]; then
-	echo "usage: mkamiga.sh new-output-directory [AmigaOS-CD.iso [module-directory [Picasso96.lha]]]" >&2
+	echo "usage: mkamiga.sh new-output-directory [AmigaOS-CD.iso [module-directory [Picasso96.lha|Picasso96-directory]]]" >&2
 	exit 2
 fi
 OUT=$1
@@ -14,7 +14,7 @@ MODULES=${3:-}
 PICASSO=${4:-$AUX/Picasso96.lha}
 # MUI, AmiSSL and IBrowse, installed as their installers would
 AMIGAAPPS=${AMIGAAPPS-$AUX/media/amiga}
-[ "$#" -lt 4 ] || [ -f "$PICASSO" ] || { echo "missing Picasso96 archive: $PICASSO" >&2; exit 1; }
+[ "$#" -lt 4 ] || [ -e "$PICASSO" ] || { echo "missing Picasso96 archive: $PICASSO" >&2; exit 1; }
 [ -f "$ISO" ] || { echo "missing CD: $ISO" >&2; exit 1; }
 if [ -n "$MODULES" ]; then
 	for m in guestcore amigaguest; do
@@ -48,7 +48,7 @@ mkdir -p "$ROOT/usr/bin" "$ROOT/usr/sbin" "$ROOT/etc/amiga" "$ROOT/amiga/media"
 cp "$OUT/bin/startmig" "$ROOT/usr/bin/"
 cp "$D/makeamiga" "$ROOT/usr/bin/"
 cp "$OUT/bin/amigareg" "$ROOT/usr/sbin/"
-cp "$OUT/media/ROM/kicka4000.rom" "$ROOT/etc/amiga/"
+cp "$OUT/media/ROM/kicka4000.rom" "$OUT/media/ROM/kicka3000.rom" "$ROOT/etc/amiga/"
 cp "$OUT/media/ADF/"*.adf "$ROOT/amiga/media/"
 cp "$OUT/media/manifest.json" "$ROOT/amiga/media/"
 mkdir -p "$ROOT/amiga/rtg"
@@ -67,12 +67,16 @@ nice -n 19 python3 "$AUX/tools/amiga/template.py" "$OUT/media/ADF" "$ROOT/amiga/
 	--session "$ROOT/amiga/guest/session/Session" \
 	--bsdsocket "$ROOT/amiga/guest/bsdsock/bsdsocket.library" \
 	--audio "$ROOT/amiga/guest/ahi/container.audio"
-if [ -f "$PICASSO" ]; then
-	cp "$PICASSO" "$ROOT/amiga/rtg/Picasso96.lha"
-	(cd "$ROOT/amiga/rtg" && sha256sum Picasso96.lha > Picasso96.sha256)
+if [ -f "$PICASSO" ] || [ -d "$PICASSO/Picasso96Install" ]; then
 	# the Picasso96 runtime the boot extension binds container.card with
-	7z x -y -o"$OUT/p96" "$PICASSO" > /dev/null
-	P=$OUT/p96/Picasso96Install
+	if [ -d "$PICASSO" ]; then
+		P=$PICASSO/Picasso96Install
+	else
+		cp "$PICASSO" "$ROOT/amiga/rtg/Picasso96.lha"
+		(cd "$ROOT/amiga/rtg" && sha256sum Picasso96.lha > Picasso96.sha256)
+		7z x -y -o"$OUT/p96" "$PICASSO" > /dev/null
+		P=$OUT/p96/Picasso96Install
+	fi
 	for f in Picasso96/rtg.library Picasso96/emulation.library Picasso96/fastlayers.library Picasso96API.library; do
 		cp "$P/Libs/$f" "$ROOT/amiga/sys/LIBS/$f"
 	done

@@ -46,7 +46,7 @@ fi
 [ -f "$RD/build/core/sbin/init" ] || { echo "[FAIL] no $RD/build/core (run mkroot.sh)"; exit 1; }
 [ -x "$B/bin/runall" ] || { echo "[FAIL] no tests/build/bin (run build.sh)"; exit 1; }
 
-nm "$KERNEL" | awk '$3 ~ /^(freemem|availrmem|availsmem|lbolt|fpu_present|anoninfo|ticks_til_clock|mac_ticks|dlm_inited|sn_nintr|sn_nslot|guest_loading|M68Kvec|guest_chain|guest_nftrap|guest_nfpriv|idle|rd_unit|adb_nintr|adb_nsrq|segmapcnt)$/ && ($3 != "idle" || $2 == "T") { print $3, $1 }' \
+nm "$KERNEL" | awk '$3 ~ /^(freemem|availrmem|availsmem|lbolt|fpu_present|anoninfo|ticks_til_clock|mac_ticks|dlm_inited|sn_nintr|sn_nslot|guest_loading|M68Kvec|guest_chain|guest_nftrap|guest_nfpriv|idle|rd_unit|adb_nintr|adb_nsrq|segmapcnt|waitloc)$/ && ($3 != "idle" || $2 == "T") { print $3, $1 }' \
 	> "$B/ksyms"
 # t_dlm's modules, built against this kernel (none without module support)
 KDIR=$KDIR sh "$T/dlm/build.sh" "$KERNEL" "$B/dlm"
@@ -77,6 +77,9 @@ SMQB=$B/smsqe
 # t_amiga's guest image, startmig and ROM
 AMIB=$B/amiga
 KDIR=$KDIR sh "$T/amiga/build.sh" "$AMIB"
+# t_win16's startwin and volume (run-qemu.sh adds it as SCSI disk 3)
+W16B=$B/w16
+case " $ONLY " in "  "|*/t_win16.c*) sh "$T/win16/mkvol.sh" "$W16B" ;; *) rm -rf "$W16B" ;; esac
 # t_ufs's volume: /d/f0../d/f3 in t_pattern (run-qemu.sh adds it as SCSI disk 2)
 UFSB=$B/ufs
 if [ -z "$NET" ]; then
@@ -99,6 +102,7 @@ if [ -z "$TESTKB" ]; then
 	[ -d "$SMQB/root" ] && TESTKB=$((TESTKB + 64 + 2 * $(du -sk "$SMQB/root" | cut -f1)))
 	# t_cpm: S: and its scratch drives
 	[ -d "$CPMB/root" ] && TESTKB=$((TESTKB + 128 + 3 * $(du -sk "$CPMB/root" | cut -f1)))
+	[ ! -f "$W16B/startwin" ] || TESTKB=$((TESTKB + 64 + $(du -sk "$W16B/startwin" | cut -f1)))
 fi
 
 # /etc/group with the display devices' group
@@ -257,7 +261,16 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 			echo "f $f 755 0 3 $AMIB/root$f"
 		done
 	fi
-	if [ -f "$AMIB/sys.img" ] || [ -f "$UFSB/ufs.img" ] || [ -f "$AUXB/macsys.img" ]; then
+	if [ -f "$W16B/win16.img" ]; then
+		echo "f /usr/bin/startwin 755 0 3 $W16B/startwin"
+		for l in libsocket.so libnsl.so; do
+			grep -q "^f /usr/lib/$l[[:space:]]" "$M" || echo "f /usr/lib/$l 755 2 2 $RD/build/core/usr/lib/$l"
+		done
+		echo "b /dev/dsk/c3d0s0 600 0 3 18 3"
+		echo "d /win 755 0 3"
+	fi
+	if [ -f "$AMIB/sys.img" ] || [ -f "$UFSB/ufs.img" ] || [ -f "$AUXB/macsys.img" ] ||
+	    [ -f "$W16B/win16.img" ]; then
 		echo "d /usr/lib/fs/ufs 755 0 3"
 		echo "f /usr/lib/fs/ufs/mount 555 0 3 $RD/build/core/usr/lib/fs/ufs/mount"
 	fi

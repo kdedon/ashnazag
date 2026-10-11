@@ -65,8 +65,9 @@ printf '%s\n' '{"action":"plan","selection":{"machine":"q800","devices":["scsi53
 ## Presets and recipes
 
 A preset is a versioned starting selection for one machine: devices, disk
-layout and defaults, all editable afterwards. Only the Quadra 800 preset builds
-today; Falcon030, Falcon CT60/CT63, TT030 and Amiga 4000 are listed as planned.
+layout and defaults, all editable afterwards. The Quadra 800 and Falcon030 presets
+build (Falcon030 with `ashforge`; the browser builds Quadra only); Falcon CT60/CT63,
+TT030 and Amiga 4000 are listed as planned.
 
 Each build produces a recipe: format and forge versions, preset id and
 revision, the changes from the preset, the resolved package lock, and each

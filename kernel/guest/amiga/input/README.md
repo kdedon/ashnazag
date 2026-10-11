@@ -28,7 +28,7 @@ A held key must be released and pressed again after recovery. The command
 wakes on the host's PORTS doorbell or, without one, the next vertical
 blank, and processes at most 64 events before yielding.
 This bridge does not provide keyboard.device raw-matrix state or native
-custom-chip input. Guest execution and input delivery remain unverified.
+custom-chip input.
 
 Interface references:
 https://developer.amigaos3.net/autodocs/input.device/IND_WRITEEVENT.html

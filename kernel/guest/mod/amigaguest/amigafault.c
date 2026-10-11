@@ -160,7 +160,7 @@ openbus(x, a, sz)
 	return (a >= x->ctr->ac_config.ae_chipsize && end <= 0xa00000) ||
 	    (a >= 0xa00000 && end <= 0xa01000) ||
 	    (a >= 0xc00000 && end <= 0xda0000) ||
-	    (a >= 0xdd2000 && end <= 0xdd4000) ||
+	    (a >= 0xdd0000 && end <= 0xdd4000) ||
 	    (a >= 0xdc0000 && end <= 0xdc1000) ||
 	    (a >= 0xe80000 && end <= 0xe90000) ||
 	    (a >= 0xf00000 && end <= 0xf80000) ||
@@ -731,7 +731,7 @@ amiga_fault(gp, r, v)
 	struct ix x;
 	unsigned long saved[16], epoch, fa;
 	unsigned char b[4];
-	int i, j, sr = GR_SR(r), ssw, s, e, wb, tries, w, n, m, nm;
+	int i, j, sr = GR_SR(r), ssw, s, e, wb, cm, tries, w, n, m, nm;
 	unsigned long value;
 	unsigned char op[8];
 	a->ac_stat.as_fault++;
@@ -753,7 +753,9 @@ amiga_fault(gp, r, v)
 	 */
 	w = G16(r + 82);
 	n = 0;
-	if (fa == 0xdff09a && !(ssw & 0x100) && (w & 0xf8) == 0xc0 && ((w & 7) == 1 || (w & 7) == 5) &&
+	/* a faulted movem (CM) restarts from its first transfer: run it all here */
+	cm = ssw & 0x1000;
+	if (fa == 0xdff09a && !cm && !(ssw & 0x100) && (w & 0xf8) == 0xc0 && ((w & 7) == 1 || (w & 7) == 5) &&
 	    !((G16(r + 78) | G16(r + 80)) & 0x80) && G32(r + 104) == 0xdff09a) {
 		value = G32(r + 108) & 0xffff;
 		P16(r + 82, w & ~0x80);
@@ -802,7 +804,7 @@ amiga_fault(gp, r, v)
 		epoch = a->ac_epoch; x.dev = a->ac_dev;
 		for (i = 0; i < 4; i++) x.gary[i] = a->ac_gary[i];
 		amiga_splx(s);
-		wb = (G16(r + 78) | G16(r + 80) | G16(r + 82)) & 0x80;
+		wb = cm ? 0 : (G16(r + 78) | G16(r + 80) | G16(r + 82)) & 0x80;
 		if (wb) e = (ssw & 0x100) ? -1 : writebacks(&x, r);
 		else e = emul(&x);
 		if (e >= 0 && x.hit) {
@@ -829,11 +831,14 @@ amiga_fault(gp, r, v)
 					if (copyout((caddr_t)b, (caddr_t)x.st[i].a, x.st[i].sz))
 						psignal(curproc, SIGSEGV);
 				}
-				if (wb) {
+				if (cm)
+					P16(r + 76, ssw & ~0x1000);
+				if (wb || cm) {
 					P16(r + 78, G16(r + 78) & ~0x80);
 					P16(r + 80, G16(r + 80) & ~0x80);
 					P16(r + 82, G16(r + 82) & ~0x80);
-				} else GR_PC(r) = x.pc + x.len;
+				}
+				if (!wb) GR_PC(r) = x.pc + x.len;
 				amiga_pvclock(gp);
 				u.u_sigflag |= USTKCLEAR;
 				guest_trapret();

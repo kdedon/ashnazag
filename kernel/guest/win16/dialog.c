@@ -453,7 +453,7 @@ dlg_run(h)
 	u32 h;
 {
 	struct wnd *w = wnd_get(h), *owner;
-	int done = 0, r, en;
+	int done = 0, r, en, act;
 
 	if (!w)
 		return -1;
@@ -467,9 +467,11 @@ dlg_run(h)
 	r = wnd_get(h) ? w->dlgresult : -1;
 	if (en && wnd_get(owner->h))
 		owner->style &= ~WS_DISABLED;
+	/* a program the dialog started (Program Manager's Run) keeps the activation */
+	act = !wnd_active || wnd_active == w || wnd_active == owner;
 	if (wnd_get(h))
 		wnd_destroy(w);
-	if (owner && wnd_get(owner->h))
+	if (act && owner && wnd_get(owner->h))
 		wnd_activate(owner, WA_ACTIVE);
 	return r;
 }

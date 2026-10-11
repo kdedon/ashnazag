@@ -205,7 +205,18 @@ readrom(path)
 	return romok(rombuf, path);
 }
 
-/* the A4000 Kickstart 3.2 (47.96), by sum, CRC and header */
+/* the Kickstarts the environment runs, by CRC, and where its patch sites lie */
+static struct kickrom {
+	unsigned long crc;
+	char *name;
+	unsigned long at[4];		/* sites[] */
+} kickroms[] = {
+	{ 0x9bb8fc93UL, "A4000 Kickstart 3.2 (47.96)", { 0xfd4f82, 0xfd4f9e, 0xf81722, 0xf81770 } },
+	{ 0xf3af46ccUL, "A3000 Kickstart 3.2 (47.96)", { 0xfd41be, 0xfd41da, 0xf816be, 0xf8170c } }
+};
+static struct kickrom *kickrom;		/* the one last verified */
+
+/* a known Kickstart, by sum, CRC and header */
 static int
 romok(b, name)
 	unsigned char *b;
@@ -225,11 +236,16 @@ romok(b, name)
 		for (bit = 0; bit < 8; bit++)
 			crc = (crc >> 1) ^ ((crc & 1) ? 0xedb88320UL : 0);
 	}
-	if (sum != 0xffffffffUL || (crc ^ 0xffffffffUL) != 0x9bb8fc93UL ||
+	crc ^= 0xffffffffUL;
+	for (i = 0; i < sizeof kickroms / sizeof kickroms[0]; i++)
+		if (crc == kickroms[i].crc)
+			break;
+	if (sum != 0xffffffffUL || i == sizeof kickroms / sizeof kickroms[0] ||
 	    get32(b) != 0x11144ef9UL || get32(b + 4) != 0xf800d2UL) {
-		miglog(1, "%.500s: expected the A4000 Kickstart 3.2 (47.96) ROM", name);
+		miglog(1, "%.500s: expected the A3000 or A4000 Kickstart 3.2 (47.96) ROM", name);
 		return 0;
 	}
+	kickrom = &kickroms[i];
 	return 1;
 }
 
@@ -259,19 +275,19 @@ setting(file, key, mb)
 	return found;
 }
 
-/* code in the A4000 3.2 (47.96) Kickstart, and what replaces it */
-static struct { unsigned long at; int n; unsigned short was[6], now[6]; } sites[] = {
+/* code in Kickstart 3.2 (47.96), and what replaces it; addresses in kickroms[] */
+static struct { int n; unsigned short was[6], now[6]; } sites[] = {
 	/* timer.device: the two E-clock reads, through the stub */
-	{ 0xfd4f82, 6, { 0x1629, 0x0700, 0x1829, 0x0600, 0x1429, 0x0700 },
+	{ 6, { 0x1629, 0x0700, 0x1829, 0x0600, 0x1429, 0x0700 },
 	  { 0x4eb9, PVECLOCK >> 16, PVECLOCK & 0xffff, 0x4e71, 0x4e71, 0x4e71 } },
-	{ 0xfd4f9e, 6, { 0x1629, 0x0700, 0x1829, 0x0600, 0x1429, 0x0700 },
+	{ 6, { 0x1629, 0x0700, 0x1829, 0x0600, 0x1429, 0x0700 },
 	  { 0x4eb9, PVECLOCK >> 16, PVECLOCK & 0xffff, 0x4e71, 0x4e71, 0x4e71 } },
 	/*
 	 * exec's task switch: fsave, which user mode cannot run, becomes an
 	 * idle frame so the FPU registers are always saved; frestore skips it.
 	 */
-	{ 0xf81722, 4, { 0xf325, 0x4a15, 0x6700, 0xfe56 }, { 0x2b3c, 0x4100, 0x0000, 0x4e71 } },
-	{ 0xf81770, 1, { 0xf35d }, { 0x588d } }
+	{ 4, { 0xf325, 0x4a15, 0x6700, 0xfe56 }, { 0x2b3c, 0x4100, 0x0000, 0x4e71 } },
+	{ 1, { 0xf35d }, { 0x588d } }
 };
 
 /*
@@ -303,11 +319,11 @@ pvpatch(rom)
 		i += 6;
 	}
 	for (j = 0; j < sizeof sites / sizeof sites[0]; j++) {
-		a = sites[j].at - ROMBASE;
+		a = kickrom->at[j] - ROMBASE;
 		for (k = 0; k < sites[j].n && get16(rom + a + 2 * k) == sites[j].was[k]; k++)
 			;
 		if (k < sites[j].n) {
-			miglog(0, "Kickstart copy: %lx differs, left alone", sites[j].at);
+			miglog(0, "Kickstart copy: %lx differs, left alone", kickrom->at[j]);
 			continue;
 		}
 		for (k = 0; k < sites[j].n; k++)
@@ -1008,6 +1024,8 @@ main(argc, argv)
 		miglog(0, "SYS: is %.500s%s", sysroot, readonly ? ", read-only" : "");
 		miglog(0, "fast RAM %lu MB", fastmb);
 	}
+	if (!romarg && access(rom, 0) < 0)
+		rom = "/etc/amiga/kicka3000.rom";
 	/* the file now if named; else after the machine's own Kickstart is tried */
 	if (romarg || check) {
 		if (!readrom(rom))
@@ -1015,7 +1033,7 @@ main(argc, argv)
 		miglog(0, "Kickstart %.500s verified", rom);
 	}
 	if (check) {
-		printf("A4000 Kickstart 3.2 (47.96): checksum and CRC verified\n");
+		printf("%s: checksum and CRC verified\n", kickrom->name);
 		return 0;
 	}
 	if (!probe && !checksystem(sysroot)) {

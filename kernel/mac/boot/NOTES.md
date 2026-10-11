@@ -98,3 +98,4 @@ Expected serial output: `A/UX Startup hand-off: d0 0x536d7201 info 0x00003c00`, 
 
 Static: `elf2coff -c` checks the launch rules; parse the COFF back with `coff2elf` (`.text`/`.data` must be byte-identical to the ELF).
 
+Launch rules follow A/UX Startup 3.1 and `launch` 1.31 (HFS partition of the A/UX disk image) and the A/UX kernel (`memcdjsize` access width, section layout). Bootinfo tag numbers are the public Linux/m68k ones.

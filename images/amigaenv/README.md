@@ -15,7 +15,7 @@ the Amiga environment" with the seconds elapsed and the file being read.
 startmig logs its progress, each file opened and the handler's request
 counts to `.startmig.log` in a writable SYS: (`~/Amiga`), otherwise to
 `/tmp/startmig.<uid>.log`. After the hot key, the console shows startmig's
-messages; errors (ROM, `/dev/amiga`, module, display) go there too.
+messages; errors (ROM, `/dev/amigaguest`, module, display) go there too.
 
 Build a new private staging directory:
 
@@ -26,9 +26,10 @@ sh images/amigaenv/mkamiga.sh images/work/amiga-stage AmigaOS3.2CD.iso images/wo
 
 The output directory must be new. The optional second argument selects the
 CD; the third selects a directory containing `guestcore` and `amigaguest`.
-An optional fourth argument selects a local Picasso96 archive, otherwise
-`Picasso96.lha` at the repository root is used if present. Its original archive
-and checksum are retained under `root/amiga/rtg/`.
+An optional fourth argument selects a local Picasso96 archive or an unpacked
+one (the directory holding `Picasso96Install`), otherwise `Picasso96.lha` at
+the repository root is used if present. An archive and its checksum are
+retained under `root/amiga/rtg/`.
 
 Sound: the template carries `DEVS:AHI/container.audio`, its audio mode and
 an AHI preferences default selecting it. AHI itself is user-supplied: an
@@ -67,7 +68,7 @@ sh /path/to/amiga-stage/installmig /path/to/amiga-stage
 ```
 
 The installer copies the utilities, template, ROMs and modules, creates
-`/dev/amiga`, and grants device/media access to the display group. It also
+`/dev/amigaguest`, and grants device/media access to the display group. It also
 updates the shared `guestcore` in the existing Mac module directory when
 present. Reboot after updating modules, then register as root:
 
@@ -83,6 +84,9 @@ startmig
 ```
 
 The current execution path requires a 68040 and a packed 8-bit display.
+Kickstart: the A3000 or A4000 3.2 (47.96) ROM. On an Amiga with one of
+them the machine's own ROM is used, otherwise `/etc/amiga/kicka4000.rom`
+(or `kicka3000.rom`), or `-r FILE`.
 Fast RAM is 64 MB unless `-m MB` (0 to 128), `fastmb=MB` in an
 environment's `.env` or `FAST_MB=MB` in `/etc/default/amiga` says
 otherwise; startmig exits if it cannot reserve that much.

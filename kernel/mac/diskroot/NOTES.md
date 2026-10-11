@@ -39,7 +39,7 @@ role; `mkdiskimage.sh` checks this by building `scsi/test/apmtest.c` on the host
 
 AMIX installs its root as s5 and the kernel mounts either (the probe reads the superblock).
 The disk root is ufs; `ROOTFS=s5` builds an s5 root instead. s5 on a disk slice relies on the
-`uiomove` wrapper (`s5dir/S5DIR.md`) to keep directory updates; `tests/s5disk` covers it.
+`uiomove` wrapper (`s5dir/S5DIR.md`) to keep directory updates; `t_file` covers it.
 
 ufs parameters, as `mkfs -F ufs special SIZE 32 16 8192 1024 16 10 60 4096 t 0 0`: 8 KB blocks,
 1 KB fragments, 16 groups of 16 cylinders (4 MB), 960 inodes per group (15,360), 10% free, no

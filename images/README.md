@@ -145,7 +145,7 @@ The default kernel is `kernel/build/unix-mac.elf`. `-c` stores a kernel command 
 
 ## Disk with a Unix root
 
-`q800-unix-disk.img` (440,451,072 bytes, SCSI ID 0) boots like `q800-unix.img` and then runs AMIX multi-user from its own root partition. Log in on the screen and keyboard as `guest` or `root` (no passwords); the login message (`images/macenv/motd`) lists how to start each environment. The previous build is `q800-unix-disk.img.prev`.
+`q800-unix-disk.img` (440,451,072 bytes, SCSI ID 0) boots like `q800-unix.img` and then runs AMIX multi-user from its own root partition. Log in on the screen and keyboard as `guest` or `root` (no passwords); the login message (`images/macenv/motd`) lists how to start each environment.
 
 | Part | Contents |
 |---|---|
@@ -200,9 +200,11 @@ sh kernel/mac/diskroot/pkg/mkpkgimage.sh -p DIR WORK [kernel.elf [out.img]]
 startmac
 ```
 
-The Finder desktop appears in about a minute; the image carries the Finder's desktop database, so there is no rebuild.  Ctrl-Option-Command-0 shows the console, Ctrl-Option-Command-1 the Mac again.  Special > Shut Down or Restart leaves the Mac: root goes back to the shell; other users get A/UX's root-password dialog, where Logout goes back to the shell.  Keys typed while the Mac runs do not reach the shell.  Faults the Mac handles itself print nothing; `macdiag` counts them (`quiet`).
+The Finder desktop appears in about a minute; the image carries the Finder's desktop database, so there is no rebuild.  Ctrl-Option-Command-0 shows the console, Ctrl-Option-Command-1 the Mac again.  Special > Log Out (root: the Apple menu) leaves the Mac and goes back to the shell; root's Shut Down halts Unix.  Keys typed while the Mac runs do not reach the shell.  Faults the Mac handles itself print nothing; `macdiag` counts them (`quiet`).
 
 The guest modules are registered at run level 2 (`/etc/rc2.d/S05aux`), which also starts the File ID daemon (`/etc/aux/fidd`).  The template is `/mac/lib/System Folder`. root's System Folder is `/mac/sys/System Folder`; other users (group `display`) get `$HOME/System Folder` from `makemac` on their first `startmac`. Both are refreshed when the template changes (`makemac -f`, which keeps Preferences, the desktop database, MacTCP settings and added files); guest already has one; the Mac's PRAM is kept in `/etc/aux/pram`.
+
+Mac OS 8.1 is a separate environment with its own template, `/mac/lib/env/8.1/System Folder`, from the 8.1 CD (`CD81`): `makemac -e 8.1` once, then `startmac -e 8.1`.
 
 `startmac6` runs System 6.0.7 with MultiFinder instead: A/UX 2.0.1's Mac environment in its own root, `/a201`, on the IIci's ROM in 4 MB (`TBMEMORY`), from the A/UX 2.0.1 CD (`media/AUX_2.0.1_CD_Image.iso`, `CD201`) and the IIci ROM beside the repository (`AUXROM6`); without them the image has no System 6.  root's System Folder is `/a201/mac/sys/System Folder`, guest's `/a201/home/guest/System Folder`; other users need a copy there.  Special > Logout leaves it.
 
@@ -214,7 +216,7 @@ Rebuild (needs the A/UX root in `tests/aux/auxroot`, the Quadra 700 ROM beside t
 sh images/macenv/mkmacimage.sh [kernel.elf [out.img]]
 ```
 
-## The TOS container
+## The TOS environment
 
 The same image runs Atari TOS as an AMIX process. Log in as `guest` (or `root`) and type:
 
@@ -242,8 +244,12 @@ startcpm
 
 or pick "CP/M-68K environment" at the xdm session chooser (last in the list) or in the twm and XView menus, which open it in an xterm. Each drive is a directory of plain files: A: is `~/CPM` (user areas 1-15 are subdirectories `1` to `15`), H: your home, M: a private scratch directory emptied at each start, O: `/`, and P: the nine distribution disks' files (`/cpm/dist`, read-only; `X.REL` programs also as `X.68K`). Programs not on the current drive run from P:. Add drives with `X=path` lines in `~/CPM/DRIVES`, `startcpm -d X=path`, or `MOUNT X: path` inside CP/M (`MOUNT` alone lists them). Unix names that don't fit 8.3 show shortened, e.g. `MAKEFI~7.LIN`. CP/M-80 `.COM` and CP/M-86 `.CMD` programs run too, interpreted (no GSX graphics). `EXIT` ends the session, as does end of input. `startcpm -e NAME` uses `~/CPM/NAME/` for A:. The console is your terminal. One session per environment at a time.
 
-The image builds put in the files from DRI's release zip (`media/cpm68k/68kv1_3.zip`, `CPMZIP`); without it there is no CP/M. `images/cpmenv/mkcpm.sh` makes the archive; details in `kernel/guest/cpm/CPM.md`.
+The image builds put in the files from DRI's release zip (`media/cpm68k/68kv1_3.zip`, `CPMZIP`); without it there is no CP/M. `images/cpmenv/mkcpm.sh` makes the archive; drive layout in `kernel/guest/cpm/LAYOUT-PLAN.md`.
 
+
+## The Amiga environment
+
+`startmig` boots Kickstart 3.2 to Workbench from `~/Amiga` (`makeamiga`). `mkmacimage.sh` installs it from `AMIGASTAGE`, the output of `images/amigaenv/mkamiga.sh` run on your AmigaOS 3.2 CD and Picasso96; see `images/amigaenv/README.md`.
 
 ## The Windows 3.x environment (Win16)
 

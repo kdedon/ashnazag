@@ -79,9 +79,7 @@ the resident record, six library vectors, and `CardBase.Name` initialization.
 The driver uses the 1624-byte Picasso96 2.0 BoardInfo and ignores callback
 arguments introduced after 2.0.
 
-These checks inspect files without executing the library. Loading Picasso96,
-selecting a screen, drawing, and switching screens still require guest
-verification. The card does not supply an AmigaOS boot device or filesystem.
+These checks inspect files without executing the library. The card does not supply an AmigaOS boot device or filesystem.
 
 Interface source: [P96 Driver Development](https://wiki.icomp.de/wiki/P96_Driver_Development).
 SDK attribution and license: [NOTICE](NOTICE).
