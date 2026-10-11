@@ -6,7 +6,7 @@
 #   sh x11/mkimage.sh [kernel.elf [out.img]]
 #
 # Builds the server, client libraries, clients and package as needed.  BOOTX=1 boots to xdm (/etc/default/x).
-# XPKGS="manx xview" also installs those
+# XPKGS="manx xview gl" also installs those
 # packages (x11/NAME/build.sh, after build.sh clibs) as pkgadd would.
 # APKG=dir installs apkg from the datastreams getapkg.sh fetched,
 # ENVPKGS the environment packages named (images/envpkg/mkenvpkgs.sh).

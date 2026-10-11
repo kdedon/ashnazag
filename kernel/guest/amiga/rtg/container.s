@@ -15,6 +15,11 @@
 .equ state_display, gbi_CardData+4
 .equ state_format, gbi_CardData+8
 .equ state_vsync, gbi_CardData+12
+| the last SetPanning: memory, width, x, y
+.equ state_panmem, gbi_CardData+16
+.equ state_panw, gbi_CardData+20
+.equ state_panx, gbi_CardData+24
+.equ state_pany, gbi_CardData+28
 
 .text
 .globl _start
@@ -95,8 +100,8 @@ find_card:
  bne return_zero
  cmp.l #RTG_HEADER_SIZE,rtg_header_size(%a1)
  bne return_zero
- cmp.l #1,rtg_format(%a1)
- bne return_zero
+ btst #1,rtg_formats+3(%a1)
+ beq return_zero
  move.l #1,lib_claimed(%a6)
  move.l %a1,gbi_RegisterBase(%a0)
  | the display session's memory, mapped by the launcher
@@ -136,32 +141,39 @@ init_card:
  | In the display chain, direct access, own drawing functions without masks
  or.l #0x04508000,gbi_Flags(%a0)
  and.l #~0x01000000,gbi_Flags(%a0)
- move.w #2,gbi_RGBFormats(%a0)
- move.w #2,gbi_SoftSpriteFlags(%a0)
- | The host draws the pointer when it offers to: a hardware sprite.
  move.l #RTG_BASE,%a1
+ move.w rtg_formats+2(%a1),gbi_RGBFormats(%a0)
+ move.w rtg_formats+2(%a1),gbi_SoftSpriteFlags(%a0)
+ | The host draws the pointer on CLUT screens when it offers to: a hardware sprite.
  tst.l rtg_cursor(%a1)
  beq 3f
  or.l #1,gbi_Flags(%a0)
- clr.w gbi_SoftSpriteFlags(%a0)
+ and.w #~2,gbi_SoftSpriteFlags(%a0)
 3:
- move.w #8192,gbi_MaxHorValue+2(%a0)
- move.w #8192,gbi_MaxVerValue+2(%a0)
- move.l #RTG_BASE,%a1
  move.l rtg_max_width(%a1),%d0
  cmp.l #4096,%d0
  bls 1f
  move.l #4096,%d0
-1: move.w %d0,gbi_MaxHorResolution+2(%a0)
- move.l rtg_max_height(%a1),%d0
- cmp.l #4096,%d0
+1: move.l rtg_max_height(%a1),%d1
+ cmp.l #4096,%d1
  bls 2f
- move.l #4096,%d0
-2: move.w %d0,gbi_MaxVerResolution+2(%a0)
- move.l #4,gbi_PixelClockCount+4(%a0)
+ move.l #4096,%d1
+ | the same limits for CLUT, hi-colour, true-colour and true-alpha modes
+2: move.l %d2,-(%sp)
+ moveq #2,%d2
+4: move.w #8192,gbi_MaxHorValue(%a0,%d2.l)
+ move.w #8192,gbi_MaxVerValue(%a0,%d2.l)
+ move.w %d0,gbi_MaxHorResolution(%a0,%d2.l)
+ move.w %d1,gbi_MaxVerResolution(%a0,%d2.l)
+ move.l #4,gbi_PixelClockCount(%a0,%d2.l*2)
+ addq.l #2,%d2
+ cmp.l #10,%d2
+ blo 4b
+ move.l (%sp)+,%d2
  clr.l state_switch(%a0)
  move.l #1,state_display(%a0)
  move.l #1,state_format(%a0)
+ clr.l state_panmem(%a0)
  callback gbi_SetSwitch, set_switch
  callback gbi_SetColorArray, set_palette
  callback gbi_SetDAC, set_dac
@@ -216,24 +228,58 @@ set_display:
  bsr publish_on
  move.l %d1,%d0
  rts
+| the screen's rows follow its format, whichever of SetDAC and SetPanning comes last
 set_dac:
  move.l %d7,state_format(%a0)
  move.l %d7,gbi_RGBFormat(%a0)
+ bsr publish_pan
  bra publish_on
+| shown, blank, or native when switched off; a format the host lacks stays blank
 publish_on:
+ move.l %d1,-(%sp)
  move.l #RTG_BASE,%a1
  addq.l #1,rtg_seq(%a1)
+ move.l state_format(%a0),%d1
+ bsr format_bpp
  move.l state_switch(%a0),%d0
  beq 1f
  moveq #2,%d0
  tst.l state_display(%a0)
  beq 1f
- cmp.l #1,state_format(%a0)
- bne 1f
+ tst.l %d1
+ beq 1f
  moveq #1,%d0
+ move.l state_format(%a0),rtg_format(%a1)
 1: move.l %d0,rtg_on(%a1)
  addq.l #1,rtg_seq(%a1)
+ move.l (%sp)+,%d1
  bra ring
+| d1: a format; out d1 its bytes a pixel if the host shows it, else 0
+format_bpp:
+ move.l %d2,-(%sp)
+ move.l %d1,%d2
+ moveq #0,%d1
+ cmp.l #31,%d2
+ bhi 9f
+ move.l RTG_BASE+rtg_formats,%d1
+ btst %d2,%d1
+ beq 8f
+ moveq #1,%d1
+ cmp.l #1,%d2
+ beq 9f
+ moveq #2,%d1
+ cmp.l #4,%d2
+ beq 9f
+ cmp.l #10,%d2
+ beq 9f
+ moveq #4,%d1
+ cmp.l #6,%d2
+ beq 9f
+ cmp.l #9,%d2
+ beq 9f
+8: moveq #0,%d1
+9: move.l (%sp)+,%d2
+ rts
 set_gc:
  move.w %d0,gbi_Border(%a0)
  move.l %a1,gbi_ModeInfo(%a0)
@@ -249,30 +295,54 @@ set_gc:
  | rows until SetPanning places the screen: one at the start of card memory
  tst.l rtg_stride(%a2)
  bne 1f
+ bsr pixel_bytes
  bsr row_bytes
  move.l %d0,rtg_stride(%a2)
 1: addq.l #1,rtg_seq(%a2)
  move.l (%sp)+,%a2
  bra ring
 set_panning:
- movem.l %d2-%d3/%a2,-(%sp)
  move.w %d1,gbi_XOffset(%a0)
  move.w %d2,gbi_YOffset(%a0)
- move.l #RTG_BASE,%a2
- bsr row_bytes
+ move.l %a1,state_panmem(%a0)
+ and.l #65535,%d0
+ move.l %d0,state_panw(%a0)
  and.l #65535,%d1
+ move.l %d1,state_panx(%a0)
  and.l #65535,%d2
+ move.l %d2,state_pany(%a0)
+ bsr publish_pan
+ bra ring
+| the panned screen's rows and first pixel in the format the board was last given
+publish_pan:
+ movem.l %d0-%d3/%a2,-(%sp)
+ move.l #RTG_BASE,%a2
+ move.l state_panmem(%a0),%d3
+ beq 9f
+ bsr pixel_bytes
+ move.l state_panw(%a0),%d0
+ bsr row_bytes
+ move.l state_pany(%a0),%d2
  mulu.l %d0,%d2
- add.l %d1,%d2
- move.l %a1,%d3
  sub.l rtg_vram(%a2),%d3
+ add.l %d3,%d2
+ move.l state_panx(%a0),%d3
+ mulu.l %d1,%d3
  add.l %d3,%d2
  addq.l #1,rtg_seq(%a2)
  move.l %d0,rtg_stride(%a2)
  move.l %d2,rtg_offset(%a2)
  addq.l #1,rtg_seq(%a2)
- movem.l (%sp)+,%d2-%d3/%a2
- bra ring
+9: movem.l (%sp)+,%d0-%d3/%a2
+ rts
+| d1: bytes a pixel of the board's format, 1 for one the host lacks
+pixel_bytes:
+ move.l state_format(%a0),%d1
+ bsr format_bpp
+ tst.l %d1
+ bne 1f
+ moveq #1,%d1
+1: rts
 set_palette:
  movem.l %d2-%d3/%a2,-(%sp)
  and.l #65535,%d0
@@ -310,17 +380,21 @@ palette_done:
 ring:
  move.l #2,0xf7fffc
  rts
-| rows of 8-bit pixels, on four-byte boundaries; as the display's when
-| the card's memory is the display and the bitmap is as wide as it
+| rows on four-byte boundaries; as the display's when the card's memory
+| is the display and an 8-bit bitmap is as wide as it
 bytes_per_row:
- cmp.l #1,%d7
- bne return_zero
-| SetPanning passes no format: the board shows only CLUT screens
+ move.l %d7,%d1
+ bsr format_bpp
+ tst.l %d1
+ beq return_zero
+| d0 pixels of d1 bytes (kept): the row's bytes
 row_bytes:
  and.l #65535,%d0
  beq return_zero
  cmp.l #4096,%d0
  bhi return_zero
+ cmp.l #1,%d1
+ bne 1f
  tst.l RTG_BASE+rtg_copy
  bne 1f
  cmp.l RTG_BASE+rtg_max_width,%d0
@@ -329,14 +403,15 @@ row_bytes:
  bhi 1f
  move.l RTG_BASE+rtg_vstride,%d0
  rts
-1: addq.l #3,%d0
+1: mulu.l %d1,%d0
+ addq.l #3,%d0
  and.l #-4,%d0
  rts
 calculate_memory:
  move.l %a1,%d0
  rts
 compatible_formats:
- moveq #2,%d0
+ move.l RTG_BASE+rtg_formats,%d0
  rts
 resolve_clock:
  movem.l %d2-%d4/%a2,-(%sp)

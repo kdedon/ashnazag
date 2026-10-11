@@ -233,6 +233,8 @@ Rebuild (needs the A/UX root in `tests/aux/auxroot`, the Quadra 700 ROM beside t
 sh images/macenv/mkmacimage.sh [kernel.elf [out.img]]
 ```
 
+The default image adds `XPKGS="xview gl"` (XView, and `glxgears` in `/usr/x11r6/bin`). `sh images/macenv/check-image.sh [image]` checks it in QEMU: X and glxgears from `startx`, then each environment.
+
 ## The TOS environment
 
 The same image runs Atari TOS as an AMIX process. Log in as `guest` (or `root`) and type:

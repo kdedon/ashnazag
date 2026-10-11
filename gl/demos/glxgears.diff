@@ -1,0 +1,15 @@
+--- a/xdemos/glxgears.c
++++ b/xdemos/glxgears.c
+@@ -345,7 +345,11 @@
+    /* window attributes */
+    attr.background_pixel = 0;
+    attr.border_pixel = 0;
+-   attr.colormap = XCreateColormap( dpy, root, visinfo->visual, AllocNone);
++   /* the default colormap, if it fits: a private one shows only while installed */
++   if (visinfo->visual == DefaultVisual(dpy, scrnum))
++      attr.colormap = DefaultColormap(dpy, scrnum);
++   else
++      attr.colormap = XCreateColormap( dpy, root, visinfo->visual, AllocNone);
+    attr.event_mask = StructureNotifyMask | ExposureMask | KeyPressMask;
+    mask = CWBackPixel | CWBorderPixel | CWColormap | CWEventMask;
+ 

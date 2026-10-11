@@ -72,6 +72,7 @@ extern void am_dsclut(), am_vminfo(), am_planes();
 extern char *am_dsname;
 extern int am_dscmapbits;
 extern unsigned long am_dsvsize;
+extern int am_dsfull;
 #endif
 
 struct dsdisp ds_disp;
@@ -524,13 +525,23 @@ int type;
 	pollwakeup(&s->s_ph, POLLIN | POLLRDNORM);
 }
 
+#ifdef DS_AMIGA
+/* a card with deeper modes: shadows keep its 8-bit frame */
+static unsigned long ds_keep;
+#endif
+
 static caddr_t
 ds_shadow(s)
 register struct dssess *s;
 {
-	register unsigned long size = s->s_size, i, pa;
+	register unsigned long size = s->s_size, i, pa, keep = size;
 
-	s->s_memsize = size + DS_PGSIZE;
+#ifdef DS_AMIGA
+	if (ds_keep && keep > ds_keep)
+		keep = ds_keep;
+#endif
+	s->s_kept = keep;
+	s->s_memsize = keep + (keep < size ? 2 : 1) * DS_PGSIZE;
 	s->s_mem = (caddr_t)kmem_zalloc(s->s_memsize, KM_NOSLEEP);
 	if (s->s_mem == 0)
 		return 0;
@@ -542,7 +553,8 @@ register struct dssess *s;
 	}
 	s->s_shadow = (caddr_t)(((unsigned long)s->s_mem + DS_PGOFF) & ~DS_PGOFF);
 	for (i = 0; i < size >> DS_PGSHIFT; i++) {
-		pa = vtop(s->s_shadow + (i << DS_PGSHIFT), (caddr_t)0);
+		pa = vtop(s->s_shadow + ((i < keep >> DS_PGSHIFT ? i : keep >> DS_PGSHIFT) <<
+		    DS_PGSHIFT), (caddr_t)0);
 		if (pa == 0) {
 			kmem_free((caddr_t)s->s_pfn, (size >> DS_PGSHIFT) * 4);
 			kmem_free(s->s_mem, s->s_memsize);
@@ -817,7 +829,7 @@ register struct dssess *to;
 	ds_unloadsess(to);
 	DS_CPUSHA();
 	if (!from->s_dead)
-		ds_lcopy((unsigned long *)from->s_shadow, (unsigned long *)vram, from->s_size);
+		ds_lcopy((unsigned long *)from->s_shadow, (unsigned long *)vram, from->s_kept);
 	if (from == &ds_sess[0])
 		fbcons.fc_m.fm_base = (unsigned long)ds_sess[0].s_shadow +
 		    ds_disp.d_info.fi_offset;
@@ -847,7 +859,7 @@ register struct dssess *to;
 	if (DS_GUEST(from) && !DS_GUEST(to) && ds_sndown)
 		(*ds_sndown)(0);
 #endif
-	ds_lcopy((unsigned long *)vram, (unsigned long *)to->s_shadow, to->s_size);
+	ds_lcopy((unsigned long *)vram, (unsigned long *)to->s_shadow, to->s_kept);
 	if (to == &ds_sess[0])
 		fbcons.fc_m.fm_base = ds_disp.d_base;
 	DS_CPUSHA();
@@ -1112,6 +1124,11 @@ ds_init()
 	/* room for the deepest mode a session may take */
 	if (am_dsvsize > ds_disp.d_vsize)
 		ds_disp.d_vsize = am_dsvsize;
+	/* a card with deeper modes: every session maps room for the deepest */
+	if (am_dsfull) {
+		ds_keep = fi->fi_size;
+		fi->fi_size = ds_disp.d_vsize = (ds_disp.d_vsize + DS_PGOFF) & ~DS_PGOFF;
+	}
 #endif
 #ifdef DS_ATARI
 	/* the console's screen opens the pool, which ends at the top of ST-RAM */

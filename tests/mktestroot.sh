@@ -102,6 +102,7 @@ if [ -z "$TESTKB" ]; then
 	[ -d "$SMQB/root" ] && TESTKB=$((TESTKB + 64 + 2 * $(du -sk "$SMQB/root" | cut -f1)))
 	# t_cpm: S: and its scratch drives
 	[ -d "$CPMB/root" ] && TESTKB=$((TESTKB + 128 + 3 * $(du -sk "$CPMB/root" | cut -f1)))
+	[ ! -f "$B/bin/t_gl" ] || TESTKB=$((TESTKB + $(du -sk "$B/bin/t_gl" | cut -f1)))
 	[ ! -f "$W16B/startwin" ] || TESTKB=$((TESTKB + 64 + $(du -sk "$W16B/startwin" | cut -f1)))
 fi
 

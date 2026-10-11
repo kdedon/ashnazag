@@ -96,13 +96,13 @@ if [ -n "$ENVPKG" ]; then
 `$PY "$DR/pkg/pkginst.py" "$S/pkgs" $(ls "$EP"/*.pkg | grep -v macnet)`"
 fi
 if [ -n "$AMIGAENV" ]; then
-	A=$(cd "$AMIGAENV/root" && pwd)
+	AE=$(cd "$AMIGAENV/root" && pwd)
 	rm -rf "$S/amigasys"
-	cp -R "$A/amiga/sys" "$S/amigasys"
+	cp -R "$AE/amiga/sys" "$S/amigasys"
 	chmod -R a+rX,go-w,u+w "$S/amigasys"
 	ENV="$ENV
-f /etc/amiga/kicka4000.rom 640 0 25 $A/etc/amiga/kicka4000.rom
-`for f in "$A"/amiga/media/*; do echo "f ${f#$A} 640 0 25 $f"; done`
+f /etc/amiga/kicka4000.rom 640 0 25 $AE/etc/amiga/kicka4000.rom
+`for f in "$AE"/amiga/media/*; do echo "f ${f#$AE} 640 0 25 $f"; done`
 `printf 't\t/amiga/sys\t0\t3\t%s' "$S/amigasys"`"
 fi
 

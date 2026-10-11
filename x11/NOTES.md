@@ -107,14 +107,20 @@ so the server runs the **8 bpp cfb path** (PseudoColor, default map loaded throu
 - XKB off (`BuildXKB NO`); core keymap only, US layout.
 - Native rebuild in QEMU not done.
 
-## Packages: manx, XView
+## Packages: manx, XView, gl
 
 ```
 sh x11/build.sh clibs              # libX11.a, libXext.a, Xt headers
 sh x11/manx/build.sh               # $X11W/manx/MANX.pkg   (/opt/amix/bin)
 sh x11/xview/build.sh              # $X11W/xview/XVIEW.pkg (/usr/openwin)
-XPKGS="manx xview" AMIX_TAPE=... sh x11/mkimage.sh   # installs them, as pkgadd would
+sh x11/gl/build.sh                 # $X11W/gl/GL.pkg       (/usr/x11r6/bin/glxgears)
+XPKGS="manx xview gl" AMIX_TAPE=... sh x11/mkimage.sh   # installs them, as pkgadd would
 ```
+
+`gl` is Mesa 5.0.2's glxgears (`gl/build.sh`), 2 MB static. It uses the default colormap
+when the visual matches: in a private one, as upstream does, the gears stay black on the 8-bit
+screen until the window manager installs that map. On QEMU's Quadra 800 it draws about 60
+frames a second.
 
 Sources come from `images/vendor.manifest` through `images/fetch.sh` (pinned sha256 or commit,
 cached in `toolchain/dl/vendor`). Streams are SVR4 datastreams (`mkpkg.py`), so `pkgadd -d` takes

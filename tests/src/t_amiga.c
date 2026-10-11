@@ -1365,6 +1365,9 @@ idle(p)
 	bw = f1.wakes - f0.wakes;
 	t_info("idle_wakeups", "in 5 s: display %ld, SYS: %ld", dw, bw);
 	t_check("idle_wakeups", dw <= 2 && bw <= 2, "display %ld, SYS: %ld in 5 s", dw, bw);
+	/* a Mac display has no deeper session modes: the card offers CLUT only */
+	t_check("rtg_formats", r1.formats == 1U << MIG_RTG_INDEX8 && r1.format == MIG_RTG_INDEX8,
+	    "formats %#x, shown %u", r1.formats, r1.format);
 }
 
 /*

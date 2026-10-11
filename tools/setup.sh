@@ -22,6 +22,7 @@
 #   --qemu            build the patched QEMU into toolchain/qemu-local
 #   --x11             fetch X11R6.3 and x11r6.3-amix into ref/
 #   --tos-src         fetch EmuTOS and fVDI into ref/
+#   --gl              fetch Mesa 5.0.2 and its demos into ref/
 # JOBS (default 1) is passed to make; downloads go to toolchain/dl.
 set -e
 AUX=$(cd "$(dirname "$0")/.." && pwd)
@@ -54,6 +55,9 @@ xc-2.tar.gz:cb9e6725a6f10b345c3dea417821d79a0738c09da0a16fe6b14b2ade878dcb8d
 xc-3.tar.gz:cfc344e80624c08964369af6530e83e94682465c061cb37b9b8078e0b6676891"
 XAMIX_URL=https://github.com/isoriano1968/x11r6.3-amix
 XAMIX_PIN=cb61a2115659cb3ae27c649439edb2ca133131b6
+MESA_URL=https://archive.mesa3d.org/older-versions/5.x
+MESA_SUMS="MesaLib-5.0.2.tar.gz:912836d16b56091b2e7d6c5fa2f336de1791a43cef45c94a263ad84d12607172
+MesaDemos-5.0.2.tar.gz:6cc3cec1e9bdb7ce0627746f40dfa132a00d88b77b48d328b6f0e7041e995985"
 
 die() { echo "setup: $*" >&2; exit 1; }
 step() { echo "== $*"; }
@@ -97,7 +101,7 @@ cdimage() {	# .iso or .7z, link name
 	esac
 }
 
-TAPE= PATCHDISK= CROSS= QEMU= X11= TOSSRC=
+TAPE= PATCHDISK= CROSS= QEMU= X11= TOSSRC= GL=
 while [ $# -gt 0 ]; do
 	case $1 in
 	--tape)	# one or more values, kept newline-separated
@@ -122,6 +126,7 @@ while [ $# -gt 0 ]; do
 	--qemu) QEMU=1; shift; continue ;;
 	--x11) X11=1; shift; continue ;;
 	--tos-src) TOSSRC=1; shift; continue ;;
+	--gl) GL=1; shift; continue ;;
 	*) sed -n '2,/^set -e/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 2 ;;
 	esac
 	[ $# -ge 2 ] || die "$1 needs a value"
@@ -306,6 +311,13 @@ if [ -n "$X11" ]; then
 		cp -p "$(fetch $X11_URL/$n $s)" "$AUX/ref/x11r6.3/dist/$n"
 	done
 	gitpin $XAMIX_URL $XAMIX_PIN "$AUX/ref/x11r6.3-amix"
+fi
+if [ -n "$GL" ]; then
+	step "Mesa 5.0.2"
+	mkdir -p "$AUX/ref/mesa/dist"
+	echo "$MESA_SUMS" | while IFS=: read -r n s; do
+		cp -p "$(fetch $MESA_URL/$n $s)" "$AUX/ref/mesa/dist/$n"
+	done
 fi
 if [ -n "$QEMU" ] && [ ! -x "$TC/qemu-local/usr/bin/qemu-system-m68k" ]; then
 	step "QEMU 8.2.2 with the 68040 fix"

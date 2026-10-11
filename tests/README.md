@@ -24,7 +24,7 @@ Direct boot also runs `display/hostio.py`: `t_display` sends it requests on SCC 
 | `core` | smoke plus t_arith t_mem t_sig t_streams t_time t_tty t_page t_moddemo t_stress t_env t_ufs |
 | `mac` | t_aux t_mac t_mac6 t_mac76 t_mac81 t_env |
 | `tos` | t_tos t_xaaes t_env |
-| `mint`, `cpm`, `amiga`, `display`, `sound`, `win16` | t_mint; t_cpm; t_amiga t_env; t_display; t_sound; t_win16 |
+| `mint`, `cpm`, `amiga`, `display`, `sound`, `win16`, `gl` | t_mint; t_cpm; t_amiga t_env; t_display; t_sound; t_win16; t_gl |
 | `stable` | t_stable: each environment started and stopped five ways, leaks and idle CPU (`STABLE="mac76 cpm idle=30 cycles=1"` narrows it) |
 
 Exit status: 0 all PASS, 1 any FAIL, 2 timeout, panic or no `TESTS DONE`.
@@ -88,6 +88,7 @@ INFO time.clk_tck: 60
 | `t_sound` | `/dev/asc`, the sound service and its front-session rule, `/dev/snd` and Sound Manager in System 6 and 7.6.1 |
 | `t_win16` | `startwin` and the Win16 test programs on SCSI disk 3; with your Windows and Wabi, install and Program Manager |
 | `t_gate` | cost of the guest vector gates on native system calls |
+| `t_gl` | software GL (`gl/build.sh`'s OSMesa): clear, smooth shading, depth test and read-back, diffuse lighting, nearest and modulated texturing checked pixel by pixel; frame time of a lit, textured sphere. Skips without the library |
 | `t_guestdlm`, `t_envram` | guest modules under DLM; environment RAM allocation and return |
 | `t_env` | guest environments: record locks on s5 and ufs released by `SIGKILL`; `maketos -e` makes distinct roots, refuses reserved and bad names and existing ones, `--import` copies `~/TOS` without its environments and leaves it unchanged; `starttos -e`, `startmig -e` (on the ufs volume) hold the lock on `.env`, and `envlock` on the legacy System Folder's `.stamp`, while running, a second session is refused, other environments and the legacy tree lock separately, and the lock goes on `SIGKILL` and on exit |
 

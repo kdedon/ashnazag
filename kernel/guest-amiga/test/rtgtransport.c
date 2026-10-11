@@ -56,6 +56,22 @@ int main(void)
     assert(mig_rtg_snapshot(&s, &out, 1024, 768) == -1);
     s.max_width--; s.format++;
     assert(mig_rtg_snapshot(&s, &out, 1024, 768) == -1);
+    /* 16 and 32 bits only when the session offers them, rows in bytes */
+    s.format = MIG_RTG_R5G6B5;
+    assert(mig_rtg_snapshot(&s, &out, 1024, 768) == -1);
+    s.formats |= 1U << MIG_RTG_R5G6B5 | 1U << MIG_RTG_B8G8R8A8;
+    s.stride = 1279;
+    assert(mig_rtg_snapshot(&s, &out, 1024, 768) == -1);
+    s.stride = 1280;
+    assert(mig_rtg_snapshot(&s, &out, 1024, 768) == 1);
+    s.format = MIG_RTG_B8G8R8A8; s.stride = 2560; s.memory_size = 4 * 1024 * 768;
+    assert(mig_rtg_snapshot(&s, &out, 1024, 768) == 1);
+    s.offset = s.memory_size - ((s.height - 1) * s.stride + s.width * 4) + 1;
+    assert(mig_rtg_snapshot(&s, &out, 1024, 768) == -1);
+    s.offset = 0; s.format = MIG_RTG_A8R8G8B8;
+    assert(mig_rtg_snapshot(&s, &out, 1024, 768) == -1);
+    assert(mig_rtg_bpp(MIG_RTG_INDEX8) == 1 && mig_rtg_bpp(MIG_RTG_R5G6B5) == 2 &&
+        mig_rtg_bpp(MIG_RTG_A8R8G8B8) == 4 && mig_rtg_bpp(3) == 0);
     puts("RTG bounds and publication checks passed");
     return 0;
 }

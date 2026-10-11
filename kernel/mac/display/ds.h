@@ -103,6 +103,7 @@ struct dssess {
 	caddr_t		s_shadow;	/* page-aligned shadow of the mapped region */
 	unsigned long	*s_pfn;		/* its page frames */
 	unsigned long	s_size;		/* bytes mapped */
+	unsigned long	s_kept;		/* bytes the shadow keeps; the rest share a page */
 	int		s_dead;		/* released: maps fault */
 	int		s_cache;	/* FBC_* */
 	int		s_blank;

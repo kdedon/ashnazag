@@ -37,6 +37,7 @@ static struct {
 	{ "t_tty", 30 },
 	{ "t_arith", 60 },
 	{ "t_cc295", 120 },
+	{ "t_gl", 300 },
 	{ "t_sys", 60 },
 	{ "t_streams", 60 },
 	{ "t_stress", 90 },

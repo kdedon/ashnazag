@@ -79,7 +79,8 @@ Research's CP/M-68K 1.3 release zip, `media/cpm68k/68kv1_3.zip`), `AMIGASTAGE`
 (`images/amigaenv/mkamiga.sh`'s output). An environment whose media
 is missing is left out of the image.
 
-Optional open-source downloads: `--tos-src` (EmuTOS 1.4, fVDI), `--x11` (X11R6.3, x11r6.3-amix).
+Optional open-source downloads: `--tos-src` (EmuTOS 1.4, fVDI), `--x11` (X11R6.3, x11r6.3-amix),
+`--gl` (Mesa 5.0.2 and its demos).
 
 ### What each target needs
 
@@ -91,6 +92,7 @@ Optional open-source downloads: `--tos-src` (EmuTOS 1.4, fVDI), `--x11` (X11R6.3
 | suite (minimum) | `sh tests/run-qemu.sh` | kernel + patched QEMU. No ROM: QEMU boots the kernel directly. Guest tests skip without their media. |
 | disk | `sh images/mkimage.sh --small`, `images/mkboot.sh`, `kernel/mac/diskroot/mkdiskimage.sh` | suite + A/UX 3.1 CD, hfsutils, tape 03, 07 and 10; Quadra 800 ROM to boot it |
 | x11 | `x11/build.sh`, `x11/mkimage.sh` | disk + tape 13, 14, `--x11` |
+| gl | `sh gl/build.sh`; `tests/run-qemu.sh` (t_gl, `GROUP=gl`) | suite + `toolchain/amix-gcc295`, `--gl`; libGL and glxgears also x11's `clibs` |
 | mac | `images/macenv/mkmacimage.sh` | x11 + Mac OS 7.6.1 CD, Quadra 700 ROM, the A/UX root tree (`tests/aux/auxroot`, from `--aux-cd`); optional 8.1, System 6 and CP/M media above |
 | tos | `tests/run-qemu.sh` (t_tos) | suite + `--tos-src` |
 | amiga | `tests/run-qemu.sh` (t_amiga), `images/amigaenv/mkamiga.sh` | suite + AmigaOS 3.2 CD |

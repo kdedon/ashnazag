@@ -41,6 +41,7 @@ static int am_lines;		/* display lines, interlace doubles them */
 #define AM_PLANES	4
 #define AM_NMODE	(2 * AM_PLANES)
 #define AM_MODEID	0x90	/* + 8 interlaced, + planes */
+#define AM_RTGID	0xa0	/* + bits a pixel */
 static unsigned char am_toraw[128] = {
  0x20,0x21,0x22,0x23,0x25,0x24,0x31,0x32,
  0x33,0x34,0x30,0x35,0x10,0x11,0x12,0x13,
@@ -116,10 +117,34 @@ unsigned long code, qual;
 	}
 }
 
+/* the card's depths when it has more than 8 bits; then each session maps the deepest */
+int am_dsfull;
+
+/* bits a pixel of the card's mode n */
+static int
+am_rtgbits(n)
+int n;
+{
+	int i;
+
+	for (i = 0; i < 3; i++)
+		if ((am_rtg->r_depths & 1 << i) && n-- == 0)
+			return 8 << i;
+	return 0;
+}
+
 int
 am_nvmode()
 {
-	return am_rtg ? 0 : AM_NMODE;
+	int i, n = 0;
+
+	if (!am_rtg)
+		return AM_NMODE;
+	if (am_dsfull)
+		for (i = 0; i < 3; i++)
+			if (am_rtg->r_depths & 1 << i)
+				n++;
+	return n;
 }
 
 void
@@ -130,6 +155,21 @@ struct fbinfo *fi;
 	int d = n % AM_PLANES + 1, lace = n >= AM_PLANES;
 
 	*fi = ds_disp.d_info;
+	if (am_rtg) {
+		d = am_rtgbits(n);
+		fi->fi_mode = AM_RTGID + d;
+		fi->fi_depth = d;
+		fi->fi_rowbytes = am_rtg->r_row * (d / 8);
+		if (d > 8) {
+			fi->fi_visual = FBV_TRUE;
+			fi->fi_rmask = am_rtg->r_rgb[d / 32][0];
+			fi->fi_gmask = am_rtg->r_rgb[d / 32][1];
+			fi->fi_bmask = am_rtg->r_rgb[d / 32][2];
+			fi->fi_cmapsize = 0;
+			fi->fi_flags &= ~(FBF_CMAP | FBF_BLANK);
+		}
+		return;
+	}
 	fi->fi_layout = FBL_PLANES;
 	fi->fi_mode = AM_MODEID + (lace ? 8 : 0) + d;
 	fi->fi_height = am_lines << lace;
@@ -147,7 +187,8 @@ unsigned long id;
 	int n;
 
 	for (n = 0; n < am_nvmode(); n++)
-		if (id == AM_MODEID + (n >= AM_PLANES ? 8 : 0) + n % AM_PLANES + 1)
+		if (am_rtg ? id == AM_RTGID + am_rtgbits(n) :
+		    id == AM_MODEID + (n >= AM_PLANES ? 8 : 0) + n % AM_PLANES + 1)
 			return n;
 	return -1;
 }
@@ -160,8 +201,11 @@ struct dssess *s;
 	struct fbinfo fi;
 	int i;
 
-	if (am_rtg)
+	if (am_rtg) {
+		if (am_dsfull)
+			(*am_rtg->r_setdepth)(s->s_vmode ? am_rtgbits(s->s_vmode - 1) : 8);
 		return;
+	}
 	if (s->s_vmode)
 		am_vminfo(s->s_vmode - 1, &fi);
 	else {
@@ -267,6 +311,10 @@ am_dsinit()
 	am_console = activescreen;
 	am_lines = height;
 	am_dsvsize = am_rtg ? 0 : size;
+	am_dsfull = am_rtg && am_rtg->r_setdepth && (am_rtg->r_depths & 6);
+	if (am_dsfull)
+		am_dsvsize = (am_rtg->r_base & DS_PGOFF) + (unsigned long)am_rtg->r_row *
+		    am_rtg->r_height * (am_rtg->r_depths & 4 ? 4 : 2);
 	if (am_rtg) {
 		fbcons.fc_m.fm_base = am_rtg->r_base;
 		fbcons.fc_m.fm_width = am_rtg->r_width; fbcons.fc_m.fm_height = am_rtg->r_height;

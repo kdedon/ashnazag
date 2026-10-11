@@ -62,10 +62,6 @@ for f in $ENVPKGS; do echo "f /var/spool/pkg/${f##*/} 644 0 3 $f"; done >> "$I"
 if [ "$MACNETWORK" = 1 ] && [ -f "$CD81" ]; then
 	sh "$D/network/build.sh" "$P/network"
 	ENVPKGS="$ENVPKGS $P/envpkg/pkgs/env/macnet-1.0.pkg"
-	cat >> "$I" <<'EOF2'
-c /dev/tcp 666 0 3 33 0
-c /dev/udp 666 0 3 34 0
-EOF2
 fi
 
 # the Amiga environment's Kickstart, floppies and SYS: template from

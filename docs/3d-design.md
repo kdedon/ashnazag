@@ -245,7 +245,7 @@ Signals stay as now: a host signal while in Mesa becomes a guest interrupt throu
 Rules from the display service:
 - A hidden session gets no DRM lock: `LockHardware` and draw calls return `W3D_NOTVISIBLE` (a Warp3D error titles already handle), GL clients block in the lock.
 - Switch-out: the kernel takes the DRM lock, waits for idle, saves the session's VRAM (front, depth) to its shadow, bumps the texture heap age so every context reloads its textures.
-- The container card needs 16- and 32-bit modes first: it offers `MIG_RTG_INDEX8` only, and most Warp3D titles refuse CLUT screens.
+- The container card offers 16- and 32-bit modes where the host session has them (most Warp3D titles refuse CLUT screens).
 
 ### 4.5 Size
 

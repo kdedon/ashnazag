@@ -1,7 +1,8 @@
 #!/bin/sh
-# check-image.sh -- boot a built disk image and check each environment
-# from a guest login: starttos reaches the desktop, startmig Workbench,
-# startmac the Finder.
+# check-image.sh -- boot a built disk image and check X and each
+# environment: root's startx on the serial line brings X up (and glxgears
+# draws, if installed), then from a guest login starttos reaches the
+# desktop, startmig Workbench, startmac the Finder.
 #
 #   sh images/macenv/check-image.sh [image [outdir]]
 #
@@ -36,18 +37,23 @@ if [ -n "$XDM" ]; then
 		shot:04-mig "$HOT" wait:5 shot:05-mig-console 'hmp:sendkey ctrl-c' wait:25 \
 		'type:guest\n' wait:2 'type:\n' wait:5 "type:$MAC" wait:150 shot:07-mac quit
 else
-	set -- wait:150 shot:01-login 'type:guest\n' wait:5 'type:\n' wait:10 \
+	# root, typed on the serial line: X with glxgears, if installed; then X stops and root logs out
+	set -- wait:150 shot:01-login 'serial:root\n' wait:8 'serial:startx &\n' wait:60 \
+		"serial:DISPLAY=:0 XAUTHORITY=/.Xauthority; export DISPLAY XAUTHORITY; [ -p /tmp/.X11-unix/X0 ] && kill -0 \`cat /tmp/Xamix.pid\` && echo X''-UP\n" wait:3 \
+		"serial:[ -x /usr/x11r6/bin/glxgears ] && { echo GEARS''-ON; /usr/x11r6/bin/glxgears & }\n" wait:60 shot:00-x \
+		"serial:kill \`cat /tmp/Xamix.pid\`\n" wait:15 'serial:exit\n' wait:10 \
+		'type:guest\n' wait:5 'type:\n' wait:10 \
 		'type:starttos\n' wait:90 shot:02-tos "$HOT" wait:5 'hmp:sendkey ctrl-c' wait:20 \
 		'type:clear; makeamiga; startmig\n' wait:30 shot:03-mig-starting wait:150 shot:04-mig \
 		"$HOT" wait:5 shot:05-mig-console 'hmp:sendkey ctrl-c' wait:15 \
 		'type:clear; grep -c open Amiga/.startmig.log; grep RTG Amiga/.startmig.log\n' wait:8 shot:06-mig-log \
 		'type:startmac\n' wait:150 shot:07-mac quit
 fi
-QEXTRA="-g 640x480x8" sh "$AUX/images/qemu/run-mac.sh" --tmo 1100 "$ROM" "$OUT/disk.img" 128 "$OUT" \
+QEXTRA="-g 640x480x8" sh "$AUX/images/qemu/run-mac.sh" --sock --tmo 1300 "$ROM" "$OUT/disk.img" 128 "$OUT" \
 	"$@" > "$OUT/run.log" 2>&1 || :
 rm -f "$OUT/disk.img"
 r=0
-python3 - "$OUT" > "$OUT/check.txt" <<'EOF' || r=1
+XDM=$XDM python3 - "$OUT" > "$OUT/check.txt" <<'EOF' || r=1
 import os, struct, sys, zlib
 out = sys.argv[1]
 def colours(name):
@@ -69,7 +75,41 @@ def colours(name):
         for x in range(0, w * 3, 12):
             seen.add(row[x:x + 3])
     return len(seen)
+def hues(name):
+    # pixels where one primary leads the others: glxgears' red, green and blue gears
+    p = os.path.join(out, name + '.png')
+    if not os.path.exists(p):
+        return set()
+    d = open(p, 'rb').read()
+    w, h = struct.unpack('>II', d[16:24])
+    i, idat = 8, b''
+    while i < len(d):
+        n, = struct.unpack('>I', d[i:i + 4])
+        if d[i + 4:i + 8] == b'IDAT':
+            idat += d[i + 8:i + 8 + n]
+        i += 12 + n
+    raw = zlib.decompress(idat)
+    found = set()
+    for y in range(h):
+        row = raw[y * (w * 3 + 1) + 1:(y + 1) * (w * 3 + 1)]
+        for x in range(0, w * 3, 3):
+            c = row[x:x + 3]
+            for k in range(3):
+                if c[k] > 100 and all(c[k] > c[j] + 60 for j in range(3) if j != k):
+                    found.add(k)
+    return found
 fail = 0
+if not os.environ.get('XDM'):
+    log = open(os.path.join(out, 'serial.log'), 'rb').read().decode('latin-1')
+    ok = 'X-UP' in log.replace("X''-UP", '') and colours('00-x') > 2
+    fail += not ok
+    print('%s startx: X server up (00-x.png)' % ('[ok]' if ok else '[FAIL]'))
+    if 'GEARS-ON' in log.replace("GEARS''-ON", ''):
+        ok = hues('00-x') == {0, 1, 2}
+        fail += not ok
+        print('%s glxgears: red, green and blue gears (00-x.png)' % ('[ok]' if ok else '[FAIL]'))
+        for l in [l for l in log.splitlines() if 'frames in' in l][:3]:
+            print('  ' + l.strip(' #'))
 for name, what in (('02-tos', 'starttos: desktop'), ('04-mig', 'startmig: Workbench'),
                    ('07-mac', 'startmac: Finder')):
     n = colours(name)

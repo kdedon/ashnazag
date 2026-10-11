@@ -42,7 +42,7 @@ Echo "Yes" >ENVARC:Picasso96/DisableAmigaBlitter
 This setting routes native planar operations through P96's CPU
 implementations.
 
-Choose an 8-bit mode no larger than the host session's display. The driver
+Choose an 8-bit mode (16 or 32 bits if the host offers them) no larger than the host session's display. The driver
 advertises that size to P96, supports 25.175/40/65/108 MHz nominal clocks,
 and leaves mode creation to P96 and its preferences. Select the resulting
 mode in AmigaOS ScreenMode preferences. For example, 640x480 at 8 bits uses

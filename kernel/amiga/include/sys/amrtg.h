@@ -15,6 +15,14 @@ struct am_rtg {
 	char		*r_name;
 	void		(*r_clut)();	/* (index, r, g, b), 8 bits a gun */
 	void		(*r_show)();	/* (on): the card's picture, else the chipset's */
+	/*
+	 * Optional deeper modes at the same size: r_depths has 1 for 8 bits,
+	 * 2 for 16 and 4 for 32; r_rgb the red, green and blue masks of a
+	 * pixel read as a big-endian word, for 16 and 32 bits.
+	 */
+	int		r_depths;
+	unsigned long	r_rgb[2][3];
+	void		(*r_setdepth)();	/* (bits): the card's pixels from now */
 };
 
 extern int am_rtgattach();	/* (struct am_rtg *) 0, or EBUSY once in use */

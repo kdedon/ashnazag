@@ -5,13 +5,18 @@
 #define MIG_RTG_HEADER_SIZE 8192UL
 #define MIG_RTG_MAP_SIZE MIG_RTG_HEADER_SIZE
 #define MIG_RTG_MAGIC 0x4d525447U
-#define MIG_RTG_VERSION 3U
+#define MIG_RTG_VERSION 4U
 /* the display session's memory: the card's video RAM */
 #define MIG_RTG_VRAM 0x30000000UL
 #define MIG_RTG_VRAM_MAX (16UL * 1024 * 1024)
 /* RAM after the session's memory for bitmaps not shown: windows, icons */
 #define MIG_RTG_EXTRA (4UL * 1024 * 1024)
+/* P96 pixel formats (RGBFB_*) the card can show; formats holds 1 << each */
 #define MIG_RTG_INDEX8 1U
+#define MIG_RTG_B8G8R8A8 9U
+#define MIG_RTG_A8R8G8B8 6U
+#define MIG_RTG_R5G6B5PC 4U
+#define MIG_RTG_R5G6B5 10U
 #define MIG_RTG_NATIVE 0U
 #define MIG_RTG_VISIBLE 1U
 #define MIG_RTG_BLANK 2U
@@ -65,6 +70,13 @@ struct mig_rtg {
      * guest has it.
      */
     volatile unsigned int track, ram, inram;
+    /*
+     * The screen formats the session can show, 1 << format; the card
+     * shows format.  Screens deeper than 8 bits are always copied.
+     */
+    unsigned int formats;
+    /* the display helper's count of the session coming to the front */
+    volatile unsigned int shows;
 };
 typedef char mig_rtg_fits[sizeof(struct mig_rtg) <= MIG_RTG_HEADER_SIZE - 256 ? 1 : -1];
 
@@ -75,5 +87,6 @@ void mig_rtg_init(struct mig_rtg *, unsigned int, unsigned int, unsigned int,
     unsigned int, unsigned int);
 int mig_rtg_snapshot(const volatile struct mig_rtg *, struct mig_rtg *,
     unsigned int, unsigned int);
+unsigned int mig_rtg_bpp(unsigned int);
 
 #endif

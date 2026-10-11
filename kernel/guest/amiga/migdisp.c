@@ -21,6 +21,15 @@
 extern int munmap();
 
 int migkick = -1;
+/*
+ * The session's modes at the display's size for 1, 2 and 4 bytes a pixel,
+ * with their ids, and the screen formats they show as P96 format bits.
+ */
+static struct fbinfo migdisp_mode[3];
+static unsigned long modeid[3];
+unsigned int migdisp_formats;
+/* the guest's part of the session: the 8-bit frame, page-rounded */
+unsigned long migdisp_gsize;
 /* the boot menu asked for: the guest finds it in the input page */
 int migmenu;
 extern int mig_fs_bell;
@@ -93,13 +102,14 @@ static void drawstatus(unsigned char *fb, struct fbinfo *fi)
  * The card draws straight into the session's memory, the display while in
  * front; this keeps the colour table in step.  Returns -1 on error.
  */
+static int cmapstale;
 static int cmap(int fd, struct mig_rtg *s, int status)
 {
     static int shown = -1;
     static unsigned short pal[3][256];
     struct fbcmap cm;
     unsigned int i;
-    int changed = status != shown;
+    int changed = status != shown || cmapstale;
     for (i = 0; i < 256; i++) {
         unsigned short r = status == MIG_RTG_VISIBLE ? s->palette[i][0] : 0;
         unsigned short g = status == MIG_RTG_VISIBLE ? s->palette[i][1] : 0;
@@ -108,6 +118,7 @@ static int cmap(int fd, struct mig_rtg *s, int status)
         pal[0][i] = r; pal[1][i] = g; pal[2][i] = b;
     }
     shown = status;
+    cmapstale = 0;
     if (!changed) return 0;
     cm.cm_start = 0; cm.cm_count = 256;
     cm.cm_red = pal[0]; cm.cm_green = pal[1]; cm.cm_blue = pal[2];
@@ -180,8 +191,10 @@ static int ptake(volatile struct mig_rtg *s)
  */
 static int pointer(unsigned char *fb, struct fbinfo *fi, struct mig_rtg *r, int visible)
 {
+    static unsigned int pfmt = MIG_RTG_INDEX8;
     volatile struct mig_rtg *s = (volatile struct mig_rtg *)MIG_RTG_BASE;
-    unsigned long origin, end = MIG_RTG_VRAM + fi->fi_size;
+    unsigned long origin, end = MIG_RTG_VRAM + migdisp_gsize, lo, hi;
+    int keep = 1;
     unsigned char *p;
     int x, y, x0, y0, x1, y1;
     unsigned int c;
@@ -195,7 +208,14 @@ static int pointer(unsigned char *fb, struct fbinfo *fi, struct mig_rtg *r, int 
     if (s->pshown && s->px0 >= 0 && s->py0 >= 0 && s->px1 - s->px0 <= 16 &&
         s->py1 - s->py0 <= 48 && s->px0 < s->px1 && s->py0 < s->py1 &&
         fits(s->porigin, s->pstride, s->px1, s->py1, end)) {
-        for (y = s->py0; y < s->py1; y++) {
+        /* a screen of another format over the old pointer has its own pixels there */
+        lo = s->porigin + s->py0 * s->pstride + s->px0;
+        hi = s->porigin + (s->py1 - 1) * s->pstride + s->px1;
+        origin = r->vram + r->offset;
+        if (r->format != pfmt && r->on == MIG_RTG_VISIBLE && lo < origin +
+            (r->height - 1) * r->stride + r->width * mig_rtg_bpp(r->format) && hi > origin)
+            keep = 0;
+        for (y = s->py0; keep && y < s->py1; y++) {
             p = fb + (s->porigin - MIG_RTG_VRAM) + y * s->pstride;
             for (x = s->px0; x < s->px1; x++)
                 if (p[x] == s->pdrawn[y - s->py0][x - s->px0])
@@ -203,12 +223,14 @@ static int pointer(unsigned char *fb, struct fbinfo *fi, struct mig_rtg *r, int 
         }
     }
     s->pshown = 0;
+    pfmt = r->format;
     origin = r->vram + r->offset;
     x0 = cur.x < 0 ? 0 : cur.x; y0 = cur.y < 0 ? 0 : cur.y;
     x1 = cur.x + (int)cur.w; y1 = cur.y + (int)cur.h;
     if (x1 > (int)r->width) x1 = r->width;
     if (y1 > (int)r->height) y1 = r->height;
-    if (visible && cur.on && x0 < x1 && y0 < y1 && fits(origin, r->stride, x1, y1, end)) {
+    if (visible && cur.on && r->format == MIG_RTG_INDEX8 && x0 < x1 && y0 < y1 &&
+        fits(origin, r->stride, x1, y1, end)) {
         for (y = y0; y < y1; y++) {
             p = fb + (origin - MIG_RTG_VRAM) + y * r->stride;
             for (x = x0; x < x1; x++) {
@@ -233,6 +255,7 @@ static int pointer(unsigned char *fb, struct fbinfo *fi, struct mig_rtg *r, int 
  * centred, with the pointer drawn over them from the copy.
  */
 static unsigned char *shadow;
+static unsigned long shadowsize;
 static int cshown, cx0, cy0, cx1, cy1;
 
 /* rows of N bytes, N a multiple of 4 on 4-byte boundaries, are equal */
@@ -245,19 +268,38 @@ static int same(const unsigned char *a, const unsigned char *b, unsigned int n)
     return 1;
 }
 
-/* the screen's rows from SRC, stride apart, changed or all, to the display */
+/*
+ * The screen's rows, stride apart, changed or all, to the display: from
+ * SRC, or read at ORIGIN through PROC a block at a time.  Returns the rows
+ * copied, or -1 if the guest's memory could not be read.
+ */
 static int copyrows(unsigned char *fb, struct fbinfo *fi, struct mig_rtg *s, int full,
-    const unsigned char *src0)
+    const unsigned char *src0, int proc, unsigned long origin)
 {
-    unsigned int y, xoff = (fi->fi_width - s->width) / 2, yoff = (fi->fi_height - s->height) / 2;
+    static unsigned char buf[65536];
+    unsigned int bpp = mig_rtg_bpp(s->format), w = s->width * bpp, k = 0, n = 0;
+    unsigned int y, xoff = (fi->fi_width - s->width) / 2 * bpp, yoff = (fi->fi_height - s->height) / 2;
     const unsigned char *src;
+    unsigned long at;
     int rows = 0;
     for (y = 0; y < s->height; y++) {
-        src = src0 + y * s->stride;
-        if (!full && same(shadow + y * s->width, src, s->width)) continue;
-        memcpy(shadow + y * s->width, src, s->width);
-        memcpy(fb + fi->fi_offset + (yoff + y) * fi->fi_rowbytes + xoff,
-            shadow + y * s->width, s->width);
+        if (src0)
+            src = src0 + y * s->stride;
+        else {
+            if (k == n) {
+                n = sizeof buf / s->stride;
+                if (n > s->height - y) n = s->height - y;
+                at = origin + y * s->stride;
+                if (!n || lseek(proc, (off_t)at, SEEK_SET) != (off_t)at ||
+                    read(proc, (char *)buf, (n - 1) * s->stride + w) != (int)((n - 1) * s->stride + w))
+                    return -1;
+                k = 0;
+            }
+            src = buf + k++ * s->stride;
+        }
+        if (!full && same(shadow + y * w, src, w)) continue;
+        memcpy(shadow + y * w, src, w);
+        memcpy(fb + fi->fi_offset + (yoff + y) * fi->fi_rowbytes + xoff, shadow + y * w, w);
         rows++;
     }
     return rows;
@@ -274,7 +316,7 @@ static void copypointer(unsigned char *fb, struct fbinfo *fi, struct mig_rtg *s)
             memcpy(fb + fi->fi_offset + (yoff + y) * fi->fi_rowbytes + xoff + cx0,
                 shadow + y * s->width + cx0, cx1 - cx0);
     cshown = 0;
-    if (!cur.on || !cur.w || !cur.h) return;
+    if (!cur.on || !cur.w || !cur.h || s->format != MIG_RTG_INDEX8) return;
     cx0 = cur.x < 0 ? 0 : cur.x; cy0 = cur.y < 0 ? 0 : cur.y;
     cx1 = cur.x + (int)cur.w; cy1 = cur.y + (int)cur.h;
     if (cx1 > (int)s->width) cx1 = s->width;
@@ -286,24 +328,6 @@ static void copypointer(unsigned char *fb, struct fbinfo *fi, struct mig_rtg *s)
             if ((c = cur.img[y - cur.y][x - cur.x] & 3) != 0) row[x] = pen[c];
     }
     cshown = 1;
-}
-
-/*
- * The screen at card address ORIGIN, as the guest maps it: a copy read
- * through /proc into a buffer, or 0.
- */
-static const unsigned char *guestrows(int proc, unsigned long origin, unsigned long n)
-{
-    static unsigned char *buf;
-    static unsigned long size;
-    if (n > size) {
-        free(buf);
-        if (!(buf = (unsigned char *)malloc(n))) { size = 0; return 0; }
-        size = n;
-    }
-    if (lseek(proc, (off_t)origin, SEEK_SET) != (off_t)origin || read(proc, (char *)buf, n) != (int)n)
-        return 0;
-    return buf;
 }
 
 /* asks the guest to move the display's part of card memory; 0 once moved */
@@ -381,6 +405,12 @@ static void alert(unsigned char *fb, struct fbinfo *fi, volatile struct mig_earl
     a->done = a->seq;
 }
 
+/* the doorbell wait ends for the session coming to the front */
+static void woken(int sig)
+{
+    (void)sig;
+}
+
 static void watch(int fd, int go, int ack, unsigned char *fb, struct fbinfo *fi, pid_t guest)
 {
     volatile struct mig_early_status *early = (volatile struct mig_early_status *)MIG_EARLY_STATUS;
@@ -399,7 +429,8 @@ static void watch(int fd, int go, int ack, unsigned char *fb, struct fbinfo *fi,
     int other, away = 0, proc = -1;
     int status, bound = 0, warned = 0, bad = 0, last = -1;
     int moved, changed, laststatus = -1, copying = 0, full, rows, idle = 0;
-    unsigned int lastw = 0, lasth = 0;
+    unsigned int lastw = 0, lasth = 0, lastfmt = 0, fmt = MIG_RTG_INDEX8, bpp, shows = 0;
+    struct fbinfo *m = fi;
     unsigned int lastoff = 0, laststride = 0;
     long next = 0;
     memset(&aw, 0, sizeof aw);
@@ -462,7 +493,10 @@ static void watch(int fd, int go, int ack, unsigned char *fb, struct fbinfo *fi,
          * display's part of card memory to RAM and the screen is copied;
          * the display-sized screen back in front moves it back.
          */
-        other = status == MIG_RTG_VISIBLE && !rtg.copy && (rtg.offset || rtg.stride != rtg.vstride);
+        /* deeper screens are copied: the session keeps only an 8-bit frame while hidden */
+        bpp = mig_rtg_bpp(rtg.format);
+        other = status == MIG_RTG_VISIBLE && !rtg.copy &&
+            (bpp > 1 || rtg.offset || rtg.stride != rtg.vstride);
         if (status == MIG_RTG_VISIBLE && proc >= 0 && other != away) {
             /* the pointer out of the screen being moved first */
             if (other && pointer(fb, fi, &rtg, 0) < 0) {
@@ -486,7 +520,19 @@ static void watch(int fd, int go, int ack, unsigned char *fb, struct fbinfo *fi,
             miglog(0, "RTG screen at %u, rows %u apart: outside the display", rtg.offset, rtg.stride);
             warned = 1;
         }
-        if (cmap(fd, &rtg, status) < 0) {
+        /* the session takes the shown screen's format */
+        if (status == MIG_RTG_VISIBLE && rtg.format != fmt) {
+            if (ioctl(fd, FBIOSMODE, modeid[bpp >> 1]) < 0)
+                miglog(0, "RTG screen format %u: %s", rtg.format, strerror(errno));
+            else {
+                miglog(0, "RTG screen format %u, %u bits, rows %u at %u", rtg.format, bpp * 8,
+                    rtg.stride, rtg.offset);
+                fmt = rtg.format;
+                m = bpp > 1 ? &migdisp_mode[bpp >> 1] : fi;
+                cmapstale = 1;
+            }
+        }
+        if (fmt == MIG_RTG_INDEX8 && cmap(fd, &rtg, status) < 0) {
             perror("startmig: RTG palette");
             return;
         }
@@ -498,23 +544,28 @@ static void watch(int fd, int go, int ack, unsigned char *fb, struct fbinfo *fi,
             live->drawn = 0;
             MIG_RTG_BARRIER();
             origin = rtg.vram + rtg.offset;
-            if (!fits(origin, rtg.stride, rtg.width, rtg.height,
+            if (rtg.format != fmt || !fits(origin, rtg.stride, rtg.width * bpp, rtg.height,
                 rtg.copy ? MIG_RTG_VRAM + MIG_RTG_EXTRA : end))
                 continue;
-            src = rtg.copy ? (const unsigned char *)origin :
-                guestrows(proc, origin, (rtg.height - 1) * rtg.stride + rtg.width);
-            if (!src)
-                continue;
-            full = !copying || rtg.width != lastw || rtg.height != lasth;
+            src = rtg.copy ? (const unsigned char *)origin : 0;
+            full = !copying || rtg.width != lastw || rtg.height != lasth || fmt != lastfmt ||
+                live->shows != shows;
+            shows = live->shows;
             if (!live->copies)
                 miglog(0, "RTG screen %ux%u copied to the display", rtg.width, rtg.height);
             live->copies++;
             if (full) {
-                if (!shadow && !(shadow = (unsigned char *)malloc(fi->fi_width * fi->fi_height)))
-                    return;
-                memset(fb + fi->fi_offset, 0, fi->fi_rowbytes * fi->fi_height);
+                if (shadowsize < fi->fi_width * fi->fi_height * bpp) {
+                    free(shadow);
+                    shadowsize = fi->fi_width * fi->fi_height * bpp;
+                    if (!(shadow = (unsigned char *)malloc(shadowsize))) {
+                        miglog(0, "no memory for the screen copy");
+                        return;
+                    }
+                }
+                memset(fb + m->fi_offset, 0, m->fi_rowbytes * m->fi_height);
                 cshown = 0;
-                lastw = rtg.width; lasth = rtg.height;
+                lastw = rtg.width; lasth = rtg.height; lastfmt = fmt;
             }
             copying = 1;
             moved = cursor_read();
@@ -522,7 +573,10 @@ static void watch(int fd, int go, int ack, unsigned char *fb, struct fbinfo *fi,
                 memcpy(curpal, rtg.palette, sizeof curpal);
                 pens(&rtg);
             }
-            rows = copyrows(fb, fi, &rtg, full, src);
+            if ((rows = copyrows(fb, m, &rtg, full, src, proc, origin)) < 0) {
+                copying = 0;
+                continue;
+            }
             idle = rows ? 0 : idle + 1;
             if (moved || rows || full)
                 copypointer(fb, fi, &rtg);
@@ -531,7 +585,8 @@ static void watch(int fd, int go, int ack, unsigned char *fb, struct fbinfo *fi,
         /* the pointer again after a move, a new shape or palette, or the card's drawing */
         moved = cursor_read();
         changed = moved || memcmp(curpal, rtg.palette, sizeof curpal) ||
-            rtg.offset != lastoff || rtg.stride != laststride || status != laststatus;
+            rtg.offset != lastoff || rtg.stride != laststride || status != laststatus ||
+            rtg.format != lastfmt;
         if (changed || (status == MIG_RTG_VISIBLE && cur.on && !((volatile struct mig_rtg *)MIG_RTG_BASE)->pshown)) {
             if (changed) {
                 memcpy(curpal, rtg.palette, sizeof curpal);
@@ -542,7 +597,7 @@ static void watch(int fd, int go, int ack, unsigned char *fb, struct fbinfo *fi,
                 curpal[0][0] ^= 1;
                 continue;
             }
-            lastoff = rtg.offset; laststride = rtg.stride; laststatus = status;
+            lastoff = rtg.offset; laststride = rtg.stride; laststatus = status; lastfmt = rtg.format;
         }
     }
 }
@@ -575,6 +630,67 @@ static void input_read(int fd, struct evinfo *info, int hidden,
             events[i].ie_type, events[i].ie_code, events[i].ie_value);
 }
 
+/* the P96 format of a mode's pixels, or 0 */
+static unsigned int format(struct fbinfo *f)
+{
+    if (f->fi_layout != FBL_PACKED) return 0;
+    if (f->fi_depth == 8) return f->fi_cmapsize >= 256 ? MIG_RTG_INDEX8 : 0;
+    if (f->fi_visual != FBV_TRUE) return 0;
+    if (f->fi_depth == 16 && f->fi_rmask == 0xf800 && f->fi_gmask == 0x07e0 && f->fi_bmask == 0x001f)
+        return MIG_RTG_R5G6B5;
+    if (f->fi_depth == 32 && f->fi_rmask == 0xff0000 && f->fi_gmask == 0xff00 && f->fi_bmask == 0xff)
+        return MIG_RTG_A8R8G8B8;
+    if (f->fi_depth == 32 && f->fi_rmask == 0xff00 && f->fi_gmask == 0xff0000 &&
+        f->fi_bmask == 0xff000000UL)
+        return MIG_RTG_B8G8R8A8;
+    return 0;
+}
+
+/*
+ * The card's deeper modes at the display's size and mapping, on an Amiga
+ * host, where a session's mode is its own.  The session ends in the
+ * 8-bit one, and fi with it.
+ */
+static void modes(int fd, struct fbinfo *fi)
+{
+    struct fbmodeinfo mi[16];
+    struct fbmodes ms;
+    struct fbinfo f;
+    unsigned int i, n, fmt, b;
+    migdisp_mode[0] = *fi;
+    migdisp_formats = 1U << MIG_RTG_INDEX8;
+    ms.ms_count = 16; ms.ms_modes = mi;
+    if (fi->fi_type != FBT_AMIGA || ioctl(fd, FBIOGMODES, &ms) < 0) return;
+    n = ms.ms_count < 16 ? ms.ms_count : 16;
+    for (i = 0; i < n && !modeid[0]; i++)
+        if (mi[i].mi_width == fi->fi_width && mi[i].mi_height == fi->fi_height &&
+            mi[i].mi_depth == 8 && mi[i].mi_id != fi->fi_mode &&
+            ioctl(fd, FBIOSMODE, mi[i].mi_id) == 0 && ioctl(fd, FBIOGINFO, &f) == 0 &&
+            format(&f) == MIG_RTG_INDEX8 && f.fi_size == fi->fi_size)
+            modeid[0] = mi[i].mi_id;
+    if (!modeid[0]) return;
+    for (i = 0; i < n; i++) {
+        if (mi[i].mi_width != fi->fi_width || mi[i].mi_height != fi->fi_height ||
+            (mi[i].mi_depth != 16 && mi[i].mi_depth != 32) ||
+            ioctl(fd, FBIOSMODE, mi[i].mi_id) < 0 || ioctl(fd, FBIOGINFO, &f) < 0)
+            continue;
+        b = f.fi_depth / 16;
+        if ((fmt = format(&f)) == 0 || f.fi_size != fi->fi_size || !f.fi_rowbytes ||
+            f.fi_offset > f.fi_size || f.fi_rowbytes < f.fi_width * (f.fi_depth / 8) ||
+            f.fi_height > (f.fi_size - f.fi_offset) / f.fi_rowbytes)
+            continue;
+        migdisp_mode[b] = f;
+        modeid[b] = mi[i].mi_id;
+        migdisp_formats |= 1U << fmt;
+    }
+    if (ioctl(fd, FBIOSMODE, modeid[0]) < 0 || ioctl(fd, FBIOGINFO, &f) < 0) {
+        migdisp_formats = 1U << MIG_RTG_INDEX8;
+        return;
+    }
+    *fi = migdisp_mode[0] = f;
+    miglog(0, "display formats %#x", migdisp_formats);
+}
+
 /*
  * The display session, opened before the helpers fork so that the guest
  * maps the same one as its card's memory.  Returns the fd, or -1.
@@ -597,6 +713,8 @@ int migdisp_open(struct fbinfo *fi)
         fprintf(stderr, "startmig: display requires a packed 8-bit framebuffer with 256 colors\n");
         close(fd); return -1;
     }
+    migdisp_gsize = (fi->fi_offset + fi->fi_rowbytes * fi->fi_height + 4095) & ~4095UL;
+    modes(fd, fi);
     /* write-through keeps reads cached for the card's blits */
     if (ioctl(fd, FBIOCACHE, FBC_WT) < 0 && ioctl(fd, FBIOCACHE, FBC_CI) < 0) {
         perror("startmig: framebuffer cache mode"); close(fd); return -1;
@@ -629,6 +747,7 @@ int migdisp(int ready, int life, int go, int ack, int fd, struct fbinfo *fip)
     p[3].fd = input_open("/dev/mouse", fd, &mouseinfo);
     if (p[2].fd < 0 || p[3].fd < 0)
         fprintf(stderr, "startmig: one or more session input devices unavailable\n");
+    sigset(SIGUSR2, woken);
     watcher = fork();
     if (watcher == 0) {
         close(ready); close(life);
@@ -662,8 +781,12 @@ int migdisp(int ready, int life, int go, int ack, int fd, struct fbinfo *fip)
                     ioctl(migkick, AMIGAIOC_KICK, guest);
                 }
             }
-            if (note.fn_type == FBN_SHOWN) hidden = 0;
-            if (note.fn_type == FBN_MODE) break;
+            /* past the 8-bit frame the display was not kept: the watcher copies all */
+            if (note.fn_type == FBN_SHOWN) {
+                hidden = 0;
+                ((struct mig_rtg *)MIG_RTG_BASE)->shows++;
+                kill(watcher, SIGUSR2);
+            }
         }
         kick = input->head == input->tail;
         if (p[2].revents & POLLIN)

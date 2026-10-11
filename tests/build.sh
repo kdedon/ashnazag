@@ -31,6 +31,8 @@ LIBGCC=$(ls "$TC"/lib/gcc-lib/m68k-cbm-sysv4/*/libgcc.a | tail -1)
 CC295=$AUX/toolchain/amix-gcc295/bin/m68k-cbm-sysv4-gcc
 LIBGCC295=$(ls "$AUX"/toolchain/amix-gcc295/lib/gcc-lib/m68k-cbm-sysv4/*/libgcc.a 2>/dev/null | tail -1)
 [ -x "$CC295" ] || CC295=$CC
+# t_gl's library (gl/build.sh); without it t_gl skips
+GLW=${GLW:-$AUX/images/work/gl}
 
 # nonshared libc members, without the libc.so.1 member itself
 if [ ! -f "$O/libextra.a" ]; then
@@ -75,6 +77,17 @@ for s in ${ONLY:-"$T"/src/t_*.c "$T/src/runall.c"}; do
 		cc295 "$T/src/t_arith.c" "$O/cc295_arith.o" $XA
 		cc295 "$T/src/t.c" "$O/cc295_t.o"
 		link "$BIN/cc295_arith" "$O/cc295_arith.o" "$O/cc295_t.o" $LIBGCC295
+		echo "[ok] $n"
+		continue
+	fi
+	if [ $n = t_gl ]; then
+		if [ -f "$GLW/lib/libOSMesa.a" ] && [ "$CC295" != "$CC" ]; then
+			cc295 "$s" "$O/$n.o" -m68040 -D_XOPEN_SOURCE -I"$GLW/include"
+			link "$BIN/$n" "$O/$n.o" "$O/t.o" "$GLW/lib/libOSMesa.a" $LIBGCC295
+		else
+			cc "$s" "$O/$n.o" -DNOGL
+			link "$BIN/$n" "$O/$n.o" "$O/t.o"
+		fi
 		echo "[ok] $n"
 		continue
 	fi

@@ -1,0 +1,10 @@
+--- a/src/mmath.h
++++ b/src/mmath.h
+@@ -204,6 +204,7 @@
+ 
+ 
+ #if defined(__i386__) || defined(__sparc__) || defined(__s390x__) || \
++    defined(__m68k__) || \
+     defined(__powerpc__) || \
+     ( defined(__alpha__) && ( defined(__IEEE_FLOAT) || !defined(VMS) ) )
+ #define USE_IEEE

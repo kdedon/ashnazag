@@ -52,6 +52,11 @@ x11() {
 	has "X11R6.3 sources (setup.sh --x11)" f "$AUX/ref/x11r6.3/dist/xc-3.tar.gz"
 	has "x11r6.3-amix (setup.sh --x11)" f "$AUX/ref/x11r6.3-amix/overlay"
 }
+gl() {
+	suite
+	has "gcc 2.95.3 (sh toolchain/build-gcc295.sh)" f "$TC/amix-gcc295/bin/m68k-cbm-sysv4-gcc"
+	has "Mesa 5.0.2 (setup.sh --gl)" f "$AUX/ref/mesa/dist/MesaLib-5.0.2.tar.gz"
+}
 mac() {
 	x11
 	has "Mac OS 7.6.1 CD (--macos761)" f "$AUX/media/Mac OS 7.6.1.iso"
@@ -75,12 +80,12 @@ falcon() {
 	has "cmake (for kernel/atari/build-hatari.sh)" sh -c 'command -v cmake || [ -d "$1/ref/hatari" ]' - "$AUX"
 }
 
-[ $# -gt 0 ] || set -- kernel suite disk x11 mac tos amiga falcon
+[ $# -gt 0 ] || set -- kernel suite disk x11 gl mac tos amiga falcon
 want=$*
-[ $# -gt 0 ] && [ "$want" = "kernel suite disk x11 mac tos amiga falcon" ] && all=1
+[ $# -gt 0 ] && [ "$want" = "kernel suite disk x11 gl mac tos amiga falcon" ] && all=1
 bad=0
 for t in "$@"; do
-	case $t in kernel|suite|disk|x11|mac|tos|amiga|falcon) ;; *) echo "unknown target $t"; exit 2 ;; esac
+	case $t in kernel|suite|disk|x11|gl|mac|tos|amiga|falcon) ;; *) echo "unknown target $t"; exit 2 ;; esac
 	miss=0
 	echo "$t:"
 	out=$($t)

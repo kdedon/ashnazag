@@ -38,6 +38,8 @@ static char *amiga_device;
 
 extern int mprotect(), munmap();
 extern int migdisp(), migdisp_open(), migkick, migmenu;
+extern unsigned int migdisp_formats;
+extern unsigned long migdisp_gsize;
 
 static unsigned char rombuf[ROMSIZE];
 static int displaylife = -1, gofd = -1;
@@ -390,17 +392,21 @@ movecard(sig)
         was = *intenar & 0x4000 ? 0xc000 : 0x4000;
         *intena = 0x4000;
     }
+    /* the display seen through a second mapping meanwhile: no second copy in RAM */
     if (want != r->inram &&
-        (t = mmap((caddr_t)0, winsize, PROT_READ | PROT_WRITE, MAP_PRIVATE, zfd, 0)) != (caddr_t)-1) {
-        memcpy(t, (char *)MIG_RTG_VRAM, winsize);
-        m = want ? mmap((caddr_t)MIG_RTG_VRAM, winsize, PROT_READ | PROT_WRITE,
-            MAP_PRIVATE | MAP_FIXED, zfd, 0) :
-            mmap((caddr_t)MIG_RTG_VRAM, winsize, PROT_READ | PROT_WRITE,
-            MAP_SHARED | MAP_FIXED, movefd, 0);
-        if (m != (caddr_t)-1) {
-            memcpy((char *)MIG_RTG_VRAM, t, winsize);
-            r->inram = want;
+        (t = mmap((caddr_t)0, winsize, PROT_READ | PROT_WRITE, MAP_SHARED, movefd, 0)) != (caddr_t)-1) {
+        if (want) {
+            m = mmap((caddr_t)MIG_RTG_VRAM, winsize, PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_FIXED, zfd, 0);
+            if (m != (caddr_t)-1)
+                memcpy((char *)MIG_RTG_VRAM, t, winsize);
+        } else {
+            memcpy(t, (char *)MIG_RTG_VRAM, winsize);
+            m = mmap((caddr_t)MIG_RTG_VRAM, winsize, PROT_READ | PROT_WRITE,
+                MAP_SHARED | MAP_FIXED, movefd, 0);
         }
+        if (m != (caddr_t)-1)
+            r->inram = want;
         munmap(t, winsize);
     }
     write(ackfd, &c, 1);
@@ -421,8 +427,8 @@ displaygone(sig)
     _exit(1);
 }
 
-/* the session's mapping, page-rounded; the card's RAM follows */
-#define VRAMEND(fi) (MIG_RTG_VRAM + (((fi)->fi_size + pagesize - 1) & ~(pagesize - 1)))
+/* the guest's part of the session, page-rounded; the card's RAM follows */
+#define VRAMEND(fi) (MIG_RTG_VRAM + migdisp_gsize)
 static unsigned long pagesize = 4096;
 
 static unsigned int
@@ -534,7 +540,7 @@ native(fi, root, w, h)
 	char *root;
 	unsigned long *w, *h;
 {
-	unsigned long n, m, i;
+	unsigned long n, m, i, id, d;
 	long len;
 	int p96 = 0;
 	*w = 640; *h = 480;
@@ -549,16 +555,22 @@ native(fi, root, w, h)
 	memcpy(scrm[1], scrm[0], m);
 	for (i = 12; (len = chunk(scrm[1], i, m)) >= 0; i += 8 + ((len + 1) & ~1L))
 		if (!memcmp(scrm[1] + i, "SCRM", 4) && len >= 28) {
-			if (p96 && get32(scrm[1] + i + 24) == NATIVE_ID) {
+			id = get32(scrm[1] + i + 24);
+			if (p96 && (id & ~0xfffUL) == NATIVE_ID) {
+				/* a depth the display lacks: 8 bits */
+				d = get16(scrm[1] + i + 32);
+				if (!(d > 8 && d <= 16 && migdisp_formats & 1U << MIG_RTG_R5G6B5) &&
+				    !(d > 16 && migdisp_formats & (1U << MIG_RTG_B8G8R8A8 | 1U << MIG_RTG_A8R8G8B8)))
+					put32(scrm[1] + i + 24, NATIVE_ID), d = 8;
 				put16(scrm[1] + i + 28, fi->fi_width);
 				put16(scrm[1] + i + 30, fi->fi_height);
-				put16(scrm[1] + i + 32, 8);
+				put16(scrm[1] + i + 32, d);
 				mig_hostfs_overlay(scrmpath, scrm[0], scrm[1], m);
 			}
 			smode = scrm[1] + i + 24;
 			*w = get16(scrm[1] + i + 28);
 			*h = get16(scrm[1] + i + 30);
-			return p96 && get32(scrm[1] + i + 24) == NATIVE_ID;
+			return p96 && (id & ~0xfffUL) == NATIVE_ID;
 		}
 	return 0;
 }
@@ -771,6 +783,7 @@ vram(fi, w, h)
 		r->copy = r->track = 1;
 	}
 	r->cursor = 1;
+	r->formats = migdisp_formats;
 	miglog(0, "card memory: %lu KB %s (%lux%lu screen, display %lux%lu rows %lu)",
 	    r->memory_size >> 10, direct ? "is the display" : "in RAM, copied",
 	    w, h, fi->fi_width, fi->fi_height, rb);
@@ -794,7 +807,7 @@ pretouch(fi, fd)
 		poll((struct pollfd *)0, 0, 20);
 	if (i == 100)
 		miglog(0, "display session %ld not in front (%ld)", st.st_session, st.st_front);
-	for (i = 0; i < fi->fi_size; i += pagesize)
+	for (i = 0; i < migdisp_gsize; i += pagesize)
 		sum += p[i];
 	(void)sum;
 }
@@ -1160,7 +1173,7 @@ main(argc, argv)
 		if (ack[0] >= 0)
 			close(ack[0]);
 		if (direct) {
-			if (mmap((caddr_t)MIG_RTG_VRAM, fi.fi_size, PROT_READ | PROT_WRITE,
+			if (mmap((caddr_t)MIG_RTG_VRAM, migdisp_gsize, PROT_READ | PROT_WRITE,
 			    MAP_SHARED | MAP_FIXED, dfd, 0) == (caddr_t)-1)
 				fail("display mapping");
 			pretouch(&fi, dfd);
