@@ -48,7 +48,9 @@
 #define DRM_IOCTL_ARGS		dev_t kdev, u_long cmd, caddr_t data, int flags, DRM_STRUCTPROC *p
 #define DRM_SUSER(p)		drv_priv((p)->p_cred)
 #define DRM_IRQ_ARGS		char *arg
-#define DRM_DEVICE		drm_device_t *dev = &DRM(softc)[getminor(kdev)]
+/* one card; each open has a minor of its own, which names its file */
+#define DRM_DEVICE		drm_device_t *dev = &DRM(softc)[0]
+#define DRM_NMINOR		64
 #define DRM_MALLOC(size)	DRM(amix_malloc)(size)
 #define DRM_FREE(pt)		DRM(amix_mfree)(pt)
 #define DRM_VTOPHYS(addr)	vtophys(addr)
@@ -59,7 +61,7 @@
 #define DRM_WRITE32(addr, val)	(*(volatile u32 *)(addr) = DRM(swab32)(val))
 #define DRM_ERR(v)		v
 #define DRM_PRIV							\
-	drm_file_t *priv = (drm_file_t *)DRM(find_file_by_proc)(dev, p); \
+	drm_file_t *priv = DRM(find_file_by_minor)(dev, getminor(kdev)); \
 	if (!priv) {							\
 		DRM_DEBUG("can't find authenticator\n");		\
 		return EINVAL;						\
@@ -354,7 +356,7 @@ extern int		DRM(close)(dev_t kdev, int flags, int fmt, DRM_STRUCTPROC *p);
 extern int		DRM(mmap)(dev_t kdev, off_t offset, int prot);
 extern int		DRM(open_helper)(dev_t kdev, int flags, int fmt,
 			    DRM_STRUCTPROC *p, drm_device_t *dev);
-extern drm_file_t	*DRM(find_file_by_proc)(drm_device_t *dev, DRM_STRUCTPROC *p);
+extern drm_file_t	*DRM(find_file_by_minor)(drm_device_t *dev, int minor);
 extern int		DRM(tsleep)(caddr_t chan, int timo);
 extern void		*DRM(amix_malloc)(unsigned long size);
 extern void		DRM(amix_mfree)(void *pt);

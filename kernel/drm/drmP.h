@@ -290,6 +290,7 @@ struct drm_file {
 	struct drm_device *devXX;
 #ifdef __AMIX__
 	struct dssess	  *sess;	/* display session it draws for */
+	int		  owner;	/* bound by DSBIND, not by a magic */
 #endif
 };
 
@@ -316,6 +317,10 @@ typedef struct drm_lock_data {
 	pid_t		  pid;		/* PID of lock holder (0=kernel)   */
 	wait_queue_head_t lock_queue;	/* Queue of blocked processes	   */
 	unsigned long	  lock_time;	/* Time of last lock in jiffies	   */
+#ifdef __AMIX__
+	struct drm_file	  *filp;	/* holder, freed with it */
+	unsigned long	  leave;	/* lbolt a switch-away began waiting, 0 none */
+#endif
 } drm_lock_data_t;
 
 typedef struct drm_device_dma {

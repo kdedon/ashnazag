@@ -37,7 +37,11 @@ int DRM(mmap)(dev_t kdev, off_t offset, int prot)
 
 /*	DRM_DEBUG("offset = 0x%x\n", offset);*/
 
+#ifdef __AMIX__
+	priv = DRM(find_file_by_minor)(dev, getminor(kdev));
+#else
 	priv = DRM(find_file_by_proc)(dev, DRM_CURPROC);
+#endif
 	if (!priv) {
 		DRM_DEBUG("can't find authenticator\n");
 		return EINVAL;

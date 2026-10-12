@@ -154,8 +154,8 @@ MODULE_DEPEND(DRIVER_NAME, linux, 1, 1, 1);
 
 #ifdef __AMIX__
 drm_device_t DRM(softc)[DRIVER_NUM_CARDS];
-#define DRIVER_SOFTC(unit)	(&DRM(softc)[unit])
-/* clients without an X server make their own contexts */
+#define DRIVER_SOFTC(unit)	(&DRM(softc)[0])
+/* clients without an X server make their own contexts; session owners authenticate */
 #define DRM_CTX_ROOT		0
 #else
 #define DRM_CTX_ROOT		1
@@ -173,7 +173,7 @@ static drm_ioctl_desc_t		  DRM(ioctls)[] = {
 	[DRM_IOCTL_NR(DRM_IOCTL_SET_UNIQUE)]    = { DRM(setunique),   1, 1 },
 	[DRM_IOCTL_NR(DRM_IOCTL_BLOCK)]         = { DRM(block),       1, 1 },
 	[DRM_IOCTL_NR(DRM_IOCTL_UNBLOCK)]       = { DRM(unblock),     1, 1 },
-	[DRM_IOCTL_NR(DRM_IOCTL_AUTH_MAGIC)]    = { DRM(authmagic),   1, 1 },
+	[DRM_IOCTL_NR(DRM_IOCTL_AUTH_MAGIC)]    = { DRM(authmagic),   1, DRM_CTX_ROOT },
 
 	[DRM_IOCTL_NR(DRM_IOCTL_ADD_MAP)]       = { DRM(addmap),      1, 1 },
 	[DRM_IOCTL_NR(DRM_IOCTL_RM_MAP)]        = { DRM(rmmap),       1, 0 },
@@ -191,8 +191,8 @@ static drm_ioctl_desc_t		  DRM(ioctls)[] = {
 	[DRM_IOCTL_NR(DRM_IOCTL_NEW_CTX)]       = { DRM(newctx),      1, 1 },
 	[DRM_IOCTL_NR(DRM_IOCTL_RES_CTX)]       = { DRM(resctx),      1, 0 },
 
-	[DRM_IOCTL_NR(DRM_IOCTL_ADD_DRAW)]      = { DRM(adddraw),     1, 1 },
-	[DRM_IOCTL_NR(DRM_IOCTL_RM_DRAW)]       = { DRM(rmdraw),      1, 1 },
+	[DRM_IOCTL_NR(DRM_IOCTL_ADD_DRAW)]      = { DRM(adddraw),     1, DRM_CTX_ROOT },
+	[DRM_IOCTL_NR(DRM_IOCTL_RM_DRAW)]       = { DRM(rmdraw),      1, DRM_CTX_ROOT },
 
 	[DRM_IOCTL_NR(DRM_IOCTL_LOCK)]	        = { DRM(lock),        1, 0 },
 	[DRM_IOCTL_NR(DRM_IOCTL_UNLOCK)]        = { DRM(unlock),      1, 0 },
@@ -896,7 +896,11 @@ int DRM(close)(dev_t kdev, int flags, int fmt, DRM_STRUCTPROC *p)
 	int retcode = 0;
 
 	DRM_DEBUG( "open_count = %d\n", dev->open_count );
+#ifdef __AMIX__
+	priv = DRM(find_file_by_minor)(dev, minor(kdev));
+#else
 	priv = DRM(find_file_by_proc)(dev, p);
+#endif
 	if (!priv) {
 		DRM_DEBUG("can't find authenticator\n");
 		return EINVAL;
@@ -916,8 +920,13 @@ int DRM(close)(dev_t kdev, int flags, int fmt, DRM_STRUCTPROC *p)
 		   DRM_CURRENTPID, (long)&dev->device, dev->open_count);
 #endif
 
+#ifdef __AMIX__
+	if (dev->lock.hw_lock && _DRM_LOCK_IS_HELD(dev->lock.hw_lock->lock)
+	    && dev->lock.filp == priv) {
+#else
 	if (dev->lock.hw_lock && _DRM_LOCK_IS_HELD(dev->lock.hw_lock->lock)
 	    && dev->lock.pid == DRM_CURRENTPID) {
+#endif
 		DRM_DEBUG("Process %d dead, freeing lock for context %d\n",
 			  DRM_CURRENTPID,
 			  _DRM_LOCKING_CONTEXT(dev->lock.hw_lock->lock));
@@ -979,7 +988,13 @@ int DRM(close)(dev_t kdev, int flags, int fmt, DRM_STRUCTPROC *p)
 #endif /* __NetBSD__ */
 
 	DRM_LOCK;
+#ifdef __AMIX__
+	/* the file goes with this close: so does a magic nobody used */
+	if (priv->magic)
+		DRM(remove_magic)(dev, priv->magic);
+#else
 	priv = DRM(find_file_by_proc)(dev, p);
+#endif
 	if (priv) {
 		priv->refs--;
 		if (!priv->refs) {
@@ -1148,7 +1163,8 @@ int DRM(lock)( DRM_IOCTL_ARGS )
                         }
 #ifdef __AMIX__
 			/* a session's client draws only while it is in front */
-			if ( priv->sess && priv->sess != ds_front ) {
+			if ( priv->sess && priv->sess != ds_front &&
+			     !(priv->owner && (lock.flags & _DRM_LOCK_HIDDEN)) ) {
 				ret = DRM(tsleep)((caddr_t)&dev->lock.lock_queue, 0);
 				if (ret)
 					break;
@@ -1159,6 +1175,9 @@ int DRM(lock)( DRM_IOCTL_ARGS )
 					     lock.context ) ) {
                                 dev->lock.pid       = DRM_CURRENTPID;
                                 dev->lock.lock_time = jiffies;
+#ifdef __AMIX__
+				dev->lock.filp      = priv;
+#endif
                                 atomic_inc( &dev->counts[_DRM_STAT_LOCKS] );
                                 break;  /* Got lock */
                         }

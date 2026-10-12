@@ -103,6 +103,10 @@ int DRM(remove_magic)(drm_device_t *dev, drm_magic_t magic)
 				prev->next = pt->next;
 			}
 			DRM_UNLOCK;
+#ifdef __AMIX__
+			/* the entry, not the null pointer the loop ends on */
+			DRM(free)(pt, sizeof(*pt), DRM_MEM_MAGIC);
+#endif
 			return 0;
 		}
 	}
@@ -147,13 +151,25 @@ int DRM(authmagic)(DRM_IOCTL_ARGS)
 	drm_auth_t	   auth;
 	drm_file_t	   *file;
 	DRM_DEVICE;
+#ifdef __AMIX__
+	DRM_PRIV;
+#endif
 
 	DRM_COPY_FROM_USER_IOCTL(auth, (drm_auth_t *)data, sizeof(auth));
+#ifdef __AMIX__
+	if (!priv->owner && DRM_SUSER(p))
+		return EACCES;
+#endif
 
 	DRM_DEBUG("%u\n", auth.magic);
 	if ((file = DRM(find_file)(dev, auth.magic))) {
 		file->authenticated = 1;
 		DRM(remove_magic)(dev, auth.magic);
+#ifdef __AMIX__
+		/* it draws for the authenticator's session */
+		file->sess = priv->sess;
+		file->magic = 0;
+#endif
 		return 0;
 	}
 	return DRM_ERR(EINVAL);

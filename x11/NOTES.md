@@ -14,6 +14,8 @@ with the `m68k-cbm-sysv4` toolchain; clients are the stock AMIX X11R4 ones (tape
 | `patches/03-no-tcp.diff` | `os/access.c` includes `netinet/in.h` even without TCP (its interface code needs it) |
 | `patches/05-iplan2p8.diff` | `iplan2p8` (interleaved 8 bitplanes, sources copied by `tree`) in `Xamix` |
 | `patches/04-card-select.diff` | `RtgZZ9000` switch in the server, `rtg` and `amix` Imakefiles and `amixIo.c`: the ZZ9000 card is optional |
+| `patches/07-dri.diff` | `hw/amix/dri` in the server: XF86DRI and GLX initialised beside the other extensions; they add themselves only on a screen with a DRM |
+| `src/dri/` | direct rendering (`amixdri.c`), direct-only GLX (`glxamix.c`); `build.sh dri` adds XFree86 4.3's `xf86dri.c`, libdrm and GLX headers (`gl/dri/x43.sh`). Design: `docs/3d-design.md` §2.1 |
 | `src/amixEv.c` | `inev` records → the port's `InputEvent` → `amixKbdEnqueueEvent`/`amixMouseEnqueueEvent` (autorepeat, acceleration unchanged); `-mb3` |
 | `src/amixMacKeyMap.c` | ADB core keymap, keycode = ADB + 8; Command Mod1 (Meta), Option Mod2 (Mode_switch) |
 | `src/rtg/fb/fbcard.c`, `Imakefile` | the `fb` card: session, `mmap`, mfb at 1 bpp (pixel 0 white), cfb at 8 bpp with colormap install/store → `FBIOPUTCMAP`, save screen → `FBIOBLANK` |

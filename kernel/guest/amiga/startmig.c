@@ -44,7 +44,8 @@ extern int migdisp(), migdisp_open(), migkick, migmenu;
 extern unsigned int migdisp_formats;
 extern unsigned long migdisp_gsize;
 
-static unsigned char rombuf[ROMSIZE];
+/* shared: the helpers forked meanwhile reserve no copy of their own */
+static unsigned char *rombuf;
 static int displaylife = -1, gofd = -1;
 static void fail(char *);
 static int romok();
@@ -187,6 +188,13 @@ readrom(path)
 	int fd, count;
 	unsigned char extra;
 
+	if (!rombuf) {
+		if ((fd = open("/dev/zero", O_RDWR)) < 0 ||
+		    (rombuf = (unsigned char *)mmap((caddr_t)0, ROMSIZE, PROT_READ | PROT_WRITE,
+		    MAP_SHARED, fd, 0)) == (unsigned char *)-1)
+			fail("Kickstart buffer");
+		close(fd);
+	}
 	fd = open(path, O_RDONLY);
 	if (fd < 0)
 		fail(path);
@@ -396,19 +404,15 @@ movecard(sig)
 {
     volatile struct mig_rtg *r = (volatile struct mig_rtg *)MIG_RTG_BASE;
     volatile unsigned short *pv = (volatile unsigned short *)AMIGA_PV_BASE;
-    volatile unsigned short *intena = (volatile unsigned short *)0xdff09aUL;
-    volatile unsigned short *intenar = (volatile unsigned short *)0xdff01cUL;
     caddr_t t, m;
     unsigned short was;
     unsigned int want = r->ram != 0;
     char c = 1;
     (void)sig;
+    /* the kernel holds Amiga interrupts while this runs on its own stack */
     if (pvmode) {
         was = *pv;
         *pv = 0x4000;
-    } else {
-        was = *intenar & 0x4000 ? 0xc000 : 0x4000;
-        *intena = 0x4000;
     }
     /* the display seen through a second mapping meanwhile: no second copy in RAM */
     if (want != r->inram &&
@@ -431,8 +435,6 @@ movecard(sig)
     /* last: an interrupt held meanwhile reaches the guest, not this handler */
     if (pvmode)
         *pv = was;
-    else
-        *intena = was;
 }
 
 static void
@@ -1231,6 +1233,7 @@ main(argc, argv)
 	if (!hostrom) {
 		region(ROMBASE, ROMSIZE, 0);
 		memcpy((char *)ROMBASE, rombuf, ROMSIZE);
+		munmap((caddr_t)rombuf, ROMSIZE);
 		if (!probe && pv && pvstubbed) {
 			n = pvpatch((unsigned char *)ROMBASE);
 			miglog(0, "Kickstart copy: %d changes", n);

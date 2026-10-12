@@ -116,16 +116,34 @@ A Voodoo3 (WinUAE's Prometheus, 68060) stands in for the Radeon: same templates,
 | Front session | the backend calls `DRM(amix_front)` after each pan (`v3_fronthook`); lock waiters recheck `ds_front` |
 | Maps | made by the kernel at first open, in X's place: registers (BAR0, 32 MB), frame buffer (VRAM), SAREA 8 KB with the lock. `GET_MAP` lists them; unique is `PCI:bus:slot:func` |
 | SAREA memory | chip RAM: the HAT complains at unmap about a device mapping of managed (kmem) pages. Kernel lock ops push the data cache around the lock word |
-| Auth | `DRM_IOCTL_DSBIND` (`'d'`, 0x3e): an `/dev/fbN` fd of the caller's own session; returns the session id, its frame offset in the FB map and the free VRAM range. Root is authenticated as on BSD. `ADD_CTX`/`RM_CTX` need auth, not root |
-| Lock | a bound client gets the lock only while its session is in front, else sleeps (signals end the wait) |
+| Auth | `DRM_IOCTL_DSBIND` (`'d'`, 0x3e): an `/dev/fbN` fd of the caller's own session; returns the session id, its frame offset in the FB map and the free VRAM range. Root is authenticated as on BSD. A bound file (the session owner) may `AUTH_MAGIC` another file, which then draws for the owner's session: X's clients. `ADD_CTX`/`RM_CTX`, `ADD_DRAW`/`RM_DRAW` need auth, not root |
+| Lock | a bound client gets the lock only while its session is in front, else sleeps (signals end the wait). The owner's request with `_DRM_LOCK_HIDDEN` is granted while hidden: X draws its hidden session while its clients wait. libdrm always asks the kernel (no user-space CAS for the hardware lock); the drawable spin lock uses `cas.l` |
+| Switch | `ds_leavefn` around `ds_switch`: before, the kernel takes the lock (kernel context) and waits for the card to go idle (`DRIVER_IDLE`, tdfx: status bit 9); a holder gets a second, retried each tick (hotkeys) or `EBUSY` (`FBIOSWITCH`), then the switch goes ahead. After, the lock is freed and waiters recheck the front |
 | ioctl copy | `cmd` is the BSD `sys/ioccom.h` encoding (AMIX has it, 255-byte limit); the glue copies in and out |
-| Files | per process (BSD), released at the last close of the device: SVR4 calls close once |
+| Files | one per open: minor 0 clones a minor (1-63) as `/dev/fb` does; SVR4 closes each minor once, which frees its file, its magic and the lock if it holds it (a client that dies with the lock leaves it free) |
 | SG / PCI GART | `drm_scatter.h`, `ati_pcigart.h` on `opci_dmaalloc`/`opci_busaddr`; compiled, not yet run (tdfx has no DMA) |
 | Template fix | `map_count` was never counted, so `GET_MAP` always failed |
 
 Test: `drmtest` (in the Amiga test disk; `mkhdf.sh AUTORUN=` runs it at boot): RGB565 session, version, unique, bind, maps, context, lock (SAREA word `0x80000001`), a red band through the FB map, a green rectangle by the 2D engine through the register map (read back `0x07e0`), unlock, and no lock while hidden.
 
 ## 2. X server: DRI in X11R6.3 or XFree86 4.3
+
+### 2.1 As built: direct-only GLX and XF86DRI in Xamix
+
+Card-independent; a card's Mesa driver plugs in as below.
+
+| Part | As built |
+|---|---|
+| Server DRI | `x11/src/dri/amixdri.c` (new, ~550): the `fb` card calls `AmixDRIScreenInit` with its session fd; it opens `/dev/dri/card0`, `DSBIND`s, finds the kernel's SAREA and FB maps, makes its own context. Clients are authenticated by magic (`drmAuthMagic`). Drawables: a slot per window in the SAREA drawable table (256), the stamp moves on `ClipNotify`, `DestroyWindow` and drawable destroy; cliprects are the window's `clipList`, the back cliprect its box on the screen. The server holds the lock (`_DRM_LOCK_HIDDEN`) from wakeup to block while any direct drawable exists. Device private: `AMIXDRIRec` (session, size, depth, stride, front offset, free VRAM) |
+| XF86DRI protocol | 4.3's `xf86dri.c` as is, on `amixdri.h` |
+| GLX | `x11/src/dri/glxamix.c` (new, ~330): `QueryVersion` 1.2, `GetVisualConfigs` (one per X visual, double, depth 16), `CreateContext` (direct only, else `BadMatch`), `DestroyContext`, `IsDirect`, `MakeCurrent` (release only), strings, `ClientInfo`, `WaitGL`/`WaitX`. Rendering, GLX pixmaps, vendor requests: `BadRequest`. GLX and XF86DRI appear only where a screen has a DRM |
+| libdrm | 4.3's `xf86drm*.c`: `drmOpen` opens `/dev/dri/card0` and checks name or bus id; `drmDSBind`; m68k `DRM_CAS` (`cas.l`) |
+| libGL | Mesa 5.0.2's dispatcher (`X/glxapi.c`) picks 4.3's GLX client (`glxcmds`, `glxext`, `xfont`, `dri_glx`, `XF86dri`, `dri_util`, built `GLX_BUILT_IN_XMESA`) when the server has GLX and a driver took the default screen; else Mesa's Xlib renderer, as before. Contexts are always direct |
+| Drivers | linked in: `__driDrivers[]` (`{name, __driCreateScreen, __driRegisterExtensions}`) replaces dlopen. binutils 2.8.1 here builds no shared objects, and AMIX's `dlopen` has no `RTLD_GLOBAL`, so a driver `.so` could not see libGL's `_glapi_*` |
+| Sources | `gl/dri/x43.sh` extracts the 4.3 files and applies `gl/dri/patches`; `gl/build.sh` builds `libdrm.a` and `libGL.a`, `x11/build.sh dri` puts the server side in `hw/amix/dri` (`x11/patches/07-dri.diff`) |
+| Missing for a card | Xamix draws 8-bit `cfb` only: DRI drivers need a 16/32-bit TrueColor screen (`cfb16`/`cfb32` in the `fb` card); the GLX visual list from the card (depth/stencil/alpha); the card's device private and SAREA private |
+
+Test: `dritest` (`gl/src/dritest.c`, in `/usr/x11r6/bin` on the Amiga test disk with `GLBIN=`): a null DRI driver, linked under the server's driver name, runs libGL's whole set-up: DRM open, magic auth through the server, SAREA and FB maps, context, drawable; the drawable's four cliprects around a covering window, a new stamp and cliprects after the cover moves, the lock free after a client that held it exits; and a child with no driver renders a red square through Mesa's Xlib renderer.
 
 | | A: Xamix (X11R6.3) + GLX/DRI | B: XFree86 4.3 server |
 |---|---|---|
@@ -291,7 +309,7 @@ Rules from the display service:
 | 8 | Radeon DRM: kernel CP init, PCI GART on the bridge's DMA memory, §1.4 swaps; check Prometheus bus mastering | 5, 7 | **real card** |
 | 9 | r200 DRI driver with the X-less DRI host; a GL demo in a display session | 2, 8 | **real card** |
 | 10 | Warp3D on r200 | 4, 9 | **real card** |
-| 11 | Xamix: direct-only GLX + DRI extension; libGL with DRI loader | 3 (protocol part), 9 (rendering) | QEMU for the protocol, **real card** for DRI |
+| 11 | Xamix: direct-only GLX + DRI extension; libGL with DRI loader. **Done without a card driver (§2.1)**; a driver, 16/32-bit X screens and the card's visuals remain | 3 (protocol part), 9 (rendering) | WinUAE (Voodoo3) for the protocol, **real card** for DRI |
 | 12 | Options: radeon (R100) driver, Radeon 2D acceleration in Xamix, CTPCI on the CT60 | 8 | real cards |
 
 Card-free first: 1-6 and the protocol half of 11. Amiberry has no Radeon, and QEMU's q800 has no PCI.

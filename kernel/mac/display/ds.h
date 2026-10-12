@@ -162,6 +162,7 @@ extern struct dsevh ds_evh[];
 extern unsigned long ds_gen, ds_serial, ds_vblcount;
 extern unsigned long ds_nhwvbl, ds_nswvbl;
 extern void (*ds_frontfn)();	/* (s): s came to the front; at DS_HI */
+extern int (*ds_leavefn)();	/* (s, 0): s may leave the front, else EBUSY; (s, 1): it left */
 
 /* ds.c */
 int	ds_init();		/* () -> errno */

@@ -7,8 +7,9 @@
 # source from tools/setup.sh --gl.  Work tree: $GLW (default
 # images/work/gl).  Out in $GLW: lib/libOSMesa.a (core, software
 # rasteriser, OSMesa, snprintf; no threads), lib/libGL.a (the same with the
-# Xlib driver, when $X11W has the X client libraries), bin/glxgears (with
-# the Mesa demos) and include/.
+# Xlib driver, when $X11W has the X client libraries, and direct rendering
+# through XFree86 4.3's GLX and DRI client code and libdrm: gl/dri/x43.sh),
+# lib/libdrm.a, bin/glxgears (with the Mesa demos) and include/.
 set -e
 
 D=$(cd "$(dirname "$0")" && pwd)
@@ -44,6 +45,12 @@ if [ ! -d "$M" ]; then
 			sed -i 's,^#include "macros.h",#include "../macros.h",' "$f"
 	done
 fi
+# the direct-rendering dispatch, if the tree was made without it
+for p in "$D"/patches/*-glx-direct.diff; do
+	patch -s -p1 -R --dry-run -d "$M" < "$p" > /dev/null 2>&1 && continue
+	echo "== patch $(basename "$p")"
+	patch -s -p1 -d "$M" < "$p"
+done
 
 S=$M/src
 CORE="api_arrayelt api_loopback api_noop api_validate accum attrib blend
@@ -69,7 +76,11 @@ CORE="api_arrayelt api_loopback api_noop api_validate accum attrib blend
 	tnl/t_pipeline tnl/t_vb_fog tnl/t_vb_light tnl/t_vb_normals
 	tnl/t_vb_points tnl/t_vb_program tnl/t_vb_render tnl/t_vb_texgen
 	tnl/t_vb_texmat tnl/t_vb_vertex"
-XLIB="X/glxapi X/fakeglx X/xfonts X/xm_api X/xm_dd X/xm_line X/xm_span X/xm_tri"
+XLIB="X/fakeglx X/xfonts X/xm_api X/xm_dd X/xm_line X/xm_span X/xm_tri"
+# the dispatcher picks the real GLX where a DRI driver takes the screen
+XGLX="X/glxapi X/realglx"
+DRM="xf86drm xf86drmHash xf86drmRandom xf86drmSL"
+GLX43="glx/glxcmds glx/glxext glx/xfont dri/dri_glx dri/XF86dri dri/dri_util"
 
 objs() {	# extra cflags, sources -> $OBJS
 	fl=$1; shift
@@ -99,31 +110,81 @@ lib libOSMesa.a $COBJS $OBJS
 rm -rf "$GLW/include"
 cp -r "$M/include" "$GLW/include"
 
+# 4.3 sources (dir/name under a source root), objects named x43_*
+objs43() {	# extra cflags, source root, sources -> $OBJS
+	fl=$1; r=$2; shift 2
+	OBJS=
+	for f in $*; do
+		o=$GLW/obj/x43_$(basename $f).o
+		if [ ! -f "$o" ] || [ "$r/$f.c" -nt "$o" ]; then
+			echo "cc $f.c"
+			$N "$CC" $CFLAGS $fl -I"$M/include" -I"$S" -c "$r/$f.c" -o "$o"
+		fi
+		OBJS="$OBJS $o"
+	done
+}
+
 # libGL: the Xlib driver against the X11R6.3 client libraries (x11/build.sh
-# clibs), drawing with core X requests
+# clibs), drawing with core X requests, and the GLX and DRI client code for
+# a server whose GLX is direct only.  DRI drivers are linked in
+# (__driDrivers, gl/dri/src/dri_drivers.c): binutils here makes no shared
+# objects, and AMIX's dlopen has no RTLD_GLOBAL to show them libGL.
 XINC=$X11W/src/xc/exports/include
 XL=$X11W/src/xc/lib
 [ -f "$XL/X11/libX11.a" ] || exit 0
+X43=$GLW/x43
+sh "$D/dri/x43.sh" "$X43"
+XC=$X43/xc
+OSS=$XC/programs/Xserver/hw/xfree86/os-support
+DRIFL="-D__AMIX__ -DGLX_DIRECT_RENDERING -DGLX_BUILT_IN_XMESA -DDRM_USE_MALLOC
+	-I$D/dri/include -I$XC/lib/GL/glx -I$XC/lib/GL/dri -I$XC/lib/GL/include
+	-I$XC/include -I$XC/programs/Xserver/GL/dri -I$OSS -I$AUX/kernel/drm -I$S/X
+	-I$XINC -I$XINC/X11/extensions -I$X11W/src/xc/include/extensions"
 objs "-I$XINC" $XLIB
-lib libGL.a $COBJS $OBJS
+XOBJS=$OBJS
+objs "$DRIFL" $XGLX
+XOBJS="$XOBJS $OBJS"
+# signal.h has no sigset_t under _XOPEN_SOURCE
+objs43 "$DRIFL -U_XOPEN_SOURCE" "$OSS/linux/drm" $DRM
+DOBJS=$OBJS
+lib libdrm.a $DOBJS
+objs43 "$DRIFL" "$XC/lib/GL" $GLX43
+XOBJS="$XOBJS $OBJS $DOBJS"
+objs43 "$DRIFL" "$D/dri/src" glxdirect dri_drivers
+lib libGL.a $COBJS $XOBJS $OBJS
+rm -rf "$GLW/include/dri"; mkdir -p "$GLW/include/dri"
+cp "$XC/lib/GL/glx/glxclient.h" "$XC/lib/GL/dri/dri_glx.h" "$XC/lib/GL/dri/dri_util.h" \
+	"$XC/lib/GL/dri/xf86dri.h" "$XC/programs/Xserver/GL/dri/sarea.h" "$OSS/xf86drm.h" \
+	"$GLW/include/dri/"
 
-# glxgears, linked like the system's programs: shared libc, then the
+# X GL programs, linked like the system's programs: shared libc, then the
 # members only its archive has
-DEMOS=$AUX/ref/mesa/dist/MesaDemos-5.0.2.tar.gz
-[ -f "$DEMOS" ] || exit 0
 OLD=$AUX/toolchain/amix
 SYS=$OLD/m68k-cbm-sysv4/sysroot
 LIBGCC=$(ls "$TC"/lib/gcc-lib/$T/*/libgcc.a)
 mkdir -p "$GLW/bin" "$GLW/extra"
-$N tar xzf "$DEMOS" -C "$GLW" Mesa-5.0.2/xdemos/glxgears.c
-patch -s -p1 -d "$M" < "$D/demos/glxgears.diff"
 if [ ! -f "$GLW/libextra.a" ]; then
 	(cd "$GLW/extra" && ar x "$SYS/usr/ccs/lib/libc.so" && rm -f libc.so.1 &&
 	 ar rc ../libextra.a *)
 fi
+xlink() {	# program, objects
+	p=$1; shift
+	$N "$OLD/bin/$T-ld" -o "$GLW/bin/$p" "$SYS/usr/ccs/lib/crt1.o" "$SYS/usr/ccs/lib/crti.o" \
+		"$@" "$GLW/lib/libGL.a" "$XL/Xext/libXext.a" "$XL/X11/libX11.a" \
+		-L"$SYS/usr/lib" -lsocket -lnsl "$SYS/usr/lib/libc.so.1" "$SYS/usr/ccs/lib/libm.a" \
+		"$GLW/libextra.a" "$LIBGCC" "$SYS/usr/ccs/lib/crtn.o"
+	echo "== $GLW/bin/$p"
+}
+
+# DRI set-up without a card driver, and Mesa's renderer without a DRI driver
+$N "$CC" $CFLAGS $DRIFL -U_XOPEN_SOURCE -I"$M/include" -I"$S" -I"$AUX/x11/src/dri" \
+	-I"$AUX/kernel/mac/display" \
+	-c "$D/src/dritest.c" -o "$GLW/obj/dritest.o"
+xlink dritest "$GLW/obj/dritest.o"
+
+DEMOS=$AUX/ref/mesa/dist/MesaDemos-5.0.2.tar.gz
+[ -f "$DEMOS" ] || exit 0
+$N tar xzf "$DEMOS" -C "$GLW" Mesa-5.0.2/xdemos/glxgears.c
+patch -s -p1 -d "$M" < "$D/demos/glxgears.diff"
 $N "$CC" $CFLAGS -I"$GLW/include" -I"$XINC" -c "$M/xdemos/glxgears.c" -o "$GLW/obj/glxgears.o"
-$N "$OLD/bin/$T-ld" -o "$GLW/bin/glxgears" "$SYS/usr/ccs/lib/crt1.o" "$SYS/usr/ccs/lib/crti.o" \
-	"$GLW/obj/glxgears.o" "$GLW/lib/libGL.a" "$XL/Xext/libXext.a" "$XL/X11/libX11.a" \
-	-L"$SYS/usr/lib" -lsocket -lnsl "$SYS/usr/lib/libc.so.1" "$SYS/usr/ccs/lib/libm.a" \
-	"$GLW/libextra.a" "$LIBGCC" "$SYS/usr/ccs/lib/crtn.o"
-echo "== $GLW/bin/glxgears"
+xlink glxgears "$GLW/obj/glxgears.o"

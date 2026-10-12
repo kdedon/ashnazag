@@ -81,6 +81,7 @@ struct dssess *ds_front = &ds_sess[0];
 unsigned long ds_gen, ds_serial, ds_vblcount;
 unsigned long ds_nhwvbl, ds_nswvbl;	/* VBLs from DAFB, from the tick */
 void (*ds_frontfn)();
+int (*ds_leavefn)();
 
 static long ds_nextid = 1;
 static int ds_pend = -1;		/* hotkey digit to act on, -1 none */
@@ -834,6 +835,10 @@ register struct dssess *to;
 		return EINVAL;
 	if (!fbcons_grab())
 		return EBUSY;
+	if (ds_leavefn && (*ds_leavefn)(from, 0) != 0) {
+		fbcons_unlock();
+		return EBUSY;
+	}
 	ds_gen++;
 	ds_unloadsess(from);
 	ds_unloadsess(to);
@@ -891,6 +896,8 @@ register struct dssess *to;
 	to->s_dlo = 256;
 	to->s_dhi = 0;
 	DS_SPLX(x);
+	if (ds_leavefn)
+		(void)(*ds_leavefn)(from, 1);
 	ds_release(from);
 	ds_note(from, FBN_HIDDEN);
 	ds_note(to, FBN_SHOWN);

@@ -27,6 +27,7 @@ extern Bool cfbScreenInit(), cfbCreateDefColormap(), cfbSetVisualTypes();
 extern Bool ipl2p8ScreenInit(), iplCreateDefColormap(), iplSetVisualTypes();
 extern Bool amixMacKeyLayout();
 extern int TellLostMap(), TellGainedMap();
+extern Bool AmixDRIScreenInit();
 
 typedef struct {
     int		  fd;
@@ -344,6 +345,9 @@ int	     dpix, dpiy;
     pScreen->UninstallColormap = fbUninstallColormap;
     pScreen->ListInstalledColormaps = fbListInstalledColormaps;
     pScreen->StoreColors = fbStoreColors;
+    if (!fbIpl(d))
+	(void) AmixDRIScreenInit(pScreen, d->fd, d->fi.fi_offset, (int) d->fi.fi_rowbytes,
+				 (int) d->fi.fi_width, (int) d->fi.fi_height, (int) d->fi.fi_depth);
     return TRUE;
 }
 

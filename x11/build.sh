@@ -4,6 +4,7 @@
 #   sh x11/build.sh [stage ...]
 #
 # Stages (default: all in order): tree, imake, makefiles, libs, server;
+# dri (refreshes the direct-rendering sources in an existing tree);
 # clibs (client libraries) and clients (xdm, xchoose, xdmenv; after
 # clibs) on request.
 # Work tree: $X11W (default: images/work/x11-$PLATFORM, PLATFORM mac or atari), sources in
@@ -43,6 +44,24 @@ tree() {
 	# new files
 	(cd "$D/src" && tar cf - .) | (cd "$XC/programs/Xserver/hw/amix" && tar xpf -)
 	cp "$AUX/kernel/mac/display/dsio.h" "$XC/programs/Xserver/hw/amix/rtg/fb/dsio.h"
+	dri
+}
+
+# XFree86 4.3's DRI extension, libdrm and GLX protocol headers beside amixdri.c
+dri() {
+	newpatches
+	sh "$AUX/gl/dri/x43.sh" "$X11W/x43"
+	X=$X11W/x43/xc
+	O=$XC/programs/Xserver/hw/amix/dri
+	OS=$X/programs/Xserver/hw/xfree86/os-support
+	mkdir -p "$O"
+	(cd "$D/src/dri" && cp amixdri.c amixdri.h amixdrirec.h glxamix.c Imakefile "$O/")
+	cp "$X/programs/Xserver/GL/dri/xf86dri.c" "$X/programs/Xserver/GL/dri/sarea.h" \
+	   "$X/lib/GL/dri/xf86dri.h" "$X/lib/GL/dri/xf86dristr.h" "$OS/xf86drm.h" \
+	   "$OS"/linux/drm/xf86drm*.c "$O/"
+	mkdir -p "$O/GL"
+	cp "$X/include/GL/glxproto.h" "$X/include/GL/glxmd.h" "$X/include/GL/glxtokens.h" "$O/GL/"
+	cp "$AUX/kernel/drm/drm.h" "$O/drm.h"
 }
 
 # the config file for this cross build, from the repository's copy
@@ -54,9 +73,10 @@ crossdef() {
 		"$D/config/cross.def" > "$XC/config/cf/cross.def"
 }
 
-# xdm's patch, if the tree was made without it
+# the xdm and DRI patches, if the tree was made without them
 newpatches() {
-	for p in "$D"/patches/*-xdm.diff; do
+	for p in "$D"/patches/*-xdm.diff "$D"/patches/*-dri.diff; do
+		[ -f "$p" ] || continue
 		patch -s -p1 -R --dry-run -d "$XC" < "$p" > /dev/null 2>&1 && continue
 		echo "== patch $(basename "$p")"
 		patch -s -p1 -d "$XC" < "$p"

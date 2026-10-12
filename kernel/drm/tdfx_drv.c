@@ -38,6 +38,16 @@
 #include "tdfx.h"
 #include "drmP.h"
 
+#ifdef __AMIX__
+/* status bit 9, busy, clear three reads running */
+#define DRIVER_IDLE(dev)						\
+do {									\
+	int n_, i_;							\
+	for (n_ = i_ = 0; n_ < 100000 && i_ < 3; n_++)			\
+		i_ = DRM_READ32(DRM(card).c_reg) & (1 << 9) ? 0 : i_ + 1; \
+} while (0)
+#endif
+
 #define DRIVER_AUTHOR		"VA Linux Systems Inc."
 
 #define DRIVER_NAME		"tdfx"

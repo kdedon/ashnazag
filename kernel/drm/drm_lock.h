@@ -80,6 +80,9 @@ int DRM(lock_transfer)(drm_device_t *dev,
 	char failed;
 
 	dev->lock.pid = 0;
+#ifdef __AMIX__
+	dev->lock.filp = 0;
+#endif
 	do {
 		old  = *lock;
 		new  = context | _DRM_LOCK_HELD;
@@ -96,6 +99,9 @@ int DRM(lock_free)(drm_device_t *dev,
 	char failed;
 
 	dev->lock.pid = 0;
+#ifdef __AMIX__
+	dev->lock.filp = 0;
+#endif
 	do {
 		old  = *lock;
 		new  = 0;

@@ -1,0 +1,26 @@
+--- a/src/X/glxapi.c
++++ b/src/X/glxapi.c
+@@ -41,6 +41,9 @@
+ 
+ extern struct _glxapi_table *_real_GetGLXDispatchTable(void);
+ extern struct _glxapi_table *_mesa_GetGLXDispatchTable(void);
++#ifdef __AMIX__
++extern Bool _real_glXDirectCapable(Display *dpy, int screen);
++#endif
+ 
+ 
+ struct display_dispatch {
+@@ -85,7 +88,12 @@
+ #ifdef GLX_BUILT_IN_XMESA
+       if (!getenv("LIBGL_FORCE_XMESA")) {
+          int ignore;
+-         if (XQueryExtension( dpy, "GLX", &ignore, &ignore, &ignore )) {
++         if (XQueryExtension( dpy, "GLX", &ignore, &ignore, &ignore )
++#ifdef __AMIX__
++             /* the server's GLX is direct only: a DRI driver must take the screen */
++             && _real_glXDirectCapable(dpy, DefaultScreen(dpy))
++#endif
++             ) {
+             /* the X server has the GLX extension */
+             t = _real_GetGLXDispatchTable();
+          }

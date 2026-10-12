@@ -32,6 +32,17 @@
 
 #include "drmP.h"
 
+#ifdef __AMIX__
+drm_file_t *DRM(find_file_by_minor)(drm_device_t *dev, int m)
+{
+	drm_file_t *priv;
+
+	TAILQ_FOREACH(priv, &dev->files, link)
+		if (priv->minor == m)
+			return priv;
+	return NULL;
+}
+#else
 drm_file_t *DRM(find_file_by_proc)(drm_device_t *dev, DRM_STRUCTPROC *p)
 {
 #if __FreeBSD_version >= 500021
@@ -48,6 +59,7 @@ drm_file_t *DRM(find_file_by_proc)(drm_device_t *dev, DRM_STRUCTPROC *p)
 			return priv;
 	return NULL;
 }
+#endif
 
 /* DRM(open) is called whenever a process opens /dev/drm. */
 
@@ -66,7 +78,11 @@ int DRM(open_helper)(dev_t kdev, int flags, int fmt, DRM_STRUCTPROC *p,
 	DRM_DEBUG("pid = %d, minor = %d\n", DRM_CURRENTPID, m);
 
 	/* FIXME: linux mallocs and bzeros here */
+#ifdef __AMIX__
+	priv = NULL;
+#else
 	priv = (drm_file_t *) DRM(find_file_by_proc)(dev, p);
+#endif
 	if (priv) {
 		priv->refs++;
 	} else {

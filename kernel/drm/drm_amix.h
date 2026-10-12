@@ -173,6 +173,7 @@ DRM(amix_mapdev)(unsigned long pa, unsigned long size)
 
 extern struct dsfbh ds_fbh[];
 extern int ds_owns();
+extern int (*ds_leavefn)();
 
 /* the display session behind an open /dev/fbN */
 int
@@ -199,6 +200,7 @@ DRM(dsbind)(DRM_IOCTL_ARGS)
 	if (!ds_owns(s))
 		return EACCES;
 	priv->sess = s;
+	priv->owner = 1;
 	priv->authenticated = 1;
 	b.session = s->s_id;
 	b.offset = DS_VOFF(s);
@@ -215,12 +217,54 @@ DRM(amix_front)(void)
 	wakeup((caddr_t)&DRM(softc)[0].lock.lock_queue);
 }
 
+#ifndef DRIVER_IDLE
+#define DRIVER_IDLE(dev)
+#endif
+
+/*
+ * Around a session switch (ds_leavefn): before it, the kernel takes the
+ * lock and lets the card go idle, so nothing draws while the frame
+ * moves; a holder gets a second to let go, then the switch goes ahead
+ * anyway.  After it, the lock is freed and its waiters recheck the front.
+ */
+int
+DRM(amix_leave)(struct dssess *from, int done)
+{
+	drm_device_t *dev = &DRM(softc)[0];
+	drm_hw_lock_t *l = dev->lock.hw_lock;
+
+	if (l == 0)
+		return 0;
+	if (done) {
+		if (dev->lock.filp == 0 && dev->lock.pid == 0 &&
+		    _DRM_LOCKING_CONTEXT(l->lock) == DRM_KERNEL_CONTEXT &&
+		    _DRM_LOCK_IS_HELD(l->lock))
+			DRM(lock_free)(dev, &l->lock, DRM_KERNEL_CONTEXT);
+		return 0;
+	}
+	if (!DRM(lock_take)(&l->lock, DRM_KERNEL_CONTEXT)) {
+		/* a wait given up more than a second ago starts afresh */
+		if (dev->lock.leave == 0 || lbolt - dev->lock.leave > 2 * HZ)
+			dev->lock.leave = lbolt ? lbolt : 1;
+		if (lbolt - dev->lock.leave < HZ)
+			return EBUSY;
+		dev->lock.leave = 0;
+		DRIVER_IDLE(dev);
+		return 0;
+	}
+	dev->lock.leave = 0;
+	dev->lock.pid = 0;
+	dev->lock.filp = 0;
+	DRIVER_IDLE(dev);
+	return 0;
+}
+
 /* what the X server and its driver would set: bus id, registers, frame buffer, shared area */
 static int
 DRM(amix_mkmaps)(dev_t kdev)
 {
 	struct drm_amixcard *c = &DRM(card);
-	drm_device_t *dev = &DRM(softc)[getminor(kdev)];
+	drm_device_t *dev = &DRM(softc)[0];
 	drm_map_t m;
 	char bus[32];
 	int i, e;
@@ -259,15 +303,21 @@ DRM(amix_mkmaps)(dev_t kdev)
 
 /* SVR4 entry points */
 
+/* minor 0 opens a fresh minor: its file, closed once with it */
 int
 DRM(svr4open)(dev_t *devp, int flag, int otyp, struct cred *cr)
 {
-	drm_device_t *dev;
-	int e;
+	drm_device_t *dev = &DRM(softc)[0];
+	int e, m;
 
-	if (getminor(*devp) >= DRIVER_NUM_CARDS || DRM(card).c_reg == 0)
+	if (getminor(*devp) != 0 || DRM(card).c_reg == 0)
 		return ENXIO;
-	dev = &DRM(softc)[getminor(*devp)];
+	for (m = 1; m < DRM_NMINOR; m++)
+		if (DRM(find_file_by_minor)(dev, m) == NULL)
+			break;
+	if (m == DRM_NMINOR)
+		return EAGAIN;
+	*devp = makedevice(getmajor(*devp), m);
 	if ((e = DRM(open)(*devp, flag, otyp, DRM_CURPROC)) != 0)
 		return e;
 	if (TAILQ_FIRST(dev->maplist) == NULL && (e = DRM(amix_mkmaps)(*devp)) != 0) {
@@ -280,19 +330,7 @@ DRM(svr4open)(dev_t *devp, int flag, int otyp, struct cred *cr)
 int
 DRM(svr4close)(dev_t dev, int flag, int otyp, struct cred *cr)
 {
-	drm_device_t *d = &DRM(softc)[getminor(dev)];
-	drm_file_t *priv;
-
-	/* a last close: every process holding the device */
-	while ((priv = TAILQ_FIRST(&d->files)) != NULL) {
-		if (d->lock.hw_lock && _DRM_LOCK_IS_HELD(d->lock.hw_lock->lock))
-			DRM(lock_free)(d, &d->lock.hw_lock->lock,
-			    _DRM_LOCKING_CONTEXT(d->lock.hw_lock->lock));
-		TAILQ_REMOVE(&d->files, priv, link);
-		DRM(free)(priv, sizeof(*priv), DRM_MEM_FILES);
-	}
-	d->open_count = 0;
-	return DRM(takedown)(d);
+	return DRM(close)(dev, flag, otyp, DRM_CURPROC);
 }
 
 int
@@ -344,6 +382,7 @@ DRM(amix_attach)(struct drm_amixcard *c)
 		DRM(pgshift) = 12;
 	DRM(card) = *c;
 	bzero((caddr_t)dev, sizeof *dev);
+	ds_leavefn = DRM(amix_leave);
 	if ((e = DRM(init)(dev)) != 0) {
 		DRM(card).c_reg = 0;
 		return e;
@@ -358,6 +397,7 @@ DRM(amix_detach)(void)
 
 	if (dev->open_count)
 		return EBUSY;
+	ds_leavefn = 0;
 	DRM(cleanup)(dev);
 	DRM(card).c_reg = 0;
 	return 0;

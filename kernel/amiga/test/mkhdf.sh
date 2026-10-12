@@ -21,6 +21,8 @@
 # kernel's .elf), whose packages are installed instead.  AMIGAENV:
 # mkamiga.sh's outdir, for Kickstart, the floppies and SYS:.  X11PKG:
 # x11/package.sh's pkg directory; X and the tape's clients are installed.
+# GLBIN: gl/build.sh's bin directory; its dritest and glxgears go to
+# /usr/x11r6/bin (with X11PKG).
 # AUTORUN: a command run as root at the end of boot, output on the
 # console and in /tmp/autorun.out.
 set -e
@@ -122,6 +124,12 @@ if [ -n "$X11PKG" ]; then
 a tape/13
 a tape/14
 `grep -v '^f /etc/inittab ' "$XP/x11.manifest" | sed -e "s, x11pkg/, $XP/,"`"
+	for p in dritest glxgears; do
+		[ -n "$GLBIN" ] && [ -f "$GLBIN/$p" ] || continue
+		m68k-elf-strip -o "$S/bin/$p" "$GLBIN/$p"
+		ENV="$ENV
+f /usr/x11r6/bin/$p 555 2 2 bin/$p"
+	done
 fi
 
 cat > "$S/root.manifest" <<EOF

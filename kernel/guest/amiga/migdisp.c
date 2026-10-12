@@ -268,6 +268,19 @@ static int same(const unsigned char *a, const unsigned char *b, unsigned int n)
     return 1;
 }
 
+/* a row to the display in whole longs: a card may order the bytes of each long */
+static void put(unsigned char *to, const unsigned char *from, unsigned int n)
+{
+    unsigned long *x = (unsigned long *)to;
+    const unsigned long *y = (const unsigned long *)from;
+    if ((n | (unsigned long)to | (unsigned long)from) & 3) {
+        memcpy(to, from, n);
+        return;
+    }
+    for (n >>= 2; n; n--)
+        *x++ = *y++;
+}
+
 /*
  * The screen's rows, stride apart, changed or all, to the display: from
  * SRC, or read at ORIGIN through PROC a block at a time.  Returns the rows
@@ -299,7 +312,7 @@ static int copyrows(unsigned char *fb, struct fbinfo *fi, struct mig_rtg *s, int
         }
         if (!full && same(shadow + y * w, src, w)) continue;
         memcpy(shadow + y * w, src, w);
-        memcpy(fb + fi->fi_offset + (yoff + y) * fi->fi_rowbytes + xoff, shadow + y * w, w);
+        put(fb + fi->fi_offset + (yoff + y) * fi->fi_rowbytes + xoff, shadow + y * w, w);
         rows++;
     }
     return rows;

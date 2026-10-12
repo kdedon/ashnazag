@@ -1,0 +1,14 @@
+#include <Server.tmpl>
+
+/* xf86dri.c, sarea.h, the libdrm sources and their headers come from XFree86 4.3 (x11/build.sh dri) */
+SRCS = amixdri.c glxamix.c xf86dri.c xf86drm.c xf86drmHash.c xf86drmRandom.c xf86drmSL.c
+
+OBJS = amixdri.o glxamix.o xf86dri.o xf86drm.o xf86drmHash.o xf86drmRandom.o xf86drmSL.o
+
+STD_DEFINES = ServerDefines -D__AMIX__ -DDRM_USE_MALLOC
+   INCLUDES = -I. -I../../../include -I$(XINCLUDESRC) -I$(EXTINCSRC) -I$(SERVERSRC)/include
+
+NormalLibraryObjectRule()
+NormalLibraryTarget(amixdri, $(OBJS))
+
+DependTarget()

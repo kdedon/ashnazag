@@ -49,7 +49,11 @@ extern unsigned long v3ds_resv;
 #define	VP_CLUTBYPASS	0x00000400
 #define	VP_FMT(n)	((unsigned long)(n) << 18)	/* 0 CLUT, 1 RGB565, 3 RGB32 */
 
-/* miscInit0 bits 30-31: how the frame buffer aperture orders a big-endian host's bytes */
+/*
+ * miscInit0 bits 30-31: the frame buffer aperture reverses the bytes of
+ * each long (30), then swaps its words (31), for a big-endian host.  A
+ * 32-bit pixel takes 30, a 16-bit one both.
+ */
 #define	MI0_SWIZ(n)	((unsigned long)(n) << 30)
 
 volatile unsigned char *v3_reg, *v3_fb;
@@ -213,7 +217,7 @@ int bits;
 {
 	v3_bits = bits;
 	/* the CPU's pixels land in the card's byte order */
-	wl(MISCINIT0, (rl(MISCINIT0) & ~MI0_SWIZ(3)) | MI0_SWIZ(bits == 32 ? 3 : bits == 16 ? 1 : 0));
+	wl(MISCINIT0, (rl(MISCINIT0) & ~MI0_SWIZ(3)) | MI0_SWIZ(bits == 32 ? 1 : bits == 16 ? 3 : 0));
 	wl(VIDDESKSTRIDE, (unsigned long)v3ds_width * (bits / 8));
 	v3_vp = VP_ON | VP_DESKTOP |
 	    (bits == 32 ? VP_FMT(3) | VP_CLUTBYPASS : bits == 16 ? VP_FMT(1) | VP_CLUTBYPASS : 0);

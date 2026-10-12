@@ -1,0 +1,44 @@
+--- a/programs/Xserver/Imakefile
++++ b/programs/Xserver/Imakefile
+@@ -189,7 +189,10 @@
+ IPL8DIR  = iplan2p8
+ AMIXDIRS = include dix os mi $(EXTDIRS) $(MFBDIR) $(CFB8DIR) $(CFB16DIR) \
+            $(IPL8DIR) $(DDXDIR1) $(DEPDIRS)
+-AMIXOBJS = hw/amix/amixInit.o
++AMIXDRI  = hw/amix/dri
++AMIXOBJS = hw/amix/amixInit.o $(AMIXDRI)/amixdri.o $(AMIXDRI)/glxamix.o \
++           $(AMIXDRI)/xf86dri.o $(AMIXDRI)/xf86drm.o $(AMIXDRI)/xf86drmHash.o \
++           $(AMIXDRI)/xf86drmRandom.o $(AMIXDRI)/xf86drmSL.o
+ #ifndef RtgZZ9000
+ #define RtgZZ9000 YES
+ #endif
+--- a/programs/Xserver/mi/miinitext.c
++++ b/programs/Xserver/mi/miinitext.c
+@@ -130,6 +130,9 @@
+ #ifdef XCSECURITY
+ extern void SecurityExtensionInit();
+ #endif
++/* direct rendering: each adds itself only where a screen has a DRM */
++extern void XFree86DRIExtensionInit();
++extern void GlxExtensionInit();
+ #ifdef XPRINT
+ extern void	XpExtensionInit();
+ #endif
+@@ -215,4 +218,6 @@
+ #ifdef XPRINT
+     XpExtensionInit();
+ #endif
++    XFree86DRIExtensionInit();
++    GlxExtensionInit();
+ }
+--- a/programs/Xserver/hw/amix/Imakefile
++++ b/programs/Xserver/hw/amix/Imakefile
+@@ -23,7 +23,7 @@
+    INCLUDES = -I. -I../../mfb -I../../mi -I../../include -I$(XINCLUDESRC) -I$(FONTINCSRC) -Irtg/fb -I/usr/amiga/include
+ 
+    RTGDIRS = rtg
+-   SUBDIRS = $(RTGDIRS)
++   SUBDIRS = $(RTGDIRS) dri
+ 
+ NormalLibraryObjectRule()
+ 

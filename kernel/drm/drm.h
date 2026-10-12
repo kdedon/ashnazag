@@ -58,7 +58,12 @@
 #define DRM_IOC_READ		IOC_OUT
 #define DRM_IOC_WRITE		IOC_IN
 #define DRM_IOC_READWRITE	IOC_INOUT
+#ifdef __AMIX__
+#define DRM_IOC(dir, group, nr, size) \
+	((dir) | (((size) & IOCPARM_MASK) << 16) | ((group) << 8) | (nr))
+#else
 #define DRM_IOC(dir, group, nr, size) _IOC(dir, group, nr, size)
+#endif
 #endif
 
 #define XFREE86_VERSION(major,minor,patch,snap) \
@@ -417,6 +422,11 @@ typedef struct drm_dsbind {
 	unsigned long	vram;		/* out: VRAM free for back, depth and textures: offset... */
 	unsigned long	vramsize;	/* ...and size */
 } drm_dsbind_t;
+#endif
+
+#ifdef __AMIX__
+/* lock flag: a session owner's request, granted while its session is hidden */
+#define _DRM_LOCK_HIDDEN	0x40000000
 #endif
 
 #define DRM_IOCTL_BASE			'd'
