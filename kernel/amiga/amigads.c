@@ -119,6 +119,26 @@ unsigned long code, qual;
 
 /* the card's depths when it has more than 8 bits; then each session maps the deepest */
 int am_dsfull;
+unsigned long am_dsphys, am_dsvram;
+
+/* a free frame of VRAM for a new session, its offset; 0 if none */
+unsigned long
+am_vslot()
+{
+	unsigned long off;
+	int i;
+
+	if (!am_rtg || !am_rtg->r_pan)
+		return 0;
+	for (off = ds_disp.d_vsize; off + ds_disp.d_vsize <= am_dsvram; off += ds_disp.d_vsize) {
+		for (i = 1; i <= DS_NSESS; i++)
+			if (ds_sess[i].s_used && ds_sess[i].s_voff == off)
+				break;
+		if (i > DS_NSESS)
+			return off;
+	}
+	return 0;
+}
 
 /* bits a pixel of the card's mode n */
 static int
@@ -243,6 +263,8 @@ struct dssess *s;
 	}
 	DisplayScreen(sp);
 	SelectScreen(sp);
+	if (am_rtg && am_rtg->r_pan)
+		(*am_rtg->r_pan)(s->s_voff);
 	if (am_rtg)
 		(*am_rtg->r_show)(s != &ds_sess[0]);
 }
@@ -316,6 +338,8 @@ am_dsinit()
 		am_dsvsize = (am_rtg->r_base & DS_PGOFF) + (unsigned long)am_rtg->r_row *
 		    am_rtg->r_height * (am_rtg->r_depths & 4 ? 4 : 2);
 	if (am_rtg) {
+		am_dsphys = am_rtg->r_phys ? am_rtg->r_phys - am_rtg->r_base : 0;
+		am_dsvram = am_rtg->r_pan ? am_rtg->r_vram : 0;
 		fbcons.fc_m.fm_base = am_rtg->r_base;
 		fbcons.fc_m.fm_width = am_rtg->r_width; fbcons.fc_m.fm_height = am_rtg->r_height;
 		fbcons.fc_m.fm_depth = am_rtg->r_depth; fbcons.fc_m.fm_row = am_rtg->r_row;
@@ -380,7 +404,7 @@ kbintr()
 {
 	unsigned char raw, code, adb;
 
-	raw = ~*(volatile unsigned char *)0xbfed01;
+	raw = ~*(volatile unsigned char *)0xbfec01;	/* CIA-A serial data */
 	code = raw >> 1;
 	if (am_key && code < 0x68) {
 		adb = am_toadb[code];

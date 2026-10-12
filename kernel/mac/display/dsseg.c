@@ -1,8 +1,8 @@
 /*
  * dsseg.c -- mappings of a session's frame buffer.
  *
- * A device segment: VRAM while the session is in front (page frames
- * from ds_fbmmap()), its shadow pages while hidden.  The segment is the
+ * A device segment: VRAM while the session is in front or has its own
+ * (page frames from ds_fbmmap()), else its shadow pages.  The segment is the
  * kernel's segdev with four operations wrapped:
  *   fault   refuses software locking; loads shadow pages as the managed
  *           pages they are; retries when a switch raced the load; makes
@@ -256,8 +256,8 @@ u_int len;
 
 	if (root == 0)
 		return;
-	lo = ds_disp.d_page >> DS_PGSHIFT;
-	hi = lo + (ds_disp.d_vsize >> DS_PGSHIFT);
+	lo = DS_PHYS(ds_disp.d_page) >> DS_PGSHIFT;
+	hi = lo + (DS_VSPAN >> DS_PGSHIFT);
 	e = (unsigned long)addr + len;
 	for (va = (unsigned long)addr & ~DS_PGOFF; va < e; va += DS_PGSIZE) {
 		a = root[(va >> 25) & 0x7F];
@@ -329,7 +329,7 @@ enum seg_rw rw;
 		return FC_MAKE_ERR(EFAULT);
 	for (tries = 0; ; tries++) {
 		g = ds_gen;
-		if (t->t_sess == ds_front)
+		if (t->t_sess == ds_front || DS_OWNV(t->t_sess))
 			fc = (*ds_devops->fault)(seg, addr, len, type, rw);
 		else
 			fc = ds_shfault(seg, t->t_sess, addr, len, rw);
@@ -343,7 +343,7 @@ enum seg_rw rw;
 		if (tries >= 8 || t->t_sess->s_dead)
 			return FC_MAKE_ERR(EAGAIN);
 	}
-	if (t->t_cache == FBC_WT && t->t_sess == ds_front)
+	if (t->t_cache == FBC_WT && (t->t_sess == ds_front || DS_OWNV(t->t_sess)))
 		ds_setwt(seg, addr, len);
 	return 0;
 }

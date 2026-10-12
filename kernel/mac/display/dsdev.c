@@ -181,8 +181,10 @@ int prot;
 
 	if (s == 0 || s->s_dead || off < 0 || off >= s->s_size)
 		return -1;
+	if (DS_OWNV(s))
+		return DS_PHYS(ds_disp.d_page + DS_VOFF(s) + off) >> DS_PGSHIFT;
 	if (s == ds_front)
-		return (ds_disp.d_page + off) >> DS_PGSHIFT;
+		return DS_PHYS(ds_disp.d_page + off) >> DS_PGSHIFT;
 	return s->s_pfn[off >> DS_PGSHIFT];
 }
 

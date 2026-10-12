@@ -126,6 +126,7 @@ struct dssess {
 #endif
 #ifdef DS_AMIGA
 	int		s_vmode;	/* FBIOSMODE's mode, index + 1; 0 the display's */
+	unsigned long	s_voff;		/* its own VRAM, from d_page; 0 none */
 #endif
 };
 
@@ -179,6 +180,22 @@ void	ds_sinfo();		/* (s, fi): what FBIOGINFO reports for s */
 int	ds_ncmap();		/* (s) -> its colour table's entries */
 #if defined(DS_ATARI) || defined(DS_AMIGA)
 int	ds_setmode();		/* (s, id) -> errno */
+#endif
+#ifdef DS_AMIGA
+/*
+ * A card with room for more than one frame gives sessions their own
+ * VRAM: such a session maps it, shown or not, and needs no copy.
+ */
+extern unsigned long am_dsphys, am_dsvram, am_vslot();
+#define DS_PHYS(va)	((va) + am_dsphys)
+#define DS_VOFF(s)	((s)->s_voff)
+#define DS_OWNV(s)	((s)->s_voff != 0)
+#define DS_VSPAN	(am_dsvram > ds_disp.d_vsize ? am_dsvram : ds_disp.d_vsize)
+#else
+#define DS_PHYS(va)	(va)
+#define DS_VOFF(s)	0
+#define DS_OWNV(s)	0
+#define DS_VSPAN	ds_disp.d_vsize
 #endif
 #ifdef DS_ATARI
 void	ds_relmouse();		/* (buttons, dx, dy) */

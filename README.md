@@ -11,7 +11,7 @@ top of it as environments: ordinary Unix processes with their own display sessio
 | Quadra 800 (68040) | QEMU `q800` with a Quadra 800 ROM; real Quadra 800 | Boots from disk to a multi-user login on the built-in screen and ADB keyboard. SCSI, SONIC Ethernet, clock, swap, ufs, loadable modules, display and sound services, X11. All environments below. |
 | Falcon030 (68030, no FPU) | Hatari (TOS 4.04); real Falcon | Boots from IDE to a login on VGA or RGB monitors. X11 and xdm, TOS, CP/M and System 6 environments. Slow on real hardware. |
 | CT60/CT63 Falcon (68060) | Hatari 060 with FastRAM | Kernel boots from FastRAM; SuperVidel or Videl console. Real-hardware testing in progress. |
-| Amiga A3000 (68040, 68060) | Amiberry; WinUAE for PCI 3D cards | Started from AmigaDOS by `unix_boot040`; login on the console. PCI through openpci.library (Prometheus), NE2000 Ethernet, ZZ9000 RTG, Voodoo3 detected. Real hardware untested. |
+| Amiga A3000 (68040, 68060) | Amiberry; WinUAE for PCI 3D cards | Started from AmigaDOS by `unix_boot040`; login on the console. PCI through openpci.library (Prometheus), NE2000 Ethernet, ZZ9000 RTG, Voodoo3 display (X and 8-bit Workbench; 16-bit colours right, pixel order not yet). Real hardware untested. |
 
 ## Environments
 

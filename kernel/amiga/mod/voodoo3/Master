@@ -1,0 +1,4 @@
+# voodoo3: a PCI Voodoo3 or Banshee as the display service's screen
+$depend opci
+$modtype misc
+voodoo3	voodoo3	m	0	0	0

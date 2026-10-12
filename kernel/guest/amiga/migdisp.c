@@ -426,7 +426,7 @@ static void watch(int fd, int go, int ack, unsigned char *fb, struct fbinfo *fi,
     unsigned long end = live->vram + live->memory_size, origin;
     const unsigned char *src;
     char path[32];
-    int other, away = 0, proc = -1;
+    int other, away = 0, proc = -1, z;
     int status, bound = 0, warned = 0, bad = 0, last = -1;
     int moved, changed, laststatus = -1, copying = 0, full, rows, idle = 0;
     unsigned int lastw = 0, lasth = 0, lastfmt = 0, fmt = MIG_RTG_INDEX8, bpp, shows = 0;
@@ -556,12 +556,17 @@ static void watch(int fd, int go, int ack, unsigned char *fb, struct fbinfo *fi,
             live->copies++;
             if (full) {
                 if (shadowsize < fi->fi_width * fi->fi_height * bpp) {
-                    free(shadow);
+                    if (shadow)
+                        munmap((caddr_t)shadow, shadowsize);
                     shadowsize = fi->fi_width * fi->fi_height * bpp;
-                    if (!(shadow = (unsigned char *)malloc(shadowsize))) {
-                        miglog(0, "no memory for the screen copy");
+                    /* mapped: the heap of this process has little room left */
+                    if ((z = open("/dev/zero", O_RDWR)) < 0 ||
+                        (shadow = (unsigned char *)mmap((caddr_t)0, shadowsize,
+                        PROT_READ | PROT_WRITE, MAP_PRIVATE, z, 0)) == (unsigned char *)-1) {
+                        miglog(0, "no memory for the screen copy: %s", strerror(errno));
                         return;
                     }
+                    close(z);
                 }
                 memset(fb + m->fi_offset, 0, m->fi_rowbytes * m->fi_height);
                 cshown = 0;

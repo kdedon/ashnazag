@@ -9,7 +9,7 @@
 # UNIX_Root ufs = c6d0s1, UNIX_Swap = c6d0s2) and outdir/boot/, the
 # AmigaDOS volume: S/Startup-Sequence runs unix_boot040 on the kernel.
 # A login runs on the serial port.  The root holds the amilib, opci, pci
-# ne, zz9000, floppy and v3bars modules (floppy loaded at boot, zz9000 when the card is there), modadmin, lspci and pci.ids, fltool, tcpcat, /dev/pci and /dev/ne0, registered at
+# ne, zz9000, voodoo3, floppy and v3bars modules (floppy loaded at boot, zz9000 or voodoo3 when the card is there), modadmin, lspci and pci.ids, fltool, tcpcat, /dev/pci and /dev/ne0, registered at
 # run level 2; ne0 comes up as 10.0.2.15 (Amiberry's user-mode network).
 # AMIX_TAPE: tape segments (default media/amix-tape).  UNIXBOOT: the
 # unix_boot040 executable.  OPENPCI: openpci's unpacked archive (Libs/
@@ -19,7 +19,8 @@
 # PKG: stage.sh's outdir, for the display module and the environment
 # packages.  ENVPKG: images/envpkg/mkenvpkgs.sh's outdir (AMIGAKERNEL this
 # kernel's .elf), whose packages are installed instead.  AMIGAENV:
-# mkamiga.sh's outdir, for Kickstart, the floppies and SYS:.
+# mkamiga.sh's outdir, for Kickstart, the floppies and SYS:.  X11PKG:
+# x11/package.sh's pkg directory; X and the tape's clients are installed.
 set -e
 A=$(cd "$(dirname "$0")/.." && pwd)
 K=$(cd "$A/.." && pwd)
@@ -38,7 +39,9 @@ PATH="$AUX/toolchain/linux/bin:$AUX/toolchain/bin:$PATH"
 [ -f "$OPENPCI/Libs/openpci.library" ] || { echo "[FAIL] OPENPCI: no Libs/openpci.library"; exit 1; }
 mkdir -p "$O/src/tape" "$O/src/bin"
 S=$O/src
-for s in 02 03 07 10; do
+SEGS="02 03 07 10"
+[ -z "$X11PKG" ] || SEGS="$SEGS 13 14"
+for s in $SEGS; do
 	[ -f "$S/tape/$s" ] || cp "$TAPE/$s" "$S/tape/$s"
 done
 
@@ -49,7 +52,7 @@ x() { (cd "$S" && cpio -i --quiet --to-stdout "$1" < tape/02); }
 x etc/vfstab | sed -e 's,^/dev/dsk/c0d0s1[	 ].*,/dev/dsk/c6d0s1	/dev/rdsk/c6d0s1	/	ufs	1	no	-,' > "$S/vfstab"
 grep -q '^/dev/dsk/c6d0s1.*ufs' "$S/vfstab" || { echo "[FAIL] tape vfstab changed"; exit 1; }
 printf 'amiga\n' > "$S/nodename"
-printf '/sbin/modadmin -r cdev pci 60 >/dev/null\n/sbin/modadmin -r sdev ne 61 >/dev/null\n/sbin/modadmin -r cdev zz9000 49 >/dev/null\n/sbin/modadmin -l zz9000 >/dev/null 2>&1\n/sbin/modadmin -r cdev floppy 62 >/dev/null\n/sbin/modadmin -l floppy >/dev/null\n' > "$S/S05dlm"
+printf '/sbin/modadmin -r cdev pci 60 >/dev/null\n/sbin/modadmin -r sdev ne 61 >/dev/null\n/sbin/modadmin -r cdev zz9000 49 >/dev/null\n/sbin/modadmin -l zz9000 >/dev/null 2>&1\n/sbin/modadmin -l voodoo3 >/dev/null 2>&1\n/sbin/modadmin -r cdev floppy 62 >/dev/null\n/sbin/modadmin -l floppy >/dev/null\n' > "$S/S05dlm"
 cat > "$S/network-config" <<'NC'
 /usr/sbin/slink addaen /dev/ne0 ne0 &&
 	/usr/sbin/ifconfig ne0 10.0.2.15 netmask 255.255.255.0 up -trailers &&
@@ -105,6 +108,13 @@ f /etc/amiga/kicka4000.rom 640 0 25 $AE/etc/amiga/kicka4000.rom
 `for f in "$AE"/amiga/media/*; do echo "f ${f#$AE} 640 0 25 $f"; done`
 `printf 't\t/amiga/sys\t0\t3\t%s' "$S/amigasys"`"
 fi
+if [ -n "$X11PKG" ]; then
+	XP=$(cd "$X11PKG" && pwd)
+	ENV="$ENV
+a tape/13
+a tape/14
+`grep -v '^f /etc/inittab ' "$XP/x11.manifest" | sed -e "s, x11pkg/, $XP/,"`"
+fi
 
 cat > "$S/root.manifest" <<EOF
 a tape/02
@@ -139,6 +149,7 @@ f /etc/conf/mod.d/opci 644 0 3 mods/mod.d/opci
 f /etc/conf/mod.d/pci 644 0 3 mods/mod.d/pci
 f /etc/conf/mod.d/ne 644 0 3 mods/mod.d/ne
 f /etc/conf/mod.d/zz9000 644 0 3 mods/mod.d/zz9000
+f /etc/conf/mod.d/voodoo3 644 0 3 mods/mod.d/voodoo3
 f /etc/conf/mod.d/floppy 644 0 3 mods/mod.d/floppy
 f /etc/conf/mod.d/v3bars 644 0 3 mods/mod.d/v3bars
 c /dev/floppy0 666 0 3 62 0

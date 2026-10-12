@@ -23,6 +23,15 @@ struct am_rtg {
 	int		r_depths;
 	unsigned long	r_rgb[2][3];
 	void		(*r_setdepth)();	/* (bits): the card's pixels from now */
+	/*
+	 * Optional: with r_pan, each session may own a frame in the r_vram
+	 * bytes from r_base's page, and the card shows the one at the
+	 * offset it is given.  r_phys: r_base's physical address, if not
+	 * r_base.
+	 */
+	void		(*r_pan)();	/* (offset from r_base's page) */
+	unsigned long	r_vram;
+	unsigned long	r_phys;
 };
 
 extern int am_rtgattach();	/* (struct am_rtg *) 0, or EBUSY once in use */

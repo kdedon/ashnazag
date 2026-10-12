@@ -370,7 +370,13 @@ unsigned long id;
 		return ENXIO;
 	if (!fbcons_grab())
 		return EBUSY;
-	if (fi.fi_size != s->s_size) {
+	if (fi.fi_size != s->s_size && DS_OWNV(s)) {
+		if (ds_segcount(s)) {
+			fbcons_unlock();
+			return EBUSY;
+		}
+		s->s_size = fi.fi_size;
+	} else if (fi.fi_size != s->s_size) {
 		if (ds_segcount(s)) {
 			fbcons_unlock();
 			return EBUSY;
@@ -656,7 +662,10 @@ int *errp, vid;
 		return 0;
 	}
 #endif
-	if (ds_shadow(s) == 0) {
+#ifdef DS_AMIGA
+	s->s_voff = am_vslot();
+#endif
+	if (!DS_OWNV(s) && ds_shadow(s) == 0) {
 #ifdef DS_ATARI
 		if (s->s_vid)
 			kmem_free((caddr_t)s->s_vid, sizeof *s->s_vid);
@@ -808,7 +817,8 @@ register struct dssess *s;
 /*
  * Bring `to' in front.  Safe context only (see the head of the file).
  * VRAM goes to the old session's shadow, the new one's shadow (zeros
- * until it draws) to VRAM; its CLUT is loaded at once.
+ * until it draws) to VRAM, except for sessions with VRAM of their own;
+ * its CLUT is loaded at once.
  */
 int
 ds_switch(to)
@@ -828,7 +838,7 @@ register struct dssess *to;
 	ds_unloadsess(from);
 	ds_unloadsess(to);
 	DS_CPUSHA();
-	if (!from->s_dead)
+	if (!from->s_dead && !DS_OWNV(from))
 		ds_lcopy((unsigned long *)from->s_shadow, (unsigned long *)vram, from->s_kept);
 	if (from == &ds_sess[0])
 		fbcons.fc_m.fm_base = (unsigned long)ds_sess[0].s_shadow +
@@ -859,7 +869,8 @@ register struct dssess *to;
 	if (DS_GUEST(from) && !DS_GUEST(to) && ds_sndown)
 		(*ds_sndown)(0);
 #endif
-	ds_lcopy((unsigned long *)vram, (unsigned long *)to->s_shadow, to->s_kept);
+	if (!DS_OWNV(to))
+		ds_lcopy((unsigned long *)vram, (unsigned long *)to->s_shadow, to->s_kept);
 	if (to == &ds_sess[0])
 		fbcons.fc_m.fm_base = ds_disp.d_base;
 	DS_CPUSHA();
