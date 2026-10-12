@@ -22,7 +22,7 @@ Mesa 5.0 itself carries no DRI drivers: they live in the XFree86 4.3 tree, built
 | X server | **keep Xamix (X11R6.3)** and add direct-only GLX + the DRI extension: ~7k lines ported, ~1k new. XFree86 4.3's server is ~300k lines plus a new os-support port and a second owner for the card |
 | Mesa | 5.0.2 core static, no threads, no dlopen at first. OSMesa on AMIX is the first build |
 | Warp3D | our Warp3D.library (84 LVOs), register glue to ELF functions in startmig, Mesa behind it. Trap #0 already reaches AMIX from guest code; add a PC-range check so faults and FP emulation in Mesa go to the host, not the guest |
-| Output | the Amiga environment's display-service session; on the card the session's VRAM, else OSMesa into the session memory |
+| Output | the Amiga environment's display-service session; on the card the session's VRAM, else OSMesa into a host back buffer copied to the session memory |
 | Card-free work | compiler, Mesa software, libGL/GLX, Warp3D.library on swrast, DRM core, opci DMA/IRQ (Amiberry). Card needed: Radeon backend, radeon DRM, r200 |
 
 ```
@@ -288,7 +288,7 @@ What the guest path does today (`guestcore`, `amigaguest`, `mkgates.py`):
 
 Change (~25 lines + one ioctl): a host PC range per guest process.
 
-- `struct guest_proc` gets `gp_hostlo`, `gp_hosthi`; `AMIGAIOC_HOSTPC {lo, hi}` right after `AMIGAIOC_ENTER`, set by startmig to its own text (and any later `dlopen`ed object).
+- `struct guest_proc` gets `gp_hostlo`, `gp_hosthi`; `AMIGAIOC_HOSTPC {lo, hi}` right after `AMIGAIOC_ENTER`, set by startmig to the Warp3D host code and Mesa, linked last (and any later `dlopen`ed object). The startmig code before them reaches guest registers through the guest's faults, as the guest does.
 - `gc_trap`: `if ((u_long)GR_PC(r) - gp->gp_hostlo < gp->gp_hosthi - gp->gp_hostlo) return 1;` before the profile dispatch. Declining sends the exception to the stock handler (`guest_chain`), exactly as for a native process. The asm fast paths need no check: Mesa never raises those vectors.
 - A flag set by the glue was considered and rejected: a signal or fault taken between setting and clearing it misroutes, and the flag would have to nest.
 
@@ -299,7 +299,16 @@ Signals stay as now: a host signal while in Mesa becomes a guest interrupt throu
 | Host | Warp3D renders into | How |
 |---|---|---|
 | Radeon session in front | the BitMap's place in the session's VRAM | `SetDrawRegion`: BitMap address − `MIG_RTG_VRAM` + the session's VRAM offset (backend) → colour offset and pitch of the r200 drawable; Z/stencil and back buffers in the same session's VRAM allocation |
-| Any other host, or no card | the BitMap's memory | OSMesa into the session memory the container card maps; the same code on Mac, Atari and stock Amigas |
+| Any other host, or no card | the BitMap's memory | OSMesa into a back buffer in host memory, copied to the BitMap the container card maps (below); the same code on Mac, Atari and stock Amigas |
+
+Back buffer (software path): Mesa reads and writes pixels one at a time, and display memory behind Zorro or an emulated card is slow at that. Mesa draws into host memory of the BitMap's size and format instead:
+- Each primitive marks the rows it covers. `Flush`, `FlushFrame`, `WaitIdle`, `UnLockHardware` and `SetDrawRegion` copy those rows to the BitMap (not while the session is hidden).
+- After `UnLockHardware` (or a flush while unlocked) the guest may draw into the BitMap: rows are read back before Mesa next draws over them. A `ClearDrawRegion` without scissor or colour mask reads nothing: it refills only the back buffer rows drawn since the last clear to that colour, and the copy fills the BitMap's other rows with the colour instead of reading them. `ClearZBuffer` likewise refills only the Z rows drawn since a clear to the same value.
+- Without memory for it (1024x768x32: 3 MB beside Mesa's 0.7 MB and the 1.5 MB Z buffer), Mesa draws into the BitMap as before.
+- AMIX's libc `memcpy` and `memset` move a byte at a time; startmig links word and `movem` versions, which Mesa's clears and span copies use too.
+- A triangle whose vertices share one w is drawn with affine texturing (`GL_FASTEST`): no divide per pixel. Vertex arrays keep perspective.
+- OSMesa's own span loops (`gl/patches/04`) also cover triangles without depth test and RGB 565; before, those took swrast's general span path.
+- Cost on Amiberry (A3000/040 interpretive, about 2 MIPS), w3dtest at 1024x768: 6.6 s a frame at 32 bits and 9.5-12.4 s at 16 bits drawing into the BitMap; 1.8-2.2 s (0.2-0.3 s of it copying) and 1.2-1.3 s (0.1-0.2 s) with the above, with host load moving them by up to 40%. What is left is Mesa's per-pixel work on 65k pixels a frame, about 160 ms per 16k-pixel triangle even on the fast paths.
 
 Rules from the display service:
 - A hidden session gets no DRM lock: `LockHardware` and draw calls return `W3D_NOTVISIBLE` (a Warp3D error titles already handle), GL clients block in the lock.

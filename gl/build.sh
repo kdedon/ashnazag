@@ -45,8 +45,8 @@ if [ ! -d "$M" ]; then
 			sed -i 's,^#include "macros.h",#include "../macros.h",' "$f"
 	done
 fi
-# the direct-rendering dispatch, if the tree was made without it
-for p in "$D"/patches/*-glx-direct.diff; do
+# patches added since the tree was made
+for p in "$D"/patches/*.diff; do
 	patch -s -p1 -R --dry-run -d "$M" < "$p" > /dev/null 2>&1 && continue
 	echo "== patch $(basename "$p")"
 	patch -s -p1 -d "$M" < "$p"

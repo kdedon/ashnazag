@@ -32,5 +32,7 @@ struct mig_w3d {
 typedef char mig_w3d_fits[(sizeof(struct mig_w3d) <= MIG_W3D_MAP_SIZE) ? 1 : -1];
 
 void w3d_init(struct mig_w3d *);
+void w3d_text(void);
+void fill32(void *, unsigned long, unsigned long);
 
 #endif

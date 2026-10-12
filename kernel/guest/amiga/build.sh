@@ -23,8 +23,10 @@ W3D= GL=
 if [ -f "$GLW/lib/libOSMesa.a" ] && [ -x "$TC95/bin/m68k-cbm-sysv4-gcc" ]; then
     nice -n 19 "$TC95/bin/m68k-cbm-sysv4-gcc" -O2 -m68040 -fomit-frame-pointer -Wall \
         -I"$GLW/include" -I"$G/amiga" -c "$G/amiga/w3d.c" -o "$O/w3d.o"
+    nice -n 19 "$TC95/bin/m68k-cbm-sysv4-gcc" -O2 -m68040 -fomit-frame-pointer -Wall \
+        -c "$G/amiga/fastmem.c" -o "$O/fastmem.o"
     W3D=-DWARP3D
-    GL="$O/w3d.o $GLW/lib/libOSMesa.a $SYS/usr/ccs/lib/libm.a $(ls "$TC95"/lib/gcc-lib/m68k-cbm-sysv4/*/libgcc.a | tail -1)"
+    GL="$O/fastmem.o $O/w3d.o $GLW/lib/libOSMesa.a $SYS/usr/ccs/lib/libm.a $(ls "$TC95"/lib/gcc-lib/m68k-cbm-sysv4/*/libgcc.a | tail -1)"
 fi
 for source in amiga/startmig amiga/migdisp amiga/rtgtransport amiga/input amiga/hostfs \
     amiga/hostfsbroker amiga/sysroot amiga/miglog amiga/migsnd amiga/migfloppy amiga/amfm sndout; do

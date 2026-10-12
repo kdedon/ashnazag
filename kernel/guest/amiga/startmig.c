@@ -39,7 +39,7 @@ static char *amiga_device;
 #define BOOTSIZE 0x80000UL
 
 extern int mprotect(), munmap();
-extern char _start, etext;
+extern char etext;
 extern int migdisp(), migdisp_open(), migkick, migmenu;
 extern unsigned int migdisp_formats;
 extern unsigned long migdisp_gsize;
@@ -1276,8 +1276,15 @@ main(argc, argv)
 	ae.ae_flags |= AMIGAF_PAL | (census ? AMIGAF_CENSUS : 0) | kickrom->flags;
 	if (ioctl(fd, AMIGAIOC_ENTER, &ae) < 0)
 		fail("Amiga session (AMIGAIOC_ENTER)");
-	/* faults and FPU emulation in startmig's own code (Mesa) are AMIX's */
-	hostpc.ah_lo = (unsigned long)&_start;
+	/*
+	 * faults and FPU emulation in Mesa, linked last, are AMIX's; the code
+	 * before it reaches guest registers through the guest's faults
+	 */
+#ifdef WARP3D
+	hostpc.ah_lo = (unsigned long)w3d_text;
+#else
+	hostpc.ah_lo = (unsigned long)&etext;
+#endif
 	hostpc.ah_hi = (unsigned long)&etext;
 	if (ioctl(fd, AMIGAIOC_HOSTPC, &hostpc) < 0)
 		fail("AMIGAIOC_HOSTPC");

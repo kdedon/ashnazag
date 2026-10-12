@@ -1,7 +1,12 @@
 /*
  * w3d.c -- the host side of Warp3D.library: each library vector's
- * function, drawing with Mesa's software renderer into the BitMap's
- * memory.  Called on the host stack from guest code, one caller at a time.
+ * function, drawing with Mesa's software renderer.  Called on the host
+ * stack from guest code, one caller at a time.
+ *
+ * Mesa draws into a back buffer in host memory: display memory can be
+ * slow to read and write pixel by pixel.  The rows drawn go to the BitMap
+ * at each flush and unlock; rows the guest may have drawn into since are
+ * read back before Mesa draws over them, unless a clear covers them.
  *
  * Guest structures are read at the byte offsets of the 68k Amiga
  * layout (2-byte alignment).
@@ -128,6 +133,18 @@ struct ctx {
     char *bitmap;
     unsigned char *mem;
     int bpr, w, h, yoff, bpp, rgbfmt;
+    unsigned char *back;	/* w * bpp a row; 0: Mesa draws into mem */
+    int y0, y1;		/* rows to write to the bitmap */
+    int s0, s1;		/* rows holding the bitmap's content */
+    int k0, k1;		/* rows drawn since the back buffer was cleared to kc */
+    int kok;
+    unsigned long kc;
+    int z0, z1;		/* rows drawn since the Z buffer was cleared to zval */
+    unsigned long zval;
+    int cmask;		/* colour mask is all on */
+    float pad;		/* widest line or point, in pixels */
+    int affine;		/* texture coordinates without w */
+    unsigned long backsz;
     unsigned long state;
     struct tex *texs, *cur;
     float color[4];
@@ -143,11 +160,17 @@ static char *names[MIG_W3D_NFN];
 static unsigned char seen[MIG_W3D_NFN];
 static struct ctx *current;
 static int drew;
-static long frames, t0;
+static long frames, t0, copyms;
 
 /* the W3D_Driver of the one driver, in memory the guest reads */
 static struct { unsigned long chip, formats, name; unsigned short swdriver; } __attribute__((packed)) drv;
 static unsigned long drvlist[2];
+
+/* first in this file's text, which Mesa's follows */
+void
+w3d_text(void)
+{
+}
 
 static int
 unimpl(int n)
@@ -183,10 +206,10 @@ tag(unsigned long *t, unsigned long want, unsigned long def)
 static int
 make(struct ctx *c)
 {
-    if (!OSMesaMakeCurrent(c->gl, c->mem + c->yoff * c->bpr,
+    if (!OSMesaMakeCurrent(c->gl, c->back ? c->back : c->mem + c->yoff * c->bpr,
         c->bpp == 2 ? GL_UNSIGNED_SHORT_5_6_5 : GL_UNSIGNED_BYTE, c->w, c->h))
         return 0;
-    OSMesaPixelStore(OSMESA_ROW_LENGTH, c->bpr / c->bpp);
+    OSMesaPixelStore(OSMESA_ROW_LENGTH, c->back ? c->w : c->bpr / c->bpp);
     OSMesaPixelStore(OSMESA_Y_UP, 0);
     current = c;
     return 1;
@@ -201,6 +224,103 @@ use(char *w3d)
     if (current != c && !make(c))
         return 0;
     return 1;
+}
+
+static long
+ms(void)
+{
+    struct timeval tv;
+    gettimeofday(&tv);
+    return tv.tv_sec * 1000 + tv.tv_usec / 1000;
+}
+
+/* rows a..b-1 from the back buffer to the bitmap (out) or back */
+static void
+copy(struct ctx *c, int a, int b, int out)
+{
+    int n = c->w * c->bpp;
+    unsigned char *p = c->back + a * n, *m = c->mem + (c->yoff + a) * c->bpr;
+    if (n == c->bpr) {
+        if (out) memcpy(m, p, (b - a) * n); else memcpy(p, m, (b - a) * n);
+        return;
+    }
+    for (; a < b; a++, p += n, m += c->bpr)
+        if (out) memcpy(m, p, n); else memcpy(p, m, n);
+}
+
+static void
+grow(int *lo, int *hi, int a, int b)
+{
+    if (*lo >= *hi) *lo = a, *hi = b;
+    if (a < *lo) *lo = a;
+    if (b > *hi) *hi = b;
+}
+
+/* Mesa is about to draw between rows y and e */
+static void
+touch(struct ctx *c, float y, float e)
+{
+    float lo = y - c->pad - 1, hi = e + c->pad + 2;
+    int a, b;
+    if (!(lo < hi)) return;
+    a = lo < 0 ? 0 : lo > c->h ? c->h : (int)lo;
+    b = hi < 0 ? 0 : hi > c->h ? c->h : (int)hi;
+    if (a >= b) return;
+    if (glIsEnabled(GL_DEPTH_TEST)) grow(&c->z0, &c->z1, a, b);
+    if (!c->back) return;
+    if (c->s0 >= c->s1) {
+        copy(c, a, b, 0);
+        c->s0 = a; c->s1 = b;
+    } else {
+        if (a < c->s0) { copy(c, a, c->s0, 0); c->s0 = a; }
+        if (b > c->s1) { copy(c, c->s1, b, 0); c->s1 = b; }
+    }
+    grow(&c->y0, &c->y1, a, b);
+    grow(&c->k0, &c->k1, a, b);
+}
+
+/* bitmap rows a..b-1 to the clear colour */
+static void
+fillrows(struct ctx *c, int a, int b)
+{
+    int n = c->w * c->bpp;
+    unsigned char *m = c->mem + (c->yoff + a) * c->bpr;
+    if (n == c->bpr) {
+        if (a < b) fill32(m, c->kc, (b - a) * n);
+        return;
+    }
+    for (; a < b; a++, m += c->bpr)
+        fill32(m, c->kc, n);
+}
+
+/* rows still the clear colour are filled: nothing to read for them */
+static void
+copyout(struct ctx *c)
+{
+    int a = c->y0, b = c->y1, k0 = c->kok ? c->k0 : 0, k1 = c->kok ? c->k1 : c->h;
+    long t;
+    if (!c->back || a >= b || rtg->hidden) return;
+    t = ms();
+    if (k0 >= k1) k0 = k1 = b;
+    fillrows(c, a, k0 < a ? a : k0 > b ? b : k0);
+    if ((k0 > a ? k0 : a) < (k1 < b ? k1 : b))
+        copy(c, k0 > a ? k0 : a, k1 < b ? k1 : b, 1);
+    fillrows(c, k1 < a ? a : k1 > b ? b : k1, b);
+    copyms += ms() - t;
+    c->y0 = c->y1 = 0;
+}
+
+/* a back buffer the bitmap's size; none if memory is short */
+static void
+backbuf(struct ctx *c, int want)
+{
+    unsigned long n = (unsigned long)c->w * c->h * c->bpp;
+    c->y0 = c->y1 = c->s0 = c->s1 = 0;
+    if (c->back && want && c->backsz == n) return;
+    c->kok = 0;
+    if (c->back) free(c->back);
+    c->back = want ? malloc(n) : 0;
+    c->backsz = c->back ? n : 0;
 }
 
 /* the bitmap's layout: W3D_Bitmap, or what the library found */
@@ -286,16 +406,23 @@ CreateContext(unsigned long *err, unsigned long *tags)
      * the guest's chip memory: create only with room for the context
      * (about 0.7 MB) and its depth buffer; the probe stays in the heap
      */
-    if (!(probe = malloc(MESA_ROOM + c->w * c->h * 2))) {
+    if ((probe = malloc(MESA_ROOM + c->w * c->h * (2 + c->bpp))) != 0) {
+        free(probe);
+        backbuf(c, 1);
+    } else if ((probe = malloc(MESA_ROOM + c->w * c->h * 2)) != 0)
+        free(probe);
+    else {
         miglog(0, "Warp3D: CreateContext: no memory for Mesa");
         free(w); free(c);
         seterr(err, NOMEMORY);
         return 0;
     }
-    free(probe);
+    c->cmask = 1;
+    c->zval = ~0UL;
     if (!(c->gl = OSMesaCreateContextExt(fmt, 16, 0, 0, 0)) || !make(c)) {
         miglog(0, "Warp3D: CreateContext: no Mesa context");
         if (c->gl) OSMesaDestroyContext(c->gl);
+        if (c->back) free(c->back);
         free(w); free(c);
         seterr(err, NOMEMORY);
         return 0;
@@ -316,7 +443,9 @@ CreateContext(unsigned long *err, unsigned long *tags)
     glShadeModel(GL_SMOOTH);
     glDepthFunc(GL_LESS);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    miglog(0, "Warp3D: context %dx%d, %d bytes a pixel, rows %d", c->w, c->h, c->bpp, c->bpr);
+    frames = 0;
+    miglog(0, "Warp3D: context %dx%d, %d bytes a pixel, rows %d%s", c->w, c->h, c->bpp, c->bpr,
+        c->back ? "" : ", no back buffer");
     seterr(err, OK);
     return (long)w;
 }
@@ -343,8 +472,10 @@ DestroyContext(char *w)
     if (!use(w)) return 0;
     c = (struct ctx *)L(w, C_DRIVER);
     calls();
+    copyout(c);
     while (c->texs) freetex(c, c->texs);
     OSMesaDestroyContext(c->gl);
+    if (c->back) free(c->back);
     current = 0;
     c->w3d = 0;
     free(c);
@@ -412,8 +543,13 @@ LockHardware(char *w)
 static long
 finish(char *w, int wait)
 {
+    struct ctx *c;
     if (!use(w)) return ILLEGALINPUT;
+    c = (struct ctx *)L(w, C_DRIVER);
     if (wait) glFinish(); else glFlush();
+    copyout(c);
+    /* unlocked, the guest may draw into the bitmap */
+    if (!W(w, C_HWLOCKED)) c->s0 = c->s1 = 0;
     if (drew) {
         drew = 0;
         tab->ring = 1;
@@ -421,15 +557,7 @@ finish(char *w, int wait)
     return OK;
 }
 
-static long
-ms(void)
-{
-    struct timeval tv;
-    gettimeofday(&tv);
-    return tv.tv_sec * 1000 + tv.tv_usec / 1000;
-}
-
-static long UnLockHardware(char *w) { finish(w, 0); if (w) W(w, C_HWLOCKED) = 0; return 0; }
+static long UnLockHardware(char *w) { if (w) W(w, C_HWLOCKED) = 0; finish(w, 0); return 0; }
 static long WaitIdle(char *w) { finish(w, 1); return 0; }
 static long CheckIdle(char *w) { return OK; }
 static long Flush(char *w) { return finish(w, 0); }
@@ -439,9 +567,9 @@ static long
 FlushFrame(char *w)
 {
     finish(w, 1);
-    if (frames == 0) t0 = ms();
+    if (frames == 0) t0 = ms(), copyms = 0;
     if (++frames == 21)
-        miglog(0, "Warp3D: 20 frames, %ld ms per frame", (ms() - t0) / 20);
+        miglog(0, "Warp3D: 20 frames, %ld ms per frame, %ld copying", (ms() - t0) / 20, copyms / 20);
     return 0;
 }
 
@@ -724,10 +852,20 @@ drawable(char *w)
     return OK;
 }
 
+/* the same w at every vertex needs no divide per pixel */
+static void
+affine(struct ctx *c, int on)
+{
+    if (on != c->affine) {
+        glHint(GL_PERSPECTIVE_CORRECTION_HINT, on ? GL_FASTEST : GL_NICEST);
+        c->affine = on;
+    }
+}
+
 static void
 vertex(struct ctx *c, char *v, struct tex *t)
 {
-    float q = c->state & S_PERSPECTIVE ? F(v, 16) : 1.0f;
+    float q = c->state & S_PERSPECTIVE && !c->affine ? F(v, 16) : 1.0f;
     glColor4fv((float *)(v + 32));
     if (t)
         glTexCoord4f(F(v, 20) * t->sw * q, F(v, 24) * t->sh * q, 0, q);
@@ -751,10 +889,17 @@ prim(char *w, GLenum mode, char **vs, int n, char *obj)
 {
     struct ctx *c;
     struct tex *t;
-    int i, e;
+    int i, e, same = 1;
+    float y0, y1;
     if ((e = drawable(w)) != OK) return e;
     c = (struct ctx *)L(w, C_DRIVER);
-    t = primtex(c, obj);
+    for (i = 0, y0 = y1 = F(vs[0], 4); i < n; i++) {
+        if (F(vs[i], 4) < y0) y0 = F(vs[i], 4);
+        if (F(vs[i], 4) > y1) y1 = F(vs[i], 4);
+        if (F(vs[i], 16) != F(vs[0], 16)) same = 0;
+    }
+    touch(c, y0, y1);
+    if ((t = primtex(c, obj)) != 0) affine(c, same);
     glBegin(mode);
     for (i = 0; i < n; i++) vertex(c, vs[i], t);
     glEnd();
@@ -780,6 +925,8 @@ many(char *w, GLenum mode, char *tris, int byref)
 {
     int n = L(tris, 0), i;
     char *v = (char *)L(tris, 4), *vs[64], **p;
+    float y0, y1;
+    int same = 1;
     long e = OK;
     struct ctx *c;
     struct tex *t;
@@ -791,7 +938,13 @@ many(char *w, GLenum mode, char *tris, int byref)
     if (byref) return prim(w, mode, (char **)v, n, (char *)L(tris, 8));
     if ((e = drawable(w)) != OK) return e;
     c = (struct ctx *)L(w, C_DRIVER);
-    t = primtex(c, (char *)L(tris, 8));
+    for (i = 0, y0 = y1 = F(v, 4); i < n; i++) {
+        if (F(v + i * V_SIZE, 4) < y0) y0 = F(v + i * V_SIZE, 4);
+        if (F(v + i * V_SIZE, 4) > y1) y1 = F(v + i * V_SIZE, 4);
+        if (F(v + i * V_SIZE, 16) != F(v, 16)) same = 0;
+    }
+    touch(c, y0, y1);
+    if ((t = primtex(c, (char *)L(tris, 8))) != 0) affine(c, same);
     glBegin(mode);
     for (i = 0; i < n; i++) vertex(c, v + i * V_SIZE, t);
     glEnd();
@@ -804,11 +957,21 @@ static long DrawTriStrip(char *w, char *t) { return many(w, GL_TRIANGLE_STRIP, t
 static long DrawTriFanV(char *w, char *t) { return many(w, GL_TRIANGLE_FAN, t, 1); }
 static long DrawTriStripV(char *w, char *t) { return many(w, GL_TRIANGLE_STRIP, t, 1); }
 
+static void
+wide(char *w, float s, int line)
+{
+    struct ctx *c;
+    if (!use(w)) return;
+    c = (struct ctx *)L(w, C_DRIVER);
+    if (s > c->pad) c->pad = s;
+    if (line) glLineWidth(s); else glPointSize(s);
+}
+
 static long
 DrawLine(char *w, char *l)
 {
     char *v[2];
-    if (use(w)) glLineWidth(F(l, 2 * V_SIZE + 4));
+    wide(w, F(l, 2 * V_SIZE + 4), 1);
     v[0] = l; v[1] = l + V_SIZE;
     return prim(w, GL_LINES, v, 2, (char *)L(l, 2 * V_SIZE));
 }
@@ -816,25 +979,59 @@ DrawLine(char *w, char *l)
 static long
 DrawPoint(char *w, char *p)
 {
-    if (use(w)) glPointSize(F(p, V_SIZE + 4));
+    wide(w, F(p, V_SIZE + 4), 0);
     return prim(w, GL_POINTS, &p, 1, (char *)L(p, V_SIZE));
 }
 
 static long
 lines(char *w, GLenum mode, char *l)
 {
-    if (use(w)) glLineWidth(F(l, 12));
+    wide(w, F(l, 12), 1);
     return many(w, mode, l, 0);
 }
 
 static long DrawLineStrip(char *w, char *l) { return lines(w, GL_LINE_STRIP, l); }
 static long DrawLineLoop(char *w, char *l) { return lines(w, GL_LINE_LOOP, l); }
 
+/* argb in the bitmap's format, twice over at 16 bits */
+static unsigned long
+pixel(struct ctx *c, unsigned long argb)
+{
+    unsigned long p;
+    if (c->bpp == 2) {
+        p = (argb >> 8 & 0xf800) | (argb >> 5 & 0x07e0) | (argb >> 3 & 0x001f);
+        return p << 16 | p;
+    }
+    if (c->rgbfmt == MIG_RTG_A8R8G8B8) return argb;
+    return (argb & 0xff) << 24 | (argb & 0xff00) << 8 | (argb >> 8 & 0xff00) | argb >> 24;
+}
+
 static long
 ClearDrawRegion(char *w, unsigned long argb)
 {
+    struct ctx *c;
     int e;
     if ((e = drawable(w)) != OK) return e;
+    c = (struct ctx *)L(w, C_DRIVER);
+    if (c->state & S_SCISSOR)
+        touch(c, (long)L(w, C_SCISSOR + 4), (long)L(w, C_SCISSOR + 4) + (long)L(w, C_SCISSOR + 12));
+    else if (!c->cmask)
+        touch(c, 0, c->h);
+    else if (c->back) {
+        /*
+         * every row's content is new: nothing to read back, and only rows
+         * drawn since a clear to the same colour need filling
+         */
+        unsigned long p = pixel(c, argb), n = c->w * c->bpp;
+        if (!c->kok || p != c->kc) c->k0 = 0, c->k1 = c->h;
+        if (c->k0 < c->k1) fill32(c->back + c->k0 * n, p, (c->k1 - c->k0) * n);
+        c->kc = p;
+        c->kok = 1;
+        c->k0 = c->k1 = 0;
+        c->s0 = c->y0 = 0;
+        c->s1 = c->y1 = c->h;
+        return OK;
+    }
     glClearColor((argb >> 16 & 255) / 255.0f, (argb >> 8 & 255) / 255.0f, (argb & 255) / 255.0f,
         (argb >> 24 & 255) / 255.0f);
     glClear(GL_COLOR_BUFFER_BIT);
@@ -855,12 +1052,31 @@ FreeZBuffer(char *w)
 static long
 ClearZBuffer(char *w, double *z)
 {
+    struct ctx *c;
+    GLint zw, zh, zb;
+    void *zbuf;
+    double d = z ? *z : 1.0;
+    unsigned long v;
     if (!use(w)) return ILLEGALINPUT;
     if (!W(w, C_ZBUFFERALLOC)) return NOZBUFFER;
-    glClearDepth(z ? *z : 1.0);
+    c = (struct ctx *)L(w, C_DRIVER);
+    d = d < 0 ? 0 : d > 1 ? 1 : d;
+    v = (unsigned short)(d * 65535.0);
+    if (!(c->state & S_SCISSOR) && OSMesaGetDepthBuffer(c->gl, &zw, &zh, &zb, &zbuf) && zb == 2 &&
+        zh == c->h) {
+        /* only rows drawn since a clear to the same value; Z rows count from the bottom */
+        if (v != c->zval) c->z0 = 0, c->z1 = zh;
+        if (c->z0 < c->z1)
+            fill32((unsigned short *)zbuf + (zh - c->z1) * zw, v << 16 | v, (c->z1 - c->z0) * zw * 2);
+        c->zval = v;
+        c->z0 = c->z1 = 0;
+        return OK;
+    }
+    c->zval = ~0UL;
+    glClearDepth(d);
     glDepthMask(GL_TRUE);
     glClear(GL_DEPTH_BUFFER_BIT);
-    glDepthMask(((struct ctx *)L(w, C_DRIVER))->state & S_ZBUFFERUPDATE ? GL_TRUE : GL_FALSE);
+    glDepthMask(c->state & S_ZBUFFERUPDATE ? GL_TRUE : GL_FALSE);
     return OK;
 }
 
@@ -920,6 +1136,7 @@ static long
 SetColorMask(char *w, long r, long g, long b, long a)
 {
     if (!use(w)) return ILLEGALINPUT;
+    ((struct ctx *)L(w, C_DRIVER))->cmask = r && g && b && a;
     glColorMask(r != 0, g != 0, b != 0, a != 0);
     return OK;
 }
@@ -947,10 +1164,15 @@ static long
 SetDrawRegion(char *w, char *bm, long yoff, long *sc)
 {
     struct ctx *c;
+    int ow, oh;
     if (!use(w)) return ILLEGALINPUT;
     c = (struct ctx *)L(w, C_DRIVER);
+    copyout(c);
     c->yoff = yoff;
+    ow = c->w; oh = c->h;
     if (!region(c, bm, 0)) return ILLEGALBITMAP;
+    if (c->w != ow || c->h != oh) c->zval = ~0UL;
+    backbuf(c, c->back != 0);
     if (!make(c)) return NOMEMORY;
     viewport(c);
     if (sc) SetScissor(w, sc);
@@ -1067,6 +1289,30 @@ element(struct ctx *c, struct tex *t, unsigned long i)
     glVertex3f(x, y, z);
 }
 
+static float
+elemy(struct ctx *c, unsigned long i)
+{
+    char *v = c->vp + i * c->vstride;
+    return c->vmode == 2 ? D(v, 8) : F(v, 4);
+}
+
+/* rows the elements cover; idx 0 for base..base+n-1 */
+static void
+touchelems(struct ctx *c, unsigned long base, unsigned long type, unsigned long n, void *idx)
+{
+    unsigned long i, k;
+    float y, y0 = 0, y1 = 0;
+    if (!c->back) return;
+    for (i = 0; i < n; i++) {
+        k = !idx ? base + i : type == 0 ? ((unsigned char *)idx)[i] : type == 1 ?
+            ((unsigned short *)idx)[i] : ((unsigned long *)idx)[i];
+        y = elemy(c, k);
+        if (!i || y < y0) y0 = y;
+        if (!i || y > y1) y1 = y;
+    }
+    if (n) touch(c, y0, y1);
+}
+
 static const GLenum primmode[7] = { GL_TRIANGLES, GL_TRIANGLE_FAN, GL_TRIANGLE_STRIP, GL_POINTS,
     GL_LINES, GL_LINE_LOOP, GL_LINE_STRIP };
 
@@ -1080,7 +1326,8 @@ DrawArray(char *w, unsigned long prim, unsigned long base, unsigned long n)
     if ((e = drawable(w)) != OK) return e;
     c = (struct ctx *)L(w, C_DRIVER);
     if (prim > 6 || !c->vp) return ILLEGALINPUT;
-    t = primtex(c, (char *)L(w, 356));
+    touchelems(c, base, 0, n, 0);
+    if ((t = primtex(c, (char *)L(w, 356))) != 0) affine(c, 0);
     if (!c->cp) glColor4fv(c->color);
     glBegin(primmode[prim]);
     for (i = 0; i < n; i++) element(c, t, base + i);
@@ -1098,7 +1345,8 @@ DrawElements(char *w, unsigned long prim, unsigned long type, unsigned long n, v
     if ((e = drawable(w)) != OK) return e;
     c = (struct ctx *)L(w, C_DRIVER);
     if (prim > 6 || type > 2 || !c->vp) return ILLEGALINPUT;
-    t = primtex(c, (char *)L(w, 356));
+    touchelems(c, 0, type, n, idx);
+    if ((t = primtex(c, (char *)L(w, 356))) != 0) affine(c, 0);
     if (!c->cp) glColor4fv(c->color);
     glBegin(primmode[prim]);
     for (i = 0; i < n; i++)
