@@ -775,6 +775,7 @@ int migdisp(int ready, int life, int go, int ack, int fd, struct fbinfo *fip)
             if (read(fd, (char *)&note, sizeof note) != sizeof note) break;
             if (note.fn_type == FBN_HIDDEN) {
                 hidden = 1;
+                ((struct mig_rtg *)MIG_RTG_BASE)->hidden = 1;
                 mig_input_reset(input, &inputstate);
                 if (migkick >= 0) {
                     input->doorbell = 1;
@@ -784,6 +785,7 @@ int migdisp(int ready, int life, int go, int ack, int fd, struct fbinfo *fip)
             /* past the 8-bit frame the display was not kept: the watcher copies all */
             if (note.fn_type == FBN_SHOWN) {
                 hidden = 0;
+                ((struct mig_rtg *)MIG_RTG_BASE)->hidden = 0;
                 ((struct mig_rtg *)MIG_RTG_BASE)->shows++;
                 kill(watcher, SIGUSR2);
             }

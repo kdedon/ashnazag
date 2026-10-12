@@ -121,6 +121,7 @@ sys.stdout.buffer.write(donotwait(open(sys.argv[2], "rb").read()))' \
 	  echo 'Run >NIL: Execute S:dragtest'
 	  echo 'Run >NIL: Execute S:sndtest'
 	  echo 'Run >NIL: Execute S:alertwait'
+	  echo 'Run >NIL: Execute S:w3dwait'
 	  [ ! -f "$AMIGASYS/IBrowse/IBrowse" ] || echo 'Run >NIL: Execute S:ibtest'
 	  echo 'EndIf'; } > "$O/User-Startup"
 	[ -z "$U" ] || { sed "/ \/S\/$U /d" "$M" > "$M.new"; mv "$M.new" "$M"; }
@@ -133,6 +134,14 @@ sys.stdout.buffer.write(donotwait(open(sys.argv[2], "rb").read()))' \
 	awk 'tolower($2) != "/libs/bsdsocket.library"' "$M" > "$M.new"
 	mv "$M.new" "$M"
 	echo "f /LIBS/bsdsocket.library 755 0 3 $O/bsdsock/bsdsocket.library" >> "$M"
+	# Warp3D.library; S:w3dwait runs w3dtest on SYS:w3dgo
+	sh "$KDIR/guest/amiga/warp3d/build.sh" "$O/warp3d" > /dev/null
+	sh "$KDIR/guest-amiga/test/w3dtest/build.sh" "$O/w3dtest" > /dev/null 2>&1
+	awk 'tolower($2) != "/libs/warp3d.library"' "$M" > "$M.new"
+	mv "$M.new" "$M"
+	echo "f /LIBS/Warp3D.library 755 0 3 $O/warp3d/Warp3D.library" >> "$M"
+	echo "f /C/w3dtest 755 0 3 $O/w3dtest/w3dtest" >> "$M"
+	echo "f /S/w3dwait 755 0 3 $T/amiga/w3dwait" >> "$M"
 	echo "f /bsdtest 755 0 3 $O/bsdtest/bsdtest" >> "$M"
 	cp "$O/bsdtest/bsdsrv" "$R/tests/amiga/bsdsrv"
 	if [ -f "$AMIGASYS/IBrowse/IBrowse" ]; then

@@ -75,6 +75,8 @@ struct guest_proc {
 	unsigned long		gp_fpc, gp_fea;
 	unsigned long		gp_fpre;	/* SIGBUS/SIGSEGV pending before it */
 	unsigned short		gp_fssw, gp_fpad;
+	/* the host's own code: its exceptions go to the stock handlers */
+	unsigned long		gp_hostlo, gp_hosthi;
 };
 
 /* gp_flags; the gates read the low 16 bits at offsets 14 and 15 */

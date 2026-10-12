@@ -1,0 +1,15 @@
+--- a/src/config.h
++++ b/src/config.h
+@@ -121,8 +121,10 @@
+ #define MAX_WIDTH 2048
+ #define MAX_HEIGHT 2048
+ 
+-/* Maxmimum size for CVA.  May be overridden by the drivers.  */
+-#define MAX_ARRAY_LOCK_SIZE 3000
++/* Maxmimum size for CVA.  May be overridden by the drivers.
++ * Each vertex buffer stage allocates this many vertices: kept small for
++ * hosts with a few MB to spare. */
++#define MAX_ARRAY_LOCK_SIZE 256
+ 
+ /* Subpixel precision for antialiasing, window coordinate snapping */
+ #define SUB_PIXEL_BITS 4

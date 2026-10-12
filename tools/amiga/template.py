@@ -53,7 +53,7 @@ def donotwait(info):
     return (info[:54] + b'\0\0\0\1' + info[58:] + struct.pack('>LL', 8, len(tool)) + tool)
 
 
-def prepare(adfs, output, input_binary, card, session, bsdsocket=None, audio=None):
+def prepare(adfs, output, input_binary, card, session, bsdsocket=None, audio=None, warp3d=None):
     sources = {}
     disks = {}
     for name in ('Install3.2', 'Workbench3.2', 'Extras3.2', 'Classes3.2', 'Fonts', 'Storage3.2', 'Locale', 'ModulesA4000D_3.2'):
@@ -110,6 +110,8 @@ def prepare(adfs, output, input_binary, card, session, bsdsocket=None, audio=Non
     put('Libs/Picasso96/container.card', card.read_bytes(), 'container')
     if bsdsocket:
         put('Libs/bsdsocket.library', bsdsocket.read_bytes(), 'container')
+    if warp3d:
+        put('Libs/Warp3D.library', warp3d.read_bytes(), 'container')
     # Workbench's Tools menu: Log Out, and Shut Down for root
     put('WBStartup/Session', session.read_bytes(), 'container')
     put('WBStartup/Session.info', donotwait(payloads['prefs/env-archive/sys/def_tool.info'][1]), 'container')
@@ -166,9 +168,10 @@ def main():
     parser.add_argument('--card', type=Path, required=True)
     parser.add_argument('--session', type=Path, required=True)
     parser.add_argument('--bsdsocket', type=Path)
+    parser.add_argument('--warp3d', type=Path)
     parser.add_argument('--audio', type=Path)
     args = parser.parse_args()
-    manifest = prepare(args.adfs, args.output, args.input_binary, args.card, args.session, args.bsdsocket, args.audio)
+    manifest = prepare(args.adfs, args.output, args.input_binary, args.card, args.session, args.bsdsocket, args.audio, args.warp3d)
     print('Prepared', len(manifest['files']), 'files in', args.output)
 
 

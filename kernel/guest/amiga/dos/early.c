@@ -56,6 +56,9 @@ struct state {
     void *oldpeek;
     U *fssm;
     B *startless[4];
+    B *renamed[2];
+    U nrenamed;
+    const char *romname[2];
 };
 /* the stand-ins' fields after struct Library */
 #define F_REAL 34
@@ -219,7 +222,11 @@ static B *initlib(struct state *s, const char *path, const char *rename, U *segp
     memset(r, 0, sizeof r);
     r[A1] = P(res); r[D1] = seg;
     if (!(base = (B *)lcall(EXEC, -102, r))) { unloadseg(seg); return 0; }
-    if (rename) *(const char **)(base + 10) = rename;
+    if (rename) {
+        s->renamed[s->nrenamed] = base;
+        s->romname[s->nrenamed++] = *(const char **)(base + 10);
+        *(const char **)(base + 10) = rename;
+    }
     if (segp) *segp = seg;
     return base;
 }
@@ -771,5 +778,12 @@ U early_late(B *dos)
         if (!i && s->rtg) *(U *)(s->rtg + RTG_HANDLER) = p;
     }
     s->nprocs = 0;
+    /*
+     * the loader DOS brings looks libraries up by their names without the
+     * path: back to the romtag names, or it loads second copies from disk
+     */
+    for (i = 0; i < s->nrenamed; i++)
+        *(const char **)(s->renamed[i] + 10) = s->romname[i];
+    s->nrenamed = 0;
     return s->bound;
 }

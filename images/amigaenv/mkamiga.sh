@@ -32,6 +32,7 @@ sh "$AUX/kernel/guest/amiga/dos/build.sh" "$ROOT/amiga/guest/dos"
 sh "$AUX/kernel/guest/amiga/input/build.sh" "$ROOT/amiga/guest/input"
 sh "$AUX/kernel/guest/amiga/session/build.sh" "$ROOT/amiga/guest/session"
 sh "$AUX/kernel/guest/amiga/bsdsock/build.sh" "$ROOT/amiga/guest/bsdsock"
+sh "$AUX/kernel/guest/amiga/warp3d/build.sh" "$ROOT/amiga/guest/warp3d"
 sh "$AUX/kernel/guest/amiga/ahi/build.sh" "$ROOT/amiga/guest/ahi"
 cp "$AUX/kernel/guest/amiga/dos/README.md" "$ROOT/amiga/guest/dos/"
 cp "$AUX/kernel/guest/amiga/dos/CONTAINER" "$ROOT/amiga/guest/dos/"
@@ -41,6 +42,7 @@ nice -n 19 python3 "$AUX/tools/amiga/template.py" "$OUT/media/ADF" "$ROOT/amiga/
 	--input "$ROOT/amiga/guest/input/container-input" --card "$ROOT/amiga/rtg/container.card" \
 	--session "$ROOT/amiga/guest/session/Session" \
 	--bsdsocket "$ROOT/amiga/guest/bsdsock/bsdsocket.library" \
+	--warp3d "$ROOT/amiga/guest/warp3d/Warp3D.library" \
 	--audio "$ROOT/amiga/guest/ahi/container.audio"
 if [ -f "$PICASSO" ] || [ -d "$PICASSO/Picasso96Install" ]; then
 	# the Picasso96 runtime the boot extension binds container.card with

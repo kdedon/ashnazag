@@ -12,12 +12,13 @@
 |   &vblcount
 |   hexit(code)         exit through a host call, as the session's Log Out
 |   hhalt(fd)           AMIGAIOC_HALT through a host call, as Shut Down: errno
+|   zdiv()              a divide by zero here; zero divides seen by the guest
 
 	.text
 	.globl	start
 start:
 	.long	getsr, setsr, wr16, rd16, urte, stopit, vblon, vblcount, dis, trp
-	.long	hexit, hhalt
+	.long	hexit, hhalt, zdiv
 
 getsr:
 	moveq	#0,d0
@@ -139,6 +140,18 @@ hhalt:
 3:	lea	16(sp),sp
 	rts
 
+| the guest's zero divide handler counts; the frame's PC is past divu
+zdiv:
+	move.l	#zhit,0x14
+	moveq	#0,d0
+	moveq	#1,d1
+	divu.w	d0,d1
+	move.l	zcount,d0
+	rts
+zhit:
+	addq.l	#1,zcount
+	rte
+
 stopit:
 	stop	#0x2000
 	move.w	#0x2700,sr
@@ -160,3 +173,4 @@ vbl:
 	.data
 vblcount: .long	0
 savessp: .long	0
+zcount:	.long	0

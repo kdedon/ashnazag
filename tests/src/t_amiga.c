@@ -37,6 +37,7 @@
 #include <termio.h>
 #include <signal.h>
 #include <poll.h>
+#include <setjmp.h>
 #include <sys/signal.h>
 #include <sys/fault.h>
 #include <sys/syscall.h>
@@ -75,6 +76,7 @@ typedef long (*gfn)();
 #define	trp	G(9)
 #define	hexit	G(10)
 #define	hhalt	G(11)
+#define	zdiv	G(12)
 
 static int afd = -1;
 
@@ -305,9 +307,90 @@ g_fork()
 	return 0;
 }
 
-static int (*gtab[])() = { g_enter, g_rte, g_mask, g_stop, g_exit, g_exec, g_fork };
-static char *gname[] = { "enter_leave", "rte_user", "intmask", "stop", "exit", "exec", "fork" };
-static int gwant[] = { 0, 0, 0, 0, 7, 0, 0 };
+static int nfpe;
+static sigjmp_buf hjb;
+
+static void
+fpe(s)
+	int s;
+{
+	nfpe++;
+}
+
+static void
+segv(s)
+	int s;
+{
+	siglongjmp(hjb, 1);
+}
+
+/* a zero divide in host code */
+static long
+hdiv()
+{
+	long n = 1;
+
+	__asm__ __volatile__("moveq &0,%%d0\n\tdivu.w %%d0,%1" : "=d" (n) : "0" (n) : "d0");
+	return n;
+}
+
+static void
+hend()
+{
+}
+
+/*
+ * Exceptions at a PC in AMIGAIOC_HOSTPC's range are the host's: a zero
+ * divide there is SIGFPE, a custom chip read SIGSEGV; the guest's own
+ * code still sees its vectors.
+ */
+static int
+g_hostpc()
+{
+	struct amigahostpc h;
+	struct sigaction sa;
+	long z;
+	int e;
+
+	if ((e = enter()) != 0)
+		return e;
+	memset((char *)&sa, 0, sizeof sa);
+	sa.sa_handler = fpe;
+	sigaction(SIGFPE, &sa, (struct sigaction *)0);
+	sa.sa_handler = segv;
+	sigaction(SIGSEGV, &sa, (struct sigaction *)0);
+	sigaction(SIGBUS, &sa, (struct sigaction *)0);
+	if (zdiv() != 1)
+		return 1;
+	hdiv();
+	if ((z = zdiv()) != 3 || nfpe)
+		return 2;
+	if (sigsetjmp(hjb, 1) != 0)
+		return 3;
+	(void)*(volatile unsigned short *)INTENAR;
+	h.ah_lo = (unsigned long)hdiv;
+	h.ah_hi = (unsigned long)hend;
+	if (ioctl(afd, AMIGAIOC_HOSTPC, &h) < 0)
+		return 4;
+	hdiv();
+	if (nfpe != 1 || zdiv() != 4)
+		return 5;
+	h.ah_lo = (unsigned long)hdiv;
+	h.ah_hi = (unsigned long)g_hostpc + 0x1000;
+	if (ioctl(afd, AMIGAIOC_HOSTPC, &h) < 0)
+		return 6;
+	if (sigsetjmp(hjb, 1) == 0) {
+		(void)*(volatile unsigned short *)INTENAR;
+		return 7;
+	}
+	h.ah_lo = 1;
+	h.ah_hi = 0;
+	return ioctl(afd, AMIGAIOC_HOSTPC, &h) == 0 || errno != EINVAL ? 8 : 0;
+}
+
+static int (*gtab[])() = { g_enter, g_rte, g_mask, g_stop, g_exit, g_exec, g_fork, g_hostpc };
+static char *gname[] = { "enter_leave", "rte_user", "intmask", "stop", "exit", "exec", "fork", "hostpc" };
+static int gwant[] = { 0, 0, 0, 0, 7, 0, 0, 0 };
 
 static void
 guests()
@@ -1077,6 +1160,89 @@ alert()
 	unlink(b);
 }
 
+/* the startmig log's last line holding s, or 0 */
+static char *
+miglogline(s)
+	char *s;
+{
+	static char b[512];
+	char l[512];
+	FILE *f;
+
+	b[0] = 0;
+	if ((f = fopen("/tmp/startmig.0.log", "r")) == 0)
+		return 0;
+	while (fgets(l, sizeof l, f))
+		if (strstr(l, s))
+			strcpy(b, l);
+	fclose(f);
+	if (b[0] && b[strlen(b) - 1] == '\n')
+		b[strlen(b) - 1] = 0;
+	return b[0] ? b : 0;
+}
+
+/*
+ * Warp3D.library through Mesa in startmig: SYS:w3dgo runs w3dtest, which
+ * draws on the deepest display-sized screen a navy clear, a red triangle,
+ * a 2x2 checker on a square and a green triangle in front of a blue one
+ * drawn after it.  The pixels are checked on the screen.
+ */
+static void
+warp3d()
+{
+	static struct { int x, y; char *rgb, *what; } px[] = {
+		{ 60, 60, "ff0000", "red triangle" }, { 300, 300, "000080", "clear" },
+		{ 292, 52, "ffffff", "texel 0,0" }, { 356, 52, "000000", "texel 1,0" },
+		{ 292, 116, "000000", "texel 0,1" }, { 356, 116, "ffffff", "texel 1,1" },
+		{ 60, 260, "00ff00", "Z in front" },
+	};
+	char b[64], *r, *l = 0;
+	time_t t0;
+	int k, i, bad = 0;
+
+	t0 = time((time_t *)0);
+	sprintf(b, "%s/w3dgo", SYS);
+	close(creat(b, 0644));
+	for (k = 0; k < 120 && !(l = miglogline("Warp3D: 20 frames")); k++) {
+		if (k == 30)
+			host("shot amiga_w3dearly");
+		sleep(1);
+	}
+	unlink(b);
+	if (!t_check("warp3d_frames", l != 0, "%s", used("C/w3dtest", t0) ? "no 20 frames logged" :
+	    "SYS:C/w3dtest never read")) {
+		if ((l = miglogline("Warp3D")) != 0)
+			t_info("warp3d_frames", "%s", l);
+		host("shot amiga_w3dfail");
+		return;
+	}
+	t_info("warp3d_frames", "%s", l);
+	/* past the last frame, drawn after the timed ones */
+	k = (r = strstr(l, "frames, ")) ? atoi(r + 8) : 0;
+	sleep(2 + 2 * k / 1000);
+	host("shot amiga_w3d");
+	for (i = 0; i < sizeof px / sizeof px[0]; i++) {
+		sprintf(b, "pix amiga_w3d %d %d", px[i].x, px[i].y);
+		r = host(b);
+		if (!r || strcmp(r, px[i].rgb)) {
+			t_info("warp3d_pixels", "%s at %d,%d: %s, not %s", px[i].what, px[i].x, px[i].y,
+			    r ? r : "no reply", px[i].rgb);
+			bad++;
+		}
+	}
+	t_check("warp3d_pixels", bad == 0, "%d of %d wrong", bad, (int)(sizeof px / sizeof px[0]));
+	for (k = 0; k < 20 && !(l = miglogline("Warp3D calls:")); k++)
+		sleep(1);
+	t_check("warp3d_calls", l && strstr(l, "DrawTriangle") && strstr(l, "SetStencilFunc 1"),
+	    "%s", l ? l : "no counters logged");
+	if (l)
+		t_info("warp3d_calls", "%s", l);
+	if ((l = miglogline("Warp3D: SetStencilFunc not implemented")) != 0)
+		t_info("warp3d_unimplemented", "%s", l);
+	/* w3dtest's console window closes 5 s after the context */
+	sleep(6);
+}
+
 /*
  * bsdsocket.library: SYS:bsdtest starts on SYS:bsdgo and talks to
  * bsdsrv, which prints a "name ok detail" line per check.
@@ -1335,7 +1501,7 @@ peek(p, addr, buf, n)
 
 /*
  * After the drags, with the test's SYS: polls ended: the Workbench screen
- * is the display, nothing was copied, and the helpers sleep while the
+ * is the display, nothing is copied, and the helpers sleep while the
  * guest idles.
  */
 static void
@@ -1358,9 +1524,9 @@ idle(p)
 		t_check("idle_wakeups", 0, "guest memory: %s", T_ERR);
 		return;
 	}
-	t_check("direct_default", !r1.copy && !r1.copies && r1.width == r1.max_width &&
+	t_check("direct_default", !r1.copy && r1.copies == r0.copies && r1.width == r1.max_width &&
 	    r1.stride == r1.vstride, "copy %u, %u copies, screen %ux%u rows %u, display %u rows %u",
-	    r1.copy, r1.copies, r1.width, r1.height, r1.stride, r1.max_width, r1.vstride);
+	    r1.copy, r1.copies - r0.copies, r1.width, r1.height, r1.stride, r1.max_width, r1.vstride);
 	dw = r1.wakes - r0.wakes;
 	bw = f1.wakes - f0.wakes;
 	t_info("idle_wakeups", "in 5 s: display %ld, SYS: %ld", dw, bw);
@@ -1561,6 +1727,8 @@ menu()
 		t_skip("boot_menu", "mount " SYSDEV " failed");
 		return;
 	}
+	/* the last session's picture can stay up until this one draws */
+	host("shot amiga_menu0");
 	t0 = time((time_t *)0);
 	if ((p = fork()) == 0) {
 		fd = open("/tmp/startmig.menu.log", O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -1575,8 +1743,13 @@ menu()
 	for (i = 0; p > 0 && i < 30; i++) {
 		sleep(1);
 		if ((r = host("shot amiga_menu")) == 0 || sscanf(r, "%d %d", &w, &h) != 2 ||
-		    (r = host("lit amiga_menu")) == 0 || atoi(r) > w * h / 8)
+		    (r = host("lit amiga_menu")) == 0)
 			break;
+		if (atoi(r) > w * h / 8 && ((r = host("cmp amiga_menu0 amiga_menu")) == 0 ||
+		    strncmp(r, "diff", 4) == 0)) {
+			r = host("lit amiga_menu");
+			break;
+		}
 	}
 	if (p < 0)
 		t_check("boot_menu", 0, "fork: %s", T_ERR);
@@ -1688,8 +1861,11 @@ boot()
 		dup2(fd, 1);
 		dup2(fd, 2);
 		putenv("HOME=/nonexistent");
-		/* this root has no swap: fast RAM within what it can reserve */
-		execl("/tests/amiga/startmig", "startmig", "--census", "-m", "16",
+		/*
+		 * this root has no swap: fast RAM within what it can reserve,
+		 * leaving startmig's heap room for Warp3D's Mesa context
+		 */
+		execl("/tests/amiga/startmig", "startmig", "--census", "-m", "12",
 		    "-boot", "/etc/amiga/boot.rom", (char *)0);
 		_exit(127);
 	}
@@ -1788,6 +1964,7 @@ boot()
 		drag(p);
 		sound();
 		alert();
+		warp3d();
 		idle(p);
 	}
 	if (!w || !logout(p, &st, o)) {

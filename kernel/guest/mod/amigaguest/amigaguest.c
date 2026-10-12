@@ -619,7 +619,8 @@ amigaioctl(dev, cmd, arg, mode, cr, rvp)
 	}
 	if (cmd == AMIGAIOC_INFO) {
 		ai.ai_version = AMIGA_ABI_VERSION;
-		ai.ai_features = AMIGA_FEAT_BASE | AMIGA_FEAT_KICK | AMIGA_FEAT_SNDBELL;
+		ai.ai_features = AMIGA_FEAT_BASE | AMIGA_FEAT_KICK | AMIGA_FEAT_SNDBELL |
+		    AMIGA_FEAT_HOSTPC;
 		if (amiga_cpup && *amiga_cpup == 40) ai.ai_features |= AMIGA_FEAT_EXPERIMENTAL;
 		return copyout((caddr_t)&ai, arg, sizeof ai) ? EFAULT : 0;
 	}
@@ -667,6 +668,14 @@ amigaioctl(dev, cmd, arg, mode, cr, rvp)
 	if (cmd == AMIGAIOC_LEAVE) return guest_detach(&amiga_profile);
 	if (cmd == AMIGAIOC_SOCK) return amiga_sock(arg);
 	if (cmd == AMIGAIOC_HALT) return guest_halt();
+	if (cmd == AMIGAIOC_HOSTPC) {
+		struct amigahostpc h;
+		if (copyin(arg, (caddr_t)&h, sizeof h)) return EFAULT;
+		if (h.ah_hi < h.ah_lo) return EINVAL;
+		gp->gp_hostlo = h.ah_lo;
+		gp->gp_hosthi = h.ah_hi;
+		return 0;
+	}
 	if (cmd == AMIGAIOC_STAT)
 		return copyout((caddr_t)&AMIGAP(gp)->ac_stat, arg, sizeof(struct amigastat)) ? EFAULT : 0;
 	return EINVAL;

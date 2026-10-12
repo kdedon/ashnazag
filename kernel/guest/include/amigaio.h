@@ -45,6 +45,12 @@
 #define AMIGAIOC_WAITN AMIGAIOC(9)	/* in/out struct amigawait */
 #define AMIGAIOC_GSTAT AMIGAIOC(10)	/* in aw_pid, out struct amigastat of that guest */
 #define AMIGAIOC_SNDWAIT AMIGAIOC(11)
+/*
+ * AMIGAIOC_HOSTPC(struct amigahostpc *), after AMIGAIOC_ENTER: exceptions
+ * at a PC in [lo, hi) are the host's, not the guest's
+ */
+#define AMIGA_FEAT_HOSTPC 32
+#define AMIGAIOC_HOSTPC AMIGAIOC(12)
 
 struct amigaenter {
 	unsigned long ae_version, ae_chipsize, ae_fastsize, ae_flags;
@@ -56,6 +62,9 @@ struct amigawait {
 };
 /* this waiter answers the guest's requests: a request rung with 1 blocks the guest until it waits again */
 #define AMIGAW_ANSWER 1
+struct amigahostpc {
+	unsigned long ah_lo, ah_hi;
+};
 struct amigainfo {
 	unsigned long ai_version, ai_features;
 };

@@ -255,6 +255,8 @@ gc_trap(r)
 	int v = GR_VEC(r);
 	struct guest_disp *d = &gp->gp_prof->gpf_disp[v];
 
+	if ((u_long)GR_PC(r) - gp->gp_hostlo < gp->gp_hosthi - gp->gp_hostlo)
+		return 1;
 	if (d->gd_kind == GD_NATIVE || d->gd_fn == 0)
 		return gc_host(gp, r, v);
 	if ((d->gd_flags & GDF_USER) && (GR_SR(r) & 0x2000))

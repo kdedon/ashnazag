@@ -8,7 +8,7 @@ Sources (all MIT/BSD-style):
 |---|---|
 | XFree86 4.3.0 (`X430src-1..3`) | DRM kernel code (`os-support/shared/drm/kernel`, `os-support/bsd/drm/kernel`), libdrm (`os-support/linux/drm/xf86drm*.c`), DRI drivers `r200`, `radeon` (`lib/GL/mesa/src/drv`), libGL client (`lib/GL/glx`, `lib/GL/dri`), server GLX/DRI (`programs/Xserver/GL`), radeon 2D driver, x86emu |
 | Mesa 5.0.2 | GL core, swrast, tnl, OSMesa, Xlib driver, GLU |
-| Warp3D 4.2a SDK (Aminet `dev/misc/Warp3DDev-4.2a`) | `Warp3D.h`, `Warp3D.fd`: 85 LVOs |
+| Warp3D 4.2a SDK (Aminet `dev/misc/Warp3DDev-4.2a`) | `Warp3D.h`, `Warp3D.fd`: 84 LVOs |
 | Wazp3D (Aminet `driver/video/Wazp3D`) | reference for a library-level replacement and its Warp3D-to-GL path |
 
 Mesa 5.0 itself carries no DRI drivers: they live in the XFree86 4.3 tree, built against its Mesa 5.0 snapshot (`xc/extras/Mesa`, 342 files differ from 5.0.2). Use Mesa 5.0.2 for the core and the 4.3 drivers on top; fix the few API drifts as they show.
@@ -21,7 +21,7 @@ Mesa 5.0 itself carries no DRI drivers: they live in the XFree86 4.3 tree, built
 | Card owner | the display service. A new Radeon backend (POST, modes, VRAM per session) holds the DRM; the kernel does the CP init that the X driver did on XFree86 |
 | X server | **keep Xamix (X11R6.3)** and add direct-only GLX + the DRI extension: ~7k lines ported, ~1k new. XFree86 4.3's server is ~300k lines plus a new os-support port and a second owner for the card |
 | Mesa | 5.0.2 core static, no threads, no dlopen at first. OSMesa on AMIX is the first build |
-| Warp3D | our Warp3D.library (85 LVOs), register glue to ELF functions in startmig, Mesa behind it. Trap #0 already reaches AMIX from guest code; add a PC-range check so faults and FP emulation in Mesa go to the host, not the guest |
+| Warp3D | our Warp3D.library (84 LVOs), register glue to ELF functions in startmig, Mesa behind it. Trap #0 already reaches AMIX from guest code; add a PC-range check so faults and FP emulation in Mesa go to the host, not the guest |
 | Output | the Amiga environment's display-service session; on the card the session's VRAM, else OSMesa into the session memory |
 | Card-free work | compiler, Mesa software, libGL/GLX, Warp3D.library on swrast, DRM core, opci DMA/IRQ (Amiberry). Card needed: Radeon backend, radeon DRM, r200 |
 
@@ -147,7 +147,7 @@ Recommendation: **A**. X is one client of the display service like the Amiga env
 
 ### 3.3 First build: software only
 
-1. `libOSMesa.a`: core + swrast + tnl + OSMesa, with gcc 2.95.3 (2.7.2.3 as a check). Test: `osdemo` writes a PPM; compare with the same demo on the host.
+1. `libOSMesa.a`: core + swrast + tnl + OSMesa, with gcc 2.95.3 (2.7.2.3 as a check). Test: `osdemo` writes a PPM; compare with the same demo on the host. `MAX_ARRAY_LOCK_SIZE` is 256, not 3000: every tnl stage allocates that many vertices, and a context then needs about 0.7 MB plus its depth buffer, which a Warp3D host beside the guest's memory can spare.
 2. `libGL.so`/`libGL.a` from `src/X` (Xlib driver) against X11R6.3 client libs; `glxgears` under Xamix. The server needs no GLX for this: the Xlib driver draws with core X requests.
 3. GLU and the MesaDemos as a package.
 
@@ -155,7 +155,7 @@ Recommendation: **A**. X is one client of the display service like the Amiga env
 
 ### 4.1 The API
 
-Warp3D V4 (68k, 4.2a) is 85 LVOs from -30 (`Warp3D.fd`). V5 is the AmigaOS 4 PPC API (Hans de Ruiter's Radeon drivers) and not used by 68k titles. Tiers below come from MiniGL 68k, StormMesa's driver, Wazp3D's notes and its known-buggy-call list; confirm them with the library's own per-call counters on real titles (§5 step 4).
+Warp3D V4 (68k, 4.2a) is 84 LVOs from -30 (`Warp3D.fd`). V5 is the AmigaOS 4 PPC API (Hans de Ruiter's Radeon drivers) and not used by 68k titles. Tiers below come from MiniGL 68k, StormMesa's driver, Wazp3D's notes and its known-buggy-call list; confirm them with the library's own per-call counters on real titles (§5 step 4).
 
 Warp3D vertices are already in window space: x, y in pixels, z in 0..1 (double), w = 1/z_eye for perspective, u, v in texels unless normalised. The host side draws them with identity modelview, `glOrtho(0, w, h, 0, 0, -1)`, and texture coordinates `(u·w, v·w, 0, w)` scaled by the texture matrix: the GL path Wazp3D uses.
 
@@ -200,7 +200,7 @@ Texture formats (Warp3D bytes are big-endian; GL packed types are in host order,
    jsr -LVO(a6)
    Warp3D.library stub: args d0-d4/a0-a4 -> stack (as bsdsocket.library's lvo macro)
      ObtainSemaphore(lib lock)        one caller in Mesa at a time
-     usp -> Mesa stack (256 KB)        task stacks are 4-16 KB
+     usp -> Mesa stack (128 KB)        task stacks are 4-16 KB
      save FPCR, set GL's
      jsr host->fn[n] ----------------------->  w3d_xxx(args...)  -> Mesa
                                                    flush: ioctl(drm, CMDBUF)  trap #0 -> AMIX
@@ -208,7 +208,7 @@ Texture formats (Warp3D bytes are big-endian; GL packed types are in host order,
      restore FPCR, usp; ReleaseSemaphore; rts
 ```
 
-- **Finding the ELF side**: startmig writes a table `{magic, version, count, fn[85]}` at a fixed guest address, as it does for the RTG share (`MIG_RTG_BASE`). Warp3D.library checks magic and version at open; without them `OpenLibrary` fails and titles fall back as on a machine without 3D.
+- **Finding the ELF side**: startmig writes a table `{magic, version, count, fn[84], calls[84]}` at `MIG_W3D_BASE`, as it does for the RTG share (`MIG_RTG_BASE`). Warp3D.library checks magic and version at open; without them `OpenLibrary` fails and titles fall back as on a machine without 3D.
 - **ABI**: AmigaOS and SVR4 m68k agree on scratch registers (d0-d1/a0-a1, fp0-fp1) and saved ones (d2-d7/a2-a6, fp2-fp7). Arguments are copied to the stack in C order. Floats only travel in structures. Pointer results go back in d0 and a0.
 - **Reentrancy**: Mesa, libc malloc and libdrm are not reentrant. The semaphore covers them. A task switch inside Mesa (a guest interrupt, then `Schedule`) is safe: the next Warp3D caller waits on the semaphore; exec saves the usp that points into the Mesa stack.
 - **Memory**: Mesa's `malloc` uses the process's `brk`, above startmig's data and clear of the guest's fixed ranges. Textures and vertex arrays are read in place in guest memory: same address space, same byte order.
@@ -229,7 +229,7 @@ What the guest path does today (`guestcore`, `amigaguest`, `mkgates.py`):
 
 Change (~25 lines + one ioctl): a host PC range per guest process.
 
-- `struct guest_proc` gets `gp_hostlo`, `gp_hosthi`; `AMIGAIOC_HOSTPC {lo, hi}` before `AMIGAIOC_ENTER`, set by startmig from its own text and data ends (and any later `dlopen`ed object).
+- `struct guest_proc` gets `gp_hostlo`, `gp_hosthi`; `AMIGAIOC_HOSTPC {lo, hi}` right after `AMIGAIOC_ENTER`, set by startmig to its own text (and any later `dlopen`ed object).
 - `gc_trap`: `if ((u_long)GR_PC(r) - gp->gp_hostlo < gp->gp_hosthi - gp->gp_hostlo) return 1;` before the profile dispatch. Declining sends the exception to the stock handler (`guest_chain`), exactly as for a native process. The asm fast paths need no check: Mesa never raises those vectors.
 - A flag set by the glue was considered and rejected: a signal or fault taken between setting and clearing it misroutes, and the flag would have to nest.
 
@@ -251,7 +251,7 @@ Rules from the display service:
 
 | Part | Lines |
 |---|---|
-| Warp3D.library hunk: romtag, 85 LVO stubs, stack/semaphore/FPCR glue | ~400 asm |
+| Warp3D.library hunk: romtag, 84 LVO stubs, stack/semaphore/FPCR glue | ~400 asm |
 | ELF host side: state, textures, arrays, drawable, mode queries | ~3,500 C (Wazp3D's full replacement is 6.4k with its own rasteriser; its GL path is 1.6k) |
 | startmig: table, Mesa link, `AMIGAIOC_HOSTPC` | ~100 |
 | guestcore / amigaguest: PC range | ~40 |

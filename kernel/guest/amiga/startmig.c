@@ -15,6 +15,7 @@ static char *amiga_device;
 #include <unistd.h>
 #include <errno.h>
 #include <signal.h>
+#include <siginfo.h>
 #include <poll.h>
 #include <pwd.h>
 #include "amigaio.h"
@@ -25,6 +26,7 @@ static char *amiga_device;
 #include "sndshare.h"
 #include "floppyshare.h"
 #include "earlyshare.h"
+#include "w3dshare.h"
 #include "sysroot.h"
 #include "envroot.h"
 #include "miglog.h"
@@ -37,6 +39,7 @@ static char *amiga_device;
 #define BOOTSIZE 0x80000UL
 
 extern int mprotect(), munmap();
+extern char _start, etext;
 extern int migdisp(), migdisp_open(), migkick, migmenu;
 extern unsigned int migdisp_formats;
 extern unsigned long migdisp_gsize;
@@ -354,6 +357,21 @@ region(address, size, shared)
 	sprintf(what, "guest memory %#lx+%#lx", address, size);
 	if (envmem_region(address, size, shared, -1) < 0)
 		fail(what);
+}
+
+/* a fault in host code: where, for the log; then the default action */
+static void
+hostfault(sig, si, uc)
+	int sig;
+	siginfo_t *si;
+	char *uc;
+{
+	/* the ucontext's registers start 36 bytes in: d0-d7, a0-a7, pc */
+	miglog(1, "host fault: signal %d at pc %#lx, address %#lx, sp %#lx", sig,
+	    *(unsigned long *)(uc + 36 + 4 * 16), si ? (unsigned long)si->si_addr : 0UL,
+	    *(unsigned long *)(uc + 36 + 4 * 15));
+	signal(sig, SIG_DFL);
+	kill(getpid(), sig);
 }
 
 static void
@@ -1008,6 +1026,7 @@ main(argc, argv)
 	struct fbinfo fi;
 	struct amigaenter ae;
 	struct amigainfo info;
+	struct amigahostpc hostpc;
 	struct sigaction sa;
 	struct rlimit rl;
 	int i, check = 0, probe = 0, fd, lockfd = -1;
@@ -1202,6 +1221,10 @@ main(argc, argv)
 	}
 	if (!probe) {
 		region(BOOTBASE, BOOTSIZE, 0);
+		region(MIG_W3D_BASE, MIG_W3D_MAP_SIZE, 0);
+#ifdef WARP3D
+		w3d_init((struct mig_w3d *)MIG_W3D_BASE);
+#endif
 		earlyroot = sysroot;
 		loadboot(boot);
 	}
@@ -1223,6 +1246,12 @@ main(argc, argv)
 	sa.sa_flags = SA_NODEFER;
 	if (sigaction(SIGUSR2, &sa, (struct sigaction *)0) < 0)
 		fail("SIGUSR2");
+	sa.sa_handler = hostfault;
+	sa.sa_flags = SA_SIGINFO;
+	sigemptyset(&sa.sa_mask);
+	sigaction(SIGSEGV, &sa, (struct sigaction *)0);
+	sigaction(SIGBUS, &sa, (struct sigaction *)0);
+	sigaction(SIGILL, &sa, (struct sigaction *)0);
 	/* on its own stack: the guest's is Amiga memory */
 	if (ackfd >= 0) {
 		pvmode = (ae.ae_flags & AMIGAF_PV) != 0;
@@ -1244,6 +1273,11 @@ main(argc, argv)
 	ae.ae_flags |= AMIGAF_PAL | (census ? AMIGAF_CENSUS : 0) | kickrom->flags;
 	if (ioctl(fd, AMIGAIOC_ENTER, &ae) < 0)
 		fail("Amiga session (AMIGAIOC_ENTER)");
+	/* faults and FPU emulation in startmig's own code (Mesa) are AMIX's */
+	hostpc.ah_lo = (unsigned long)&_start;
+	hostpc.ah_hi = (unsigned long)&etext;
+	if (ioctl(fd, AMIGAIOC_HOSTPC, &hostpc) < 0)
+		fail("AMIGAIOC_HOSTPC");
 	if (gofd >= 0)
 		close(gofd);
 	if (probe) {

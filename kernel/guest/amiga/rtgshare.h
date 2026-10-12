@@ -77,6 +77,8 @@ struct mig_rtg {
     unsigned int formats;
     /* the display helper's count of the session coming to the front */
     volatile unsigned int shows;
+    /* nonzero while the display session is not in front */
+    volatile unsigned int hidden;
 };
 typedef char mig_rtg_fits[sizeof(struct mig_rtg) <= MIG_RTG_HEADER_SIZE - 256 ? 1 : -1];
 
