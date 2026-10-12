@@ -23,6 +23,8 @@
 # x11/package.sh's pkg directory; X and the tape's clients are installed.
 # GLBIN: gl/build.sh's bin directory; its dritest and glxgears go to
 # /usr/x11r6/bin (with X11PKG).
+# QUAKE: gl/quake/build.sh's quake, installed as /usr/games/quake; with
+# QUAKEPAK (the user's id1/pak0.pak) the game data goes to /usr/games/id1.
 # AUTORUN: a command run as root at the end of boot, output on the
 # console and in /tmp/autorun.out.
 set -e
@@ -117,6 +119,15 @@ if [ -n "$AUTORUN" ]; then
 	printf '((%s) > /tmp/autorun.out 2>&1; cat /tmp/autorun.out > /dev/console) &\n' "$AUTORUN" > "$S/S99autorun"
 	ENV="$ENV
 f /etc/rc2.d/S99autorun 744 0 3 S99autorun"
+fi
+if [ -n "$QUAKE" ]; then
+	m68k-elf-strip -o "$S/bin/quake" "$QUAKE"
+	ENV="$ENV
+d /usr/games 755 2 2
+f /usr/games/quake 555 2 2 bin/quake"
+	[ -z "$QUAKEPAK" ] || ENV="$ENV
+d /usr/games/id1 777 2 2
+f /usr/games/id1/pak0.pak 444 2 2 $(cd "$(dirname "$QUAKEPAK")" && pwd)/$(basename "$QUAKEPAK")"
 fi
 if [ -n "$X11PKG" ]; then
 	XP=$(cd "$X11PKG" && pwd)

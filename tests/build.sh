@@ -71,7 +71,7 @@ for s in ${ONLY:-"$T"/src/t_*.c "$T/src/runall.c"}; do
 	n=$(basename "$s" .c)
 	[ -n "$ONLY" ] || [ $n != t_stable ] || continue
 	# built by tests/nativehost with their own host library
-	case $n in t_nativehost*) continue ;; esac
+	case $n in t_nativehost*|t_nativecall) continue ;; esac
 	if [ $n = t_cc295 ]; then
 		cc "$s" "$O/$n.o"
 		cc295 "$T/src/cc295abi.c" "$O/cc295abi.o"

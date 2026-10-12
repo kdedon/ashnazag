@@ -15,6 +15,8 @@ struct nh_clock {
     long frequency;
 };
 
+int nh_native_begin(void), nh_native_end(void), nh_native_depth(void);
+
 void nh_display_init(struct nh_display *);
 int nh_display_open(struct nh_display *, const char *, const char *, int);
 int nh_display_close(struct nh_display *);

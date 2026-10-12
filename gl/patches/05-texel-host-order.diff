@@ -1,0 +1,67 @@
+--- a/src/texutil.c
++++ b/src/texutil.c
+@@ -50,6 +50,17 @@
+ 
+ #ifdef MESA_BIG_ENDIAN
+ #define APPEND16( a, b )	( (a) << 16 | (b) )
++/* texels stay in host order: the driver's upload swaps them for the card */
++#undef PACK_COLOR_8888_LE
++#undef PACK_COLOR_565_LE
++#undef PACK_COLOR_1555_LE
++#undef PACK_COLOR_4444_LE
++#undef PACK_COLOR_88_LE
++#define PACK_COLOR_8888_LE	PACK_COLOR_8888
++#define PACK_COLOR_565_LE	PACK_COLOR_565
++#define PACK_COLOR_1555_LE	PACK_COLOR_1555
++#define PACK_COLOR_4444_LE	PACK_COLOR_4444
++#define PACK_COLOR_88_LE	PACK_COLOR_88
+ #else
+ #define APPEND16( a, b )	( (a) | (b) << 16 )
+ #endif
+@@ -422,18 +433,6 @@
+ #include "texutil_tmp.h"
+ 
+ 
+-#ifdef MESA_BIG_ENDIAN
+-
+-#define CONVERT_TEXEL( dst, src )					\
+-	{ const GLushort s = *(GLushort *)src;				\
+-	  dst = (s >> 9) | ((s & 0x1ff) << 7); }
+-
+-#define CONVERT_TEXEL_DWORD( dst, src )					\
+-	{ const GLuint s = ((fi_type *)src)->i;				\
+-	  dst = (((s & 0xfe00fe00) >> 9) |				\
+-		 ((s & 0x01ff01ff) << 7)); }
+-
+-#else
+ 
+ #define CONVERT_TEXEL( dst, src )					\
+ 	{ const GLushort s = *(GLushort *)src;				\
+@@ -444,7 +443,6 @@
+ 	  dst = (((s & 0xfffefffe) >> 1) |				\
+ 		 ((s & 0x00010001) << 15)); }
+ 
+-#endif
+ 
+ #define SRC_TEXEL_BYTES		2
+ 
+@@ -509,10 +507,19 @@
+ #define DST_TYPE		GLushort
+ #define DST_TEXELS_PER_DWORD	2
+ 
++#ifdef MESA_BIG_ENDIAN
++#define CONVERT_TEXEL( dst, src )					\
++	dst = PACK_COLOR_88_LE( src[1], src[0] )
++
++#define CONVERT_TEXEL_DWORD( dst, src )					\
++	dst = APPEND16( PACK_COLOR_88_LE( src[1], src[0] ),		\
++			PACK_COLOR_88_LE( src[3], src[2] ) )
++#else
+ #define CONVERT_TEXEL( dst, src )					\
+ 	dst = PACK_COLOR_88_LE( src[0], src[1] )
+ 
+ #define CONVERT_DIRECT
++#endif
+ 
+ #define SRC_TEXEL_BYTES		2
+ 

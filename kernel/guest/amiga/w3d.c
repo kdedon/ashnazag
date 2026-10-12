@@ -631,6 +631,10 @@ finish(char *w, int wait)
     /* the card's lock waits while the session is hidden */
     if (c->dri && rtg->hidden) return OK;
     if (wait) glFinish(); else glFlush();
+#ifdef W3D_DRI
+    /* cache lines read before the card drew would hide its pixels */
+    if (wait && c->dri) ioctl(w3d_fbfd, FBIOSYNC, 0);
+#endif
     copyout(c);
     /* unlocked, the guest may draw into the bitmap */
     if (!W(w, C_HWLOCKED)) c->s0 = c->s1 = 0;

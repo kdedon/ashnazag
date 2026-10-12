@@ -22,8 +22,9 @@
 #   --qemu            build the patched QEMU into toolchain/qemu-local
 #   --x11             fetch X11R6.3 and x11r6.3-amix into ref/
 #   --tos-src         fetch EmuTOS and fVDI into ref/
-#   --gl              fetch Mesa 5.0.2 and its demos, and the XFree86 4.3
-#                     sources holding DRM and DRI (1, 3), into ref/
+#   --gl              fetch Mesa 5.0.2 and its demos, the XFree86 4.3
+#                     sources holding DRM and DRI (1, 3), and quake-amix,
+#                     into ref/
 #   --winuae          fetch WinUAE into toolchain/winuae, run under
 #                     Wine (needs wine; Xvfb is fetched when missing)
 # JOBS (default 1) is passed to make; downloads go to toolchain/dl.
@@ -68,6 +69,8 @@ X430src-3.tgz:19a830e3657851ad575ca895eb59932f1d90cd03735dec68f900dbc1bb6c3b7f"
 GLIDE_URL=https://snapshot.debian.org/file/24d21d729e9d42d65b4b0bd0a62faf6103c39ef4
 GLIDE_TGZ=glide_2002.04.10.orig.tar.gz
 GLIDE_SUM=de43d7756424fa25300f55677aba06be240549da90327da84778722dbad45af8
+QUAKE_URL=https://github.com/asokero/quake-amix
+QUAKE_PIN=e7634c9e3a93901cf723a2d1ef6f2b57f71ee114
 WINUAE_URL=https://download.abime.net/winuae/releases/WinUAE6030_x64.zip
 WINUAE_SUM=f8b7c44e8ab2f68db49b4205793848b4496464dbee3c036921840d82627f4fc3
 
@@ -342,6 +345,8 @@ if [ -n "$GL" ]; then
 	step "Glide 3 (Voodoo3 DRI build)"
 	mkdir -p "$AUX/ref/glide/dist"
 	cp -p "$(fetch $GLIDE_URL $GLIDE_SUM $GLIDE_TGZ)" "$AUX/ref/glide/dist/$GLIDE_TGZ"
+	step "quake-amix"
+	gitpin $QUAKE_URL $QUAKE_PIN "$AUX/ref/quake-amix"
 fi
 if [ -n "$QEMU" ] && [ ! -x "$TC/qemu-local/usr/bin/qemu-system-m68k" ]; then
 	step "QEMU 8.2.2 with the 68040 fix"

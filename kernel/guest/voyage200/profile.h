@@ -1,0 +1,49 @@
+#ifndef VOYAGE_PROFILE_H
+#define VOYAGE_PROFILE_H
+#define TI_MAJOR 57
+#define TI_ENTER 0x544e0001
+#define TI_LEAVE 0x544e0002
+#define TI_INFO 0x544e0003
+#define TI_EVENTS 0x544e0004
+#define TI_IDLE 0x544e0005
+#define TI_RAM 0x1000UL
+#define TI_RAM_END 0x40000UL
+#define TI_IMAGE 0x200000UL
+#define TI_IMAGE_END 0x600000UL
+#define TI_IMAGE_SIZE 0x400000UL
+#define TI_IMAGE_CRC 0xf805c7a6UL
+#define TI_EXEC_CRC 0x90b2109eUL
+#define TI_STACK 0x3ffc0UL
+#define TI_BITMAP 0x4c00UL
+#define TI_QUEUE 0x64f6UL
+#define TI_CHAIN 0x5de8UL
+#define TI_UNWIND 0x220bdcUL
+#define TI_MASK_PC 0x221f4aUL
+#define TI_SERVICE_PC 0x221f36UL
+#define TI_PROFILE_VERSION 1
+#define TI_HEAP_INIT 0x2b7e9cUL
+#define TI_REGISTER 0x2d2456UL
+#define TI_DISPATCH 0x2fd20aUL
+#define TI_REFRESH 0x2fd0ecUL
+#define TI_MATH_INIT 0x27a514UL
+#define TI_ERROR_INIT 0x224a50UL
+#define TI_EXPRESSION_INIT 0x27a5b0UL
+#define TI_GRAPH_INIT 0x2a3fc6UL
+#define TI_CLIPBOARD_INIT 0x2d45dcUL
+#define TI_PARSER_INIT 0x2ed3d2UL
+#define TI_SYMBOLS_INIT 0x2c2852UL
+#define TI_EDITOR_INIT 0x2f2e0aUL
+#define TI_GRAPHICS_INIT 0x256626UL
+#define TI_WINDOW_INIT 0x22e258UL
+#define TI_COLD_INIT 0x2cfdc0UL
+#define TI_HOME_ACTIVATE 0x2fd566UL
+#define TI_QUEUE_PUSH 0x2239f8UL
+#define TI_COLLECT 0x2fcf14UL
+#define TI_HOME_ID 0x22d8f4UL
+#define TI_HOME_RESOURCE 0x22d92eUL
+#define TI_SYSTEM_ID 0x3393ceUL
+#define TI_SYSTEM_RESOURCE 0x339408UL
+#define TI_GRAPH_ID 0x2a7d06UL
+#define TI_GRAPH_RESOURCE 0x2a7d40UL
+struct ti_info { unsigned short masked, reserved; unsigned long critical, rejected; };
+#endif

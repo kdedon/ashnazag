@@ -12,6 +12,7 @@
  */
 
 #include "kinc.h"
+#include "guest_native.h"
 
 extern int guest_fsig(), guest_unote();
 extern int gc_gate_c(), gc_linea(), gc_ftrap(), gc_fpriv();
@@ -257,6 +258,8 @@ gc_trap(r)
 
 	if ((u_long)GR_PC(r) - gp->gp_hostlo < gp->gp_hosthi - gp->gp_hostlo)
 		return 1;
+	if ((gp->gp_flags & GPF_NCALL) && v != GNC_VECTOR)
+		return gc_host(gp, r, v);
 	if (d->gd_kind == GD_NATIVE || d->gd_fn == 0)
 		return gc_host(gp, r, v);
 	if ((d->gd_flags & GDF_USER) && (GR_SR(r) & 0x2000))
@@ -273,6 +276,8 @@ gc_sendsig(sig, sip, hdlr)
 {
 	struct guest_proc *gp = GUESTP(curproc);
 
+	if (gp->gp_flags & GPF_NCALL)
+		return __amix_sendsig(sig, sip, hdlr);
 	if (gp->gp_prof->gpf_sendsig)
 		return (*gp->gp_prof->gpf_sendsig)(gp, sig, sip, hdlr);
 	return __amix_sendsig(sig, sip, hdlr);
@@ -285,6 +290,8 @@ gc_vur(a, len)
 {
 	struct guest_proc *gp = GUESTP(curproc);
 
+	if (gp->gp_flags & GPF_NCALL)
+		return __amix_valid_usr_range(a, len);
 	if (gp->gp_prof->gpf_vur)
 		return (*gp->gp_prof->gpf_vur)(gp, a, len);
 	return __amix_valid_usr_range(a, len);

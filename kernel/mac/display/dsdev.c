@@ -414,6 +414,10 @@ int *rvalp;
 			return ENXIO;
 		ds_setblank(s, arg != 0);
 		return 0;
+	case FBIOSYNC:
+		/* drops lines cached before the card wrote; write-through VRAM has no dirty ones */
+		DS_CPUSHA();
+		return 0;
 	case FBIOCACHE:
 		if (s == 0)
 			return EINVAL;

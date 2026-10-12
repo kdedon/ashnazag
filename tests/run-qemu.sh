@@ -17,7 +17,7 @@
 # line), screen.png, summary.txt.
 # AMIGANET=1 (direct boot): the root also has TCP/IP, for t_amiga's
 # bsdsocket.library checks (user-mode network, no echo service).
-# GROUP=smoke|core|mac|tos|mint|cpm|smsqe|amiga|display|sound|win16|gl|stable runs that set only.
+# GROUP=smoke|core|mac|tos|mint|cpm|smsqe|amiga|display|sound|win16|gl|quake|stable runs that set only.
 # Exit: 0 all PASS, 1 any FAIL, 2 timeout, panic or no TESTS DONE.
 # up to QSLOTS QEMUs at once (tools/qslot.sh)
 # one run per checkout at a time: they share tests/build
@@ -61,8 +61,9 @@ display) G="t_display" ;;
 sound)	G="t_sound" ;;
 win16)	G="t_win16" ;;
 gl)	G="t_gl" ;;
+quake)	G="t_quake" ;;
 stable)	G="t_stable"; TMO=${TMO0:-14400} ;;
-*)	echo "GROUP: smoke core mac tos mint cpm smsqe amiga display sound win16 gl stable"; exit 2 ;;
+*)	echo "GROUP: smoke core mac tos mint cpm smsqe amiga display sound win16 gl quake stable"; exit 2 ;;
 esac
 if [ -n "${G:-}" ]; then
 	ONLY="$T/src/runall.c"
@@ -128,6 +129,10 @@ if [ $MODE = direct ]; then
 	[ -f "$T/build/w16/win16.img" ] && set -- "$@" \
 		-drive file="$T/build/w16/win16.img",format=raw,if=none,id=hd3,snapshot=on \
 		-device scsi-hd,scsi-id=3,drive=hd3
+	# t_quake's volume, writes discarded
+	[ -f "$T/build/quake/quake.img" ] && set -- "$@" \
+		-drive file="$T/build/quake/quake.img",format=raw,if=none,id=hd5,snapshot=on \
+		-device scsi-hd,scsi-id=5,drive=hd5
 elif [ $MODE = net ]; then
 	MEM=${MEM:-128}
 	set -- -m "$MEM" -kernel "$KERNEL" -initrd "$T/build/netroot.img" \

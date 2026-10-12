@@ -86,6 +86,8 @@ missing. [docs/hosts.md](docs/hosts.md) covers booting each host.
 - [EmuTOS](https://emutos.sourceforge.io/), fVDI, TeraDesk, XaAES: the TOS environment
 - [FreeType](https://freetype.org/): TrueType for the Win16 environment (fetched at build time)
 - [Mesa](https://mesa3d.org/) 5.0.2: OpenGL (fetched at build time)
+- XFree86 4.3 tdfx DRI driver and Glide3: Voodoo3 3D (fetched at build time)
+- [quake-amix](https://github.com/asokero/quake-amix): Quake for AMIX (fetched at build time; game data not included)
 
 ## AI disclosure
 

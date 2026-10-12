@@ -80,6 +80,9 @@ KDIR=$KDIR sh "$T/amiga/build.sh" "$AMIB"
 # t_win16's startwin and volume (run-qemu.sh adds it as SCSI disk 3)
 W16B=$B/w16
 case " $ONLY " in "  "|*/t_win16.c*|*/t_stable.c*) sh "$T/win16/mkvol.sh" "$W16B" ;; *) rm -rf "$W16B" ;; esac
+# t_quake's volume (SCSI disk 5), only when asked for: a timedemo takes long
+QKB=$B/quake
+case " $ONLY " in */t_quake.c*) sh "$T/quake/mkvol.sh" "$QKB" ;; *) rm -rf "$QKB" ;; esac
 # t_ufs's volume: /d/f0../d/f3 in t_pattern (run-qemu.sh adds it as SCSI disk 2)
 UFSB=$B/ufs
 if [ -z "$NET" ]; then
@@ -273,8 +276,12 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 		echo "b /dev/dsk/c3d0s0 600 0 3 18 3"
 		echo "d /win 755 0 3"
 	fi
+	if [ -f "$QKB/quake.img" ]; then
+		echo "b /dev/dsk/c5d0s0 600 0 3 18 5"
+		echo "d /quake 755 0 3"
+	fi
 	if [ -f "$AMIB/sys.img" ] || [ -f "$UFSB/ufs.img" ] || [ -f "$AUXB/macsys.img" ] ||
-	    [ -f "$W16B/win16.img" ]; then
+	    [ -f "$W16B/win16.img" ] || [ -f "$QKB/quake.img" ]; then
 		echo "d /usr/lib/fs/ufs 755 0 3"
 		echo "f /usr/lib/fs/ufs/mount 555 0 3 $RD/build/core/usr/lib/fs/ufs/mount"
 	fi

@@ -40,7 +40,7 @@ Known issues: System 6 is slow and has no colour.
 
 `startmig` boots Kickstart 3.2 to Workbench; SYS: is `~/Amiga` (`makeamiga`). `-m MB` sets
 fast RAM (or `fastmb=MB` in `.env`). The display is RTG through Picasso96 (`container.card`,
-`kernel/guest/amiga/rtg`); there is no chipset display. Sound goes through AHI. Warp3D.library draws with software Mesa; hardware 3D cards come later.
+`kernel/guest/amiga/rtg`); there is no chipset display. Sound goes through AHI. Warp3D.library draws on a Voodoo3 when the screen is in its memory, else with software Mesa.
 
 ## CP/M-68K
 

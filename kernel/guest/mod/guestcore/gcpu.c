@@ -103,7 +103,7 @@ trapret()
 
 	if (gp)
 		gp->gp_flags |= GPF_ETAIL;
-	if (gp && gp->gp_prof->gpf_intr)
+	if (gp && !(gp->gp_flags & GPF_NCALL) && gp->gp_prof->gpf_intr)
 		(*gp->gp_prof->gpf_intr)(gp, (char *)u.u_ar0);
 	if (runrun)
 		preempt();
@@ -849,8 +849,12 @@ guest_fsig1(p, gp)
 	if (gp->gp_flags & GPF_QUIET) {
 		s = splhi_();
 		h = p->p_hold;
-		p->p_hold = ~(sigmask(SIGKILL) | sigmask(SIGINT) | sigmask(SIGQUIT) |
-		    sigmask(SIGTERM) | sigmask(SIGHUP));
+		pass = sigmask(SIGKILL) | sigmask(SIGINT) | sigmask(SIGQUIT) |
+		    sigmask(SIGTERM) | sigmask(SIGHUP);
+		if (gp->gp_flags & GPF_NCALL)
+			p->p_hold = h | ~(pass | VIPL_PASS);
+		else
+			p->p_hold = ~pass;
 		n = __amix_fsig(p);
 		p->p_hold = h;
 		splx_(s);

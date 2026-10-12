@@ -24,6 +24,7 @@
 #define FBIOCACHE	FBIOC(13)	/* value: FBC_WT or FBC_CI, for the next mmap */
 #define FBIOVIDEL	FBIOC(14)	/* value: where the caller maps a FBA_VIDEL session */
 #define FBIOPAN		FBIOC(15)	/* value: FBF_OWNV, where in its VRAM the screen starts */
+#define FBIOSYNC	FBIOC(16)	/* the CPU next reads what the card drew in VRAM */
 
 #define EVIOC(n)	(('E' << 8) | (n))
 #define EVIOCGINFO	EVIOC(1)	/* out struct evinfo */
