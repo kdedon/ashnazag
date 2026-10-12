@@ -9,7 +9,7 @@
 # UNIX_Root ufs = c6d0s1, UNIX_Swap = c6d0s2) and outdir/boot/, the
 # AmigaDOS volume: S/Startup-Sequence runs unix_boot040 on the kernel.
 # A login runs on the serial port.  The root holds the amilib, opci, pci
-# ne, zz9000, voodoo3, floppy and v3bars modules (floppy loaded at boot, zz9000 or voodoo3 when the card is there), modadmin, lspci and pci.ids, fltool, tcpcat, /dev/pci and /dev/ne0, registered at
+# ne, zz9000, voodoo3, tdfx, floppy and v3bars modules (floppy loaded at boot, zz9000 or voodoo3 when the card is there), modadmin, lspci and pci.ids, fltool, tcpcat, drmtest, /dev/pci, /dev/ne0 and /dev/dri/card0, registered at
 # run level 2; ne0 comes up as 10.0.2.15 (Amiberry's user-mode network).
 # AMIX_TAPE: tape segments (default media/amix-tape).  UNIXBOOT: the
 # unix_boot040 executable.  OPENPCI: openpci's unpacked archive (Libs/
@@ -21,6 +21,8 @@
 # kernel's .elf), whose packages are installed instead.  AMIGAENV:
 # mkamiga.sh's outdir, for Kickstart, the floppies and SYS:.  X11PKG:
 # x11/package.sh's pkg directory; X and the tape's clients are installed.
+# AUTORUN: a command run as root at the end of boot, output on the
+# console and in /tmp/autorun.out.
 set -e
 A=$(cd "$(dirname "$0")/.." && pwd)
 K=$(cd "$A/.." && pwd)
@@ -52,7 +54,7 @@ x() { (cd "$S" && cpio -i --quiet --to-stdout "$1" < tape/02); }
 x etc/vfstab | sed -e 's,^/dev/dsk/c0d0s1[	 ].*,/dev/dsk/c6d0s1	/dev/rdsk/c6d0s1	/	ufs	1	no	-,' > "$S/vfstab"
 grep -q '^/dev/dsk/c6d0s1.*ufs' "$S/vfstab" || { echo "[FAIL] tape vfstab changed"; exit 1; }
 printf 'amiga\n' > "$S/nodename"
-printf '/sbin/modadmin -r cdev pci 60 >/dev/null\n/sbin/modadmin -r sdev ne 61 >/dev/null\n/sbin/modadmin -r cdev zz9000 49 >/dev/null\n/sbin/modadmin -l zz9000 >/dev/null 2>&1\n/sbin/modadmin -l voodoo3 >/dev/null 2>&1\n/sbin/modadmin -r cdev floppy 62 >/dev/null\n/sbin/modadmin -l floppy >/dev/null\n' > "$S/S05dlm"
+printf '/sbin/modadmin -r cdev pci 60 >/dev/null\n/sbin/modadmin -r sdev ne 61 >/dev/null\n/sbin/modadmin -r cdev zz9000 49 >/dev/null\n/sbin/modadmin -l zz9000 >/dev/null 2>&1\n/sbin/modadmin -l voodoo3 >/dev/null 2>&1\n/sbin/modadmin -r cdev tdfx 63 >/dev/null\n/sbin/modadmin -r cdev floppy 62 >/dev/null\n/sbin/modadmin -l floppy >/dev/null\n' > "$S/S05dlm"
 cat > "$S/network-config" <<'NC'
 /usr/sbin/slink addaen /dev/ne0 ne0 &&
 	/usr/sbin/ifconfig ne0 10.0.2.15 netmask 255.255.255.0 up -trailers &&
@@ -69,6 +71,7 @@ $CC -I"$DLM/include" -o "$S/bin/modadmin" "$DLM/modadmin.c" "$S/bin"/mod*.o "$S/
 $CC -I"$A/include" -o "$S/bin/lspci" "$A/pci/lspci.c"
 $CC -I"$K/guest/include" -o "$S/bin/fltool" "$A/floppy/fltool.c"
 $CC -o "$S/bin/kread" "$A/test/kread.c"
+$CC -I"$K/mac/display" -I"$K/drm" -o "$S/bin/drmtest" "$A/test/drmtest.c"
 # libc.so is an archive: the shared part and the static rest
 SYS=$AMIX_SYSROOT
 rm -rf "$S/libc"; mkdir -p "$S/libc"
@@ -108,6 +111,11 @@ f /etc/amiga/kicka4000.rom 640 0 25 $AE/etc/amiga/kicka4000.rom
 `for f in "$AE"/amiga/media/*; do echo "f ${f#$AE} 640 0 25 $f"; done`
 `printf 't\t/amiga/sys\t0\t3\t%s' "$S/amigasys"`"
 fi
+if [ -n "$AUTORUN" ]; then
+	printf '((%s) > /tmp/autorun.out 2>&1; cat /tmp/autorun.out > /dev/console) &\n' "$AUTORUN" > "$S/S99autorun"
+	ENV="$ENV
+f /etc/rc2.d/S99autorun 744 0 3 S99autorun"
+fi
 if [ -n "$X11PKG" ]; then
 	XP=$(cd "$X11PKG" && pwd)
 	ENV="$ENV
@@ -138,6 +146,7 @@ f /usr/share/lib/pci.ids 444 2 2 $A/pci/pci.ids
 f /usr/bin/fltool 555 2 2 bin/fltool
 f /usr/bin/tcpcat 555 2 2 bin/tcpcat
 f /usr/bin/kread 555 2 2 bin/kread
+f /usr/bin/drmtest 555 2 2 bin/drmtest
 f /etc/rc2.d/S05dlm 744 0 3 S05dlm
 f /etc/inet/network-config 444 0 3 network-config
 c /dev/pci 444 0 3 60 0
@@ -150,6 +159,7 @@ f /etc/conf/mod.d/pci 644 0 3 mods/mod.d/pci
 f /etc/conf/mod.d/ne 644 0 3 mods/mod.d/ne
 f /etc/conf/mod.d/zz9000 644 0 3 mods/mod.d/zz9000
 f /etc/conf/mod.d/voodoo3 644 0 3 mods/mod.d/voodoo3
+f /etc/conf/mod.d/tdfx 644 0 3 mods/mod.d/tdfx
 f /etc/conf/mod.d/floppy 644 0 3 mods/mod.d/floppy
 f /etc/conf/mod.d/v3bars 644 0 3 mods/mod.d/v3bars
 c /dev/floppy0 666 0 3 62 0
@@ -157,6 +167,8 @@ c /dev/floppy1 666 0 3 62 1
 c /dev/floppy2 666 0 3 62 2
 c /dev/floppy3 666 0 3 62 3
 c /dev/zz9000 660 0 25 49 0
+d /dev/dri 755 0 3
+c /dev/dri/card0 660 0 25 63 0
 d /etc/conf/pci 755 0 3
 f /etc/conf/pci/openpci.library 644 0 3 openpci.library
 $CONF

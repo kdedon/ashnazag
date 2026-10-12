@@ -105,6 +105,26 @@ PowerPC Linux ran this code because `readl`/`writel` swap and a few `#ifdef __BI
 | Mesa `glheader.h` | `MESA_BIG_ENDIAN` only if `BYTE_ORDER == BIG_ENDIAN`; `CPU_TO_LE32` identity outside Linux ("fix me") | `-DBYTE_ORDER=4321 -DBIG_ENDIAN=4321`, real `CPU_TO_LE32` |
 | DRM fast lock `DRM_CAS` (`xf86drm.h`) | no m68k case: falls back to "lock fails", one ioctl per lock | add `casl` (68020-060 in hardware) |
 
+### 1.5 The port as built: tdfx first
+
+A Voodoo3 (WinUAE's Prometheus, 68060) stands in for the Radeon: same templates, a driver with no DMA. Code in `kernel/drm` (templates with `__AMIX__` branches, `drm_os_amix.h`, glue `drm_amix.h`, `drmcard.h`), module `kernel/amiga/mod/tdfx`.
+
+| Item | As built |
+|---|---|
+| Module | `tdfx` (`$depend opci voodoo3`), `/dev/dri/card0` major 63, autoloaded on open. Compiled ANSI (`-D__STDC__=0` keeps the SVR4 header extensions), not `-traditional` |
+| Card | taken from the display backend as a `struct drm_amixcard` (registers, frame buffer, free VRAM, bridge device); `DRM(amix_attach)`. The Radeon backend hands over the same struct |
+| Front session | the backend calls `DRM(amix_front)` after each pan (`v3_fronthook`); lock waiters recheck `ds_front` |
+| Maps | made by the kernel at first open, in X's place: registers (BAR0, 32 MB), frame buffer (VRAM), SAREA 8 KB with the lock. `GET_MAP` lists them; unique is `PCI:bus:slot:func` |
+| SAREA memory | chip RAM: the HAT complains at unmap about a device mapping of managed (kmem) pages. Kernel lock ops push the data cache around the lock word |
+| Auth | `DRM_IOCTL_DSBIND` (`'d'`, 0x3e): an `/dev/fbN` fd of the caller's own session; returns the session id, its frame offset in the FB map and the free VRAM range. Root is authenticated as on BSD. `ADD_CTX`/`RM_CTX` need auth, not root |
+| Lock | a bound client gets the lock only while its session is in front, else sleeps (signals end the wait) |
+| ioctl copy | `cmd` is the BSD `sys/ioccom.h` encoding (AMIX has it, 255-byte limit); the glue copies in and out |
+| Files | per process (BSD), released at the last close of the device: SVR4 calls close once |
+| SG / PCI GART | `drm_scatter.h`, `ati_pcigart.h` on `opci_dmaalloc`/`opci_busaddr`; compiled, not yet run (tdfx has no DMA) |
+| Template fix | `map_count` was never counted, so `GET_MAP` always failed |
+
+Test: `drmtest` (in the Amiga test disk; `mkhdf.sh AUTORUN=` runs it at boot): RGB565 session, version, unique, bind, maps, context, lock (SAREA word `0x80000001`), a red band through the FB map, a green rectangle by the 2D engine through the register map (read back `0x07e0`), unlock, and no lock while hidden.
+
 ## 2. X server: DRI in X11R6.3 or XFree86 4.3
 
 | | A: Xamix (X11R6.3) + GLX/DRI | B: XFree86 4.3 server |
@@ -265,7 +285,7 @@ Rules from the display service:
 | 2 | Mesa 5.0.2 OSMesa static; `osdemo` | 1 | QEMU q800 |
 | 3 | Software libGL (Xlib driver) with X11R6.3 client libs; `glxgears` on Xamix | 2 | QEMU q800 |
 | 4 | Container card 16/32-bit modes; Warp3D.library + glue + host table + PC range; OSMesa backend; per-call counters | 2 | QEMU q800 (Amiga environment), Amiberry; Cow3D, WarpTest, StarshipW3D, then the user's titles to fix the tiers |
-| 5 | DRM core port as DLM with a null driver: open, ioctl copy, SAREA map, lock, session auth, SG alloc | 1 | QEMU q800 (no PCI needed) |
+| 5 | DRM core port as DLM: open, ioctl copy, SAREA map, lock, session auth, SG alloc. **Done with tdfx (§1.5)**; SG untested | 1 | WinUAE (Voodoo3) |
 | 6 | `opci_dmaalloc`, `opci_busaddr`, `opci_intr` exercised by a bus-master card | – | Amiberry (ES1370, a bus master, behind its emulated bridge) |
 | 7 | Radeon display backend: POST (x86emu running the card ROM through `OPCI_LEGACYIO`/`opci_region`), PLL/CRTC/DAC from `radeon_driver.c` (~2k), VRAM per session, `SURFACE_CNTL` swap | 6 | **real card** |
 | 8 | Radeon DRM: kernel CP init, PCI GART on the bridge's DMA memory, §1.4 swaps; check Prometheus bus mastering | 5, 7 | **real card** |

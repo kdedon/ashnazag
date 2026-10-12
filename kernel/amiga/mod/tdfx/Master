@@ -1,0 +1,3 @@
+# tdfx: the DRM for the Voodoo3 the voodoo3 module drives, /dev/dri/card0
+$depend opci voodoo3
+tdfx	tdfx	m	0	0	0

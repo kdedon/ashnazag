@@ -3,7 +3,7 @@
 #
 #   sh amiga/mods.sh kernel.elf outdir
 #
-# Out: outdir/mod.d/{amilib,opci,pci,ne,zz9000,voodoo3,floppy,v3bars}, built for that kernel's CPU; amilib is
+# Out: outdir/mod.d/{amilib,opci,pci,ne,zz9000,voodoo3,tdfx,floppy,v3bars}, built for that kernel's CPU; amilib is
 # checked against the kernel's exports (it must carry DLM: dlm_cacheflush),
 # opci against those and amilib's.  Install them in /etc/conf/mod.d;
 # /etc/conf/pci gets openpci.library (the openpci archive's
@@ -30,7 +30,7 @@ $HCC -o "$O/tools/modfix" "$DLM/tools/modfix.c"
 grep -qw dlm_cacheflush "$O/exports" ||
 	{ echo "mods.sh: $KERNEL has no DLM" >&2; exit 1; }
 CC="$NICE m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -fno-common -Wall -Wno-comment"
-CC="$CC -I$DLM/include -I$A/include -I$K/guest/include -I$A/amilib -I$K/atari/netusbee -DNU_PCI"
+CC="$CC -I$DLM/include -I$A/include -I$K/drm -I$K/guest/include -I$A/amilib -I$K/atari/netusbee -DNU_PCI"
 
 srcs() {
 	case $1 in
@@ -43,11 +43,12 @@ srcs() {
 	floppy)	echo "$A/floppy/flsvc.c" ;;
 	ne)	echo "$K/atari/netusbee/nuchip.c $K/atari/netusbee/nudlpi.c $A/mod/ne/nemod.c" ;;
 	voodoo3)	echo "$A/voodoo3/v3ds.c $A/mod/voodoo3/v3mod.c" ;;
+	tdfx)	echo "$K/drm/tdfx_drv.c $A/mod/tdfx/tdfxmod.c" ;;
 	v3bars)	echo "$A/test/v3bars.c" ;;
 	esac
 }
 rm -rf "$O/mod.d"
-for m in amilib opci pci ne zz9000 voodoo3 floppy v3bars; do	# each after the module it depends on
+for m in amilib opci pci ne zz9000 voodoo3 tdfx floppy v3bars; do	# each after the module it depends on
 	d=$O/src/$m
 	rm -rf "$d"; mkdir -p "$d"
 	objs=
@@ -55,6 +56,8 @@ for m in amilib opci pci ne zz9000 voodoo3 floppy v3bars; do	# each after the mo
 		o=$d/$(basename "$c" | sed 's/\.[cs]$//').o
 		cc=$CC
 		case $c in */zz9000/zz9000.c) cc=$(echo "$CC" | sed 's/ -Wall//') ;; esac	# upstream, as it is
+		# ANSI templates, upstream warnings kept; __STDC__ 0 keeps the system headers' extensions
+		case $c in */drm/*) cc="$(echo "$CC" | sed 's/ -traditional//; s/ -Wall//') -D__STDC__=0 -DDS_AMIGA -I$K/mac/display" ;; esac
 		$cc -c "$c" -o "$o" 2> "$o.warn" || { cat "$o.warn"; exit 1; }
 		if grep -v 'types.h:182\|strsubr.h:70\|In file included\|^ *from ' "$o.warn" | grep .; then
 			echo "[FAIL] warnings in $c"; exit 1

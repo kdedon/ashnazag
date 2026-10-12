@@ -22,7 +22,8 @@
 #   --qemu            build the patched QEMU into toolchain/qemu-local
 #   --x11             fetch X11R6.3 and x11r6.3-amix into ref/
 #   --tos-src         fetch EmuTOS and fVDI into ref/
-#   --gl              fetch Mesa 5.0.2 and its demos into ref/
+#   --gl              fetch Mesa 5.0.2 and its demos, and the XFree86 4.3
+#                     sources holding DRM and DRI (1, 3), into ref/
 #   --winuae          fetch WinUAE into toolchain/winuae, run under
 #                     Wine (needs wine; Xvfb is fetched when missing)
 # JOBS (default 1) is passed to make; downloads go to toolchain/dl.
@@ -60,6 +61,9 @@ XAMIX_PIN=cb61a2115659cb3ae27c649439edb2ca133131b6
 MESA_URL=https://archive.mesa3d.org/older-versions/5.x
 MESA_SUMS="MesaLib-5.0.2.tar.gz:912836d16b56091b2e7d6c5fa2f336de1791a43cef45c94a263ad84d12607172
 MesaDemos-5.0.2.tar.gz:6cc3cec1e9bdb7ce0627746f40dfa132a00d88b77b48d328b6f0e7041e995985"
+XF43_URL=https://ftp.gwdg.de/pub/xfree86/XFree86/4.3.0/source
+XF43_SUMS="X430src-1.tgz:5276b045e154948fce7abba7d686406c65862d90b43b50f2546b33e38378f0d7
+X430src-3.tgz:19a830e3657851ad575ca895eb59932f1d90cd03735dec68f900dbc1bb6c3b7f"
 WINUAE_URL=https://download.abime.net/winuae/releases/WinUAE6030_x64.zip
 WINUAE_SUM=f8b7c44e8ab2f68db49b4205793848b4496464dbee3c036921840d82627f4fc3
 
@@ -322,6 +326,11 @@ if [ -n "$GL" ]; then
 	mkdir -p "$AUX/ref/mesa/dist"
 	echo "$MESA_SUMS" | while IFS=: read -r n s; do
 		cp -p "$(fetch $MESA_URL/$n $s)" "$AUX/ref/mesa/dist/$n"
+	done
+	step "XFree86 4.3.0 DRM and DRI sources"
+	mkdir -p "$AUX/ref/xfree86-4.3/dist"
+	echo "$XF43_SUMS" | while IFS=: read -r n s; do
+		cp -p "$(fetch $XF43_URL/$n $s)" "$AUX/ref/xfree86-4.3/dist/$n"
 	done
 fi
 if [ -n "$QEMU" ] && [ ! -x "$TC/qemu-local/usr/bin/qemu-system-m68k" ]; then

@@ -80,7 +80,7 @@ Research's CP/M-68K 1.3 release zip, `media/cpm68k/68kv1_3.zip`), `AMIGASTAGE`
 is missing is left out of the image.
 
 Optional open-source downloads: `--tos-src` (EmuTOS 1.4, fVDI), `--x11` (X11R6.3, x11r6.3-amix),
-`--gl` (Mesa 5.0.2 and its demos).
+`--gl` (Mesa 5.0.2 and its demos, XFree86 4.3 DRM and DRI sources).
 
 ### What each target needs
 

@@ -13,7 +13,8 @@
  * - VRAM: sessions use [0, v3_dsvram); [v3_dsvram, v3_vram) is free for
  *   back, depth and texture buffers;
  * - ownership: the front session (am_rtg's r_pan offset) is the one a
- *   3D client may draw to the screen for.
+ *   3D client may draw to the screen for; v3_fronthook, when set, is
+ *   called after each change.
  */
 #include "sys/types.h"
 #include "sys/param.h"
@@ -54,9 +55,10 @@ extern unsigned long v3ds_resv;
 volatile unsigned char *v3_reg, *v3_fb;
 unsigned long v3_physfb, v3_vram, v3_dsvram;
 int v3_swap;			/* register longs reach the card byte reversed */
+struct opci_dev *v3_dev;
+void (*v3_fronthook)();
 
 static volatile unsigned char *v3_io;
-static struct opci_dev *v3_dev;
 static struct am_rtg v3_rtg;
 static unsigned long v3_vp;	/* vidProcCfg with the video processor on */
 static int v3_bits = 8, v3_shown;
@@ -224,6 +226,8 @@ v3_pan(off)
 unsigned long off;
 {
 	wl(VIDDESKSTART, off);
+	if (v3_fronthook)
+		(*v3_fronthook)();
 }
 
 static void
