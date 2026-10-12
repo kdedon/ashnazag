@@ -15,10 +15,11 @@ with the `m68k-cbm-sysv4` toolchain; clients are the stock AMIX X11R4 ones (tape
 | `patches/05-iplan2p8.diff` | `iplan2p8` (interleaved 8 bitplanes, sources copied by `tree`) in `Xamix` |
 | `patches/04-card-select.diff` | `RtgZZ9000` switch in the server, `rtg` and `amix` Imakefiles and `amixIo.c`: the ZZ9000 card is optional |
 | `patches/07-dri.diff` | `hw/amix/dri` in the server: XF86DRI and GLX initialised beside the other extensions; they add themselves only on a screen with a DRM |
+| `patches/08-cfb32.diff` | `cfb32` built and linked beside `cfb` and `cfb16` |
 | `src/dri/` | direct rendering (`amixdri.c`), direct-only GLX (`glxamix.c`); `build.sh dri` adds XFree86 4.3's `xf86dri.c`, libdrm and GLX headers (`gl/dri/x43.sh`). Design: `docs/3d-design.md` §2.1 |
 | `src/amixEv.c` | `inev` records → the port's `InputEvent` → `amixKbdEnqueueEvent`/`amixMouseEnqueueEvent` (autorepeat, acceleration unchanged); `-mb3` |
 | `src/amixMacKeyMap.c` | ADB core keymap, keycode = ADB + 8; Command Mod1 (Meta), Option Mod2 (Mode_switch) |
-| `src/rtg/fb/fbcard.c`, `Imakefile` | the `fb` card: session, `mmap`, mfb at 1 bpp (pixel 0 white), cfb at 8 bpp with colormap install/store → `FBIOPUTCMAP`, save screen → `FBIOBLANK` |
+| `src/rtg/fb/fbcard.c`, `Imakefile` | the `fb` card: session, `mmap`, mfb at 1 bpp (pixel 0 white), cfb at 8 bpp with colormap install/store → `FBIOPUTCMAP`, cfb16/cfb32 TrueColor at 16/32 bpp with the display's masks, save screen → `FBIOBLANK` |
 | `config/cross.def` | imake overrides: cross compiler, server only (no Xnest, Xprt, XKB, LBX, XIE, PEX), `UseRgbTxt`, `RtgZZ9000 NO`, `ConnectionFlags -DUNIXCONN` |
 | `config/amixld.sh` | final link with the cross `ld` (crt files, shared libc, libm, libc's archive-only members) |
 | `build.sh` | the build (below) |
@@ -63,6 +64,15 @@ Xamix :0 [-fb /dev/fb0] [-mb3] [-rtg fb|zz9000] [-fp path] [-depth n] [-kbd us|d
 ```
 
 - Cards are probed in order zz9000, fb; `-rtg` picks one.
+- `-depth n` sets the session to the display's largest mode of n bits a pixel (8, 16, 32; 15 and
+  24 name 16 and 32), where the display offers modes (Amiga RTG cards, Atari). Without it,
+  `DEPTH=n` in `/etc/default/x`; without that, the display's current mode (8 bits on the Amiga
+  console). The Mac display has no modes: X takes the depth the ROM booted with.
+- 16 and 32 bpp are one TrueColor visual with the display service's masks: X depth is the top
+  mask bit (Voodoo3 565 → 16, Mac 555 → 15, xRGB → 24, ZZ9000 BGRx → 32). Pixels are
+  big-endian in VRAM, as the display service presents them; no colour table is written.
+- With a DRM, each TrueColor visual is repeated once for each further set of GL buffers
+  (`docs/3d-design.md` §2.1), so `xdpyinfo` lists several visuals of the root depth.
 - The session is acquired with `FBA_FRONT`; on `EPERM` (not root, console in front) it is
   acquired in the background and the log says so; Control-Option-Command + digit brings it front.
 - The session and input fds live for the whole process: a server reset keeps them; exit or
@@ -101,7 +111,11 @@ so the server runs the **8 bpp cfb path** (PseudoColor, default map loaded throu
 ## Known limits
 
 - 1 bpp (mfb, pixel 0 white) is built but not run: needs a 1-bpp boot (A/UX Startup, or PRAM
-  depth) or `FBIOSMODE`. 16/32 bpp not done; `xcmap`-style colormap tests not run.
+  depth) or `FBIOSMODE`. `xcmap`-style colormap tests not run.
+- QEMU's Quadra boots at 8 bits; byte 0x48 of the PRAM (`-global mos6522-q800-via1.drive=`, a
+  256-byte file) is the built-in video's depth mode: 0x84 boots 640×480 at 32 bits, row 4096.
+  There X fails: `FBIOACQUIRE` gets `ENOMEM`, since the console's and X's shadows (1.9 MB each)
+  do not both fit the 4 MB kernel heap. 2 and 4 bits are refused.
 - `-mb3`, Control/Option/Command modifiers in clients not exercised by the test.
 - Serial console input can stop mid-line while X is in front; the test drives everything after `startx` by keyboard.
 - `EVIOCBELL` does not exist yet: no bell. LEDs not driven.

@@ -402,6 +402,63 @@ test_stack()
 		t_info("null_deref_faults", "load from address 0 did not fault (status 0x%x)", st);
 }
 
+/*
+ * A shared page in the top 32 MB band (mode 'a'), or the top 256 KB band
+ * after an alias already faulted in that band ('b'): mprotect's table
+ * walk must stop at the address-space end instead of wrapping to 0.
+ */
+static int
+highshared(mode)
+char *mode;
+{
+	char zero[PG], path[64];
+	char *alias, *high, *seed = 0;
+	unsigned long base = (0UL - (1UL << 25)) + PG;
+	int fd;
+
+	sprintf(path, "/tmp/t_mem_high%ld", (long)getpid());
+	if ((fd = open(path, O_RDWR | O_CREAT | O_EXCL, 0600)) < 0)
+		return 1;
+	unlink(path);
+	memset(zero, 0, sizeof(zero));
+	if (write(fd, zero, PG) != PG)
+		return 2;
+	alias = mmap((caddr_t)0, PG, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_SHARED, fd, (off_t)0);
+	if (alias == (char *)-1)
+		return 3;
+	alias[0] = 'Q';
+	if (*mode == 'b') {
+		seed = mmap((caddr_t)base, PG, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, fd, (off_t)0);
+		if (seed != (char *)base || seed[0] != 'Q')
+			return 4;
+		base = (0UL - (1UL << 18)) + PG;
+	}
+	high = mmap((caddr_t)base, PG, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_SHARED | MAP_FIXED, fd, (off_t)0);
+	if (high != (char *)base)
+		return 5;
+	if (mprotect(high, PG, PROT_READ | PROT_WRITE) || mprotect(alias, PG, PROT_READ | PROT_WRITE))
+		return 6;
+	if (high[0] != 'Q')
+		return 7;
+	high[1] = 'R';
+	if (alias[1] != 'R')
+		return 8;
+	if (mprotect(high, PG, PROT_READ) || high[1] != 'R')
+		return 9;
+	return 0;
+}
+
+static void
+test_highshared()
+{
+	int st;
+
+	st = inchild(highshared, "a");
+	t_check("mprotect_top_band", st == 0, "status 0x%x", st);
+	st = inchild(highshared, "b");
+	t_check("mprotect_top_band_b", st == 0, "status 0x%x", st);
+}
+
 int
 main()
 {
@@ -427,5 +484,6 @@ main()
 	test_mmap_file();
 	test_mmap_zero();
 	test_stack();
+	test_highshared();
 	return t_done();
 }

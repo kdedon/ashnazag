@@ -11,7 +11,9 @@
  * clip rectangle is painted (green, blue, alternating) and must cover
  * exactly the visible part.  Moving the cover must move the drawable's
  * stamp.  A child that takes the hardware lock and exits must leave it
- * free.  A second child, with no driver linked for the screen, draws
+ * free.  The server's GL configurations must name its visuals, with
+ * depth-less, single-buffered and (at 32 bits) stencil and alpha sets
+ * on a TrueColor screen.  A second child, with no driver linked for the screen, draws
  * with Mesa's Xlib renderer: a red square.  The windows stay up for
  * `seconds' (default 0).  Output: one line per check, then PASS or FAIL.
  */
@@ -134,9 +136,14 @@ static struct __DriverAPIRec nullAPI = {
     NULL, NULL
 };
 
+static __GLXvisualConfig cfg[64];
+static int ncfg;
+
 static void *
 nCreateScreen(Display *dpy, int scrn, __DRIscreen *psc, int n, __GLXvisualConfig *c)
 {
+    ncfg = n < 64 ? n : 64;
+    memcpy(cfg, c, ncfg * sizeof *c);
     return __driUtilCreateScreen(dpy, scrn, psc, n, c, &nullAPI);
 }
 
@@ -219,6 +226,36 @@ paint(__DRIdrawablePrivate *d)
 		       r->x2 - r->x1, r->y2 - r->y1);
     }
     XFreeGC(dpy, gc);
+}
+
+/* one configuration per visual; TrueColor ones with the buffer sets above */
+static int
+configs_ok(char *why)
+{
+    XVisualInfo tmpl, *v;
+    int i, n, deep = DefaultDepth(dpy, scr) > 16;
+    int rgba = 0, nodepth = 0, single = 0, full = 0, bad = 0;
+
+    for (i = 0; i < ncfg; i++) {
+	tmpl.visualid = cfg[i].vid;
+	if ((v = XGetVisualInfo(dpy, VisualIDMask, &tmpl, &n)) == 0)
+	    bad++;
+	XFree(v);
+	if (!cfg[i].rgba)
+	    continue;
+	rgba++;
+	nodepth += cfg[i].depthSize == 0;
+	single += !cfg[i].doubleBuffer;
+	full += cfg[i].depthSize == 24 && cfg[i].stencilSize == 8 && cfg[i].alphaSize == 8;
+	bad += !deep && (cfg[i].stencilSize || cfg[i].alphaSize);
+    }
+    sprintf(why, "%d, %d RGBA: %d no depth, %d single, %d Z24S8A8",
+	    ncfg, rgba, nodepth, single, full);
+    if (bad)
+	return 0;
+    if (DefaultVisual(dpy, scr)->class != TrueColor)
+	return rgba == 0;
+    return nodepth && single && (!deep || full);
 }
 
 /* the check lines in a window below the others */
@@ -446,6 +483,11 @@ main(int argc, char **argv)
 	  "drm fd %d, session %u, frame 0x%x, stride %u", nscreen->fd,
 	  info->session, info->frontOffset, info->stride);
     check("direct", glXIsDirect(dpy, ctx), "context is direct");
+    {
+	char why[80];
+
+	check("configs", configs_ok(why), "%s", why);
+    }
     if (!glXMakeCurrent(dpy, glwin, ctx) || !ndraw) {
 	check("drawable", 0, "make current failed");
 	goto out;

@@ -5,14 +5,16 @@
  * shadow pages while hidden; the kernel swaps them and the colour table
  * on a switch.  Packed 1 bpp is drawn by mfb (pixel 0 white, as on the
  * Mac), packed 8 bpp by cfb and interleaved 8 bitplanes by iplan2p8,
- * both with the colour table loaded from the installed colormap.  Input
- * comes from the event devices bound to the session.
+ * both with the colour table loaded from the installed colormap, packed
+ * 16 and 32 bpp TrueColor by cfb16 and cfb32 with the display's masks.
+ * Input comes from the event devices bound to the session.
  */
 
 #include "../../amix.h"
 #include "servermd.h"
 #include "resource.h"
 #include "colormapst.h"
+#include <stdio.h>
 #include <sys/mman.h>
 #include <sys/ioctl.h>
 #include "dsio.h"
@@ -20,10 +22,11 @@
 
 extern fbFd amixFbs[];
 extern int amixCurrentScreenIndex;
-extern Bool amixEvMb3;
+extern Bool amixEvMb3, amixEvOwnMode;
 extern Bool amixEvOpen();
 extern Bool mfbScreenInit(), mfbCreateDefColormap();
 extern Bool cfbScreenInit(), cfbCreateDefColormap(), cfbSetVisualTypes();
+extern Bool cfb16ScreenInit(), cfb32ScreenInit();
 extern Bool ipl2p8ScreenInit(), iplCreateDefColormap(), iplSetVisualTypes();
 extern Bool amixMacKeyLayout();
 extern int TellLostMap(), TellGainedMap();
@@ -41,7 +44,66 @@ static char	*fbName[MAXSCREENS];
 static int	nfbName;
 static int	fbDepth;	/* -depth: the session mode to set, 0 the display's */
 
+/* DEPTH= in /etc/default/x, the last one; 0 if none */
+static int
+fbDefaultDepth()
+{
+    FILE *f;
+    char  l[128], *p;
+    int	  n = 0;
+
+    if ((f = fopen("/etc/default/x", "r")) == 0)
+	return 0;
+    while (fgets(l, sizeof l, f))
+    {
+	for (p = l; *p == ' ' || *p == '\t'; p++)
+	    ;
+	if (strncmp(p, "DEPTH", 5) != 0)
+	    continue;
+	for (p += 5; *p == ' ' || *p == '\t'; p++)
+	    ;
+	if (*p++ != '=')
+	    continue;
+	while (*p == ' ' || *p == '\t' || *p == '"' || *p == '\'')
+	    p++;
+	n = atoi(p);
+    }
+    fclose(f);
+    return n;
+}
+
 #define fbIpl(d)	((d)->fi.fi_layout == FBL_IPLAN2)
+#define fbTrue(d)	((d)->fi.fi_visual == FBV_TRUE)
+
+/* X depth: TrueColor up to the top mask bit, else bits per pixel */
+static int
+fbXDepth(d)
+fbDevRec *d;
+{
+    unsigned long m = d->fi.fi_rmask | d->fi.fi_gmask | d->fi.fi_bmask;
+    int		  n;
+
+    if (!fbTrue(d))
+	return (int) d->fi.fi_depth;
+    for (n = 0; m; m >>= 1)
+	n++;
+    return n;
+}
+
+/* bits in m, and its lowest bit */
+static int
+fbMaskBits(m, shift)
+unsigned long m;
+int	     *shift;
+{
+    int n;
+
+    for (*shift = 0; m && !(m & 1); m >>= 1)
+	(*shift)++;
+    for (n = 0; m & 1; m >>= 1)
+	n++;
+    return n;
+}
 
 /* the largest mode of fbDepth, if the display offers modes */
 static void
@@ -53,6 +115,13 @@ char	 *name;
     struct fbmodes    ms;
     int		      i, best = -1;
 
+    if (!fbDepth)
+	fbDepth = fbDefaultDepth();
+    /* modes count bits per pixel */
+    if (fbDepth == 15)
+	fbDepth = 16;
+    else if (fbDepth == 24)
+	fbDepth = 32;
     if (!fbDepth || d->fi.fi_depth == fbDepth || !(d->fi.fi_flags & FBF_SETMODE))
 	return;
     ms.ms_count = 16;
@@ -68,6 +137,8 @@ char	 *name;
     else if (ioctl(d->fd, FBIOSMODE, mi[best].mi_id) < 0 ||
 	     ioctl(d->fd, FBIOGINFO, &d->fi) < 0)
 	ErrorF("fb: %s: FBIOSMODE: %s\n", name, strerror(errno));
+    else
+	amixEvOwnMode = TRUE;
 }
 
 static Bool
@@ -118,7 +189,11 @@ int index;
     }
     if (!(d->fi.fi_layout == FBL_PACKED &&
 	  (d->fi.fi_depth == 1 || d->fi.fi_depth == 8)) &&
-	!(fbIpl(d) && d->fi.fi_depth == 8))
+	!(fbIpl(d) && d->fi.fi_depth == 8) &&
+	!(d->fi.fi_layout == FBL_PACKED && fbTrue(d) &&
+	  (d->fi.fi_depth == 16 || d->fi.fi_depth == 32) &&
+	  d->fi.fi_rmask && d->fi.fi_gmask && d->fi.fi_bmask &&
+	  fbXDepth(d) <= d->fi.fi_depth))
     {
 	ErrorF("fb: %s: depth %lu layout %lu not supported\n", name,
 	       d->fi.fi_depth, d->fi.fi_layout);
@@ -142,13 +217,13 @@ fbCreate(pScreenInfo, index)
 ScreenInfo *pScreenInfo;
 int	    index;
 {
-    int i, depth = fbDev[index].fi.fi_depth;
+    int i, depth = fbXDepth(&fbDev[index]);
 
     for (i = 0; i < pScreenInfo->numPixmapFormats; i++)
 	if (pScreenInfo->formats[i].depth == depth)
 	    return TRUE;
     pScreenInfo->formats[i].depth = depth;
-    pScreenInfo->formats[i].bitsPerPixel = depth;
+    pScreenInfo->formats[i].bitsPerPixel = fbDev[index].fi.fi_depth;
     pScreenInfo->formats[i].scanlinePad = BITMAP_SCANLINE_PAD;
     pScreenInfo->numPixmapFormats = i + 1;
     return TRUE;
@@ -179,7 +254,7 @@ int	     index;
     pRTG->height = d->fi.fi_height;
     pRTG->pitch = d->fi.fi_rowbytes;
     pRTG->bitsPerPixel = d->fi.fi_depth;
-    pRTG->depth = d->fi.fi_depth;
+    pRTG->depth = fbXDepth(d);
     pRTG->cardPrivate = (unsigned char *) d;
     return TRUE;
 }
@@ -201,7 +276,7 @@ unsigned short	*r, *g, *b;
 {
     struct fbcmap cm;
 
-    if (!(d->fi.fi_flags & FBF_CMAP))
+    if (!(d->fi.fi_flags & FBF_CMAP) || fbTrue(d))
 	return;
     cm.cm_start = start;
     cm.cm_count = count;
@@ -302,6 +377,47 @@ xColorItem *pdefs;
 		      &pdefs->red, &pdefs->green, &pdefs->blue);
 }
 
+/*
+ * cfb16/cfb32 with one TrueColor visual; cfb puts red in the low bits,
+ * so the masks are set from the display's afterwards.
+ */
+static Bool
+fbTrueScreenInit(pScreen, pRTG, base, dpix, dpiy)
+ScreenPtr    pScreen;
+rtgScreenPtr pRTG;
+pointer	     base;
+int	     dpix, dpiy;
+{
+    fbDevRec *d = (fbDevRec *) pRTG->cardPrivate;
+    int	      rs, gs, bs, rn, gn, bn, n, i;
+    VisualPtr v;
+
+    rn = fbMaskBits(d->fi.fi_rmask, &rs);
+    gn = fbMaskBits(d->fi.fi_gmask, &gs);
+    bn = fbMaskBits(d->fi.fi_bmask, &bs);
+    n = rn > gn ? rn : gn;
+    if (bn > n)
+	n = bn;
+    if (!cfbSetVisualTypes(pRTG->depth, 1 << TrueColor, n))
+	return FALSE;
+    if (d->fi.fi_depth == 16 ?
+	!cfb16ScreenInit(pScreen, base, pRTG->width, pRTG->height, dpix, dpiy, pRTG->pitch / 2) :
+	!cfb32ScreenInit(pScreen, base, pRTG->width, pRTG->height, dpix, dpiy, pRTG->pitch / 4))
+	return FALSE;
+    for (i = 0, v = pScreen->visuals; i < pScreen->numVisuals; i++, v++)
+	if (v->class == TrueColor)
+	{
+	    v->redMask = d->fi.fi_rmask;
+	    v->greenMask = d->fi.fi_gmask;
+	    v->blueMask = d->fi.fi_bmask;
+	    v->offsetRed = rs;
+	    v->offsetGreen = gs;
+	    v->offsetBlue = bs;
+	    v->ColormapEntries = 1 << n;
+	}
+    return TRUE;
+}
+
 static Bool
 fbScreenInit(pScreen, pRTG, dpix, dpiy)
 ScreenPtr    pScreen;
@@ -328,7 +444,12 @@ int	     dpix, dpiy;
 	fbPutCmap(d, 0, 2, wb, wb, wb);
 	return TRUE;
     }
-    if (fbIpl(d))
+    if (fbTrue(d))
+    {
+	if (!fbTrueScreenInit(pScreen, pRTG, base, dpix, dpiy))
+	    return FALSE;
+    }
+    else if (fbIpl(d))
     {
 	if (!iplSetVisualTypes(8, (1 << PseudoColor) | (1 << GrayScale) |
 			       (1 << StaticGray), (int) d->fi.fi_cmapbits) ||
@@ -434,7 +555,8 @@ static void
 fbUseMsg()
 {
     ErrorF("-fb /dev/fbN           frame buffer of the next screen (/dev/fb0)\n");
-    ErrorF("-depth n               the display's largest mode of depth n\n");
+    ErrorF("-depth n               the display's largest mode of depth n (8, 16, 24 or 32;\n");
+    ErrorF("                       default DEPTH= in /etc/default/x)\n");
     ErrorF("-kbd us|de             keyboard layout\n");
     ErrorF("-mb3                   left/right arrow are buttons 2/3 (Option: arrows)\n");
 }

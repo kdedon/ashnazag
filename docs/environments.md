@@ -66,6 +66,8 @@ H: home, R: `/`. Design: `docs/win16-design.md`.
 
 `startx` starts twm; `xsession` offers a menu, or `xsession twm|xview|mac|tos|amiga|win|smsqe|lisa|voyage200|console|cpm`.
 With xdm the session chooser lists the same.
+X draws 8-bit by default; `startx -- -depth 16` or `-depth 32` (or `DEPTH=16` in `/etc/default/x`)
+gives a TrueColor screen where the display has that mode (Voodoo3, ZZ9000, Atari).
 
 ## Native SMSQ/E, Lisa and TI Voyage200 ports
 

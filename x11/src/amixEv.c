@@ -28,6 +28,7 @@ static struct timeval motionTv;
 static int optionDown;
 static int mb3Down[2];			/* arrow keys acting as buttons 2, 3 */
 Bool amixEvMb3;				/* -mb3: arrows are buttons 2 and 3 */
+Bool amixEvOwnMode;			/* a mode note the server caused is due */
 
 static void
 evKey(code, down, tv)
@@ -203,7 +204,9 @@ evNotes()
     struct fbnote n;
 
     while (read(noteFd, (char *)&n, sizeof n) == sizeof n)
-	if (n.fn_type == FBN_MODE)
+	if (n.fn_type == FBN_MODE && amixEvOwnMode)
+	    amixEvOwnMode = FALSE;
+	else if (n.fn_type == FBN_MODE)
 	    ErrorF("amixEv: display mode changed; the screen keeps its size\n");
 	else if (n.fn_type == FBN_HIDDEN || n.fn_type == FBN_SHOWN)
 	{

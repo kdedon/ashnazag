@@ -292,6 +292,8 @@ int stride, width, height, depth;
     d->CloseScreen = pScreen->CloseScreen;
     pScreen->CloseScreen = DRICloseScreen;
     RegisterBlockAndWakeupHandlers(DRIBlockHandler, DRIWakeupHandler, (pointer) pScreen);
+    if (!AmixGLXInitVisuals(pScreen))
+	ErrorF("DRI: no GL visuals beyond the screen's own\n");
     d->active = TRUE;
     return TRUE;
 }

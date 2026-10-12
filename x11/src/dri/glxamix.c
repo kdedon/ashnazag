@@ -36,6 +36,29 @@ typedef struct {
 static RESTYPE GLXContextResType;
 static int GLXErrorBase;
 
+/* the GL buffers of a visual */
+typedef struct {
+    char	dbl, depth, stencil, alpha;
+} GLXConfigRec;
+
+/*
+ * A TrueColor visual gets one X visual more for each further set of
+ * buffers: the client finds a configuration by its visual.  Alpha and
+ * stencil only where a pixel has 32 bits.
+ */
+static GLXConfigRec glxConfig16[] = {
+    { 1, 16, 0, 0 }, { 1, 0, 0, 0 }, { 0, 16, 0, 0 },
+};
+static GLXConfigRec glxConfig32[] = {
+    { 1, 24, 8, 8 }, { 1, 24, 8, 0 }, { 1, 16, 0, 0 }, { 1, 0, 0, 8 }, { 0, 24, 8, 8 },
+};
+static GLXConfigRec glxConfigIndex = { 1, 16, 0, 0 };
+
+#define GLX_MAXVISUALS	64
+
+/* parallel to each screen's visuals */
+static GLXConfigRec glxConfigs[MAXSCREENS][GLX_MAXVISUALS];
+
 static int
 GLXContextDelete(value, id)
 pointer value;
@@ -56,7 +79,64 @@ unsigned long m;
     return n;
 }
 
-/* one configuration per X visual: double buffered, 16-bit depth */
+#define NCONFIG(a)	(sizeof a / sizeof a[0])
+
+/*
+ * The visuals of a screen that renders directly: TrueColor ones repeated
+ * for each set of buffers.  Called at screen init, before colormaps.
+ */
+Bool
+AmixGLXInitVisuals(pScreen)
+ScreenPtr pScreen;
+{
+    GLXConfigRec *cf = glxConfigs[pScreen->myNum], *set;
+    VisualPtr v, nv;
+    DepthPtr d;
+    VisualID *vids;
+    int i, j, k, n, nset, extra = 0;
+
+    for (i = 0, v = pScreen->visuals; i < pScreen->numVisuals; i++, v++)
+	if (v->class == TrueColor)
+	    extra += (v->nplanes > 16 ? NCONFIG(glxConfig32) : NCONFIG(glxConfig16)) - 1;
+    n = pScreen->numVisuals;
+    if (n + extra > GLX_MAXVISUALS)
+	return FALSE;
+    if (extra) {
+	nv = (VisualPtr) xrealloc(pScreen->visuals, (n + extra) * sizeof(VisualRec));
+	if (!nv)
+	    return FALSE;
+	pScreen->visuals = nv;
+    }
+    for (i = 0; i < n; i++) {
+	v = &pScreen->visuals[i];
+	if (v->class != TrueColor) {
+	    cf[i] = glxConfigIndex;
+	    continue;
+	}
+	set = v->nplanes > 16 ? glxConfig32 : glxConfig16;
+	nset = v->nplanes > 16 ? NCONFIG(glxConfig32) : NCONFIG(glxConfig16);
+	cf[i] = set[0];
+	for (d = pScreen->allowedDepths, k = 0; k < pScreen->numDepths; k++, d++)
+	    if (d->depth == v->nplanes)
+		break;
+	if (k == pScreen->numDepths)
+	    continue;
+	vids = (VisualID *) xrealloc(d->vids, (d->numVids + nset - 1) * sizeof(VisualID));
+	if (!vids)
+	    return FALSE;
+	d->vids = vids;
+	for (j = 1; j < nset; j++) {
+	    nv = &pScreen->visuals[pScreen->numVisuals];
+	    *nv = *v;
+	    nv->vid = FakeClientID(0);
+	    d->vids[d->numVids++] = nv->vid;
+	    cf[pScreen->numVisuals++] = set[j];
+	}
+    }
+    return TRUE;
+}
+
+/* one configuration per X visual */
 static int
 GLXGetVisualConfigs(client)
 ClientPtr client;
@@ -66,6 +146,7 @@ ClientPtr client;
     CARD32 buf[GLX_CONFIG_PROPS];
     ScreenPtr pScreen;
     VisualPtr v;
+    GLXConfigRec *cf;
     int i, p, rgba;
 
     REQUEST_SIZE_MATCH(xGLXGetVisualConfigsReq);
@@ -82,6 +163,7 @@ ClientPtr client;
     rep.length = pScreen->numVisuals * GLX_CONFIG_PROPS;
     WriteToClient(client, sz_xGLXGetVisualConfigsReply, (char *) &rep);
     for (i = 0, v = pScreen->visuals; i < pScreen->numVisuals; i++, v++) {
+	cf = &glxConfigs[req->screen][i];
 	rgba = v->class == TrueColor || v->class == DirectColor;
 	p = 0;
 	buf[p++] = v->vid;
@@ -90,16 +172,16 @@ ClientPtr client;
 	buf[p++] = rgba ? bits(v->redMask) : 0;
 	buf[p++] = rgba ? bits(v->greenMask) : 0;
 	buf[p++] = rgba ? bits(v->blueMask) : 0;
-	buf[p++] = 0;			/* alpha */
+	buf[p++] = rgba ? cf->alpha : 0;
 	buf[p++] = 0;			/* accumulation red, green, blue, alpha */
 	buf[p++] = 0;
 	buf[p++] = 0;
 	buf[p++] = 0;
-	buf[p++] = TRUE;		/* double buffer */
+	buf[p++] = cf->dbl;
 	buf[p++] = FALSE;		/* stereo */
-	buf[p++] = v->nplanes;
-	buf[p++] = 16;			/* depth */
-	buf[p++] = 0;			/* stencil */
+	buf[p++] = rgba ? bits(v->redMask | v->greenMask | v->blueMask) + cf->alpha : v->nplanes;
+	buf[p++] = cf->depth;
+	buf[p++] = cf->stencil;
 	buf[p++] = 0;			/* aux buffers */
 	buf[p++] = 0;			/* level */
 	buf[p++] = GLX_VISUAL_CAVEAT_EXT;

@@ -14,6 +14,7 @@
 extern Bool AmixDRIScreenInit(ScreenPtr pScreen, int fbfd, unsigned long offset,
 			      int stride, int width, int height, int depth);
 
+extern Bool AmixGLXInitVisuals(ScreenPtr pScreen);
 extern Bool DRIExtensionInit(void);
 extern void DRIReset(void);
 extern Bool DRIScreenActive(ScreenPtr pScreen);

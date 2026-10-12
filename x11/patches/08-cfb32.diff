@@ -1,0 +1,25 @@
+--- a/programs/Xserver/Imakefile
++++ b/programs/Xserver/Imakefile
+@@ -184,10 +184,11 @@
+ MFBDIR   = mfb
+ CFB8DIR  = cfb
+ CFB16DIR = cfb16
++CFB32DIR = cfb32
+ DDXDIR1  = hw/amix
+-/* Xprint is not part of Xamix; its DIX stubs are linked through CFB16Libs. */
++/* Xprint is not part of Xamix; its DIX stubs are linked through CFBLibs. */
+ IPL8DIR  = iplan2p8
+-AMIXDIRS = include dix os mi $(EXTDIRS) $(MFBDIR) $(CFB8DIR) $(CFB16DIR) \
++AMIXDIRS = include dix os mi $(EXTDIRS) $(MFBDIR) $(CFB8DIR) $(CFB16DIR) $(CFB32DIR) \
+            $(IPL8DIR) $(DDXDIR1) $(DEPDIRS)
+ AMIXDRI  = hw/amix/dri
+ AMIXOBJS = hw/amix/amixInit.o $(AMIXDRI)/amixdri.o $(AMIXDRI)/glxamix.o \
+@@ -206,7 +207,7 @@
+            $(RTGZZLIB) \
+            hw/amix/rtg/fb/LibraryTargetName(rtgfb) \
+            iplan2p8/LibraryTargetName(ipl2p8) \
+-           hw/amix/LibraryTargetName(amix) CFB16Libs
++           hw/amix/LibraryTargetName(amix) CFBLibs
+ ServerTarget(Xamix,$(AMIXDIRS),$(AMIXOBJS),$(AMIXLIBS),$(SYSLIBS))
+ all:: Xzz9000
+ Xzz9000: Xamix

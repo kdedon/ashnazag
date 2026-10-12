@@ -1,0 +1,53 @@
+diff --git a/src/segvn_prot040.s b/src/segvn_prot040.s
+index 3aa07a1..a1c8944 100644
+--- a/src/segvn_prot040.s
++++ b/src/segvn_prot040.s
+@@ -64,34 +64,37 @@ segvn_faultpage:
+ 	moveal	%sp@(4),%a0		| a0 = seg              (arg1)
+ 	moveal	%a0@(28),%a0		| a0 = svd = seg->s_data
+ 	tstb	%a0@(2)			| svd->pageprot: per-page protections present?
+-	beqw	Lsp_pass		| no -> segment-wide, and segvn_fault@0xac46a already
+-					|       rejects that case correctly.  Unchanged.
++	beqw	Lsp_uniform
+ 	addql	&1,segvn_prot_pp_n	| the per-page path was actually entered
+ 	moveal	%sp@(20),%a0		| a0 = vpage            (arg5)
+ 	movel	%a0,%d0
+ 	beqw	Lsp_pass		| defensive: pageprot set but no vpage array -> do not
+ 					| invent a verdict; let the stock body decide
+-	movel	%sp@(36),%d1		| d1 = rw               (arg9)
++	moveq	&0,%d1
++	moveb	%a0@,%d1
++	lsrl	&4,%d1
++	andil	&0x0f,%d1
++	bras	Lsp_check
++Lsp_uniform:
++	moveq	&0,%d1
++	moveb	%a0@(3),%d1
++Lsp_check:
+ 	moveq	&7,%d0			| default protchk = PROT_READ|PROT_WRITE|PROT_EXEC
+-	cmpil	&1,%d1
++	cmpil	&1,%sp@(36)
+ 	bnes	Lsp_nread
+ 	moveq	&1,%d0			| S_READ  -> PROT_READ
+ 	bras	Lsp_have
+ Lsp_nread:
+-	cmpil	&2,%d1
++	cmpil	&2,%sp@(36)
+ 	bnes	Lsp_nwrite
+ 	moveq	&2,%d0			| S_WRITE -> PROT_WRITE
+ 	bras	Lsp_have
+ Lsp_nwrite:
+-	cmpil	&3,%d1
++	cmpil	&3,%sp@(36)
+ 	bnes	Lsp_have
+ 	moveq	&4,%d0			| S_EXEC  -> PROT_EXEC
+ Lsp_have:
+-	moveq	&0,%d1
+-	moveb	%a0@,%d1		| the vpage byte
+-	lsrl	&4,%d1			| vp_prot is its TOP nibble
+-	andil	&0x0f,%d1
+-	andl	%d0,%d1			| vp_prot & protchk
++	andl	%d0,%d1			| protection & access mask
+ 	bnew	Lsp_pass		| access permitted -> ordinary fault handling
+ 	movel	%sp@(8),segvn_prot_last_addr	| arg2 = the denied address
+ 	movel	%d1,segvn_prot_last_prot	| 0 here by construction; kept so a future

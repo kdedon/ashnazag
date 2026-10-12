@@ -285,9 +285,12 @@ sh "$AUX/kernel/guest/win16/ft/freetype.sh" > /dev/null || die "FreeType: see ke
 step "68040/68060 port at $PORT_PIN"
 PT=$AUX/kernel/amix-040-060-port
 gitpin $PORT_URL $PORT_PIN "$PT"
-if ! git -C "$PT" apply -R --check "$AUX/kernel/port-local.diff" 2>/dev/null; then
-	git -C "$PT" apply "$AUX/kernel/port-local.diff" || die "port-local.diff does not apply"
-fi
+for p in "$AUX/kernel/port-local.diff" "$AUX/kernel/port-segvn.diff" \
+	"$AUX/kernel/mac/hat-boundary/hat-chgprot040.diff"; do
+	if ! git -C "$PT" apply -R --check "$p" 2>/dev/null; then
+		git -C "$PT" apply "$p" || die "$p does not apply"
+	fi
+done
 cat > "$PT/config.sh" <<EOF
 # written by tools/setup.sh
 AUX="$AUX"
