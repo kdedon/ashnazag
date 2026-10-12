@@ -18,6 +18,7 @@ extern void tdfx_amix_front();
 extern unsigned long plat_vtop();
 extern volatile unsigned char *v3_reg, *v3_fb;
 extern unsigned long v3_physfb, v3_vram, v3_dsvram;
+extern int v3ds_width, v3ds_height;
 extern struct opci_dev *v3_dev;
 extern void (*v3_fronthook)();
 static int tdfx_flag;
@@ -44,6 +45,8 @@ tdfx_load()
 	c.c_fbsize = v3_vram;
 	c.c_vram = v3_vram;
 	c.c_free = v3_dsvram;
+	c.c_width = v3ds_width;
+	c.c_height = v3ds_height;
 	c.c_dev = v3_dev;
 	if ((e = tdfx_amix_attach(&c)) != 0)
 		return e;

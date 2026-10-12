@@ -64,6 +64,10 @@ MesaDemos-5.0.2.tar.gz:6cc3cec1e9bdb7ce0627746f40dfa132a00d88b77b48d328b6f0e7041
 XF43_URL=https://ftp.gwdg.de/pub/xfree86/XFree86/4.3.0/source
 XF43_SUMS="X430src-1.tgz:5276b045e154948fce7abba7d686406c65862d90b43b50f2546b33e38378f0d7
 X430src-3.tgz:19a830e3657851ad575ca895eb59932f1d90cd03735dec68f900dbc1bb6c3b7f"
+# Glide 3 as of April 2002 (glide3x with the h3 DRI build), Debian's orig tarball
+GLIDE_URL=https://snapshot.debian.org/file/24d21d729e9d42d65b4b0bd0a62faf6103c39ef4
+GLIDE_TGZ=glide_2002.04.10.orig.tar.gz
+GLIDE_SUM=de43d7756424fa25300f55677aba06be240549da90327da84778722dbad45af8
 WINUAE_URL=https://download.abime.net/winuae/releases/WinUAE6030_x64.zip
 WINUAE_SUM=f8b7c44e8ab2f68db49b4205793848b4496464dbee3c036921840d82627f4fc3
 
@@ -335,6 +339,9 @@ if [ -n "$GL" ]; then
 	echo "$XF43_SUMS" | while IFS=: read -r n s; do
 		cp -p "$(fetch $XF43_URL/$n $s)" "$AUX/ref/xfree86-4.3/dist/$n"
 	done
+	step "Glide 3 (Voodoo3 DRI build)"
+	mkdir -p "$AUX/ref/glide/dist"
+	cp -p "$(fetch $GLIDE_URL $GLIDE_SUM $GLIDE_TGZ)" "$AUX/ref/glide/dist/$GLIDE_TGZ"
 fi
 if [ -n "$QEMU" ] && [ ! -x "$TC/qemu-local/usr/bin/qemu-system-m68k" ]; then
 	step "QEMU 8.2.2 with the 68040 fix"

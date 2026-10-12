@@ -73,7 +73,8 @@ DRILock(DRIScreenPtr d)
     if (d->locked)
 	return;
     l.context = d->ctx;
-    l.flags = _DRM_LOCK_HIDDEN;
+    /* the card idle before cfb touches VRAM */
+    l.flags = _DRM_LOCK_HIDDEN | _DRM_LOCK_QUIESCENT;
     while (ioctl(d->fd, DRM_IOCTL_LOCK, &l) < 0)
 	if (errno != EINTR) {
 	    ErrorF("DRI: lock: %s\n", strerror(errno));

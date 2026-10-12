@@ -12,6 +12,7 @@ struct drm_amixcard {
 	unsigned long		c_physfb, c_fbsize;
 	unsigned long		c_vram;		/* bytes on the card */
 	unsigned long		c_free;		/* VRAM from here to c_vram is the DRM's */
+	int			c_width, c_height;	/* the screen in pixels */
 	struct opci_dev		*c_dev;
 };
 #endif

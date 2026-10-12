@@ -150,6 +150,33 @@ DOBJS=$OBJS
 lib libdrm.a $DOBJS
 objs43 "$DRIFL" "$XC/lib/GL" $GLX43
 XOBJS="$XOBJS $OBJS $DOBJS"
+# the Voodoo3/Banshee DRI driver and the Glide 3 it draws with
+GLIDE=$GLW/glide
+sh "$D/glide/glide.sh" "$GLIDE"
+GLIDEFL="-D__linux__ -DH3 -DGLIDE_PACKET3_TRI_SETUP=1 -DUSE_PACKET_FIFO=1
+	-DGLIDE_HW_TRI_SETUP=1 -DGLIDE_INIT_HWC -DHAL_HW=1 -DGLIDE_TRI_CULLING=1
+	-DGLIDE_USE_C_TRISETUP -DGLIDE_LIB -DGLIDE3 -DGLIDE3_ALPHA -DFX_STATIC_BUILD
+	-DGLIDE_PACKED_RGB=0 -I$GLIDE"
+GOBJS=
+for f in diget diglide disst distate distrip ditex fifo g3df gaa gbanner gdraw gerror \
+	gglide glfb gpci gsfc gsplash gsst gstrip gtex gtexdl gthread gu gxdraw xtexdl_def \
+	linhwc gdebug amixglide; do
+	o=$GLW/obj/glide_$f.o
+	if [ ! -f "$o" ] || [ "$GLIDE/$f.c" -nt "$o" ]; then
+		echo "cc glide/$f.c"
+		$N "$CC" $CFLAGS $GLIDEFL -c "$GLIDE/$f.c" -o "$o"
+	fi
+	GOBJS="$GOBJS $o"
+done
+TD=$XC/lib/GL/mesa/src/drv/tdfx
+# the system's macros.h comes first on the include path
+sed -i "s,^#include \"macros.h\",#include \"$S/macros.h\"," "$TD"/*.[ch]
+TDFL="$DRIFL -D__driCreateScreen=tdfx_driCreateScreen
+	-D__driRegisterExtensions=tdfx_driRegisterExtensions
+	-I$XC/lib/GL/mesa/src/drv/common -I$XC/programs/Xserver/GL/include -I$AUX/x11/src/dri"
+objs43 "$TDFL" "$TD" tdfx_context tdfx_dd tdfx_lock tdfx_pixels tdfx_render tdfx_screen \
+	tdfx_span tdfx_state tdfx_tex tdfx_texman tdfx_texstate tdfx_tris tdfx_vb
+XOBJS="$XOBJS $OBJS $GOBJS"
 objs43 "$DRIFL" "$D/dri/src" glxdirect dri_drivers
 lib libGL.a $COBJS $XOBJS $OBJS
 rm -rf "$GLW/include/dri"; mkdir -p "$GLW/include/dri"

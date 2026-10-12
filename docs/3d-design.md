@@ -123,6 +123,25 @@ A Voodoo3 (WinUAE's Prometheus, 68060) stands in for the Radeon: same templates,
 | Files | one per open: minor 0 clones a minor (1-63) as `/dev/fb` does; SVR4 closes each minor once, which frees its file, its magic and the lock if it holds it (a client that dies with the lock leaves it free) |
 | SG / PCI GART | `drm_scatter.h`, `ati_pcigart.h` on `opci_dmaalloc`/`opci_busaddr`; compiled, not yet run (tdfx has no DMA) |
 | Template fix | `map_count` was never counted, so `GET_MAP` always failed |
+| VRAM layout | at first open, as 4.3's tdfx DDX does: command fifo 256 KB at the start of free VRAM, back and depth buffers at the top (depth on an odd page, back on an even one, tiled), textures between; `CMDFIFO0` installed, `LFBMEMCFG` tile base = back. The SAREA private (`tdfx_sarea.h`) carries it to the client. At 1024x768 with the display's 4 MB reserve: fifo 0xc00000, textures 0xc40000 (~760 KB), back 0xcfe000, depth 0xe7f000, stride 2048 |
+| Idle | `_DRM_LOCK_QUIESCENT` waits for `DRIVER_IDLE` |
+
+### 1.6 Voodoo3 3D: 4.3's tdfx DRI driver on Glide 3
+
+| Part | As built |
+|---|---|
+| Glide | Glide 3 for h3 (Banshee/Voodoo3), DRI build (`-D__linux__`), from the 2002.04.10 tarball (`tools/setup.sh --gl`); `gl/glide/glide.sh` flattens it into one directory and applies `gl/glide/patches`; linked statically into libGL |
+| Byte order | registers: full byte swap (the bridge passes addresses unchanged). Command fifo, written through the FB aperture in 16-bit swizzle mode: halfword swap. 16-bit texels and LFB pixels raw; 8-bit texels swapped in pairs. Vertex colours in big-endian byte order |
+| Fifo | jump and flush packets go through the fifo write macro (a plain register write let the fifo run away) |
+| Swap | the swap blit sets clip, destination base and format itself. Gamma DAC writes are off: the display owns the DAC |
+| Driver | 4.3's `tdfx` against Mesa 5.0.2 (`gl/dri/patches/02-tdfx.diff`: texture enable mask, draw buffer mask, stencil, float clear/alpha, NDC pointer, vertex bits, swrast buffers). Screen init reads `AMIXDRIRec` and the SAREA layout, maps the first 6 MB of registers and all VRAM, and raises `RLIMIT_VMEM` (16 MB soft limit) |
+| Server | Xamix takes the lock with `_DRM_LOCK_HIDDEN \| _DRM_LOCK_QUIESCENT` |
+
+Result (WinUAE, Voodoo3, 68060, `glxgears` 300x300 in a 16-bit X screen): `GL_RENDERER` "Mesa DRI 20020221 Voodoo3", 14.2 FPS (10 for the first 15 s); software Mesa (`LIBGL_FORCE_XMESA=1`) 2.4-2.6 FPS.
+
+WinUAE's Voodoo3 ignores the Y-origin bit in `miscInit0`, so lower-left-origin drawing (all of GL) lands at the wrong rows there: colour below the back buffer, depth in the next tile, never cleared. The picture is wrong in WinUAE only; the real card honours the bit. With the origin forced off as a check the gears draw correctly, upside down.
+
+Open: 3D writes through the LFB need `lfbMode` swizzling and the register map past 6 MB; texture memory is small at 1024x768.
 
 Test: `drmtest` (in the Amiga test disk; `mkhdf.sh AUTORUN=` runs it at boot): RGB565 session, version, unique, bind, maps, context, lock (SAREA word `0x80000001`), a red band through the FB map, a green rectangle by the 2D engine through the register map (read back `0x07e0`), unlock, and no lock while hidden.
 
@@ -143,7 +162,7 @@ Card-independent; a card's Mesa driver plugs in as below.
 | Sources | `gl/dri/x43.sh` extracts the 4.3 files and applies `gl/dri/patches`; `gl/build.sh` builds `libdrm.a` and `libGL.a`, `x11/build.sh dri` puts the server side in `hw/amix/dri` (`x11/patches/07-dri.diff`) |
 | Screen depths | the `fb` card draws 8-bit PseudoColor (`cfb`) and 16/32-bit TrueColor (`cfb16`, `cfb32`) with the display service's masks; `-depth` or `DEPTH=` in `/etc/default/x` picks the session mode. `AMIXDRIRec.depth` is bits a pixel |
 | GL visuals | a config per X visual; on a DRM screen each TrueColor visual is repeated with a new id for each further buffer set, since a client finds its config by visual. 16 bpp: double + depth 16 (the visual itself), double without depth, single + depth 16. 32 bpp: double + depth 24 + stencil 8 + alpha 8 (itself), the same without alpha, double + depth 16, double + alpha without depth, single + depth 24 + stencil 8 + alpha 8. Alpha lives in the pixel's spare byte. PseudoColor: double + depth 16 |
-| Missing for a card | the card's own config list where it differs (a hook in `AmixGLXInitVisuals`); the card's device private and SAREA private |
+| Card drivers | `tdfx` (§1.6); a card's own config list where it differs needs a hook in `AmixGLXInitVisuals` |
 
 Test: `dritest` (`gl/src/dritest.c`, in `/usr/x11r6/bin` on the Amiga test disk with `GLBIN=`): a null DRI driver, linked under the server's driver name, runs libGL's whole set-up: DRM open, magic auth through the server, SAREA and FB maps, context, drawable; the drawable's four cliprects around a covering window, a new stamp and cliprects after the cover moves, the lock free after a client that held it exits; and a child with no driver renders a red square through Mesa's Xlib renderer.
 
@@ -311,7 +330,7 @@ Rules from the display service:
 | 8 | Radeon DRM: kernel CP init, PCI GART on the bridge's DMA memory, §1.4 swaps; check Prometheus bus mastering | 5, 7 | **real card** |
 | 9 | r200 DRI driver with the X-less DRI host; a GL demo in a display session | 2, 8 | **real card** |
 | 10 | Warp3D on r200 | 4, 9 | **real card** |
-| 11 | Xamix: direct-only GLX + DRI extension; libGL with DRI loader. **Done without a card driver (§2.1)**; a driver, 16/32-bit X screens and the card's visuals remain | 3 (protocol part), 9 (rendering) | WinUAE (Voodoo3) for the protocol, **real card** for DRI |
+| 11 | Xamix: direct-only GLX + DRI extension; libGL with DRI loader. **Done (§2.1), with 16/32-bit X screens and the Voodoo3's tdfx driver (§1.6)**; r200 remains | 3 (protocol part), 9 (rendering) | WinUAE (Voodoo3) for the protocol, **real card** for DRI |
 | 12 | Options: radeon (R100) driver, Radeon 2D acceleration in Xamix, CTPCI on the CT60 | 8 | real cards |
 
 Card-free first: 1-6 and the protocol half of 11. Amiberry has no Radeon, and QEMU's q800 has no PCI.

@@ -298,6 +298,9 @@ DRM(amix_mkmaps)(dev_t kdev)
 		    FREAD | FWRITE, DRM_CURPROC)) != 0)
 			return e;
 	}
+#ifdef DRIVER_AMIX_MAPS
+	DRIVER_AMIX_MAPS(dev);
+#endif
 	return 0;
 }
 

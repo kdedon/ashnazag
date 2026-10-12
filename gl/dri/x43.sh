@@ -29,9 +29,12 @@ nice -n 19 tar xzf "$DIST/X430src-1.tgz" -C "$DEST" \
 	xc/lib/GL/glx/packsingle.h xc/lib/GL/glx/packrender.h xc/lib/GL/glx/size.h \
 	xc/lib/GL/dri/dri_glx.c xc/lib/GL/dri/dri_glx.h xc/lib/GL/dri/dri_util.c \
 	xc/lib/GL/dri/dri_util.h xc/lib/GL/dri/XF86dri.c xc/lib/GL/dri/xf86dri.h \
-	xc/lib/GL/dri/xf86dristr.h
+	xc/lib/GL/dri/xf86dristr.h \
+	xc/lib/GL/mesa/src/drv/tdfx xc/lib/GL/mesa/src/drv/common/depthtmp.h \
+	xc/lib/GL/mesa/src/drv/common/spantmp.h xc/lib/GL/mesa/src/drv/common/stenciltmp.h
 nice -n 19 tar xzf "$DIST/X430src-3.tgz" -C "$DEST" \
 	xc/programs/Xserver/GL/dri/xf86dri.c xc/programs/Xserver/GL/dri/sarea.h \
+	xc/programs/Xserver/GL/include/GL/xf86glx.h \
 	$OS/xf86drm.h $OS/linux/drm/xf86drm.c $OS/linux/drm/xf86drmHash.c \
 	$OS/linux/drm/xf86drmRandom.c $OS/linux/drm/xf86drmSL.c
 for p in "$D"/patches/*.diff; do

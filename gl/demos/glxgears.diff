@@ -13,3 +13,20 @@
     attr.event_mask = StructureNotifyMask | ExposureMask | KeyPressMask;
     mask = CWBackPixel | CWBorderPixel | CWColormap | CWEventMask;
  
+@@ -444,6 +448,7 @@
+             GLfloat fps = frames / seconds;
+             printf("%d frames in %3.1f seconds = %6.3f FPS\n", frames, seconds,
+                    fps);
++            fflush(stdout);
+             t0 = t;
+             frames = 0;
+          }
+@@ -490,6 +495,8 @@
+    }
+ 
+    init();
++   /* no window manager sends the first ConfigureNotify */
++   reshape(300, 300);
+ 
+    event_loop(dpy, win);
+ 
