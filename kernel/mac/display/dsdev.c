@@ -423,6 +423,12 @@ int *rvalp;
 			return ENXIO;
 		s->s_cache = arg;
 		return 0;
+#ifdef DS_AMIGA
+	case FBIOPAN:
+		if (s == 0)
+			return EINVAL;
+		return ds_setpan(s, (unsigned long)arg);
+#endif
 #ifdef DS_ATARI
 	case FBIOVIDEL:
 		if (s == 0)

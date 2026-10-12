@@ -243,6 +243,15 @@ struct dssess *s;
 	am_rebuild();
 }
 
+/* the card shows s's frame from its pan offset */
+void
+am_pan(s)
+struct dssess *s;
+{
+	if (am_rtg && am_rtg->r_pan)
+		(*am_rtg->r_pan)(s->s_voff + s->s_vpan);
+}
+
 static void
 am_front(s)
 struct dssess *s;
@@ -263,8 +272,7 @@ struct dssess *s;
 	}
 	DisplayScreen(sp);
 	SelectScreen(sp);
-	if (am_rtg && am_rtg->r_pan)
-		(*am_rtg->r_pan)(s->s_voff);
+	am_pan(s);
 	if (am_rtg)
 		(*am_rtg->r_show)(s != &ds_sess[0]);
 }
@@ -334,9 +342,10 @@ am_dsinit()
 	am_lines = height;
 	am_dsvsize = am_rtg ? 0 : size;
 	am_dsfull = am_rtg && am_rtg->r_setdepth && (am_rtg->r_depths & 6);
+	/* a page over: the guest's allocator keeps bytes between bitmaps, so two screens at half depth fit */
 	if (am_dsfull)
 		am_dsvsize = (am_rtg->r_base & DS_PGOFF) + (unsigned long)am_rtg->r_row *
-		    am_rtg->r_height * (am_rtg->r_depths & 4 ? 4 : 2);
+		    am_rtg->r_height * (am_rtg->r_depths & 4 ? 4 : 2) + DS_PGSIZE;
 	if (am_rtg) {
 		am_dsphys = am_rtg->r_phys ? am_rtg->r_phys - am_rtg->r_base : 0;
 		am_dsvram = am_rtg->r_pan ? am_rtg->r_vram : 0;

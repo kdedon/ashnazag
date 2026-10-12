@@ -9,7 +9,8 @@
 # rasteriser, OSMesa, snprintf; no threads), lib/libGL.a (the same with the
 # Xlib driver, when $X11W has the X client libraries, and direct rendering
 # through XFree86 4.3's GLX and DRI client code and libdrm: gl/dri/x43.sh),
-# lib/libdrm.a, bin/glxgears (with the Mesa demos) and include/.
+# lib/libdrm.a, lib/libdrihost.a (the DRI drivers without X: drihost.h),
+# bin/glxgears (with the Mesa demos) and include/.
 set -e
 
 D=$(cd "$(dirname "$0")" && pwd)
@@ -158,11 +159,12 @@ GLIDEFL="-D__linux__ -DH3 -DGLIDE_PACKET3_TRI_SETUP=1 -DUSE_PACKET_FIFO=1
 	-DGLIDE_USE_C_TRISETUP -DGLIDE_LIB -DGLIDE3 -DGLIDE3_ALPHA -DFX_STATIC_BUILD
 	-DGLIDE_PACKED_RGB=0 -I$GLIDE"
 GOBJS=
+GH=$(ls -t "$GLIDE"/*.h | head -1)
 for f in diget diglide disst distate distrip ditex fifo g3df gaa gbanner gdraw gerror \
 	gglide glfb gpci gsfc gsplash gsst gstrip gtex gtexdl gthread gu gxdraw xtexdl_def \
-	linhwc gdebug amixglide; do
+	linhwc gdebug amixglide amixfront; do
 	o=$GLW/obj/glide_$f.o
-	if [ ! -f "$o" ] || [ "$GLIDE/$f.c" -nt "$o" ]; then
+	if [ ! -f "$o" ] || [ "$GLIDE/$f.c" -nt "$o" ] || [ "$GH" -nt "$o" ]; then
 		echo "cc glide/$f.c"
 		$N "$CC" $CFLAGS $GLIDEFL -c "$GLIDE/$f.c" -o "$o"
 	fi
@@ -176,13 +178,19 @@ TDFL="$DRIFL -D__driCreateScreen=tdfx_driCreateScreen
 	-I$XC/lib/GL/mesa/src/drv/common -I$XC/programs/Xserver/GL/include -I$AUX/x11/src/dri"
 objs43 "$TDFL" "$TD" tdfx_context tdfx_dd tdfx_lock tdfx_pixels tdfx_render tdfx_screen \
 	tdfx_span tdfx_state tdfx_tex tdfx_texman tdfx_texstate tdfx_tris tdfx_vb
-XOBJS="$XOBJS $OBJS $GOBJS"
+TDOBJS="$OBJS $GOBJS"
+XOBJS="$XOBJS $TDOBJS"
 objs43 "$DRIFL" "$D/dri/src" glxdirect dri_drivers
 lib libGL.a $COBJS $XOBJS $OBJS
+# the drivers again, for a program that owns a display session and has
+# no X server: with libOSMesa.a's core
+objs43 "$DRIFL -I$AUX/x11/src/dri" "$D/dri/src" drihost dri_drivers
+DUOBJ=$(ls "$GLW"/obj/x43_dri_util.o)
+lib libdrihost.a $OBJS $TDOBJS $DUOBJ $DOBJS
 rm -rf "$GLW/include/dri"; mkdir -p "$GLW/include/dri"
 cp "$XC/lib/GL/glx/glxclient.h" "$XC/lib/GL/dri/dri_glx.h" "$XC/lib/GL/dri/dri_util.h" \
 	"$XC/lib/GL/dri/xf86dri.h" "$XC/programs/Xserver/GL/dri/sarea.h" "$OSS/xf86drm.h" \
-	"$GLW/include/dri/"
+	"$D/dri/src/drihost.h" "$GLW/include/dri/"
 
 # X GL programs, linked like the system's programs: shared libc, then the
 # members only its archive has

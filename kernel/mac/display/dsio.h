@@ -23,6 +23,7 @@
 #define FBIOBLANK	FBIOC(12)	/* value: 1 blank, 0 unblank */
 #define FBIOCACHE	FBIOC(13)	/* value: FBC_WT or FBC_CI, for the next mmap */
 #define FBIOVIDEL	FBIOC(14)	/* value: where the caller maps a FBA_VIDEL session */
+#define FBIOPAN		FBIOC(15)	/* value: FBF_OWNV, where in its VRAM the screen starts */
 
 #define EVIOC(n)	(('E' << 8) | (n))
 #define EVIOCGINFO	EVIOC(1)	/* out struct evinfo */
@@ -52,6 +53,7 @@
 #define FBF_BLANK	0x02
 #define FBF_SETMODE	0x04
 #define FBF_CMAP	0x08	/* CLUT can be written */
+#define FBF_OWNV	0x10	/* the session's own VRAM: kept at full depth while hidden */
 
 struct fbinfo {
 	unsigned long	fi_type;

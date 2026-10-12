@@ -429,6 +429,10 @@ movecard(sig)
         }
         if (m != (caddr_t)-1)
             r->inram = want;
+        else if (want)
+            /* no memory for the copy: a failed fixed mapping leaves a hole */
+            mmap((caddr_t)MIG_RTG_VRAM, winsize, PROT_READ | PROT_WRITE,
+                MAP_SHARED | MAP_FIXED, movefd, 0);
         munmap(t, winsize);
     }
     write(ackfd, &c, 1);
@@ -1177,6 +1181,10 @@ main(argc, argv)
 		if (!native(&fi, sysroot, &w, &h))
 			miglog(0, "Workbench mode %lux%lu, not the display's", w, h);
 		direct = vram(&fi, w, h);
+#ifdef WARP3D
+		if (direct)
+			w3d_fbfd = dfd;
+#endif
 		showstartup(sysroot);
 		/* the helpers sleep until the guest has entered, when this closes */
 		if (pipe(go) < 0)

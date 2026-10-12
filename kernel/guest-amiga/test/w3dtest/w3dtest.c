@@ -9,6 +9,11 @@
  * window 100 s after a failure.  Arguments: 16 or 32 takes the deepest
  * mode of that depth instead; "hold" then draws a frame every 0.1 s for
  * 60 s and counts the frames drawn and those refused as not visible.
+ * After the first frame and again after the timed ones, "pixels" gives
+ * the BitMap's pixels inside the red, white, black, green and navy areas,
+ * each with the pixel in the same place counted from the bottom and, for
+ * a context on the card, the BitMap's height above it: where a card that
+ * ignores its Y origin draws.  "file": results to SYS:w3dtest.log.
  */
 typedef unsigned int U;
 typedef unsigned char B;
@@ -119,6 +124,26 @@ static int frame(void)
 	return e;
 }
 
+/* read back from the BitMap the context draws into */
+static void pixels(int bytes)
+{
+	static const short xy[] = { 60, 60, 280, 40, 368, 40, 60, 260, 600, 300 };
+	B *mem = *(B **)((B *)ctx + 168);
+	U bpr = *(U *)((B *)ctx + 48), h = *(U *)((B *)ctx + 56), i, y;
+	int k, n = *(U *)((B *)ctx + 8) & 4 ? 3 : 2;		/* on a card: and h rows up */
+
+	r[A0] = ctx; W3D(7);						/* WaitIdle */
+	add("pixels");
+	for (i = 0; i < sizeof xy / sizeof xy[0]; i += 2)
+		for (k = 0; k < n; k++) {
+			y = k == 2 ? xy[i + 1] - h : k ? h - 1 - xy[i + 1] : xy[i + 1];
+			add(k ? "/" : " ");
+			hex(bytes == 2 ? *(unsigned short *)(mem + y * bpr + xy[i] * 2) :
+			    *(U *)(mem + y * bpr + xy[i] * 4));
+		}
+	flush();
+}
+
 static int word(const B *s, const char *w)
 {
 	int i;
@@ -143,7 +168,7 @@ void w3dtest(const B *arg)
 	intui = lib("intuition.library", 39);
 	if (!dos || !gfx || !intui) return;
 	want = word(arg, "16") ? 16 : word(arg, "32") ? 32 : 0;
-	r[D1] = (U)"CON:0/360/640/200/w3dtest"; r[D2] = 1006;
+	r[D1] = word(arg, "file") ? (U)"SYS:w3dtest.log" : (U)"CON:0/360/640/200/w3dtest"; r[D2] = 1006;
 	if (!(out = ex(dos, -30))) return;
 	if (!(w3d = lib("Warp3D.library", 4))) {
 		add("no Warp3D.library"); flush(); add("done"); flush();
@@ -223,12 +248,14 @@ void w3dtest(const B *arg)
 	qf.n = 4; qf.v = quad; qf.tex = (void *)tex;
 	e = frame();
 	add("frame "); dec(e); add(" zbuffer "); dec(zok); flush();
+	if (bestd > 8) pixels(bestd == 16 ? 2 : 4);
 	r[A0] = ctx; r[D0] = 0; r[D1] = 0; r[D2] = 0; add("stencil "); dec(W3D(30)); flush();
 	t0 = ticks();
 	for (i = 0; i < 20; i++) frame();
 	t1 = ticks();
 	add("frame_ms "); dec((t1 - t0) * 20 / 20); flush();
 	frame();
+	if (bestd > 8) pixels(bestd == 16 ? 2 : 4);
 	if (word(arg, "hold")) {
 		drawn = hidden = 0;
 		t0 = ticks();

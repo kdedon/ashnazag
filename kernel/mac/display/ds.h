@@ -127,6 +127,7 @@ struct dssess {
 #ifdef DS_AMIGA
 	int		s_vmode;	/* FBIOSMODE's mode, index + 1; 0 the display's */
 	unsigned long	s_voff;		/* its own VRAM, from d_page; 0 none */
+	unsigned long	s_vpan;		/* shown from there into it */
 #endif
 };
 
@@ -183,6 +184,7 @@ int	ds_ncmap();		/* (s) -> its colour table's entries */
 int	ds_setmode();		/* (s, id) -> errno */
 #endif
 #ifdef DS_AMIGA
+int	ds_setpan();		/* (s, offset) -> errno */
 /*
  * A card with room for more than one frame gives sessions their own
  * VRAM: such a session maps it, shown or not, and needs no copy.

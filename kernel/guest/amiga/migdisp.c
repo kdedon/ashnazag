@@ -443,8 +443,9 @@ static void watch(int fd, int go, int ack, unsigned char *fb, struct fbinfo *fi,
     int status, bound = 0, warned = 0, bad = 0, last = -1;
     int moved, changed, laststatus = -1, copying = 0, full, rows, idle = 0;
     unsigned int lastw = 0, lasth = 0, lastfmt = 0, fmt = MIG_RTG_INDEX8, bpp, shows = 0;
-    struct fbinfo *m = fi;
+    struct fbinfo *m = fi, *dm;
     unsigned int lastoff = 0, laststride = 0;
+    unsigned long pan = 0, want, refused = 1;
     long next = 0;
     memset(&aw, 0, sizeof aw);
     aw.aw_pid = guest;
@@ -506,10 +507,32 @@ static void watch(int fd, int go, int ack, unsigned char *fb, struct fbinfo *fi,
          * display's part of card memory to RAM and the screen is copied;
          * the display-sized screen back in front moves it back.
          */
-        /* deeper screens are copied: the session keeps only an 8-bit frame while hidden */
+        /*
+         * Deeper screens are copied unless the session has its own VRAM:
+         * otherwise it keeps only an 8-bit frame while hidden.
+         */
         bpp = mig_rtg_bpp(rtg.format);
-        other = status == MIG_RTG_VISIBLE && !rtg.copy &&
-            (bpp > 1 || rtg.offset || rtg.stride != rtg.vstride);
+        dm = &migdisp_mode[bpp >> 1];
+        /* elsewhere in the session's own VRAM, in the mode's rows: the card shows it from there */
+        want = 0;
+        if (bpp > 1 && (fi->fi_flags & FBF_OWNV) && dm->fi_rowbytes && rtg.stride == dm->fi_rowbytes &&
+            rtg.vram + rtg.offset >= MIG_RTG_VRAM + dm->fi_offset)
+            want = rtg.vram + rtg.offset - MIG_RTG_VRAM - dm->fi_offset;
+        if (want == refused)
+            want = 0;
+        if (status == MIG_RTG_VISIBLE && !rtg.copy && want != pan) {
+            if (ioctl(fd, FBIOPAN, want) < 0) {
+                refused = want;
+                want = ioctl(fd, FBIOPAN, 0) < 0 ? pan : 0;
+            }
+            if (want != pan)
+                miglog(0, "RTG screen %ux%u shown from %lu", rtg.width, rtg.height, want);
+            pan = want;
+        }
+        other = status == MIG_RTG_VISIBLE && !rtg.copy && (bpp > 1 ?
+            !(fi->fi_flags & FBF_OWNV) || !dm->fi_rowbytes || rtg.stride != dm->fi_rowbytes ||
+            rtg.vram + rtg.offset != MIG_RTG_VRAM + dm->fi_offset + pan :
+            rtg.offset || rtg.stride != rtg.vstride);
         if (status == MIG_RTG_VISIBLE && proc >= 0 && other != away) {
             /* the pointer out of the screen being moved first */
             if (other && pointer(fb, fi, &rtg, 0) < 0) {
@@ -731,7 +754,9 @@ int migdisp_open(struct fbinfo *fi)
         fprintf(stderr, "startmig: display requires a packed 8-bit framebuffer with 256 colors\n");
         close(fd); return -1;
     }
-    migdisp_gsize = (fi->fi_offset + fi->fi_rowbytes * fi->fi_height + 4095) & ~4095UL;
+    /* a session with its own VRAM keeps room for deeper screens there too */
+    migdisp_gsize = fi->fi_flags & FBF_OWNV ? fi->fi_size :
+        (fi->fi_offset + fi->fi_rowbytes * fi->fi_height + 4095) & ~4095UL;
     modes(fd, fi);
     /* write-through keeps reads cached for the card's blits */
     if (ioctl(fd, FBIOCACHE, FBC_WT) < 0 && ioctl(fd, FBIOCACHE, FBC_CI) < 0) {

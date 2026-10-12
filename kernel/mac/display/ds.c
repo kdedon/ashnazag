@@ -68,7 +68,7 @@ extern int ata_svfb;
 extern int fbp_nmode, fbp_cur;
 #ifdef DS_AMIGA
 extern int am_dsinit(), am_nvmode(), am_vmfind();
-extern void am_dsclut(), am_vminfo(), am_planes();
+extern void am_dsclut(), am_vminfo(), am_planes(), am_pan();
 extern char *am_dsname;
 extern int am_dscmapbits;
 extern unsigned long am_dsvsize;
@@ -138,6 +138,8 @@ register struct fbinfo *fi;
 	if (s && s->s_vmode)
 		am_vminfo(s->s_vmode - 1, fi);
 #endif
+	if (s && DS_OWNV(s))
+		fi->fi_flags |= FBF_OWNV;
 	if (s)
 		fi->fi_size = s->s_size;
 }
@@ -348,6 +350,26 @@ ds_am_console()
 		ds_pend = 0;
 		qenable(&ds_q);
 	}
+}
+
+/* s's screen starts off bytes into its own VRAM, in its mode's rows */
+int
+ds_setpan(s, off)
+register struct dssess *s;
+unsigned long off;
+{
+	struct fbinfo fi;
+
+	ds_sinfo(s, &fi);
+	if (!DS_OWNV(s))
+		return ENXIO;
+	if ((off & 15) || off > ds_disp.d_vsize ||
+	    fi.fi_rowbytes * fi.fi_height > ds_disp.d_vsize - off)
+		return EINVAL;
+	s->s_vpan = off;
+	if (s == ds_front)
+		am_pan(s);
+	return 0;
 }
 
 /*
@@ -665,6 +687,7 @@ int *errp, vid;
 #endif
 #ifdef DS_AMIGA
 	s->s_voff = am_vslot();
+	s->s_vpan = 0;
 #endif
 	if (!DS_OWNV(s) && ds_shadow(s) == 0) {
 #ifdef DS_ATARI

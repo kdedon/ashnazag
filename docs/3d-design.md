@@ -299,6 +299,7 @@ Signals stay as now: a host signal while in Mesa becomes a guest interrupt throu
 | Host | Warp3D renders into | How |
 |---|---|---|
 | Radeon session in front | the BitMap's place in the session's VRAM | `SetDrawRegion`: BitMap address − `MIG_RTG_VRAM` + the session's VRAM offset (backend) → colour offset and pitch of the r200 drawable; Z/stencil and back buffers in the same session's VRAM allocation |
+| Voodoo3 session (tdfx DRI) | the BitMap in the session's VRAM | X-less DRI host: the tdfx driver's front buffer is moved to the BitMap (`grDRIFront`); 16-bit BitMaps only. A display-sized 16-bit screen anywhere in the session's VRAM is shown by moving the display start there (`FBIOPAN`), not copied. `W3D_SOFT` in startmig's environment forces software |
 | Any other host, or no card | the BitMap's memory | OSMesa into a back buffer in host memory, copied to the BitMap the container card maps (below); the same code on Mac, Atari and stock Amigas |
 
 Back buffer (software path): Mesa reads and writes pixels one at a time, and display memory behind Zorro or an emulated card is slow at that. Mesa draws into host memory of the BitMap's size and format instead:
@@ -309,6 +310,10 @@ Back buffer (software path): Mesa reads and writes pixels one at a time, and dis
 - A triangle whose vertices share one w is drawn with affine texturing (`GL_FASTEST`): no divide per pixel. Vertex arrays keep perspective.
 - OSMesa's own span loops (`gl/patches/04`) also cover triangles without depth test and RGB 565; before, those took swrast's general span path.
 - Cost on Amiberry (A3000/040 interpretive, about 2 MIPS), w3dtest at 1024x768: 6.6 s a frame at 32 bits and 9.5-12.4 s at 16 bits drawing into the BitMap; 1.8-2.2 s (0.2-0.3 s of it copying) and 1.2-1.3 s (0.1-0.2 s) with the above, with host load moving them by up to 40%. What is left is Mesa's per-pixel work on 65k pixels a frame, about 160 ms per 16k-pixel triangle even on the fast paths.
+
+Result (WinUAE, A3000, 68060, Voodoo3, 16-bit 1024x768 Workbench direct in VRAM): `Warp3D: tdfx on the card: Mesa DRI 20020221 Voodoo3`; w3dtest 15-16 ms a frame on the card; software (`W3D_SOFT`) 219 ms with the screen direct, 388-427 ms copied. WinUAE ignores the Y-origin bit, so the card draws the frame upright but the BitMap's height above the BitMap (here into the Workbench's bitmap): read back there, the test points are red, white, green, green, navy (software: red, white, black, green, navy; the dark checker texel shows green on the card). Hot-key switches to X and back during a 60 s run: 401 frames drawn, 103 `W3D_NOTVISIBLE` while X was in front, drawing resumes on return.
+
+Each Voodoo3 session frame is one page over a 32-bit screen: Picasso96 keeps 16 bytes between bitmaps, and a second 16-bit screen must still fit beside the Workbench.
 
 Rules from the display service:
 - A hidden session gets no DRM lock: `LockHardware` and draw calls return `W3D_NOTVISIBLE` (a Warp3D error titles already handle), GL clients block in the lock.

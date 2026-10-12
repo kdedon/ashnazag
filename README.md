@@ -24,7 +24,7 @@ Start commands, run as an ordinary user. Ctrl-Option-Command-0 shows the console
 | Mac OS 8.1 | `makemac -e 8.1`, then `startmac -e 8.1` | Quadra | Works: Finder, applications, Open/Save, sound through A/UX's Sound Manager, Open Transport networking. |
 | Mac System 6.0.7 | `startmac6` | Quadra, Falcon | Works; slow, no colour. Needs A/UX 2.0.1 and a IIci ROM. |
 | TOS (EmuTOS, TeraDesk) | `starttos` | Quadra, Falcon, Amiga | Works. fVDI at the screen's size; XaAES with `starttos -e xaaes`. On a Falcon, `starttos -P` runs the machine's own TOS ROM (slow redraws). |
-| Amiga (Kickstart 3.2, Workbench) | `startmig` | Quadra, Amiga (68040 or 68060) | Partial: Workbench on RTG (Picasso96 or ZZ9000), 8-, 16- and 32-bit where the host card has them; Warp3D through software Mesa (slow); slow start; stock chipset display not supported. |
+| Amiga (Kickstart 3.2, Workbench) | `startmig` | Quadra, Amiga (68040 or 68060) | Partial: Workbench on RTG (Picasso96 or ZZ9000), 8-, 16- and 32-bit where the host card has them; Warp3D on a Voodoo3 through its DRI driver (16-bit screens), else software Mesa (slow); slow start; stock chipset display not supported. |
 | Concurrent CP/M-68K | `startcpm` | Quadra, Falcon | Works, in the terminal: CP/M 3 BDOS, XDOS processes, more consoles with `startcpm -c N`, RSXes. Z80 and 8086 programs too. |
 | Windows 3.x programs (Win16) | `startwin` | Quadra | Works for Program Manager and the tested programs. Each user installs their own Windows 3.1/3.11 and Wabi 2.2 with `startwin -install`. |
 | X11R6.3 | `startx`, `xsession` | Quadra, Falcon | Works: twm, XView, xdm session chooser; sessions for each environment. OpenGL through Mesa 5 (software); `glxgears`. |

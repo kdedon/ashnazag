@@ -5,14 +5,26 @@
 #   sh gl/glide/glide.sh DEST
 #
 # Out: DEST/*.[ch], from ref/glide/dist (tools/setup.sh --gl) and
-# gl/glide/patches/*.diff.  Does nothing when DEST is complete.
+# gl/glide/patches/*.diff.  When DEST is complete, gl/glide/src is copied
+# again and patches it lacks are applied.
 set -e
 D=$(cd "$(dirname "$0")" && pwd)
 AUX=$(cd "$D/../.." && pwd)
 TGZ=$AUX/ref/glide/dist/glide_2002.04.10.orig.tar.gz
 DEST=$1
 [ -n "$DEST" ] || { echo "usage: glide.sh DEST" >&2; exit 2; }
-[ -f "$DEST/.done" ] && exit 0
+# files of our own are refreshed in a complete tree
+if [ -f "$DEST/.done" ]; then
+	for f in "$D"/src/*; do
+		cmp -s "$f" "$DEST/${f##*/}" || cp "$f" "$DEST/"
+	done
+	# patches added since the tree was made
+	for p in "$D"/patches/*.diff; do
+		patch -s -p1 -R --dry-run -d "$DEST" < "$p" > /dev/null 2>&1 && continue
+		patch -s -p1 -d "$DEST" < "$p"
+	done
+	exit 0
+fi
 [ -f "$TGZ" ] || { echo "$TGZ missing: sh tools/setup.sh --gl" >&2; exit 1; }
 rm -rf "$DEST" "$DEST.x"; mkdir -p "$DEST" "$DEST.x"
 U=glide-2002.04.10/upstream/tarballs

@@ -1,10 +1,13 @@
 /*
  * w3d.c -- the host side of Warp3D.library: each library vector's
- * function, drawing with Mesa's software renderer.  Called on the host
- * stack from guest code, one caller at a time.
+ * function, drawing with Mesa: on the card's 3D engine when the BitMap
+ * is in the session's VRAM in a format the card draws, else with the
+ * software renderer.  Called on the host stack from guest code, one
+ * caller at a time.
  *
- * Mesa draws into a back buffer in host memory: display memory can be
- * slow to read and write pixel by pixel.  The rows drawn go to the BitMap
+ * On the card Mesa draws straight into the BitMap.  In software it
+ * draws into a back buffer in host memory: display memory can be slow
+ * to read and write pixel by pixel.  The rows drawn go to the BitMap
  * at each flush and unlock; rows the guest may have drawn into since are
  * read back before Mesa draws over them, unless a clear covers them.
  *
@@ -22,6 +25,16 @@ extern int gettimeofday();
 #include "rtgshare.h"
 #include "w3dshare.h"
 #include "miglog.h"
+#ifdef W3D_DRI
+#include <sys/ioctl.h>
+#include <sys/types.h>
+#include "dsio.h"
+#include "dri/drihost.h"
+extern unsigned long migdisp_gsize;
+#endif
+
+/* the display session's /dev/fbN when its VRAM is the guest's card memory */
+int w3d_fbfd = -1;
 
 #define L(p, o) (*(unsigned long *)((char *)(p) + (o)))
 #define W(p, o) (*(unsigned short *)((char *)(p) + (o)))
@@ -130,6 +143,7 @@ struct tex {
 struct ctx {
     char *w3d;		/* the guest's W3D_Context */
     OSMesaContext gl;
+    void *dri;		/* on the card instead */
     char *bitmap;
     unsigned char *mem;
     int bpr, w, h, yoff, bpp, rgbfmt;
@@ -203,9 +217,68 @@ tag(unsigned long *t, unsigned long want, unsigned long def)
     return def;
 }
 
+#ifdef W3D_DRI
+static int drigeom[4];	/* the screen the driver was given */
+
+/* the BitMap in the session's VRAM, in the card's format */
+static int
+onboard(struct ctx *c)
+{
+    unsigned long a = (unsigned long)c->mem + c->yoff * c->bpr;
+    return c->bpp == 2 && !((volatile struct mig_rtg *)MIG_RTG_BASE)->inram &&
+        a >= MIG_RTG_VRAM && a + c->h * c->bpr <= MIG_RTG_VRAM + migdisp_gsize &&
+        c->w <= drigeom[0] && c->h <= drigeom[1];
+}
+
+static int
+dribind(struct ctx *c)
+{
+    return onboard(c) && drihost_bind(c->dri, (unsigned long)c->mem + c->yoff * c->bpr - MIG_RTG_VRAM,
+        c->bpr, c->w, c->h);
+}
+
+/* a context on the card, if the session has one with a DRI driver; W3D_SOFT set: software */
+static void
+dricontext(struct ctx *c)
+{
+    static int tried;
+    static const char *name;
+    struct fbinfo fi;
+    const char *err = 0;
+
+    if (w3d_fbfd < 0 || c->bpp != 2 || getenv("W3D_SOFT")) return;
+    if (!tried) {
+        tried = 1;
+        if (ioctl(w3d_fbfd, FBIOGINFO, &fi) < 0) return;
+        name = drihost_open(w3d_fbfd, fi.fi_offset, fi.fi_width, fi.fi_height, fi.fi_rowbytes,
+            fi.fi_depth, &err);
+        if (!name) {
+            miglog(0, "Warp3D: no direct rendering: %s", err);
+            return;
+        }
+        drigeom[0] = fi.fi_width; drigeom[1] = fi.fi_height;
+    }
+    if (!name || !onboard(c) || !(c->dri = drihost_create())) return;
+    if (!dribind(c)) {
+        drihost_destroy(c->dri);
+        c->dri = 0;
+        return;
+    }
+    current = c;
+    miglog(0, "Warp3D: %s on the card: %s", name, glGetString(GL_RENDERER));
+}
+#else
+#define dribind(c) 0
+#endif
+
 static int
 make(struct ctx *c)
 {
+    if (c->dri) {
+        if (!dribind(c)) return 0;
+        current = c;
+        return 1;
+    }
     if (!OSMesaMakeCurrent(c->gl, c->back ? c->back : c->mem + c->yoff * c->bpr,
         c->bpp == 2 ? GL_UNSIGNED_SHORT_5_6_5 : GL_UNSIGNED_BYTE, c->w, c->h))
         return 0;
@@ -400,13 +473,18 @@ CreateContext(unsigned long *err, unsigned long *tags)
         seterr(err, UNSUPPORTEDFMT);
         return 0;
     }
+#ifdef W3D_DRI
+    dricontext(c);
+#endif
     fmt = c->bpp == 2 ? OSMESA_RGB_565 : c->rgbfmt == MIG_RTG_A8R8G8B8 ? OSMESA_ARGB : OSMESA_BGRA;
     /*
      * Mesa leaves many allocations unchecked, and a null pointer here is
      * the guest's chip memory: create only with room for the context
      * (about 0.7 MB) and its depth buffer; the probe stays in the heap
      */
-    if ((probe = malloc(MESA_ROOM + c->w * c->h * (2 + c->bpp))) != 0) {
+    if (c->dri)
+        ;
+    else if ((probe = malloc(MESA_ROOM + c->w * c->h * (2 + c->bpp))) != 0) {
         free(probe);
         backbuf(c, 1);
     } else if ((probe = malloc(MESA_ROOM + c->w * c->h * 2)) != 0)
@@ -419,7 +497,7 @@ CreateContext(unsigned long *err, unsigned long *tags)
     }
     c->cmask = 1;
     c->zval = ~0UL;
-    if (!(c->gl = OSMesaCreateContextExt(fmt, 16, 0, 0, 0)) || !make(c)) {
+    if (!c->dri && (!(c->gl = OSMesaCreateContextExt(fmt, 16, 0, 0, 0)) || !make(c))) {
         miglog(0, "Warp3D: CreateContext: no Mesa context");
         if (c->gl) OSMesaDestroyContext(c->gl);
         if (c->back) free(c->back);
@@ -427,7 +505,7 @@ CreateContext(unsigned long *err, unsigned long *tags)
         seterr(err, NOMEMORY);
         return 0;
     }
-    L(w, C_DRIVERTYPE) = 1 << 3;	/* CPU */
+    L(w, C_DRIVERTYPE) = c->dri ? 1 << 2 : 1 << 3;	/* 3D hardware, CPU */
     L(w, C_SUPPORTEDFMT) = FMT_R5G6B5 | FMT_A8R8G8B8 | FMT_B8G8R8A8;
     L(w, C_MAXTEXW) = L(w, C_MAXTEXW + 4) = L(w, C_MAXTEXW + 8) = L(w, C_MAXTEXW + 12) = 1024;
     L(w, C_ENVSUPMASK) = 0x1e;
@@ -445,7 +523,7 @@ CreateContext(unsigned long *err, unsigned long *tags)
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     frames = 0;
     miglog(0, "Warp3D: context %dx%d, %d bytes a pixel, rows %d%s", c->w, c->h, c->bpp, c->bpr,
-        c->back ? "" : ", no back buffer");
+        c->dri ? ", on the card" : c->back ? "" : ", no back buffer");
     seterr(err, OK);
     return (long)w;
 }
@@ -474,6 +552,10 @@ DestroyContext(char *w)
     calls();
     copyout(c);
     while (c->texs) freetex(c, c->texs);
+#ifdef W3D_DRI
+    if (c->dri) drihost_destroy(c->dri);
+    else
+#endif
     OSMesaDestroyContext(c->gl);
     if (c->back) free(c->back);
     current = 0;
@@ -546,6 +628,8 @@ finish(char *w, int wait)
     struct ctx *c;
     if (!use(w)) return ILLEGALINPUT;
     c = (struct ctx *)L(w, C_DRIVER);
+    /* the card's lock waits while the session is hidden */
+    if (c->dri && rtg->hidden) return OK;
     if (wait) glFinish(); else glFlush();
     copyout(c);
     /* unlocked, the guest may draw into the bitmap */
@@ -1060,9 +1144,10 @@ ClearZBuffer(char *w, double *z)
     if (!use(w)) return ILLEGALINPUT;
     if (!W(w, C_ZBUFFERALLOC)) return NOZBUFFER;
     c = (struct ctx *)L(w, C_DRIVER);
+    if (c->dri && rtg->hidden) return NOTVISIBLE;
     d = d < 0 ? 0 : d > 1 ? 1 : d;
     v = (unsigned short)(d * 65535.0);
-    if (!(c->state & S_SCISSOR) && OSMesaGetDepthBuffer(c->gl, &zw, &zh, &zb, &zbuf) && zb == 2 &&
+    if (!(c->state & S_SCISSOR) && !c->dri && OSMesaGetDepthBuffer(c->gl, &zw, &zh, &zb, &zbuf) && zb == 2 &&
         zh == c->h) {
         /* only rows drawn since a clear to the same value; Z rows count from the bottom */
         if (v != c->zval) c->z0 = 0, c->z1 = zh;

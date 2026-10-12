@@ -72,7 +72,8 @@ struct mig_rtg {
     volatile unsigned int track, ram, inram;
     /*
      * The screen formats the session can show, 1 << format; the card
-     * shows format.  Screens deeper than 8 bits are always copied.
+     * shows format.  Screens deeper than 8 bits are copied unless the
+     * session has its own VRAM.
      */
     unsigned int formats;
     /* the display helper's count of the session coming to the front */

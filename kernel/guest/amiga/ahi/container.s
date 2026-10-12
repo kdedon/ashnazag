@@ -495,12 +495,14 @@ attrs:
  .long TAG+141, outname
  .long 0
 
-| PORTS: the helper rang; the task mixes.  The chain goes on.
+| PORTS: the helper rang; the task mixes.  The chain goes on.  A6 is
+| scratch in a server chain: the CIA server ahead of this one may change it.
 pserver:
  move.l #BASE,%a0
  tst.l s_doorbell(%a0)
  beq 1f
  clr.l s_doorbell(%a0)
+ move.l 4.w,%a6
  move.l 4(%a1),%d0
  move.l (%a1),%a1
  jsr -324(%a6)
