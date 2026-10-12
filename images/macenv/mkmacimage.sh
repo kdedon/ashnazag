@@ -43,7 +43,7 @@ mkdir -p "$P"
 KERNEL=$KERNEL sh "$AUX/images/envpkg/mkenvpkgs.sh" "$P/envpkg" > "$P/envpkg.log" 2>&1 ||
 	{ tail "$P/envpkg.log"; exit 1; }
 ENVPKGS=
-for p in envcore macenv tosenv amigaenv cpmenv smsqenv win16env; do
+for p in envcore macenv tosenv amigaenv cpmenv smsqenv win16env lisaenv v200env; do
 	f=$P/envpkg/pkgs/env/$p-1.0.pkg
 	[ ! -f "$f" ] || ENVPKGS="$ENVPKGS $f"
 done

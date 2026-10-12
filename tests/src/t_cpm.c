@@ -787,10 +787,57 @@ kmpool()
 	return t_kmem("kmeminfo") + t_kmem("kmeminfo+4") + t_kmem("kmeminfo+8");
 }
 
+static unsigned long
+ksym(name)
+char *name;
+{
+	FILE *f = fopen("/tests/ksyms", "r");
+	char n[64];
+	unsigned long a = 0;
+
+	if (f == 0)
+		return 0;
+	while (fscanf(f, "%63s %lx", n, &a) == 2 && strcmp(n, name))
+		a = 0;
+	fclose(f);
+	return a;
+}
+
+static long
+kword(fd, a)
+int fd;
+unsigned long a;
+{
+	long w = 0;
+
+	if (lseek(fd, (off_t)a, 0) == -1 || read(fd, (char *)&w, sizeof w) != sizeof w)
+		return 0;
+	return w;
+}
+
+/*
+ * Bytes in use, less page I/O headers: a finished asynchronous page write
+ * keeps its buffer header (96 bytes, a 128-byte block) until the pager next
+ * sweeps, so how many are out depends on when the disk was last flushed.
+ * Headers inside the kernel image come from its static pools.
+ */
 static long
 kmused()
 {
-	return t_kmem("kmeminfo+12") + t_kmem("kmeminfo+16") + t_kmem("kmeminfo+20");
+	unsigned long h = ksym("pageio_out"), end = ksym("end"), bp;
+	long used, before;
+	int fd = h && end ? open("/dev/kmem", O_RDONLY) : -1, n, tries = 0;
+
+	do {
+		before = t_kmem("kmeminfo+12") + t_kmem("kmeminfo+16") + t_kmem("kmeminfo+20");
+		for (n = 0, bp = fd >= 0 ? kword(fd, h + 4) : 0; bp && bp != h && n < 100000;
+		    bp = kword(fd, bp + 4))
+			n += bp >= end;
+		used = t_kmem("kmeminfo+12") + t_kmem("kmeminfo+16") + t_kmem("kmeminfo+20");
+	} while (used != before && ++tries < 10);
+	if (fd >= 0)
+		close(fd);
+	return used - n * 128L;
 }
 
 static long pool0, poolnow, used0, pagesz;

@@ -1,0 +1,6 @@
+# The Lisa environment's module: /dev/lplatform (64).
+PATH=/usr/bin:/sbin:/usr/sbin
+case $1 in
+'start')
+	modadmin -r cdev lplatform 64 ;;
+esac

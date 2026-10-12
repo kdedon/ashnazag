@@ -1,6 +1,6 @@
 #ifndef VOYAGE_PROFILE_H
 #define VOYAGE_PROFILE_H
-#define TI_MAJOR 57
+#define TI_MAJOR 65
 #define TI_ENTER 0x544e0001
 #define TI_LEAVE 0x544e0002
 #define TI_INFO 0x544e0003

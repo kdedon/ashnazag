@@ -69,6 +69,12 @@ static struct {
 	{ "t_amiga", 680 },
 	{ "t_win16", 2400 },
 	{ "t_env", 240 },
+	{ "t_nativehost", 60 },
+	{ "t_nhplat", 30 },
+	{ "t_nativecall", 60 },
+	{ "t_natenv", 90 },
+	{ "t_lisa", 180 },
+	{ "t_v200", 60 },
 	{ "t_quake", 7200 },
 	{ "t_stable", 14400 },
 	{ 0, 0 }

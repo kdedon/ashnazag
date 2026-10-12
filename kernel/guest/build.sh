@@ -6,7 +6,7 @@
 #	gates generated from base's vector table) and outdir/gates.lst
 #	for patch_vec.py
 #   sh kernel/guest/build.sh -m kernel.elf outdir
-#	modules against that kernel: outdir/mod.d/{guestcore,auxcore,auxexec,uinter}
+#	modules against that kernel: outdir/mod.d/{guestcore,auxcore,auxexec,uinter,...}
 #   sh kernel/guest/build.sh -t
 #	host checks: interface headers compile, table sanity
 #
@@ -21,7 +21,7 @@ DLM=$K/dlm
 PATH="$AUX/toolchain/linux/bin:$AUX/toolchain/bin:$PATH"
 export PATH
 NICE="nice -n 19"
-KCC="$NICE m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -Wall -I$DLM/include -I$G/include -I$G/mod/auxcore -I$G/mod/guestcore -I$K/mac/display -I$G/mod/tosguest"
+KCC="$NICE m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -Wall -I$DLM/include -I$G/include -I$G/mod/auxcore -I$G/mod/guestcore -I$K/mac/display -I$G/mod/tosguest -I$G/lisa -I$G/voyage200"
 
 # kernel objects must compile without warnings beyond the AMIX headers' own
 kcc() {	# src obj
@@ -56,7 +56,7 @@ case "$1" in
 	! grep -qw ata_idcm "$O/exports" || KCC="$KCC -DATA060"
 	! grep -qw am_dsinit "$O/exports" || KCC="$KCC -DDS_AMIGA"
 	rm -rf "$O/mod.d"
-	for m in guestcore auxcore auxexec uinter tosguest amigaguest cpmguest; do
+	for m in guestcore auxcore auxexec uinter tosguest amigaguest cpmguest lplatform tiplatform; do
 		d=$O/src/$m
 		rm -rf "$d"; mkdir -p "$d"
 		objs=

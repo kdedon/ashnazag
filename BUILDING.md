@@ -80,7 +80,7 @@ Research's CP/M-68K 1.3 release zip, `media/cpm68k/68kv1_3.zip`), `AMIGASTAGE`
 is missing is left out of the image.
 
 Optional open-source downloads: `--tos-src` (EmuTOS 1.4, fVDI), `--x11` (X11R6.3, x11r6.3-amix),
-`--gl` (Mesa 5.0.2 and its demos, XFree86 4.3 DRM and DRI sources).
+`--gl` (Mesa 5.0.2 and its demos, XFree86 4.3 DRM and DRI sources, Glide 3, quake-amix).
 
 ### What each target needs
 
@@ -95,6 +95,7 @@ Optional open-source downloads: `--tos-src` (EmuTOS 1.4, fVDI), `--x11` (X11R6.3
 | gl | `sh gl/build.sh`; `tests/run-qemu.sh` (t_gl, `GROUP=gl`) | suite + `toolchain/amix-gcc295`, `--gl`; libGL and glxgears also x11's `clibs` |
 | mac | `images/macenv/mkmacimage.sh` | x11 + Mac OS 7.6.1 CD, Quadra 700 ROM, the A/UX root tree (`tests/aux/auxroot`, from `--aux-cd`); optional 8.1, System 6 and CP/M media above |
 | tos | `tests/run-qemu.sh` (t_tos) | suite + `--tos-src` |
+| lisa, v200 | `tests/run-qemu.sh` (t_lisa, t_v200, `GROUP=lisa`, `GROUP=v200`); `lisaenv`, `v200env` from `images/envpkg/mkenvpkgs.sh` | suite; Lisa Office or a Voyage 200 image of yours to run them |
 | amiga | `tests/run-qemu.sh` (t_amiga), `images/amigaenv/mkamiga.sh` | suite + AmigaOS 3.2 CD |
 | falcon | `PLATFORM=atari sh kernel/build.sh` (`atari060` for a CT60), `kernel/atari/mkdisk.sh` | kernel + tape 02, 03, 10, `--tos-src`; Hatari for tests (`kernel/atari/build-hatari.sh`); TOS 4.04 for `starttos -P` |
 | amiga host | `PLATFORM=amiga sh kernel/build.sh`, `kernel/amiga/stage.sh`, `kernel/amiga/test/mkhdf.sh` | kernel + tape; `unix_boot040`, openpci.library; Amiberry and an A3000 Kickstart for tests (`kernel/amiga/test/amiberry.sh`) |

@@ -1,5 +1,5 @@
 # SMSQ/E environment plan
-Status: stage 1, the prebuilt Atari `SMSQE.PRG` in the TOS environment, is in development; the later stages are open.
+Status: open. The prebuilt Atari `SMSQE.PRG` ran in the TOS environment as a test; it is not shipped.
 Checked against the source (github.com/CodeDreamer/SMSQE, v3.43).
 ## Source and licence
 - `licence_txt`: BSD 2-clause (Tebby, Kilgus, Lenerz et al., 1989-2016).

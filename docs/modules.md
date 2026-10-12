@@ -33,15 +33,18 @@ hand.
 | `pci` | Amiga | `/dev/pci`: configuration space, for `lspci` |
 | `ne` | Amiga | `/dev/ne0`: RTL8029 (NE2000) on PCI |
 | `zz9000` | Amiga | `/dev/zz9000`: MNT ZZ9000 RTG and its display-service screen |
+| `voodoo3` | Amiga | PCI Voodoo3 or Banshee as the display-service screen |
+| `tdfx` | Amiga | `/dev/dri/card0`: DRM for the Voodoo3's 3D |
+| `floppy` | Amiga | `/dev/floppyN` (62): raw tracks for the floppy service |
 
 ## Services
 
 - Display (`docs/display-service-design.md`): `dsuser`'s devices. Each
   environment and X gets a session; only the session in front sees input. Sessions are
-  chunky (8-bit) or planar (Amiga bitplanes, 1-4 planes). The hot keys switch sessions.
+  chunky (8, 16 or 32-bit) or planar (Amiga bitplanes, 1-4 planes). The hot keys switch sessions.
 - Sound: `sndd` serves `/dev/sound` on the Mac's sound chip or the Falcon's DMA sound.
   Only the front session is heard; others are drained at the output rate so their
   programs keep time. Mac environments use it through `/dev/snd`, TOS through its XBIOS
   sound calls, the Amiga environment through AHI.
-- Floppy: not implemented yet. Environments will share the host drive through a raw-track
-  service.
+- Floppy: on Amiga hosts, `floppy` shares the drives with AMIX's own driver; the Amiga
+  environment's trackdisk.device uses them or ADF files. Other hosts have none yet.

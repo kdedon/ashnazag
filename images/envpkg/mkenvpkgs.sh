@@ -13,6 +13,8 @@
 #   cpmenv    startcpm (with DRI's release only: it builds against it)
 #   smsqenv   startsmsq and SMSQ/E (with its binaries zip)
 #   win16env  startwin
+#   lisaenv   startlisa, the native Lisa Office host (S05lisa)
+#   v200env   startvoyage200, the native Voyage 200 host (S05v200)
 #
 # Out: outdir/pkgs/env/PKG-VERSION.pkg, outdir/catalog in apkg's format,
 # outdir/guest/home/guest (guest's TOS, SMSQ and WIN16 folders, for disk
@@ -164,9 +166,23 @@ if [ -f "$W/win/root/usr/bin/startwin" ]; then
 	cp -R "$W/win/guest/." "$OUT/guest/"
 fi
 
+# lisaenv, v200env: launcher (one program, named per environment) and native host
+$CC -I"$G/include" -c "$G/nativeenv/startnative.c" -o "$W/startnative.o"
+for e in "lisa lisaenv lplatform startlisa" "voyage200 v200env tiplatform startvoyage200"; do
+	set -- $e
+	d=$1 p=$2 m=$3 l=$4
+	R=$W/$p
+	mod $p $m
+	mkdir -p "$R/usr/bin" "$R/usr/lib/$d" "$R/etc/rc2.d"
+	link68 "$R/usr/bin/$l" "$W/startnative.o"
+	sh "$G/$d/build.sh" "$W/$d" > "$W/$d.log" 2>&1 || { tail "$W/$d.log"; exit 1; }
+	cp "$W/$d/native" "$R/usr/lib/$d/"
+	cp "$D/$p"/S05* "$R/etc/rc2.d/"
+done
+
 # the datastreams and their catalog
 echo '#apkg-catalog 1' > "$OUT/catalog"
-for p in envcore macenv macnet tosenv amigaenv cpmenv smsqenv win16env; do
+for p in envcore macenv macnet tosenv amigaenv cpmenv smsqenv win16env lisaenv v200env; do
 	if [ ! -d "$W/$p" ]; then
 		echo "[skip] $p: inputs missing (see $W/*.log)"
 		continue

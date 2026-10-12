@@ -1,0 +1,6 @@
+# The Voyage 200 environment's module: /dev/tiplatform (65).
+PATH=/usr/bin:/sbin:/usr/sbin
+case $1 in
+'start')
+	modadmin -r cdev tiplatform 65 ;;
+esac

@@ -1259,7 +1259,9 @@ bsdsock()
 		t_skip("bsdsock", "no bsdtest in SYS:");
 		return;
 	}
-	if (access("/usr/lib/libsocket.so", 0) != 0 || access("/dev/tcp", 0) != 0) {
+	/* libsocket alone comes with t_win16; strcf only with the network root */
+	if (access("/usr/lib/libsocket.so", 0) != 0 || access("/dev/tcp", 0) != 0 ||
+	    access("/etc/inet/strcf", 0) != 0) {
 		t_skip("bsdsock", "no TCP/IP on this root");
 		return;
 	}

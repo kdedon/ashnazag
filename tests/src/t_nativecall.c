@@ -15,6 +15,8 @@
 #include "nativehost.h"
 #include "fixture.h"
 #include "t.h"
+
+#define	MD	"/tests/aux/mod.d"
 extern long ncf_private(void);
 extern int modload(char *), moduload(int);
 #ifdef __AMIX__
@@ -49,7 +51,7 @@ main(int argc, char **argv)
 	struct nh_clock clock;
 	void *memory;
 	long private_value, pid;
-	int core, module, fd, error, i, status, unbalanced, major = 63;
+	int module, fd, error, i, status, unbalanced, major = 66;
 	pid_t child;
 
 	if (argc > 1 && !strcmp(argv[1], "execchild")) {
@@ -59,16 +61,18 @@ main(int argc, char **argv)
 		return munmap(memory, 4096) != 0;
 	}
 	t_init("nativecall", 30);
-	core = modload("/tests/guestcore");
-	if (!t_check("core_load", core >= 0, "%s", T_ERR))
+	if (access(MD "/nhcall", 0) < 0) {
+		t_skip("all", "no nhcall module on this root");
 		return t_done();
+	}
+	modpath(MD);
 	memset(&registration, 0, sizeof registration);
 	strcpy(registration.md_modname, "nhcall");
 	registration.md_typedata = (caddr_t)&major;
 	if (!t_check("profile_register", modadm(MOD_TY_CDEV, MOD_C_MREG,
-		(caddr_t)&registration) == 0, "%s", T_ERR))
+		(caddr_t)&registration) == 0 || errno == EEXIST, "%s", T_ERR))
 		return t_done();
-	module = modload("/tests/nhcall");
+	module = modload("nhcall");
 	if (!t_check("profile_load", module >= 0, "%s", T_ERR))
 		return t_done();
 	fd = open("/dev/nhcall", O_RDWR);
@@ -159,6 +163,5 @@ main(int argc, char **argv)
 	t_check("detach_active", ioctl(fd, NCF_DETACH, 0) == 0, "%s", T_ERR);
 	t_check("device_close", close(fd) == 0, "%s", T_ERR);
 	t_check("profile_unload", moduload(module) == 0, "%s", T_ERR);
-	t_check("core_unload", moduload(core) == 0, "%s", T_ERR);
 	return t_done();
 }

@@ -20,8 +20,4 @@ For capture, verify `FBIOGSTATE` at capture time and handle display notes.
 A controlling console and the display service's permission policy still
 apply; acquisition never grants additional rights.
 
-Run `AMIX_TC=/path/to/toolchain/amix sh tests/nativehost/build-ui.sh OUTDIR`
-for bounded host packing and foreground fixtures plus AMIX compilation.
-The resulting `/tests/t_nativehost_ui` can run in a private target root with
-libc; it checks memory only and needs no display device. The host packing
-fixture checks 85 conditions; the foreground fixture checks 10.
+t_lisa's render and publish checks exercise the packing and input paths.

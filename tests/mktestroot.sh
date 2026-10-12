@@ -46,7 +46,7 @@ fi
 [ -f "$RD/build/core/sbin/init" ] || { echo "[FAIL] no $RD/build/core (run mkroot.sh)"; exit 1; }
 [ -x "$B/bin/runall" ] || { echo "[FAIL] no tests/build/bin (run build.sh)"; exit 1; }
 
-nm "$KERNEL" | awk '$3 ~ /^(freemem|availrmem|availsmem|lbolt|fpu_present|anoninfo|ticks_til_clock|mac_ticks|dlm_inited|sn_nintr|sn_nslot|guest_loading|M68Kvec|guest_chain|guest_nftrap|guest_nfpriv|idle|rd_unit|adb_nintr|adb_nsrq|segmapcnt|waitloc|kmeminfo)$/ && ($3 != "idle" || $2 == "T") { print $3, $1 }' \
+nm "$KERNEL" | awk '$3 ~ /^(freemem|availrmem|availsmem|lbolt|fpu_present|anoninfo|ticks_til_clock|mac_ticks|dlm_inited|sn_nintr|sn_nslot|guest_loading|M68Kvec|guest_chain|guest_nftrap|guest_nfpriv|idle|rd_unit|adb_nintr|adb_nsrq|segmapcnt|waitloc|kmeminfo|pageio_out|end)$/ && ($3 != "idle" || $2 == "T") { print $3, $1 }' \
 	> "$B/ksyms"
 # t_dlm's modules, built against this kernel (none without module support)
 KDIR=$KDIR sh "$T/dlm/build.sh" "$KERNEL" "$B/dlm"
@@ -155,6 +155,10 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 		sed -e "s#@CORE@#$RD/build/core#" -e "s#@NET07@#$B/net07#" -e "s#@NETDIR@#$T/net#" "$T/net/net.manifest"
 	fi
 	[ -f "$AUXB/mod.d/uinter" ] && echo "c /dev/uinter0 666 0 3 54 0"
+	# t_nativecall's, t_lisa's and t_v200's devices
+	[ -f "$AUXB/mod.d/nhcall" ] && echo "c /dev/nhcall 600 0 3 66 0"
+	[ -f "$AUXB/mod.d/lplatform" ] && echo "c /dev/lplatform 660 0 25 64 0"
+	[ -f "$AUXB/mod.d/tiplatform" ] && echo "c /dev/tiplatform 660 0 25 65 0"
 	if [ -d "$AUXB/mod.d" ]; then
 		echo "d /tests/aux 755 0 3"
 		echo "d /tests/aux/mod.d 755 0 3"

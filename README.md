@@ -6,12 +6,12 @@ top of it as environments: ordinary Unix processes with their own display sessio
 
 ## Hosts
 
-| Host | Tested on | Status |
-|---|---|---|
-| Quadra 800 (68040) | QEMU `q800` with a Quadra 800 ROM; real Quadra 800 | Boots from disk to a multi-user login on the built-in screen and ADB keyboard. SCSI, SONIC Ethernet, clock, swap, ufs, loadable modules, display and sound services, X11. All environments below. |
-| Falcon030 (68030, no FPU) | Hatari (TOS 4.04); real Falcon | Boots from IDE to a login on VGA or RGB monitors. X11 and xdm, TOS, CP/M and System 6 environments. Slow on real hardware. |
-| CT60/CT63 Falcon (68060) | Hatari 060 with FastRAM | Kernel boots from FastRAM; SuperVidel or Videl console. Real-hardware testing in progress. |
-| Amiga A3000 (68040, 68060) | Amiberry; WinUAE for PCI 3D cards | Started from AmigaDOS by `unix_boot040`; login on the console. PCI through openpci.library (Prometheus), NE2000 Ethernet, ZZ9000 RTG, Voodoo3 display (X and 8-, 16- and 32-bit Workbench). Real hardware untested. |
+| Host | Emulator | Real hardware | Status in the emulator |
+|---|---|---|---|
+| Quadra 800 (68040) | QEMU `q800` with a Quadra 800 ROM | Tested | Boots from disk to a multi-user login on the built-in screen and ADB keyboard. SCSI, SONIC Ethernet, clock, swap, ufs, loadable modules, display and sound services, X11. All environments below. |
+| Falcon030 (68030, no FPU) | Hatari (TOS 4.04) | Tested; slow | Boots from IDE to a login on VGA or RGB monitors. X11 and xdm, TOS, CP/M and System 6 environments. |
+| CT60/CT63 Falcon (68060) | Hatari 060 with FastRAM | In progress | Kernel boots from FastRAM; SuperVidel or Videl console. |
+| Amiga A3000 (68040, 68060) | Amiberry; WinUAE for PCI 3D cards | Untested | Started from AmigaDOS by `unix_boot040`; login on the console. PCI through openpci.library (Prometheus), NE2000 Ethernet, ZZ9000 RTG, Voodoo3 display with 3D (X and 8-, 16- and 32-bit Workbench). |
 
 ## Environments
 
@@ -24,12 +24,13 @@ Start commands, run as an ordinary user. Ctrl-Option-Command-0 shows the console
 | Mac OS 8.1 | `makemac -e 8.1`, then `startmac -e 8.1` | Quadra | Works: Finder, applications, Open/Save, sound through A/UX's Sound Manager, Open Transport networking. |
 | Mac System 6.0.7 | `startmac6` | Quadra, Falcon | Works; slow, no colour. Needs A/UX 2.0.1 and a IIci ROM. |
 | TOS (EmuTOS, TeraDesk) | `starttos` | Quadra, Falcon, Amiga | Works. fVDI at the screen's size; XaAES with `starttos -e xaaes`. On a Falcon, `starttos -P` runs the machine's own TOS ROM (slow redraws). |
-| Amiga (Kickstart 3.2, Workbench) | `startmig` | Quadra, Amiga (68040 or 68060) | Partial: Workbench on RTG (Picasso96 or ZZ9000), 8-, 16- and 32-bit where the host card has them; Warp3D on a Voodoo3 through its DRI driver (16-bit screens), else software Mesa (slow); slow start; stock chipset display not supported. |
+| Amiga (Kickstart 3.2, Workbench) | `startmig` | Quadra, Amiga (68040 or 68060) | Partial: Workbench on RTG at 8, 16 or 32 bits where the host has them; Warp3D on a Voodoo3 (16-bit screens), else in software (slow); slow start; no chipset display. |
 | Concurrent CP/M-68K | `startcpm` | Quadra, Falcon | Works, in the terminal: CP/M 3 BDOS, XDOS processes, more consoles with `startcpm -c N`, RSXes. Z80 and 8086 programs too. |
 | Windows 3.x programs (Win16) | `startwin` | Quadra | Works for Program Manager and the tested programs. Each user installs their own Windows 3.1/3.11 and Wabi 2.2 with `startwin -install`. |
-| X11R6.3 | `startx`, `xsession` | Quadra, Falcon | Works: twm, XView, xdm session chooser; sessions for each environment. OpenGL through Mesa 5 (software); `glxgears`. |
+| X11R6.3 | `startx`, `xsession` | Quadra, Falcon, Amiga | Works: twm, XView, xdm session chooser; sessions for each environment. OpenGL through Mesa 5, in software or on a Voodoo3 through DRI; `glxgears`. |
 
-SMSQ/E, TI calculators, TT and more are planned (`docs/*-plan.md`).
+Software Quake runs on the display service; the game data is yours. SMSQ/E, TI
+calculators, TT and more are planned (`docs/*-plan.md`).
 
 ## What you need
 
@@ -49,7 +50,7 @@ You supply:
 
 ```
 sh kernel/build.sh                      # Quadra kernel: kernel/build/unix-mac.elf
-GROUP=smoke sh tests/run-qemu.sh        # tests in QEMU q800; groups: smoke core mac tos cpm amiga display sound win16 gl stable
+GROUP=smoke sh tests/run-qemu.sh        # tests in QEMU q800; groups: smoke core mac tos mint cpm amiga display sound win16 gl quake stable
 sh images/macenv/mkmacimage.sh          # Quadra disk image with every environment
 PLATFORM=atari sh kernel/build.sh       # Falcon030 kernel (PLATFORM=atari060: CT60)
 sh kernel/atari/mkdisk.sh               # Falcon disk image
@@ -70,6 +71,8 @@ missing. [docs/hosts.md](docs/hosts.md) covers booting each host.
 | `kernel/dlm/` | SVR4.2-style loadable kernel modules ([docs/modules.md](docs/modules.md)) |
 | `kernel/guest/` | environments: A/UX personality and Mac (`mod/`), TOS (`tos/`), Amiga (`amiga/`), CP/M (`cpm/`), Win16 (`win16/`) |
 | `kernel/otbridge/` | Open Transport bridge for Mac OS 8 networking |
+| `kernel/drm/` | DRM for 3D cards (Voodoo3) |
+| `gl/` | Mesa, DRI drivers, Glide3 and Quake builds |
 | `x11/` | X11R6.3 server, clients, xdm and session scripts |
 | `images/` | disk-image builders and QEMU scripts |
 | `tests/` | functional test suite run under QEMU |

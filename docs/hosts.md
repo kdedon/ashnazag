@@ -62,4 +62,6 @@ supply `unix_boot040` and openpci.library.
 
 Amiberry: `KICK=a3000.rom sh kernel/amiga/test/amiberry.sh outdir` runs an A3000 with a
 68040, a Prometheus PCI bridge with an NE2000, and a ZZ9000. The login is on the serial
-port (TCP 1234). Real hardware is untested.
+port (TCP 1234). WinUAE: `KICK=a3000.rom VOODOO3=bios.rom sh kernel/amiga/test/winuae.sh
+outdir` runs it with a 68060 and a PCI Voodoo3 (`setup.sh --winuae` installs WinUAE).
+Real hardware is untested.

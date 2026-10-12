@@ -48,14 +48,11 @@ main(int argc, char **argv)
     int i = 1, lock, check = 0;
 
     prog = prog ? prog + 1 : argv[0];
-    if (!strcmp(prog, "startsmsqe"))
-        family = "smsqe";
-    else if (!strcmp(prog, "startlisa"))
+    if (!strcmp(prog, "startlisa"))
         family = "lisa";
     else if (!strcmp(prog, "startvoyage200"))
         family = "voyage200";
-    else if (argc > 1 && (!strcmp(argv[1], "smsqe") || !strcmp(argv[1], "lisa") ||
-                         !strcmp(argv[1], "voyage200")))
+    else if (argc > 1 && (!strcmp(argv[1], "lisa") || !strcmp(argv[1], "voyage200")))
         family = argv[i++];
     else
         goto usage;
@@ -124,7 +121,7 @@ main(int argc, char **argv)
     return 127;
 usage:
     fprintf(stderr, "usage: %s %s[-q] [-e NAME] [-x /executable] [-m /media] [-- args...]\n",
-        prog, !strcmp(prog, "startsmsqe") || !strcmp(prog, "startlisa") ||
-              !strcmp(prog, "startvoyage200") ? "" : "smsqe|lisa|voyage200 ");
+        prog, !strcmp(prog, "startlisa") || !strcmp(prog, "startvoyage200") ?
+        "" : "lisa|voyage200 ");
     return 2;
 }

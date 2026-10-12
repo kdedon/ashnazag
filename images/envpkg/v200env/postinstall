@@ -1,0 +1,2 @@
+sh /etc/rc2.d/S05v200 start || echo "$PKGINST: module usable after a reboot"
+exit 0

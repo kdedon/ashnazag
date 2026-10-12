@@ -39,8 +39,9 @@ Known issues: System 6 is slow and has no colour.
 ## Amiga
 
 `startmig` boots Kickstart 3.2 to Workbench; SYS: is `~/Amiga` (`makeamiga`). `-m MB` sets
-fast RAM (or `fastmb=MB` in `.env`). The display is RTG through Picasso96 (`container.card`,
-`kernel/guest/amiga/rtg`); there is no chipset display. Sound goes through AHI. Warp3D.library draws on a Voodoo3 when the screen is in its memory, else with software Mesa.
+fast RAM (or `fastmb=MB` in `.env`). The display is RTG through Picasso96, 8-, 16- or
+32-bit where the host has the mode; there is no chipset display. Sound goes through AHI.
+Warp3D.library draws on a Voodoo3 when the screen is in its memory, else with software Mesa.
 
 ## CP/M-68K
 
@@ -64,37 +65,15 @@ H: home, R: `/`. Design: `docs/win16-design.md`.
 
 ## X11
 
-`startx` starts twm; `xsession` offers a menu, or `xsession twm|xview|mac|tos|amiga|win|smsqe|lisa|voyage200|console|cpm`.
+`startx` starts twm; `xsession` offers a menu, or `xsession twm|xview|mac|tos|amiga|win|console|cpm`.
 With xdm the session chooser lists the same.
 X draws 8-bit by default; `startx -- -depth 16` or `-depth 32` (or `DEPTH=16` in `/etc/default/x`)
 gives a TrueColor screen where the display has that mode (Voodoo3, ZZ9000, Atari).
+OpenGL is Mesa 5 in software; on a Voodoo3, direct rendering through its DRI driver.
 
-## Native SMSQ/E, Lisa and TI Voyage200 ports
+## Native ports
 
-`startsmsqe`, `startlisa` and `startvoyage200` launch caller-supplied AMIX m68k ELF executables as
-separate Unix processes. Install the launchers with
-`sh kernel/guest/nativeenv/build.sh OUTDIR DESTDIR`.
-
-Each family has its own directory: `~/SMSQE`, `~/Lisa` or `~/Voyage200`; `-e NAME` selects a
-subdirectory. Create that directory, install your executable as `native` and
-provide a readable file or directory as `media`. Explicit absolute paths use
-`-x /path/to/executable -m /path/to/media`. Arguments after `--` pass through.
-For example:
-
-```sh
-mkdir -p "$HOME/SMSQE"
-startsmsqe -x /opt/native/smsqe -m /home/guest/disks/smsqe -- application
-```
-
-The executable inherits terminal input/output, the environment directory as its
-working directory, and its `.env` session lock. It receives
-`NATIVEHOST_ENVIRONMENT`, `NATIVEHOST_ROOT`, and `NATIVEHOST_MEDIA`. Its native
-port defines media interpretation and uses `nativehost` for AMIX services and
-display ownership. The launcher preserves the executable's process exit status
-and signal handling through `exec`.
-
-`/etc/default/smsqe`, `/etc/default/lisa` and `/etc/default/voyage200` use the existing `LEGACY_ROOT`,
-`ENVIRONMENT_ROOT` and `ENVIRONMENT_METADATA` policy keys. `-q` checks payload
-availability; the X chooser lists each family only when its default executable
-and media are available. Missing or incompatible executables and missing media
-fail before launching. OS payloads and native ports must be supplied separately.
+`startlisa` and `startvoyage200` (packages `lisaenv`, `v200env`) run a native 68k host
+program: `/usr/lib/lisa/native` and `/usr/lib/voyage200/native`, or one you supply. Put the
+program in `~/Lisa` or `~/Voyage200` as `native` and its system media as `media`, or give
+`-x PROGRAM -m MEDIA`; `-e NAME` uses a named subdirectory.

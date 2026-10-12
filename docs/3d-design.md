@@ -300,7 +300,7 @@ Signals stay as now: a host signal while in Mesa becomes a guest interrupt throu
 |---|---|---|
 | Radeon session in front | the BitMap's place in the session's VRAM | `SetDrawRegion`: BitMap address − `MIG_RTG_VRAM` + the session's VRAM offset (backend) → colour offset and pitch of the r200 drawable; Z/stencil and back buffers in the same session's VRAM allocation |
 | Voodoo3 session (tdfx DRI) | the BitMap in the session's VRAM | X-less DRI host: the tdfx driver's front buffer is moved to the BitMap (`grDRIFront`); 16-bit BitMaps only. A display-sized 16-bit screen anywhere in the session's VRAM is shown by moving the display start there (`FBIOPAN`), not copied. `W3D_SOFT` in startmig's environment forces software |
-| Any other host, or no card | the BitMap's memory | OSMesa into a back buffer in host memory, copied to the BitMap the container card maps (below); the same code on Mac, Atari and stock Amigas |
+| Any other host, or no card | the BitMap's memory | OSMesa into a back buffer in host memory, copied to the BitMap the environment's RTG card maps (below); the same code on Mac, Atari and stock Amigas |
 
 Back buffer (software path): Mesa reads and writes pixels one at a time, and display memory behind Zorro or an emulated card is slow at that. Mesa draws into host memory of the BitMap's size and format instead:
 - Each primitive marks the rows it covers. `Flush`, `FlushFrame`, `WaitIdle`, `UnLockHardware` and `SetDrawRegion` copy those rows to the BitMap (not while the session is hidden).
@@ -318,7 +318,7 @@ Each Voodoo3 session frame is one page over a 32-bit screen: Picasso96 keeps 16 
 Rules from the display service:
 - A hidden session gets no DRM lock: `LockHardware` and draw calls return `W3D_NOTVISIBLE` (a Warp3D error titles already handle), GL clients block in the lock.
 - Switch-out: the kernel takes the DRM lock, waits for idle, saves the session's VRAM (front, depth) to its shadow, bumps the texture heap age so every context reloads its textures.
-- The container card offers 16- and 32-bit modes where the host session has them (most Warp3D titles refuse CLUT screens).
+- The environment's RTG card offers 16- and 32-bit modes where the host session has them (most Warp3D titles refuse CLUT screens).
 
 ### 4.5 Size
 
@@ -337,7 +337,7 @@ Rules from the display service:
 | 1 | gcc 2.95.3 + newer binutils for m68k SVR4 | – | host, then QEMU q800 (rebuild of a few modules) |
 | 2 | Mesa 5.0.2 OSMesa static; `osdemo` | 1 | QEMU q800 |
 | 3 | Software libGL (Xlib driver) with X11R6.3 client libs; `glxgears` on Xamix | 2 | QEMU q800 |
-| 4 | Container card 16/32-bit modes; Warp3D.library + glue + host table + PC range; OSMesa backend; per-call counters | 2 | QEMU q800 (Amiga environment), Amiberry; Cow3D, WarpTest, StarshipW3D, then the user's titles to fix the tiers |
+| 4 | RTG card 16/32-bit modes; Warp3D.library + glue + host table + PC range; OSMesa backend; per-call counters | 2 | QEMU q800 (Amiga environment), Amiberry; Cow3D, WarpTest, StarshipW3D, then the user's titles to fix the tiers |
 | 5 | DRM core port as DLM: open, ioctl copy, SAREA map, lock, session auth, SG alloc. **Done with tdfx (§1.5)**; SG untested | 1 | WinUAE (Voodoo3) |
 | 6 | `opci_dmaalloc`, `opci_busaddr`, `opci_intr` exercised by a bus-master card | – | Amiberry (ES1370, a bus master, behind its emulated bridge) |
 | 7 | Radeon display backend: POST (x86emu running the card ROM through `OPCI_LEGACYIO`/`opci_region`), PLL/CRTC/DAC from `radeon_driver.c` (~2k), VRAM per session, `SURFACE_CNTL` swap | 6 | **real card** |

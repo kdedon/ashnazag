@@ -5,7 +5,7 @@
 #
 #   sh tests/aux/build.sh kernel.elf outdir
 #
-# Out: outdir/mod.d/{guestcore,auxcore,auxexec,uinter}, outdir/bin/<program>,
+# Out: outdir/mod.d/{guestcore,auxcore,auxexec,uinter,...,nhcall}, outdir/bin/<program>,
 # outdir/root/<path> (shared libraries, terminfo, termcap; for t_mac the
 # Mac environment: startmac, libmac1_s, Patch.067C, the System file in
 # /mac/sys/Sys7 with the Finder, the ROM image at /etc/aux/rom, fidd at
@@ -41,6 +41,15 @@ if ! m68k-elf-nm "$KERNEL" | grep -q ' T guest_trap$'; then
 	exit 0
 fi
 sh "$KDIR/guest/build.sh" -m "$KERNEL" "$OUT"
+# t_nativecall's fixture profile, beside guestcore
+. "$AUX/toolchain/src/gcc-cross-amix/build/env.sh"
+PATH="$AUX/toolchain/linux/bin:$PATH"
+N=$OUT/src/nhcall
+mkdir -p "$N"
+nice -n 19 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -Wall -I"$KDIR/dlm/include" -I"$KDIR/guest/include" \
+	-I"$T/nativecall" -c "$T/nativecall/nhcall.c" -o "$N/Driver.o"
+printf '$depend guestcore\nnhcall\tnhcall\tm\t0\t0\t0\n' > "$N/Master"
+DLM_TOOLS=$OUT/tools sh "$KDIR/dlm/tools/mkmod" -e "$OUT/exports" -o "$OUT" "$N"
 mkdir -p "$OUT/bin"
 for p in sh ls cp mv rm rmdir awk more sleep touch; do
 	[ -f "$AUXROOT/bin/$p" ] && cp "$AUXROOT/bin/$p" "$OUT/bin/$p"

@@ -13,19 +13,4 @@ Compile `nativehost.c` with this directory and `kernel/mac/display` on the inclu
 
 Functions return native `errno` values. Objects and descriptors require caller serialization. These are user-space services; invoking them from a kernel profile requires a separately designed boundary.
 
-Run focused host verification:
-
-```sh
-sh kernel/guest/nativehost/test/run.sh
-```
-
-The test uses GNU linker syscall wrapping for display and input failure cases, and real host calls for file transfer, memory, and clock progression. It checks all display setup failures, cleanup order, retained ownership after failed unmapping, geometry bounds, and raw input preservation. It does not verify AMIX device operation or an operating-system boot.
-
-Build the bounded AMIX runtime fixture with approved installed toolchain, runtime core, and kernel paths:
-
-```sh
-AMIX_TC=/path/to/toolchain/amix AMIX_CORE=/path/to/installed/core \
-KERNEL=/path/to/unix-mac.elf sh tests/nativehost/build.sh /tmp/nativehost-fixture
-```
-
-It produces a native test ELF, a checked display module, and a 4 MB root image. Init runs only `t_nativehost`, with a 30-second watchdog. Keyboard and mouse injection use the existing display hostio protocol; run `tests/display/hostio.py` against the emulator's `serb.sock` and `qmp-ds.sock`. Without that service, injected input checks report a skip. The builder starts no emulator.
+`GROUP=native sh tests/run-qemu.sh` runs t_nativehost (memory, files, clock, display, injected input), t_nhplat, t_nativecall and t_natenv.

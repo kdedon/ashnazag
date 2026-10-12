@@ -1,7 +1,7 @@
 # Display and input service
 
 One kernel service owns the screens, the colour tables and the keyboards and mice. The
-text console, the X server, A/UX's Mac environment and the guest containers are its
+text console, the X server, A/UX's Mac environment and the other environments are its
 clients. Target: the Quadra 800 (DAFB, ADB) now, Amiga and Atari later, with one X
 server binary for all three.
 
@@ -36,7 +36,7 @@ Reference trees (not built):
 | VRAM mapping | kernel: DTT1, supervisor, cache-inhibited; user mapping through `/dev/fb0` (`dsseg.c`) |
 | A/UX Startup | leaves every display at its **lowest depth (1 bpp)**; a direct boot (QEMU `-kernel`) keeps the Monitors depth |
 | Mac environment |: fake NuBus card + Slot Manager over a synthetic declaration ROM, kernel cursor at VBL, `ui_key_intr`/`ui_mouse_intr` |
-| Containers | ([guest-container-design.md](guest-container-design.md) §4.2, §10.3): surfaces, zero-copy or converted, full-screen switching by hotkey |
+| Other environments | ([guest-container-design.md](guest-container-design.md) §4.2, §10.3): surfaces, zero-copy or converted, full-screen switching by hotkey |
 
 ## 2. Kernel service
 
@@ -284,7 +284,7 @@ uinter is an in-kernel session of kind `mac`.
 - **Rootless X in the Mac** (stretch, large): a rootless mode in the X server that backs each top-level window with a shared pixmap, and a Mac-side application that shows each as a Mac window and returns Mac events over a Unix socket. Model: the MIT-licensed rootless layer of later X servers, back-ported to R6.3. 6–10 weeks.
 - **Mac in an X window** (cheaper, shares §5.3): a viewer X client maps the hidden Mac session's backing read-only (`FBIOVIEW`), converts written pages at ≤ 25 Hz, and sends X input with `EVIOCINJECT`.
 
-## 5. Containers
+## 5. Other environments
 
 guestsvc sessions ([guest-container-design.md](guest-container-design.md) §4.2, §10.3):
 
