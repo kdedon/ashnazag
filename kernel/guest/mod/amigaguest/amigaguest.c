@@ -139,7 +139,7 @@ amiga_tail(r)
 	if (!(u.u_sigflag & USTKRESTORE))
 		return 1;
 	if (fmt == 7 ? (G16(f + 12) & 0xf000) || ((G16(f + 14) | G16(f + 16) | G16(f + 18)) & 0x80) :
-	    fmt != 0 && fmt != 2)
+	    fmt != 0 && fmt != 2 && fmt != 4)
 		return 0;
 	GR_SR(r) = G16(f);
 	GR_PC(r) = G32(f + 2);
@@ -621,7 +621,7 @@ amigaioctl(dev, cmd, arg, mode, cr, rvp)
 		ai.ai_version = AMIGA_ABI_VERSION;
 		ai.ai_features = AMIGA_FEAT_BASE | AMIGA_FEAT_KICK | AMIGA_FEAT_SNDBELL |
 		    AMIGA_FEAT_HOSTPC;
-		if (amiga_cpup && *amiga_cpup == 40) ai.ai_features |= AMIGA_FEAT_EXPERIMENTAL;
+		if (amiga_cpup && (*amiga_cpup == 40 || *amiga_cpup == 60)) ai.ai_features |= AMIGA_FEAT_EXPERIMENTAL;
 		return copyout((caddr_t)&ai, arg, sizeof ai) ? EFAULT : 0;
 	}
 	if (cmd == AMIGAIOC_MAPROM)

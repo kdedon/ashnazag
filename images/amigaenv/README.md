@@ -75,7 +75,7 @@ makeamiga
 startmig
 ```
 
-The current execution path requires a 68040 and a packed 8-bit display.
+The current execution path requires a 68040 or 68060 and a packed 8-bit display.
 Kickstart: the A3000 or A4000 3.2 (47.96) ROM. On an Amiga with one of
 them the machine's own ROM is used, otherwise `/etc/amiga/kicka4000.rom`
 (or `kicka3000.rom`), or `-r FILE`.

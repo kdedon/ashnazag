@@ -1,5 +1,5 @@
 /*
- * gframe.c -- access fault frames of the 68030 and 68040: decoded to
+ * gframe.c -- access fault frames of the 68030, 68040 and 68060: decoded to
  * one form, finished by the handler, built for a guest.  r is the
  * saved registers with the exception frame at r + 64.  The SSW is
  * kept in the 68040's layout: RW 0x100, size 0x60, TT/TM 0x1f.  Byte
@@ -15,9 +15,12 @@
 #define	RM		0x80		/* read-modify-write */
 
 /*
- * The fault address and SSW of a format 7, $A or $B frame.  0: a data
+ * The fault address and SSW of a format 4, 7, $A or $B frame.  The
+ * 68060's FSLW maps to the same RW, size and TT/TM.  0: a data
  * fault, 1: an instruction fetch (TM program space), -1: no access fault.
  */
+static unsigned char sz060[4] = { 0x20, 0x40, 0, 0x60 };	/* byte, word, long, line */
+
 int
 guest_bfault(r, fa, ssw)
 	char *r;
@@ -31,6 +34,12 @@ guest_bfault(r, fa, ssw)
 		*fa = G32(f + 20);
 		*ssw = G16(f + 12);
 		return (*ssw & 3) == 2;
+	}
+	if (fmt == 4) {
+		*fa = G32(f + 8);
+		s = G16(f + 12);	/* FSLW 31-16: RW 24-23, size 22-21, TT/TM 20-16 */
+		*ssw = (s & 0x100) | sz060[s >> 5 & 3] | (s & 0x1f);
+		return (G16(f + 14) & 0x8000) != 0;
 	}
 	if (fmt != 0xa && fmt != 0xb)
 		return -1;

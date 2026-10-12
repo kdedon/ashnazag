@@ -1,6 +1,7 @@
 #include "amiga.h"
 
 long amiga_nfast;	/* INTENA writes on the fast path */
+static int amiga_nundec;	/* undecoded device accesses reported */
 
 struct ix {
 	struct amigactr *ctr;
@@ -733,35 +734,37 @@ amiga_fault(gp, r, v)
 	struct ix x;
 	unsigned long saved[16], epoch, fa;
 	unsigned char b[4];
-	int i, j, sr = GR_SR(r), ssw, s, e, wb, cm, tries, w, n, m, nm;
+	int i, j, sr = GR_SR(r), ssw, s, e, wb, cm, tries, w, n, m, nm, fmt, wbs;
 	unsigned long value;
 	unsigned char op[8];
 	a->ac_stat.as_fault++;
 	a->ac_stat.as_lastpc = GR_PC(r);
-	if ((GR_FV(r) >> 12) != 7) {
+	/* a 68060 frame restarts the instruction: no writebacks, no CM */
+	fmt = GR_FV(r) >> 12;
+	if ((fmt != 7 && fmt != 4) || (e = guest_bfault(r, &fa, &ssw)) < 0) {
 		a->ac_census.nfmt++;
 		return 1;
 	}
-	fa = G32(r + 84); a->ac_stat.as_lastaddr = fa;
-	ssw = G16(r + 76);
-	if ((ssw & 7) == 2 || (ssw & 7) == 6) {
+	a->ac_stat.as_lastaddr = fa;
+	if (e) {
 		a->ac_census.nssw++;
 		return 1;
 	}
+	wbs = fmt == 7 ? G16(r + 78) | G16(r + 80) : 0;
 	/*
 	 * Disable and Enable, a third of all faults, without the decoder:
 	 * a word write to INTENA as the only writeback, or before the
 	 * instruction ran, move.w #imm,$dff09a.
 	 */
-	w = G16(r + 82);
+	w = fmt == 7 ? G16(r + 82) : 0;
 	n = 0;
 	/* a faulted movem (CM) restarts from its first transfer: run it all here */
 	cm = ssw & 0x1000;
 	if (fa == 0xdff09a && !cm && !(ssw & 0x100) && (w & 0xf8) == 0xc0 && ((w & 7) == 1 || (w & 7) == 5) &&
-	    !((G16(r + 78) | G16(r + 80)) & 0x80) && G32(r + 104) == 0xdff09a) {
+	    !(wbs & 0x80) && G32(r + 104) == 0xdff09a) {
 		value = G32(r + 108) & 0xffff;
 		P16(r + 82, w & ~0x80);
-	} else if (fa == 0xdff09a && !(ssw & 0x100) && !((G16(r + 78) | G16(r + 80) | w) & 0x80) &&
+	} else if (fa == 0xdff09a && !(ssw & 0x100) && !((wbs | w) & 0x80) &&
 	    copyin((caddr_t)(unsigned long)GR_PC(r), (caddr_t)op, 8) == 0 && G16(op) == 0x33fc &&
 	    G32(op + 4) == 0xdff09a) {
 		value = G16(op + 2);
@@ -806,7 +809,7 @@ amiga_fault(gp, r, v)
 		epoch = a->ac_epoch; x.dev = a->ac_dev;
 		for (i = 0; i < 4; i++) x.gary[i] = a->ac_gary[i];
 		amiga_splx(s);
-		wb = cm ? 0 : (G16(r + 78) | G16(r + 80) | G16(r + 82)) & 0x80;
+		wb = cm ? 0 : (wbs | w) & 0x80;
 		if (wb) e = (ssw & 0x100) ? -1 : writebacks(&x, r);
 		else e = emul(&x);
 		if (e >= 0 && x.hit) {
@@ -852,6 +855,13 @@ amiga_fault(gp, r, v)
 		for (i = 0; i < 7; i++) GR_A(r, i) = saved[i + 8];
 		GR_USP(r) = saved[15]; GR_SR(r) = sr;
 		if (e < 0 || !x.hit) break;
+	}
+	/* the first few instructions the decoder cannot finish, on the console */
+	if ((e == -1 || (e >= 0 && !x.hit)) && amiga_nundec < 8 &&
+	    copyin((caddr_t)(unsigned long)GR_PC(r), (caddr_t)op, 2) == 0) {
+		amiga_nundec++;
+		printf("amiga: undecoded access at pc %x, address %x, opcode %x\n",
+		    (int)GR_PC(r), (int)fa, (int)G16(op));
 	}
 	if (a->ac_config.ae_flags & AMIGAF_CENSUS) {
 		a->ac_census.nfail++;

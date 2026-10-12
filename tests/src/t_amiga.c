@@ -2111,7 +2111,7 @@ main(argc, argv)
 	if (afd < 0)
 		return t_done();
 	if (ioctl(afd, AMIGAIOC_INFO, &ai) < 0 || !(ai.ai_features & AMIGA_FEAT_EXPERIMENTAL)) {
-		t_skip("guest", "no 68040 execution path");
+		t_skip("guest", "no 68040 or 68060 execution path");
 		return t_done();
 	}
 	/* in a child: a fault in the card's code must not end the suite */

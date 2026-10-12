@@ -1138,7 +1138,7 @@ main(argc, argv)
 		return 1;
 	}
 	if (!probe && !(info.ai_features & (AMIGA_FEAT_BOOT | AMIGA_FEAT_EXPERIMENTAL))) {
-		miglog(1, "Amiga environment needs a 68040");
+		miglog(1, "Amiga environment needs a 68040 or 68060");
 		return 1;
 	}
 	if (!romarg) {
