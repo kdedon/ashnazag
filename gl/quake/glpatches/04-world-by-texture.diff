@@ -1,0 +1,33 @@
+--- a/src/gl_rsurf.c
++++ b/src/gl_rsurf.c
+@@ -1030,6 +1030,16 @@
+ 	texture_t	*t;
+ 
+ 	if (!gl_texsort.value) {
++		for (i=0 ; i<cl.worldmodel->numtextures ; i++)
++		{
++			t = cl.worldmodel->textures[i];
++			if (!t)
++				continue;
++			for (s = t->texturechain ; s ; s=s->texturechain)
++				R_DrawSequentialPoly (s);
++			t->texturechain = NULL;
++		}
++
+ 		GL_DisableMultitexture();
+ 
+ 		if (skychain) {
+@@ -1291,8 +1301,11 @@
+ 				} else if (surf->flags & SURF_DRAWTURB) {
+ 					surf->texturechain = waterchain;
+ 					waterchain = surf;
+-				} else
+-					R_DrawSequentialPoly (surf);
++				} else {
++					// by texture: state changes flush the GL's vertices
++					surf->texturechain = surf->texinfo->texture->texturechain;
++					surf->texinfo->texture->texturechain = surf;
++				}
+ 
+ 			}
+ 		}

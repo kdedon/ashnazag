@@ -20,9 +20,9 @@ nice -n19 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68000 -DDS_AMIGA -Wall -Wno-c
  -I"$K/mac/display" -I"$K/mac/video" -I"$K/mac/adb" -I"$A/include" -c "$A/amigads.c" -o "$W/amigads.o"
 WEAK="--weaken-symbol dmainit --weaken-symbol execsw --weaken-symbol fmodsw"
 for s in sdopen sdqueue sdhardwarename; do WEAK="$WEAK --weaken-symbol $s"; done
-OVR="ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig kbintr unt_latch vtop hat_ptalloc uiomove aciabintr pstart screeninit"
+OVR="ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig kbintr unt_latch vtop hat_ptalloc uiomove aciabintr pstart screeninit config_cachefix"
 for s in $OVR; do WEAK="$WEAK --weaken-symbol $s"; done
-for s in sendsig valid_usr_range fsig kbintr unt_latch hat_ptalloc uiomove aciabintr pstart screeninit; do
+for s in sendsig valid_usr_range fsig kbintr unt_latch hat_ptalloc uiomove aciabintr pstart screeninit config_cachefix; do
  v=$(m68k-linux-gnu-nm "$BASE" | awk -v s="$s" '$3==s && $2=="T"{print $1}')
  [ -n "$v" ] || { echo "[FAIL] no $s"; exit 1; }
  WEAK="$WEAK --add-symbol __amix_$s=.text:0x$v,function,global"
@@ -37,6 +37,7 @@ m68k-linux-gnu-objcopy $WEAK --globalize-symbol freemem_wait "$BASE" "$W/base.we
 python3 "$K/mac/patch_s5pages.py" "$W/base.weak"
 python3 "$K/mac/vtop/patch_vtop.py" "$W/base.weak"
 python3 "$A/patch_tt.py" "$W/base.weak"
+python3 "$A/patch_gary.py" "$W/base.weak"
 for f in vtop/vtop ptalloc/ptalloc; do
  nice -n19 m68k-cbm-sysv4-gcc -m68040 -c "$K/mac/$f.s" -o "$W/$(basename "$f").o"
 done
@@ -77,6 +78,7 @@ python3 "$K/dlm/tools/chkdlm.py" "$OUT.elf"
 python3 "$K/mac/patch_s5pages.py" -c "$OUT.elf"
 python3 "$K/mac/vtop/patch_vtop.py" -c "$OUT.elf"
 python3 "$A/patch_tt.py" -c "$OUT.elf"
+python3 "$A/patch_gary.py" -c "$OUT.elf"
 python3 "$A/test/relksym.py" "$OUT"
 echo "[OK] $OUT is loader-relocatable; $OUT.elf is the zero-origin symbol view"
 python3 "$K/guest/chkguest.py" "$OUT.elf" "$W/guest/gates.lst"

@@ -1,0 +1,15 @@
+--- a/src/texstate.c
++++ b/src/texstate.c
+@@ -2452,7 +2452,11 @@
+       return;
+    }
+ 
+-   FLUSH_VERTICES(ctx, _NEW_TEXTURE);
++   if (ctx->Texture.CurrentUnit == texUnit)
++      return;
++   /* only state setters read the unit, and they flush themselves */
++   if (ctx->VertexProgram.Enabled || ctx->Driver.ActiveTexture)
++      FLUSH_VERTICES(ctx, _NEW_TEXTURE);
+ 
+    ctx->Texture.CurrentUnit = texUnit;
+    if (ctx->Transform.MatrixMode == GL_TEXTURE) {

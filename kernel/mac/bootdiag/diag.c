@@ -114,6 +114,8 @@ char *s;
 	unsigned long fg, bg, rb;
 	struct fbcons *fc = &fbcons;
 
+	if (fc->fc_hide)
+		return;
 	d = fc->fc_m.fm_depth;
 	rb = fc->fc_m.fm_row;
 	fg = fc->fc_bg;

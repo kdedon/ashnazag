@@ -1,0 +1,91 @@
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_context.h
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_context.h
+@@ -923,6 +923,7 @@
+    GLuint SetupIndex;
+    GLuint SetupNewInputs;
+    GLuint RenderIndex;
++   GLuint RenderWanted;
+    GLuint Fallback;
+    GLenum render_primitive;	/* what GL thinks */
+    GLenum raster_primitive;	/* what the hardware thinks */
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tris.c
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tris.c
+@@ -897,12 +897,13 @@
+    tdfxContextPtr fxMesa = TDFX_CONTEXT( ctx );
+    GLubyte *vertptr = (GLubyte *)fxMesa->verts;			
+    const GLuint vertshift = fxMesa->vertex_stride_shift;       	
+-   const GLuint *start = (const GLuint *)VERT(elts[0]);
++   void *v[MAX_CLIPPED_VERTICES];
+    int i;
+ 
+-   for (i = 2 ; i < n ; i++) {
+-      fxMesa->Glide.grDrawTriangle( VERT(elts[i-1]), VERT(elts[i]), start );
+-   }
++   /* one fan: a vertex per triangle instead of three */
++   for (i = 0 ; i < n ; i++)
++      v[i] = VERT(elts[i]);
++   fxMesa->Glide.grDrawVertexArray( GR_POLYGON, n, v );
+ }
+ 
+ /**********************************************************************/
+@@ -931,6 +932,8 @@
+ 			       _NEW_POLYGONSTIPPLE)
+ 
+ 
++static void tdfxSetRenderIndex( GLcontext *ctx, GLuint index );
++
+ static void tdfxChooseRenderState(GLcontext *ctx)
+ {
+    TNLcontext *tnl = TNL_CONTEXT(ctx);
+@@ -986,6 +989,16 @@
+       }
+    }
+ 
++   fxMesa->RenderWanted = index;
++   tdfxSetRenderIndex( ctx, index );
++}
++
++/* index: rast_tab entry; 0 also renders whole primitives */
++static void tdfxSetRenderIndex( GLcontext *ctx, GLuint index )
++{
++   TNLcontext *tnl = TNL_CONTEXT(ctx);
++   tdfxContextPtr fxMesa = TDFX_CONTEXT(ctx);
++
+    if (fxMesa->RenderIndex != index) {
+       fxMesa->RenderIndex = index;
+ 
+@@ -999,11 +1012,13 @@
+ 	 tnl->Driver.Render.PrimTabElts = tdfx_render_tab_elts;
+ 	 tnl->Driver.Render.ClippedLine = line_plain; /* from tritmp.h */
+ 	 tnl->Driver.Render.ClippedPolygon = tdfxFastRenderClippedPoly;
++	 tnl->Driver.Render.UnclippedTab = tdfx_render_tab_verts;
+       } else {
+ 	 tnl->Driver.Render.PrimTabVerts = _tnl_render_tab_verts;
+ 	 tnl->Driver.Render.PrimTabElts = _tnl_render_tab_elts;
+ 	 tnl->Driver.Render.ClippedLine = tdfxRenderClippedLine;
+ 	 tnl->Driver.Render.ClippedPolygon = tdfxRenderClippedPoly;
++	 tnl->Driver.Render.UnclippedTab = NULL;
+       }
+    }
+ }
+@@ -1067,6 +1082,12 @@
+ 
+    tdfxCheckTexSizes( ctx );
+ 
++   /* flat shading with one colour for the whole buffer is smooth shading */
++   if (fxMesa->RenderWanted == TDFX_FLAT_BIT) {
++      struct gl_client_array *col = TNL_CONTEXT(ctx)->vb.ColorPtr[0];
++      tdfxSetRenderIndex( ctx, col && col->StrideB == 0 ? 0 : TDFX_FLAT_BIT );
++   }
++
+    LOCK_HARDWARE(fxMesa);
+ 
+    /* Make sure vertex format changes get uploaded before we start
+@@ -1210,6 +1231,7 @@
+ 	 FLUSH_BATCH(fxMesa);
+ 	 _swsetup_Wakeup( ctx );
+ 	 fxMesa->RenderIndex = ~0;
++	 tnl->Driver.Render.UnclippedTab = NULL;
+          if (fxMesa->debugFallbacks) {
+             fprintf(stderr, "Tdfx begin software fallback: 0x%x %s\n",
+                     bit, getFallbackString(bit));

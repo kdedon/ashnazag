@@ -105,7 +105,7 @@ ata_stop:
 	movel	%sp@(4),%a2
 	lea	ata_stack_top,%sp
 	bsr.w	Lmmuoff
-	jsr	fbcons_unlock		| screen: draw what an interrupted owner queued
+	jsr	fbcons_stop		| screen: draw what an interrupted owner queued
 	movel	%a2,%sp@-
 	jsr	ata_puts
 Lspin:

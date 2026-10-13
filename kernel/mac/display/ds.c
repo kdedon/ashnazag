@@ -55,6 +55,7 @@ extern int ata_vget(), ata_sget();
 extern void ata_sput(), ata_sirq();
 extern int ata_vnative(), ata_brun(), ata_nvmode(), ata_vmfind();
 extern void ata_vminfo(), ata_vmset();
+extern unsigned long ata_vbytes();
 extern unsigned long ata_pool;
 extern int ata_tt;
 static void ds_sndsave(), ds_sndload();
@@ -139,7 +140,7 @@ register struct fbinfo *fi;
 	if (s && s->s_vmode)
 		am_vminfo(s->s_vmode - 1, fi);
 #endif
-	if (s && DS_OWNV(s))
+	if (s && DS_FULL(s))
 		fi->fi_flags |= FBF_OWNV;
 	if (s)
 		fi->fi_size = s->s_size;
@@ -342,7 +343,7 @@ ds_vblintr()
 }
 
 #ifdef DS_AMIGA
-static int ds_shadow();
+static int ds_shadowk();
 
 void
 ds_am_console()
@@ -362,7 +363,7 @@ unsigned long off;
 	struct fbinfo fi;
 
 	ds_sinfo(s, &fi);
-	if (!DS_OWNV(s))
+	if (!DS_FULL(s))
 		return ENXIO;
 	if ((off & 15) || off > ds_disp.d_vsize ||
 	    fi.fi_rowbytes * fi.fi_height > ds_disp.d_vsize - off)
@@ -403,7 +404,7 @@ unsigned long id;
 			fbcons_unlock();
 			return EBUSY;
 		}
-		if ((e = ds_shadow(s, fi.fi_size, 0)) != 0) {
+		if ((e = ds_shadowk(s, fi.fi_size, fi.fi_size, 0)) != 0) {
 			fbcons_unlock();
 			return e;
 		}
@@ -547,8 +548,10 @@ int type;
 }
 
 #ifdef DS_AMIGA
-/* a card with deeper modes: shadows keep its 8-bit frame */
+/* a card with deeper modes: the console's shadow keeps its 8-bit frame */
 static unsigned long ds_keep;
+/* bytes at d_page that may hold a hidden session's pixels */
+static unsigned long ds_vdirty = ~0UL;
 #endif
 
 static void ds_shfree();
@@ -573,23 +576,26 @@ unsigned long *pfn, n;
 /*
  * s gets a zeroed shadow of size bytes in place of its old one: page frames
  * from the free list, outside the kernel heap.  The kernel reaches them
- * through the identity map below 1 GB.  The console's frames are one run,
- * since the console draws into its shadow while hidden.  wait: may sleep
- * for memory.  Process context; errno.
+ * through the identity map below 1 GB.  Only the first keep bytes (page
+ * multiple) get their own frames.  wait: may sleep for memory.
+ * Process context; errno.
  */
 static int
-ds_shadow(s, size, wait)
+ds_shadowk(s, size, keep, wait)
 register struct dssess *s;
-unsigned long size;
+unsigned long size, keep;
 int wait;
 {
-	register unsigned long i, j, n, keep = size;
-	register page_t *pp, *lo;
+	register unsigned long i, j, n;
+	register page_t *pp;
 	unsigned long *pfn;
 
 #ifdef DS_AMIGA
 	if (ds_keep && keep > ds_keep)
 		keep = ds_keep;
+	/* a full session's frames come as it draws (ds_grow) */
+	if (DS_FULL(s))
+		keep = 0;
 #endif
 	n = (keep >> DS_PGSHIFT) + (keep < size);
 	pfn = (unsigned long *)kmem_zalloc((size >> DS_PGSHIFT) * 4, KM_NOSLEEP);
@@ -601,19 +607,11 @@ int wait;
 	}
 	availrmem -= n;
 	pages_pp_kernel += n;
-	if (s == &ds_sess[0]) {
-		if ((lo = pp = page_get(n << DS_PGSHIFT, P_NOSLEEP | P_PHYSCONTIG)) != 0)
-			for (i = 1; i < n; i++)
-				if ((pp = pp->p_next) < lo)
-					lo = pp;
-		for (i = 0; lo && i < n; i++)
-			pfn[i] = page_pptonum(lo + i);
-	} else
-		for (i = 0; i < n; i++) {
-			if ((pp = page_get(DS_PGSIZE, wait ? P_CANWAIT : P_NOSLEEP)) == 0)
-				break;
-			pfn[i] = page_pptonum(pp);
-		}
+	for (i = 0; i < n; i++) {
+		if ((pp = page_get(DS_PGSIZE, wait ? P_CANWAIT : P_NOSLEEP)) == 0)
+			break;
+		pfn[i] = page_pptonum(pp);
+	}
 	for (j = 0; j < i; j++)
 		if (pfn[j] >= DS_IDMAX >> DS_PGSHIFT)
 			break;
@@ -634,10 +632,104 @@ int wait;
 	s->s_npg = n;
 	s->s_size = size;
 	s->s_kept = keep;
-	if (s == &ds_sess[0])
-		s->s_shadow = (caddr_t)(pfn[0] << DS_PGSHIFT);
 	return 0;
 }
+
+#ifdef DS_ATARI
+/*
+ * s's shadow keeps keep bytes, more than before, without moving what it
+ * kept.  Only while no translation reaches the shadow.  0 or ENOMEM.
+ */
+static int
+ds_shgrow(s, keep)
+register struct dssess *s;
+unsigned long keep;
+{
+	register unsigned long i, n;
+	register page_t *pp;
+
+	if (keep <= s->s_kept || s->s_pfn == 0)
+		return 0;
+	n = (keep >> DS_PGSHIFT) + (keep < s->s_size);
+	if (availrmem - (int)(n - s->s_npg) < tune.t_minarmem)
+		return ENOMEM;
+	for (i = s->s_npg; i < n; i++) {
+		if ((pp = page_get(DS_PGSIZE, P_NOSLEEP)) == 0 ||
+		    page_pptonum(pp) >= DS_IDMAX >> DS_PGSHIFT) {
+			if (pp && --pp->p_keepcnt == 0)
+				page_abort(pp);
+			return ENOMEM;
+		}
+		availrmem--;
+		pages_pp_kernel++;
+		s->s_pfn[i] = page_pptonum(pp);
+		s->s_npg = i + 1;
+		bzero((caddr_t)(s->s_pfn[i] << DS_PGSHIFT), DS_PGSIZE);
+	}
+	for (i = n; i < s->s_size >> DS_PGSHIFT; i++)
+		s->s_pfn[i] = s->s_pfn[n - 1];
+	s->s_kept = keep;
+	return 0;
+}
+
+/* the page-rounded part of s's region that its Videl mode shows */
+static unsigned long
+ds_vneed(s)
+register struct dssess *s;
+{
+	unsigned long off = s->s_vgbase - s->s_vwin, n;
+
+	if (off >= s->s_size)
+		off = 0;
+	if ((n = ata_vbytes(s->s_vid)) == 0)
+		return s->s_size;
+	n = (off + n + DS_PGSIZE + DS_PGOFF) & ~DS_PGOFF;
+	return n < s->s_size ? n : s->s_size;
+}
+#endif
+
+#ifdef DS_AMIGA
+/*
+ * s's shadow owns zeroed frames for its first size bytes, in place of
+ * the shared one.  wait: may sleep.  Process context; errno.
+ */
+int
+ds_grow(s, size, wait)
+register struct dssess *s;
+unsigned long size;
+int wait;
+{
+	register unsigned long n = size >> DS_PGSHIFT;
+	register page_t *pp;
+	unsigned long pfn;
+
+	if (n > s->s_size >> DS_PGSHIFT)
+		n = s->s_size >> DS_PGSHIFT;
+	while (s->s_pfn && s->s_npg < n) {
+		if (availrmem - 1 < tune.t_minarmem)
+			return ENOMEM;
+		availrmem--;
+		pages_pp_kernel++;
+		if ((pp = page_get(DS_PGSIZE, wait ? P_CANWAIT : P_NOSLEEP)) == 0) {
+			availrmem++;
+			pages_pp_kernel--;
+			return ENOMEM;
+		}
+		pfn = page_pptonum(pp);
+		/* asleep, s may have ended or grown */
+		if (pfn >= DS_IDMAX >> DS_PGSHIFT || s->s_pfn == 0 || s->s_npg >= n) {
+			ds_pgfree(&pfn, 1L);
+			if (pfn >= DS_IDMAX >> DS_PGSHIFT)
+				return ENOMEM;
+			continue;
+		}
+		DS_CPUSHA();
+		bzero((caddr_t)(pfn << DS_PGSHIFT), DS_PGSIZE);
+		s->s_pfn[s->s_npg++] = pfn;
+	}
+	return s->s_pfn ? 0 : ENXIO;
+}
+#endif
 
 static void
 ds_shfree(s)
@@ -647,7 +739,6 @@ register struct dssess *s;
 		return;
 	ds_pgfree(s->s_pfn, s->s_npg);
 	kmem_free((caddr_t)s->s_pfn, (s->s_size >> DS_PGSHIFT) * 4);
-	s->s_shadow = 0;
 	s->s_pfn = 0;
 	s->s_npg = 0;
 }
@@ -688,8 +779,6 @@ int *errp, vid;
 	register struct dssess *s = 0;
 	register int i;
 
-	if (ds_sess[0].s_pfn == 0 && (*errp = ds_shadow(&ds_sess[0], ds_sess[0].s_size, 0)))
-		return 0;
 	for (i = 1; i <= DS_NSESS; i++)
 		if (!ds_sess[i].s_used) {
 			s = &ds_sess[i];
@@ -738,7 +827,11 @@ int *errp, vid;
 	s->s_voff = am_vslot();
 	s->s_vpan = 0;
 #endif
-	if (!DS_OWNV(s) && (i = ds_shadow(s, s->s_size, 1)) != 0) {
+	if (!DS_OWNV(s) && (i = ds_shadowk(s, s->s_size,
+#ifdef DS_ATARI
+	    s->s_vid ? ds_disp.d_info.fi_size :
+#endif
+	    s->s_size, 1)) != 0) {
 #ifdef DS_ATARI
 		if (s->s_vid)
 			kmem_free((caddr_t)s->s_vid, sizeof *s->s_vid);
@@ -844,6 +937,45 @@ register unsigned long n;
 	}
 }
 
+/* bytes of s's shadow a switch moves: all kept, or what s can have drawn */
+static unsigned long
+ds_extent(s)
+register struct dssess *s;
+{
+#ifdef DS_AMIGA
+	struct fbinfo fi;
+	register unsigned long n;
+
+	if (DS_FULL(s)) {
+		ds_sinfo(s, &fi);
+		n = s->s_vpan + fi.fi_offset + fi.fi_rowbytes * fi.fi_height;
+		if (n < s->s_ext)
+			n = s->s_ext;
+		n = (n + DS_PGOFF) & ~DS_PGOFF;
+		return n < s->s_size ? n : s->s_size;
+	}
+	/* the console draws its 8-bit frame */
+	if (s == &ds_sess[0] && ds_keep)
+		return ds_keep;
+#endif
+	return s->s_kept;
+}
+
+#ifdef DS_AMIGA
+static void
+ds_lzero(d, n)
+register VOL unsigned long *d;
+register unsigned long n;
+{
+	for (n >>= 4; n > 0; n--) {
+		*d++ = 0;
+		*d++ = 0;
+		*d++ = 0;
+		*d++ = 0;
+	}
+}
+#endif
+
 /* VRAM to s's shadow, or the shadow to VRAM (out), a page at a time */
 static void
 ds_shcopy(s, vram, out)
@@ -853,9 +985,17 @@ int out;
 {
 	register unsigned long i, *p, *v;
 
-	for (i = 0; i < s->s_kept >> DS_PGSHIFT; i++) {
+	for (i = 0; i < ds_extent(s) >> DS_PGSHIFT; i++) {
 		p = (unsigned long *)(s->s_pfn[i] << DS_PGSHIFT);
 		v = (unsigned long *)(vram + (i << DS_PGSHIFT));
+#ifdef DS_AMIGA
+		/* past its frames a full session has drawn nothing */
+		if (DS_FULL(s) && i >= s->s_npg) {
+			if (out)
+				ds_lzero(v, (unsigned long)DS_PGSIZE);
+			continue;
+		}
+#endif
 		if (out)
 			ds_lcopy(v, p, (unsigned long)DS_PGSIZE);
 		else
@@ -910,7 +1050,7 @@ register struct dssess *s;
  * Bring `to' in front.  Safe context only (see the head of the file).
  * VRAM goes to the old session's shadow, the new one's shadow (zeros
  * until it draws) to VRAM, except for sessions with VRAM of their own;
- * its CLUT is loaded at once.
+ * the console keeps text and repaints.  The CLUT is loaded at once.
  */
 int
 ds_switch(to)
@@ -922,7 +1062,7 @@ register struct dssess *to;
 
 	if (to == from)
 		return 0;
-	if (!ds_disp.d_on || !to->s_used || to->s_dead || ds_sess[0].s_pfn == 0)
+	if (!ds_disp.d_on || !to->s_used || to->s_dead)
 		return EINVAL;
 	if (!fbcons_grab())
 		return EBUSY;
@@ -930,15 +1070,32 @@ register struct dssess *to;
 		fbcons_unlock();
 		return EBUSY;
 	}
+#ifdef DS_AMIGA
+	if (!from->s_dead && DS_FULL(from) && !DS_OWNV(from) &&
+	    ds_grow(from, ds_extent(from), 0) != 0) {
+		if (ds_leavefn)
+			(void)(*ds_leavefn)(from, 1);
+		fbcons_unlock();
+		return ENOMEM;
+	}
+#endif
 	ds_gen++;
 	ds_unloadsess(from);
 	ds_unloadsess(to);
 	DS_CPUSHA();
-	if (!from->s_dead && !DS_OWNV(from))
-		ds_shcopy(from, vram, 0);
+#ifdef DS_ATARI
+	/* the shadow grows to the mode the session left with */
+	if (from->s_vid && !from->s_dead)
+		(void)ds_shgrow(from, ds_vneed(from));
+#endif
 	if (from == &ds_sess[0])
-		fbcons.fc_m.fm_base = (unsigned long)ds_sess[0].s_shadow +
-		    ds_disp.d_info.fi_offset;
+		fbcons_hide();
+	else if (!from->s_dead && !DS_OWNV(from))
+		ds_shcopy(from, vram, 0);
+#ifdef DS_AMIGA
+	if (!DS_OWNV(from) && ds_extent(from) > ds_vdirty)
+		ds_vdirty = ds_extent(from);
+#endif
 #ifdef DS_ATARI
 	/* the Videl's mode and palette go with the session that owns it */
 	/* and so does the blitter, idle between a guest's runs */
@@ -965,10 +1122,23 @@ register struct dssess *to;
 	if (DS_GUEST(from) && !DS_GUEST(to) && ds_sndown)
 		(*ds_sndown)(0);
 #endif
-	if (!DS_OWNV(to))
-		ds_shcopy(to, vram, 1);
+#ifdef DS_AMIGA
+	/* the card's byte order for to's depth before its pixels go in */
+	if (am_dsvram && !DS_OWNV(to))
+		am_planes(to);
+#endif
 	if (to == &ds_sess[0])
-		fbcons.fc_m.fm_base = ds_disp.d_base;
+		fbcons_show();
+	else if (!DS_OWNV(to))
+		ds_shcopy(to, vram, 1);
+#ifdef DS_AMIGA
+	/* what s has not drawn reads as zeros, not another session's pixels */
+	if (DS_FULL(to) && !DS_OWNV(to) && ds_vdirty > ds_extent(to)) {
+		ds_lzero((VOL unsigned long *)(vram + ds_extent(to)),
+		    (ds_vdirty < ds_disp.d_vsize ? ds_vdirty : ds_disp.d_vsize) - ds_extent(to));
+		ds_vdirty = ds_extent(to);
+	}
+#endif
 	DS_CPUSHA();
 	x = DS_SPL(DS_HI);
 	ds_front = to;
@@ -1039,7 +1209,7 @@ ds_panic()
 		ata_vload(&ds_vcons);
 #endif
 	ds_front = &ds_sess[0];
-	fbcons.fc_m.fm_base = ds_disp.d_base;
+	fbcons_show();
 	if (HWCLUT)
 		ds_clutload(&ds_sess[0], 0, (int)ds_disp.d_info.fi_cmapsize);
 }
@@ -1205,6 +1375,24 @@ ds_init()
 #endif
 	if (!fbcons.fc_on)
 		return ENXIO;
+#ifndef DS_AMIGA
+	/* the console's text, to repaint after another session */
+	if (fbcons.fc_text == 0) {
+		register unsigned short *t;
+		register long n = (long)fbcons.fc_cols * fbcons.fc_rows * 2;
+
+		t = (unsigned short *)kmem_alloc(n, KM_SLEEP);
+		if (fbcons.fc_text == 0 && fbcons_grab()) {
+			fbcons_text(t);
+			fbcons_unlock();
+		} else
+			kmem_free((caddr_t)t, n);
+		if (ds_disp.d_on)	/* another open finished while this one slept */
+			return 0;
+		if (fbcons.fc_text == 0)
+			return EBUSY;
+	}
+#endif
 	bzero((caddr_t)fi, sizeof *fi);
 	d = m->fm_depth;
 	ds_disp.d_base = m->fm_base;
@@ -1453,7 +1641,8 @@ unsigned long id;
 			return EBUSY;
 		}
 		v = (struct dsvid *)kmem_zalloc(sizeof *v, KM_NOSLEEP);
-		if (v == 0 || ds_shadow(s, ds_disp.d_vsize, 0) != 0) {
+		if (v == 0 || ds_shadowk(s, ds_disp.d_vsize,
+		    (fi.fi_rowbytes * fi.fi_height + DS_PGOFF) & ~DS_PGOFF, 0) != 0) {
 			if (v)
 				kmem_free((caddr_t)v, sizeof *v);
 			fbcons_unlock();
@@ -1469,6 +1658,10 @@ unsigned long id;
 	s->s_vmode = n + 1;
 	ata_vmset(s->s_vid, n, ds_disp.d_page);
 	ds_stdcmap(s, (int)fi.fi_depth);
+	if (s != ds_front) {
+		ds_unloadsess(s);
+		(void)ds_shgrow(s, ds_vneed(s));
+	}
 	if (s == ds_front) {
 		ata_vload(s->s_vid);
 		ds_clutload(s, 0, ds_ncmap(s));

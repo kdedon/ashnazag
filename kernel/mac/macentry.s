@@ -93,7 +93,7 @@ mac_stop:
 	movel	%sp@(4),%a2
 	lea	mac_stack_top,%sp
 	bsr.w	Lmmuoff
-	jsr	fbcons_unlock		| screen: draw what an interrupted owner queued
+	jsr	fbcons_stop		| screen: draw what an interrupted owner queued
 	movel	%a2,%sp@-
 	jsr	mac_puts
 Lspin:

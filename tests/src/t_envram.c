@@ -53,15 +53,16 @@ int main()
 		fd = open("/dev/tos", O_RDWR);
 		CHECK(fd >= 0 && ioctl(fd, TOSIOC_RAM, n) == 0, "allocate scattered RAM");
 		CHECK(count("guest_ram_pages") == 0 && count("guest_ram_objects") == 1 &&
-		    count("guest_ram_reserved") == n / sysconf(_SC_PAGESIZE),
-		    "allocation budgets RAM without resident pages");
+		    count("guest_ram_reserved") == 0,
+		    "allocation charges no RAM before pages fault in");
 		p = (unsigned char *)mmap((caddr_t)0x10000000, n, PROT_READ | PROT_WRITE,
 		    MAP_SHARED | MAP_FIXED, fd, 0);
 		CHECK(p != (unsigned char *)-1, "map RAM at virtual address");
 		if (p == (unsigned char *)-1) { close(fd); continue; }
 		CHECK(p[0] == 0 && p[0x3000] == 0, "faults return zeroed pages");
 		p[0] = 0x73; p[0x3000] = 0x31;
-		CHECK(count("guest_ram_pages") == 2, "only touched pages are resident");
+		CHECK(count("guest_ram_pages") == 2 && count("guest_ram_reserved") == 2,
+		    "only touched pages are resident and charged");
 		CHECK(munmap((caddr_t)p + 0x1000, 0x1000) == 0, "split mapping with middle unmap");
 		if (pipe(b) < 0) { CHECK(0, "pipe"); munmap((caddr_t)p, n); close(fd); continue; }
 		pid = fork();
@@ -77,8 +78,7 @@ int main()
 		close(b[0]);
 		CHECK(pid > 0, "fork shared RAM mappings");
 		munmap((caddr_t)p, n); close(fd);
-		CHECK(count("guest_ram_pages") == 2 &&
-		    count("guest_ram_reserved") == n / sysconf(_SC_PAGESIZE),
+		CHECK(count("guest_ram_pages") == 2 && count("guest_ram_reserved") == 2,
 		    "child retains RAM and budget after parent unmap and close");
 		write(b[1], "x", 1); close(b[1]);
 		st = -1;

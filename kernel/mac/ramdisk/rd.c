@@ -4,6 +4,7 @@
  *	minor 0	root image: boot-record BI_RAMDISK, else the linked-in image
  *	minor 1	swap, carved from the top of the kernel's memory chunk
  *		when the RAM disk is root
+ *	minor 2	the host ROM, read only, set by rd_romdev()
  *
  * mac_rd_config() runs from config(): MMU off, BSS not yet cleared,
  * so everything it touches is initialised data.
@@ -30,9 +31,10 @@
 #ifndef RD_SWAPMAXKB
 #define RD_SWAPMAXKB	32768
 #endif
-#define RD_NUNIT	2
+#define RD_NUNIT	3
 #define RD_ROOT		0
 #define RD_SWAP		1
+#define RD_ROM		2
 
 #define RD_BSIZE	512
 #define RD_BSHIFT	9
@@ -53,7 +55,7 @@ struct rdunit {
 
 /* nonzero initialisers keep these out of BSS */
 unsigned long rd_magic = 1;
-struct rdunit rd_unit[RD_NUNIT] = { { (caddr_t)1, 1 }, { (caddr_t)1, 1 } };
+struct rdunit rd_unit[RD_NUNIT] = { { (caddr_t)1, 1 }, { (caddr_t)1, 1 }, { 0, 0 } };
 char rd_swapname[] = "/dev/swap";
 
 extern char rd_image[], rd_image_end[];
@@ -256,6 +258,21 @@ struct cred *cr;
 	return 0;
 }
 
+/*
+ * The block device of the host ROM at kernel address va, size bytes.
+ * Mapped private, its pages come from the page cache, shared until
+ * written.
+ */
+dev_t
+rd_romdev(va, size)
+caddr_t va;
+unsigned long size;
+{
+	rd_unit[RD_ROM].base = va;
+	rd_unit[RD_ROM].nblk = size >> RD_BSHIFT;
+	return makedevice(RD_BMAJ, RD_ROM);
+}
+
 int
 ramclose(dev, flag, otyp, cr)
 dev_t dev;
@@ -288,7 +305,7 @@ register struct buf *bp;
 		return;
 	}
 	n = (up->nblk - bp->b_blkno) << RD_BSHIFT;
-	if (n == 0 && (bp->b_flags & B_READ) == 0) {
+	if ((n == 0 || m == RD_ROM) && (bp->b_flags & B_READ) == 0) {
 		bp->b_error = ENXIO;
 		bp->b_flags |= B_ERROR;
 		iodone(bp);

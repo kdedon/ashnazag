@@ -83,7 +83,7 @@ unsigned int sh;
  test_kmem_fail=1; C(gm_dup(&s,&c)==ENOMEM && r->refs==2); test_kmem_fail=0;
  dup_error=ENOMEM; C(gm_dup(&s,&c)==ENOMEM && r->refs==2); dup_error=0;
  C(gm_dup(&s,&c)==0 && r->refs==3);
- guest_ram_free(r); C(r->refs==2 && guestcore_wrapper.refs==1 && availrmem==60 && guest_ram_reserved==4);
+ guest_ram_free(r); C(r->refs==2 && guestcore_wrapper.refs==1 && availrmem==64-r->reserved && guest_ram_reserved==r->reserved);
  test_kmem_fail=1; C(gm_unmap(&s,s.s_base+ps,ps)==ENOMEM && s.s_size==4*ps && r->refs==2); test_kmem_fail=0;
  C(gm_unmap(&s,s.s_base+ps,ps)==0 && gm_find(&split)!=0 && r->refs==3);
  C(split.s_ops==&gm_ops && gm_fault(&split,split.s_base,ps,F_INVAL,S_READ)==0);

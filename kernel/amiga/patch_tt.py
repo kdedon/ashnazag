@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 # patch_tt.py -- the low-gigabyte transparent translation for the
 # supervisor only, as on the Mac host: user space below 1 GB (an
-# environment's guest memory) then goes through the page tables.
+# environment's guest memory) then goes through the page tables.  The
+# high transparent window starts at 3 GB, leaving 2 GB to 3 GB to map
+# Zorro III boards above 1 GB.
 #
 #   pstart  movel #0x003fc000,%d0; movec %d0,%itt0  -> #0x003fa000
 #           movel #0x003fc060,%d0; movec %d0,%dtt0  -> #0x003fa060
+#           movel #0x807fa060,%d0; movec %d0,%dtt1  -> #0xc03fa060
 #
 # usage: patch_tt.py [-c] image   (-c: check only, exit 1 unless converted)
 import sys
@@ -15,7 +18,8 @@ if check:
 	args = args[1:]
 d = bytearray(open(args[0], 'rb').read())
 SITES = [('203c003fc0004e7b0004', '203c003fa0004e7b0004'),
-	('203c003fc0604e7b0006', '203c003fa0604e7b0006')]
+	('203c003fc0604e7b0006', '203c003fa0604e7b0006'),
+	('203c807fa0604e7b0007', '203cc03fa0604e7b0007')]
 for old, new in SITES:
 	old, new = bytes.fromhex(old), bytes.fromhex(new)
 	n, m = d.count(old), d.count(new)

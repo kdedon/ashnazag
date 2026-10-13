@@ -1,8 +1,9 @@
 /*
  * A Voodoo3 (or Banshee) behind the PCI bridge as the display service's
  * screen.  One mode at the size Space.c names, 8-bit CLUT, RGB565 or
- * 32 bits a pixel per session, each session a frame of VRAM of its own
- * while room lasts; bringing one to the front moves the desktop start.
+ * 32 bits a pixel per session.  The front session's frame is at the
+ * start of VRAM, then v3ds_altfb frames that hidden sessions keep;
+ * bringing one of those to the front moves the desktop start.
  * Only the 2D video path is set up; the 3D engine is left as reset.
  *
  * A 3D driver for the card shares with this module, and must take from
@@ -11,7 +12,7 @@
  *   register and frame buffer mappings (v3_reg, v3_fb, v3_physfb) and
  *   the register byte order (v3_swap);
  * - VRAM: sessions use [0, v3_dsvram); [v3_dsvram, v3_vram) is free for
- *   back, depth and texture buffers;
+ *   the command fifo, back, depth and texture buffers;
  * - ownership: the front session (am_rtg's r_pan offset) is the one a
  *   3D client may draw to the screen for; v3_fronthook, when set, is
  *   called after each change.
@@ -25,7 +26,7 @@
 extern int printf();
 extern unsigned long plat_vtop();
 extern int v3ds_width, v3ds_height;
-extern unsigned long v3ds_resv;
+extern int v3ds_altfb;
 
 /* registers at BAR0 */
 #define	STATUS		0x00
@@ -271,7 +272,7 @@ v3ds_attach()
 {
 	struct opci_dev *d;
 	struct v3tim *t;
-	unsigned long frame;
+	unsigned long frame, n;
 	int i, e;
 
 	for (t = v3_tims; t < v3_tims + NTIM; t++)
@@ -303,12 +304,16 @@ v3ds_attach()
 	wl(LFBMEMCFG, 0x1fff);
 	wl(MISCINIT0, rl(MISCINIT0) & ~MI0_SWIZ(3));
 	v3_vram = v3_sizevram(opci_attr(d, OPCI_BARSIZE(1)));
-	frame = ((unsigned long)v3ds_width * v3ds_height * 4 + 4095) & ~4095UL;
-	v3_dsvram = v3_vram > v3ds_resv + frame ? v3_vram - v3ds_resv : frame;
+	/* a 32-bit screen and a page: Picasso96 keeps bytes between two 16-bit ones */
+	frame = (((unsigned long)v3ds_width * v3ds_height * 4 + 4095) & ~4095UL) + 4096;
 	if (frame > v3_vram) {
 		opci_release(d);
 		return ENOMEM;
 	}
+	n = v3_vram / frame - 1;
+	if (v3ds_altfb >= 0 && v3ds_altfb < n)
+		n = v3ds_altfb;
+	v3_dsvram = (n + 1) * frame;
 	v3_physfb = plat_vtop((unsigned long)v3_fb);
 	v3_dev = d;
 	v3_timing(t);
@@ -336,8 +341,9 @@ v3ds_attach()
 	v3_rtg.r_setdepth = v3_depth;
 	v3_rtg.r_pan = v3_pan;
 	v3_rtg.r_vram = v3_dsvram;
-	printf("voodoo3: %dx%d, %d MB, %d frames, registers %s\n", v3ds_width, v3ds_height,
-	    (int)(v3_vram >> 20), (int)(v3_dsvram / frame), v3_swap ? "byte swapped" : "in order");
+	printf("voodoo3: %dx%d, %d MB, %d frames, %d KB for 3D, registers %s\n", v3ds_width,
+	    v3ds_height, (int)(v3_vram >> 20), (int)(v3_dsvram / frame),
+	    (int)((v3_vram - v3_dsvram) >> 10), v3_swap ? "byte swapped" : "in order");
 	if ((e = am_rtgattach(&v3_rtg)) != 0) {
 		v3_dev = 0;
 		opci_release(d);

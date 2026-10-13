@@ -1538,7 +1538,7 @@ startmac()
 	static char *av[] = { "/mac/bin/startmac", 0 };
 	char pat[80], *q1, *o, *s, *z;
 	int p[2], st, id, fd;
-	long npriv0, npriv, nal0;
+	long npriv0, npriv, nal0, free0;
 	pid_t pid, dp;
 
 	t_rearm(240);
@@ -1563,6 +1563,7 @@ startmac()
 	setsym("aux_trace", 4L | 16L);
 #endif
 	npriv0 = getsym("guest_npriv");
+	free0 = getsym("freemem");
 	if (pipe(p) < 0)
 		return;
 	if ((pid = fork()) == 0) {
@@ -1598,6 +1599,7 @@ startmac()
 		screen();
 #endif
 #endif
+	t_info("session_pages", "%ld", free0 - getsym("freemem"));
 #ifdef SYS6
 	/* a hangup, as a closed login line sends; then the kill */
 	kill(-pid, SIGHUP);

@@ -4,7 +4,7 @@
  *	starttos [-rom file | -P] [-c cartridge] [-e env | -C dir | -d disk] [-D L=dir] [-u dir | -U]
  *		[-m megabytes] [-M] [-S] [-v]
  *
- * ST-RAM is a shared mapping at 0, the ROM a read-only copy at its own
+ * ST-RAM is a shared mapping at 0, the ROM file mapped read-only at its own
  * base, the machine-layer cartridge at $FA0000.  On an Atari, unless
  * -rom is given, and always with -P, the machine's own ROM runs in place,
  * read-only at $E00000, with Falcon registers.  Drives are host
@@ -134,6 +134,40 @@ readall(name, buf, max)
 	close(fd);
 	if (n < 16) {
 		fprintf(stderr, "starttos: %s: too short\n", name);
+		exit(1);
+	}
+	return n;
+}
+
+/*
+ * The ROM, its size; its first 16 bytes in h.  A file stays open in
+ * romfd for mapping; anything else (a pipe) is read into romtmp.
+ */
+static int romfd = -1;
+static char *romtmp;
+
+static long
+romopen(name, h)
+	char *name, *h;
+{
+	struct stat sb;
+	long n = 0, k = 0;
+
+	if ((romfd = open(name, O_RDONLY)) < 0 || fstat(romfd, &sb) < 0)
+		die(name);
+	if (S_ISREG(sb.st_mode))
+		n = read(romfd, h, 16) == 16 ? (long)sb.st_size : 0;
+	else {
+		if ((romtmp = malloc(0x80001)) == 0)
+			die(name);
+		while (n <= 0x80000 && (k = read(romfd, romtmp + n, 0x80001 - n)) > 0)
+			n += k;
+		if (k < 0)
+			die(name);
+		memcpy(h, romtmp, 16);
+	}
+	if (n < 16 || n > 0x80000) {
+		fprintf(stderr, "starttos: %s: not a TOS image\n", name);
 		exit(1);
 	}
 	return n;
@@ -547,7 +581,7 @@ main(argc, argv)
 	int argc;
 	char **argv;
 {
-	static char rbuf[0x80000];
+	char rbuf[16];
 	struct tosenter te;
 	struct tosowner to;
 	struct sigaction sa;
@@ -629,7 +663,7 @@ main(argc, argv)
 		memcpy(rbuf, (char *)FROM, 16);
 		n = c;
 	} else
-		n = readall(rom, rbuf, (long)sizeof rbuf);
+		n = romopen(rom, rbuf);
 	base = get32((unsigned char *)rbuf + 8);
 	pc = get32((unsigned char *)rbuf + 4);
 	if ((base != 0xe00000 && base != 0xfc0000) || pc < base || pc >= base + n ||
@@ -661,10 +695,17 @@ main(argc, argv)
 	} else
 		region(0L, (unsigned long)ramsize, 1);
 	if (!pass) {
-		region(base, (n + 0xfff) & ~0xfffL, 0);
-		memcpy((char *)base, rbuf, n);
-		if (mprotect((caddr_t)base, (n + 0xfff) & ~0xfffL, PROT_READ | PROT_EXEC) < 0)
-			die("mprotect");
+		/* a file's pages stay in the page cache, shared by sessions */
+		if (romtmp) {
+			region(base, (n + 0xfff) & ~0xfffL, 0);
+			memcpy((char *)base, romtmp, n);
+			free(romtmp);
+			if (mprotect((caddr_t)base, (n + 0xfff) & ~0xfffL, PROT_READ | PROT_EXEC) < 0)
+				die("mprotect");
+		} else if (mmap((caddr_t)base, (n + 0xfff) & ~0xfffL, PROT_READ | PROT_EXEC,
+		    MAP_PRIVATE | MAP_FIXED, romfd, 0) == (caddr_t)-1)
+			die(rom);
+		close(romfd);
 	}
 	/* shared: the display process posts input in its last page */
 	region((unsigned long)CART, (unsigned long)CARTSZ, 1);

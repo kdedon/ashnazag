@@ -428,6 +428,30 @@ register struct fbinfo *fi;
 }
 
 /*
+ * Bytes of screen memory d's mode shows, 0 if unknown.  The vertical
+ * registers count half-lines; bit 1 of $82C2 interlaces, bit 0 doubles.
+ */
+unsigned long
+ata_vbytes(d)
+register struct dsvid *d;
+{
+	unsigned long l;
+	int vco;
+
+	if (ata_tt || d->v_st)
+		return ata_tt ? 153600 : 32000;
+	l = R16(d, 0x82AA) - R16(d, 0x82A8);
+	vco = R16(d, 0x82C2);
+	if (!(vco & 2))
+		l >>= 1;
+	if (vco & 1)
+		l >>= 1;
+	if (l > 0x800)
+		return 0;
+	return 2 * (R16(d, 0x8210) + R16(d, 0x820E)) * l;
+}
+
+/*
  * Mode n into d, showing base: the timings, then the line width,
  * video control and shift mode, as the ROM sets them.
  */

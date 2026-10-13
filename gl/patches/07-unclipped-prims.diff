@@ -1,0 +1,116 @@
+--- a/src/math/m_clip_tmp.h
++++ b/src/math/m_clip_tmp.h
+@@ -62,6 +62,16 @@
+       mask |= (((cw < -cy) << CLIP_BOTTOM_SHIFT));
+       mask |= (((cw < cz) << CLIP_FAR_SHIFT));
+       mask |= (((cw < -cz) << CLIP_NEAR_SHIFT));
++#elif defined(__m68k__)
++      /* one compare per plane */
++      const GLfloat nw = -cw;
++      GLubyte mask = 0;
++      if (cx > cw) mask |= CLIP_RIGHT_BIT;
++      if (cx < nw) mask |= CLIP_LEFT_BIT;
++      if (cy > cw) mask |= CLIP_TOP_BIT;
++      if (cy < nw) mask |= CLIP_BOTTOM_BIT;
++      if (cz > cw) mask |= CLIP_FAR_BIT;
++      if (cz < nw) mask |= CLIP_NEAR_BIT;
+ #else /* !defined(macintosh)) */
+       GLubyte mask = 0;
+       if (-cx + cw < 0) mask |= CLIP_RIGHT_BIT;
+--- a/src/tnl/t_context.h
++++ b/src/tnl/t_context.h
+@@ -443,6 +443,10 @@
+ 
+       render_func          *PrimTabVerts;
+       render_func          *PrimTabElts;
++      render_func          *UnclippedTab;
++      /* Optional: by GL enum, draws a primitive with no clipped vertex
++       * found in a clipped vertex buffer, as PrimTabVerts would.
++       */
+       /* Render whole unclipped primitives (points, lines, linestrips,
+        * lineloops, etc).  The tables are indexed by the GL enum of the
+        * primitive to be rendered.  RenderTabVerts is used for non-indexed
+--- a/src/tnl/t_vb_render.c
++++ b/src/tnl/t_vb_render.c
+@@ -140,6 +140,25 @@
+    (void) (LineFunc && TriangleFunc && QuadFunc);		\
+    (void) elt; (void) mask; (void) sz; (void) stipple;
+ 
++/* A primitive with no clipped vertex goes whole to the driver. */
++static GLboolean unclipped( GLcontext *ctx, GLenum prim, GLuint start,
++			    GLuint count, GLuint flags )
++{
++   TNLcontext *tnl = TNL_CONTEXT(ctx);
++   const GLubyte *mask = tnl->vb.ClipMask;
++   GLuint i;
++
++   if (!tnl->Driver.Render.UnclippedTab)
++      return GL_FALSE;
++   for (i = start; i < count; i++)
++      if (mask[i])
++	 return GL_FALSE;
++   tnl->Driver.Render.UnclippedTab[prim]( ctx, start, count, flags );
++   return GL_TRUE;
++}
++
++#define UNCLIPPED(prim, start, count, flags) \
++   unclipped( ctx, prim, start, count, flags )
+ #define TAG(x) clip_##x##_verts
+ #define INIT(x) tnl->Driver.Render.PrimitiveNotify( ctx, x )
+ #define RESET_STIPPLE if (stipple) tnl->Driver.Render.ResetLineStipple( ctx )
+@@ -153,6 +172,7 @@
+  */
+ #undef ELT
+ #undef TAG
++#undef UNCLIPPED
+ #define ELT(x) elt[x]
+ #define TAG(x) clip_##x##_elts
+ #include "t_vb_rendertmp.h"
+--- a/src/tnl/t_vb_rendertmp.h
++++ b/src/tnl/t_vb_rendertmp.h
+@@ -59,6 +59,10 @@
+ #define ELT(x) x
+ #endif
+ 
++#ifndef UNCLIPPED
++#define UNCLIPPED(prim, start, count, flags) 0
++#endif
++
+ #ifndef RENDER_TAB_QUALIFIER
+ #define RENDER_TAB_QUALIFIER static
+ #endif
+@@ -210,7 +214,7 @@
+ 	 EDGEFLAG_SET( ej1, ef1 );
+ 	 EDGEFLAG_SET( ej, ef );
+       }
+-   } else {
++   } else if (!UNCLIPPED(GL_TRIANGLE_STRIP, start, count, flags)) {
+       for (j=start+2; j<count ; j++, parity^=1) {
+ 	 RENDER_TRI( ELT(j-2+parity), ELT(j-1-parity), ELT(j) );
+       }
+@@ -250,7 +254,7 @@
+ 	 EDGEFLAG_SET( ej1, ef1 );
+ 	 EDGEFLAG_SET( ej, ef );
+       }
+-   } else {
++   } else if (!UNCLIPPED(GL_TRIANGLE_FAN, start, count, flags)) {
+       for (j=start+2;j<count;j++) {
+ 	 RENDER_TRI( ELT(start), ELT(j-1), ELT(j) );
+       }
+@@ -321,7 +325,7 @@
+       EDGEFLAG_SET( ELT(start), efstart );
+ 
+    }
+-   else {
++   else if (!UNCLIPPED(GL_POLYGON, start, count, flags)) {
+       for (j=start+2;j<count;j++) {
+ 	 RENDER_TRI( ELT(j-1), ELT(j), ELT(start) );
+       }
+@@ -433,6 +437,7 @@
+ #undef RESET_STIPPLE
+ #undef DBG
+ #undef ELT
++#undef UNCLIPPED
+ #undef RENDER_TAB_QUALIFIER
+ #endif
+ 

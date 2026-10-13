@@ -32,23 +32,43 @@ page_t *pp;
 	guest_ram_pages--;
 }
 
+/* RAM is charged to availrmem as pages arrive, not when the object is made. */
+static int
+gm_charge(m, n)
+struct guest_ram *m;
+unsigned long n;
+{
+	if (availrmem - (int)n < tune.t_minarmem)
+		return 0;
+	availrmem -= n;
+	m->reserved += n;
+	guest_ram_reserved += n;
+	return 1;
+}
+
+static void
+gm_uncharge(m, n)
+struct guest_ram *m;
+unsigned long n;
+{
+	availrmem += n;
+	m->reserved -= n;
+	guest_ram_reserved -= n;
+}
+
 /* DMA pages remain fixed until the RAM object is released. */
 static page_t *
-gm_run(m, n, limit, extra)
+gm_run(m, n, limit)
 struct guest_ram *m;
-unsigned long n, limit, extra;
+unsigned long n, limit;
 {
 	page_t *p, *lo, *next;
 	unsigned long i;
 
-	if (extra && availrmem - (int)extra < tune.t_minarmem)
-		return 0;
-	availrmem -= extra;
 	pages_pp_kernel += n;
 	guest_ram_pages += n;
 	p = page_get(n << m->shift, P_NOSLEEP | P_PHYSCONTIG);
 	if (!p) {
-		availrmem += extra;
 		pages_pp_kernel -= n;
 		guest_ram_pages -= n;
 		return 0;
@@ -64,7 +84,6 @@ unsigned long n, limit, extra;
 			next = p + 1;
 			gm_put(p);
 		}
-		availrmem += extra;
 		return 0;
 	}
 	return lo;
@@ -83,8 +102,7 @@ struct guest_ram *m;
 			gm_put(m->page[i]);
 	kmem_free(m->page, m->n * sizeof *m->page);
 	kmem_free(m->dma, m->n);
-	availrmem += m->reserved;
-	guest_ram_reserved -= m->reserved;
+	gm_uncharge(m, m->reserved);
 	if (m->held) {
 		guest_ram_objects--;
 		mod_rele(&guestcore_wrapper);
@@ -114,15 +132,14 @@ struct guest_ram **out;
 	m->n = size >> shift;
 	m->page = (page_t **)kmem_zalloc(m->n * sizeof *m->page, KM_SLEEP);
 	m->dma = (unsigned char *)kmem_zalloc(m->n, KM_SLEEP);
-	if (availrmem - (int)m->n < tune.t_minarmem) {
+	/* the whole size must fit now; paged RAM is charged as it faults in */
+	if (availrmem - (int)m->n < tune.t_minarmem ||
+	    ((flags & GMR_CONTIG) && !gm_charge(m, m->n))) {
 		guest_ram_free(m);
 		return ENOMEM;
 	}
-	availrmem -= m->n;
-	m->reserved = m->n;
-	guest_ram_reserved += m->n;
 	if (flags & GMR_CONTIG) {
-		if (!(p = gm_run(m, m->n, limit, 0))) {
+		if (!(p = gm_run(m, m->n, limit))) {
 			guest_ram_free(m);
 			return ENOMEM;
 		}
@@ -151,14 +168,19 @@ unsigned long off;
 		return -1;
 	i = off >> m->shift;
 	if (!m->page[i]) {
-		p = page_get(1UL << m->shift, P_CANWAIT);
-		if (!p)
+		if (!gm_charge(m, 1UL))
 			return -1;
+		p = page_get(1UL << m->shift, P_CANWAIT);
+		if (!p) {
+			gm_uncharge(m, 1UL);
+			return -1;
+		}
 		pages_pp_kernel++;
 		guest_ram_pages++;
 		/* Another mapping may have installed this frame while page_get slept. */
 		if (m->page[i]) {
 			gm_put(p);
+			gm_uncharge(m, 1UL);
 			return (int)gm_pfn(m->page[i]);
 		}
 		pagezero(p, 0, 1UL << m->shift);
@@ -229,8 +251,12 @@ unsigned long off, len, limit, *out;
 	for (i = first; i <= last; i++)
 		if (m->page[i])
 			extra++;
-	if (!(p = gm_run(m, n, limit, extra)))
+	if (!gm_charge(m, n))
 		return ENOMEM;
+	if (!(p = gm_run(m, n, limit))) {
+		gm_uncharge(m, n);
+		return ENOMEM;
+	}
 	gm_unload(m);
 	if (m->invalidate)
 		(*m->invalidate)(m->arg, first << m->shift, n << m->shift);
@@ -246,7 +272,7 @@ unsigned long off, len, limit, *out;
 		if (old)
 			gm_put(old);
 	}
-	availrmem += extra;
+	gm_uncharge(m, extra);
 	dlm_cacheflush();
 	*out = (gm_pfn(p) << m->shift) + (off & ((1UL << m->shift) - 1));
 	return 0;

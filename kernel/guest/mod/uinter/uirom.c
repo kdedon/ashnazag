@@ -1,7 +1,7 @@
 /*
  * uirom.c -- the ROM object: a Mac host's own ROM, else the user's Mac
- * ROM image file, checked once, mapped into a Mac task by UI_ROM as a
- * private copy, and the kernel
+ * ROM image file, checked once, mapped into a Mac task by UI_ROM
+ * copy-on-write, and the kernel
  * low-memory values the Mac side copies with UI_COPY_OUT, derived from
  * the ROM's ProductInfo table.
  *
@@ -33,14 +33,17 @@
 #include "vm/as.h"
 
 extern int execmap(), as_map(), as_unmap(), segvn_create();
+extern struct vnode *makespecvp();
 extern caddr_t zfod_argsp;
 extern int fpu_present;
-__asm__(".weak cputype\n.weak mac_model\n.weak mac_romva");
+__asm__(".weak cputype\n.weak mac_model\n.weak mac_romva\n.weak rd_romdev");
 extern long ui_cputype __asm__("cputype");	/* 40, 60; absent: 68020/030 */
 extern unsigned long mac_model;		/* a Mac host's Gestalt machine ID */
 extern unsigned long mac_romva();	/* a Mac host's ROM in kernel space */
 /* read at run time: the compiler takes a declared symbol's address as nonzero */
+extern dev_t rd_romdev();		/* the block device of a kernel ROM */
 static unsigned long (*volatile romva)() = mac_romva;
+static dev_t (*volatile romdev)() = rd_romdev;
 static long *volatile cpup = &ui_cputype;
 static unsigned long *volatile modelp = &mac_model;
 
@@ -302,6 +305,8 @@ romload1(aux2)
 	lowset(0x21eL, 2L, 1);			/* KbdType: ADB extended */
 	lowset(0xcb1L, i ? 4L : 3L, 1);		/* MMUType: 68040, 68030 */
 	lowset(0x2aeL, (long)UI_ROMBASE, 4);	/* ROMBase */
+	if (ui_hwrom && romdev)
+		ui_rom.r_vp = makespecvp((*romdev)((caddr_t)ui_hwrom, ui_rom.r_size), VBLK);
 	if (b)
 		kmem_free((_VOID *)b, head);
 	printf("uinter: ROM %s, %d KB, version %x, sum %x, ProductInfo %x, box %d\n",
@@ -370,8 +375,9 @@ ui_romfree()
 
 /*
  * The ROM at user address a in the caller: a private mapping of the
- * file, pages shared through the page cache until written, or a copy
- * of the host's ROM in zero-fill memory.  Mac code writes to ROM space
+ * file or the host ROM's block device, pages shared through the page
+ * cache until written, else a copy of the host's ROM in zero-fill
+ * memory.  Mac code writes to ROM space
  * (HSetState on ROM resources) and real ROM ignores that; here a write
  * stays in the task's own copy.
  */
@@ -386,7 +392,7 @@ ui_rommap(a, aux2)
 		return e;
 	if (((u_long)a & 0xfff) || !valid_usr_range(a, ui_rom.r_size))
 		e = EINVAL;
-	else if (ui_hwrom) {
+	else if (!ui_rom.r_vp) {
 		e = as_map(u.u_procp->p_as, a, (u_int)ui_rom.r_size, segvn_create,
 		    zfod_argsp);
 		if (e == 0 && copyout((caddr_t)ui_hwrom, a, ui_rom.r_size)) {

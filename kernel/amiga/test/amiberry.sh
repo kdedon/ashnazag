@@ -10,11 +10,14 @@
 # MACHINE: a3000 (default; the disk is SCSI unit 6) or a4000 (AGA; the
 # disk is the IDE master).  CSPPC: the CyberStorm PPC's flash image; the
 # card replaces the CPU and its RAM, the disk is unit CSPPCID (default 0)
-# on its SCSI.  CDROM: an ISO image as a CD-ROM on that SCSI, unit 1.
+# on its SCSI; CSPPCMB its RAM (default 128).  CDROM: an ISO image as a CD-ROM on that SCSI, unit 1.
 # STATE: config, home and IPC socket
 # directory (default hdfdir/run).  CARDS: Amiberry board names on the
 # PCI bus (default "ne2000_pci es1370 fm801").  GFX: a graphics card
 # (default ZZ9000_Z2; S3VIRGE_PCI puts one on PCI; empty for none).
+# MEDWIN: 256 or 512 puts a Mediator 4000 Mk II with that window in place
+# of the Prometheus.  Z3MAP: Zorro III placement (default uae; real
+# starts at 0x40000000).
 # The NE2000 is on the user-mode network; host port ECHOPORT (default
 # 2307) reaches the guest's TCP echo service.  DF0-DF3: ADF files in
 # the floppy drives.  Runs until killed, or
@@ -52,13 +55,13 @@ cachesize=0
 chipmem_size=4
 a3000mem_size=16
 $(if [ -n "$CSPPC" ]; then
-	echo cpuboard_type=CyberStormPPC; echo "cpuboard_rom_file=$CSPPC"; echo cpuboardmem1_size=128
+	echo cpuboard_type=CyberStormPPC; echo "cpuboard_rom_file=$CSPPC"; echo cpuboardmem1_size=${CSPPCMB:-128}
 else
 	echo mbresmem_size=32
 fi)
 fastmem_size=0
 z3mem_size=0
-z3mapping=uae
+z3mapping=${Z3MAP:-uae}
 $([ ! -d "$H/boot" ] || echo "filesystem2=rw,DH0:AmigaBoot:$H/boot,5")
 $(if [ -n "$CSPPC" ]; then
 	echo "hardfile2=rw,SD${CSPPCID:-0}:$H/amix.hdf,0,0,0,512,-128,,scsi${CSPPCID:-0}_cpuboard"
@@ -71,7 +74,12 @@ fi)
 serial_port=TCP://127.0.0.1:${SERPORT:-1234}
 serial_direct=true
 sound_output=none
-prometheus_rom_file=:ENABLED
+$(if [ -n "$MEDWIN" ]; then
+	echo mediator_rom_file=:ENABLED
+	echo "mediator_rom_options=subtype=4000mkii$([ "$MEDWIN" = 256 ] || echo ,winsize)"
+else
+	echo prometheus_rom_file=:ENABLED
+fi)
 EOF
 for c in $CARDS; do
 	echo "${c}_rom_file=:ENABLED" >> "$C"

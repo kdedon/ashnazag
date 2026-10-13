@@ -32,7 +32,7 @@ extern struct modwrapper dsuser_wrapper;
 extern int segdev_create(), as_map(), as_unmap();
 extern page_t *page_numtookpp();
 extern void map_addr(), flushmmu();
-extern int ds_fbmmap();
+extern int ds_fbmmap(), ds_grow();
 extern struct dssess *ds_fbsess();
 
 /* 040 root table of an address space; 0 once hat_free ran */
@@ -302,8 +302,14 @@ enum seg_rw rw;
 		if ((pv[0] & (PROT_READ | PROT_WRITE | PROT_EXEC)) == 0 ||
 		    (rw == S_WRITE && !(pv[0] & PROT_WRITE)))
 			return FC_PROT;
-		if (off >= s->s_size ||
-		    (pp = page_numtookpp(s->s_pfn[off >> DS_PGSHIFT])) == 0)
+		if (off >= s->s_size)
+			return FC_MAKE_ERR(EFAULT);
+#ifdef DS_AMIGA
+		if (DS_FULL(s) && (off >> DS_PGSHIFT) >= s->s_npg &&
+		    ds_grow(s, (off & ~DS_PGOFF) + DS_PGSIZE, 1) != 0)
+			return FC_MAKE_ERR(ENOMEM);
+#endif
+		if ((pp = page_numtookpp(s->s_pfn[off >> DS_PGSHIFT])) == 0)
 			return FC_MAKE_ERR(EFAULT);
 		hat_memload(seg, (addr_t)va, pp, pv[0], HAT_NOFLAGS);
 	}
@@ -327,6 +333,13 @@ enum seg_rw rw;
 		return FC_MAKE_ERR(ENXIO);
 	if (type == F_SOFTLOCK || type == F_SOFTUNLOCK)
 		return FC_MAKE_ERR(EFAULT);
+#ifdef DS_AMIGA
+	/* a switch moves what the session has touched */
+	g = ((struct segdev_data *)seg->s_data)->offset +
+	    ((unsigned long)addr + len - (unsigned long)seg->s_base);
+	if (g > t->t_sess->s_ext)
+		t->t_sess->s_ext = g;
+#endif
 	for (tries = 0; ; tries++) {
 		g = ds_gen;
 		if (t->t_sess == ds_front || DS_OWNV(t->t_sess))

@@ -2,8 +2,9 @@
  * A Radeon (R100, R200, RV250, RV280) behind the PCI bridge as the
  * display service's screen, on the primary CRTC and the analogue
  * output.  One mode at the size Space.c names, 8-bit CLUT, RGB565 or
- * 32 bits a pixel per session, each session a frame of VRAM of its own
- * while room lasts; bringing one to the front moves the CRTC start.
+ * 32 bits a pixel per session.  The front session's frame is at the
+ * start of VRAM, then rds_altfb frames that hidden sessions keep;
+ * bringing one of those to the front moves the CRTC start.
  * A card nothing has started (no CRTC on, no memory size) is started
  * from the init tables in its PC ROM.
  *
@@ -27,7 +28,7 @@ extern int printf();
 extern void drv_usecwait();
 extern unsigned long plat_vtop();
 extern int rds_width, rds_height;
-extern unsigned long rds_resv;
+extern int rds_altfb;
 extern long rds_refkhz;
 
 #define	BUS_CNTL	0x0030
@@ -439,7 +440,7 @@ rds_attach()
 	    0x4967, 0x496e, 0x514c, 0x5148, 0x5149, 0x514a, 0x514b, 0x4242, 0x5144, 0x5159, 0x515a, 0x5157 };
 	struct opci_dev *d = 0;
 	struct rdtim *t;
-	unsigned long frame, aper, mem;
+	unsigned long frame, aper, mem, n;
 	char *why;
 	int i, e, b;
 
@@ -487,12 +488,16 @@ rds_attach()
 	rd_vram = mem < aper ? mem : aper;
 	rd_fbsize = opci_attr(d, OPCI_BARSIZE(0));
 	rd_aper = aper;
-	frame = ((unsigned long)rds_width * rds_height * 4 + 4095) & ~4095UL;
+	/* a 32-bit screen and a page: Picasso96 keeps bytes between two 16-bit ones */
+	frame = (((unsigned long)rds_width * rds_height * 4 + 4095) & ~4095UL) + 4096;
 	if (frame > rd_vram) {
 		opci_release(d);
 		return ENOMEM;
 	}
-	rd_dsvram = rd_vram > rds_resv + frame ? rd_vram - rds_resv : frame;
+	n = rd_vram / frame - 1;
+	if (rds_altfb >= 0 && rds_altfb < n)
+		n = rds_altfb;
+	rd_dsvram = (n + 1) * frame;
 	rd_physfb = plat_vtop((unsigned long)rd_fb);
 	rd_dev = d;
 	rd_tim = t;

@@ -575,6 +575,63 @@ char *outdir;
 	free(b);
 }
 
+/* ---- hidden screen: cells read back, drawn while away, repainted */
+
+static void
+hidden(name, w, h, d, row)
+char *name;
+unsigned long w, h, d, row;
+{
+	static char t1[4096], t2[4096];
+	static unsigned short cells[MAXR * MAXC * 4];
+	struct fbmode m;
+	unsigned char *a, *b;
+	unsigned long sz, y, vis;
+	int i, n1 = 0, n2 = 0, diff = 0;
+
+	n1 += sprintf(t1 + n1, "\033[2J\033[Hplain \033[7minverse\033[1m bold-inv\033[0m "
+	    "\033[1mbold\033[0m \033(0lqk~a\033(B \351\374\377\r\n");
+	for (i = 0; i < 20; i++)
+		n1 += sprintf(t1 + n1, "line %d %s\r\n", i, i % 3 ? "abc" : "\033[7mxyz\033[0m");
+	n1 += sprintf(t1 + n1, "\033[5;3Hcursor");
+	n2 += sprintf(t2 + n2, "\033[3;1H\033[2Pins\033[4@\033[2L\033[7mhidden\033[0m\r\n"
+	    "\033[%d;%dr", (int)(h / FB_CH) - 12, (int)(h / FB_CH));
+	for (i = 0; i < 12; i++)
+		n2 += sprintf(t2 + n2, "\033[%d;1Hmore %d\r\n", (int)(h / FB_CH), i);
+	n2 += sprintf(t2 + n2, "\033[3;10r\033[10;1H\n\n\033[3;1H\033M\033[r\033[4;5Hend\033[1mB");
+	m.fm_row = row; m.fm_depth = d; m.fm_width = w; m.fm_height = h;
+	sz = row * h;
+	a = calloc(1, sz);
+	b = calloc(1, sz);
+	m.fm_base = (unsigned long)a;
+	fbcons_attach(&m);
+	fbcons_write((unsigned char *)t1, n1);
+	if (!fbcons_grab())
+		diff = 1;
+	fbcons_text(cells);
+	fbcons_hide();
+	fbcons_unlock();
+	memset(a, 0x5A, sz);		/* another owner's pixels */
+	fbcons_write((unsigned char *)t2, n2);
+	diff |= a[0] != 0x5A || a[sz - 1] != 0x5A;
+	if (!fbcons_grab())
+		diff = 1;
+	fbcons_show();
+	fbcons_unlock();
+	m.fm_base = (unsigned long)b;
+	fbcons_attach(&m);
+	fbcons_write((unsigned char *)t1, n1);
+	fbcons_write((unsigned char *)t2, n2);
+	vis = (w * d + 7) / 8;
+	for (y = 0; y < h; y++)
+		diff |= memcmp(a + y * row, b + y * row, vis) != 0;
+	printf("%s hidden %s: repainted from cells = drawn throughout\n",
+	    diff ? "FAIL" : "OK  ", name);
+	bad |= diff;
+	free(a);
+	free(b);
+}
+
 int
 main(argc, argv)
 int argc;
@@ -591,6 +648,12 @@ char **argv;
 	mode("16bpp-640x480", 640UL, 480UL, 16UL, 1280UL, o);
 	mode("32bpp-640x480-row2600", 636UL, 480UL, 32UL, 2600UL, o);
 	jump(o);
+	hidden("1bpp-640x480", 640UL, 480UL, 1UL, 80UL);
+	hidden("2bpp-640x480", 640UL, 480UL, 2UL, 160UL);
+	hidden("4bpp-640x480", 640UL, 480UL, 4UL, 320UL);
+	hidden("8bpp-1152x870", 1152UL, 870UL, 8UL, 1152UL);
+	hidden("16bpp-640x480", 640UL, 480UL, 16UL, 1280UL);
+	hidden("32bpp-636x480-row2600", 636UL, 480UL, 32UL, 2600UL);
 	probes(argc > 2 ? argv[2] : NULL);
 	printf("%s\n", bad ? "FAIL" : "all OK");
 	return bad;

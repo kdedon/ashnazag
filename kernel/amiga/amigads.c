@@ -413,6 +413,9 @@ void adbkbd_setleds(v) int v; { }
 void adbkbd_cons(v) int v; { }
 int fbcons_grab() { if (am_busy) return 0; am_busy = 1; return 1; }
 void fbcons_unlock() { am_busy = 0; }
+/* the console is a screen of its own */
+void fbcons_hide() { }
+void fbcons_show() { }
 
 /* Keep the native handshake and console path while mirroring raw keys. */
 void

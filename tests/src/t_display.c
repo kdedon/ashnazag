@@ -980,6 +980,83 @@ t_heap()
 	    "free pages %ld -> %ld", r0, t_kmem("availrmem"));
 }
 
+/* n bytes of kernel memory at symbol sym (0: address 0) + off; 0 if unreadable */
+static int
+kread(char *sym, unsigned long off, void *buf, int n)
+{
+	unsigned long a = 0, info;
+	int fd, ok;
+
+	if ((sym && getksym(sym, &a, &info) < 0) || (fd = open("/dev/kmem", O_RDONLY)) < 0)
+		return 0;
+	ok = lseek(fd, (off_t)(a + off), 0) != -1 && read(fd, (char *)buf, n) == n;
+	close(fd);
+	return ok;
+}
+
+/*
+ * The console keeps text, no pixels: no shadow while a session is in
+ * front, and what it prints meanwhile is on the screen once it is back.
+ * fbcons+4: its cells, +8: hidden; ds_sess+28: the console's s_pfn.
+ */
+static void
+t_conredraw(void)
+{
+	static char msg[] = "\0337\033[1;1H\033[7mCONREDRAW\033[0m\0338";
+	unsigned short cell[9];
+	unsigned long text = 0, pfn = 1, hid = 0, hid2 = 1;
+	char box[64];
+	int fd, con, i, hidden = 0, shown, before;
+	long id;
+
+	if (!kread("fbcons", 4UL, &text, 4) || !kread("ds_sess", 28UL, &pfn, 4)) {
+		t_skip("console_no_shadow", "no kernel symbols");
+		return;
+	}
+	t_check("console_text", text != 0, "no cells");
+	if (front() != 0 || text == 0) {
+		t_fail("console_redraw", "console not in front (%ld)", front());
+		return;
+	}
+	/* from here to the last dump nothing may reach the console */
+	before = host("shot cr_before") != 0;
+	fd = fbopen();
+	id = fd < 0 ? -1 : acquire(fd, 1, "conredraw");
+	if (id <= 0 || !waitfront(id, 5)) {
+		t_fail("console_redraw", "no session in front: %s", T_ERR);
+		if (fd >= 0) close(fd);
+		return;
+	}
+	kread("ds_sess", 28UL, &pfn, 4);
+	kread("fbcons", 8UL, &hid, 4);
+	con = open("/dev/console", O_WRONLY | O_NOCTTY);
+	if (con >= 0) {
+		write(con, msg, sizeof msg - 1);
+		close(con);
+	}
+	/* the cells take the text while the screen is the session's */
+	for (i = 0; i < 20 && !hidden; i++) {
+		poll((struct pollfd *)0, 0, 100);
+		hidden = kread((char *)0, text, cell, sizeof cell) &&
+		    memcmp(cell, "\001C\001O\001N\001R\001E\001D\001R\001A\001W", 18) == 0;
+	}
+	close(fd);
+	shown = waitfront(0L, 5);
+	kread("fbcons", 8UL, &hid2, 4);
+	strcpy(box, "no host");
+	if (before) {
+		sleep(1);
+		if (host("shot cr_after") && host("box cr_before cr_after"))
+			strcpy(box, hrep);
+	}
+	t_check("console_no_shadow", pfn == 0 && hid == 1, "s_pfn 0x%lx, hidden %ld", pfn, hid);
+	t_check("console_text_hidden", con >= 0 && hidden, "cells %04x %04x", cell[0], cell[1]);
+	t_check("console_shown", shown && hid2 == 0, "front %ld, hidden %ld", front(), hid2);
+	/* only the nine inverse cells at the top left changed */
+	if (before)
+		t_check("console_repainted", strcmp(box, "0 0 71 15") == 0, "changed: %s", box);
+}
+
 static int
 modid()
 {
@@ -1094,6 +1171,7 @@ main()
 		close(fd);
 	t_check("close_front", waitfront(0L, 5), "front %ld after the last close", front());
 	t_kill();
+	t_conredraw();
 	t_heap();
 	t_module();
 	return t_done();

@@ -26,7 +26,10 @@ syms, glob = [], []
 for l in subprocess.run([NM, '-n', binary], capture_output=True, text=True).stdout.splitlines():
     f = l.split()
     if len(f) == 3 and f[1] in 'Tt':
-        syms.append((int(f[0], 16), f[2]))
+        a = int(f[0], 16)
+        # a function at the object's start owns its address
+        if f[2].startswith('gcc2_compiled') and syms and syms[-1][0] == a: continue
+        syms.append((a, f[2]))
         glob.append(f[1] == 'T')
 # gcc2_compiled. opens each object: name its static code after the object's next symbol
 for i, (a, s) in enumerate(syms):

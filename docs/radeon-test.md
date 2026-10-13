@@ -50,6 +50,23 @@ enough space" error a ZZ9000 can show after several display restarts.
    Return. The screen goes to the graphics card. Photo the screen when it stops
    scrolling. If nothing shows on the card's monitor, photo the Amiga's own
    video output too.
+
+   Until its console starts, Unix fills the Amiga's own screen with one colour
+   for each stage. If it stops on a plain colour, tell us which:
+
+   | Screen | Where it stopped |
+   |---|---|
+   | the loader's text, unchanged | Unix never started (loader or copy) |
+   | flashing white and red | the copied kernel is corrupt |
+   | red | Unix started, sizing memory and boards |
+   | yellow | building its memory map |
+   | green | memory map on, starting up |
+   | blue | starting the console |
+   | text | console up; the stages above passed |
+
+   Unix loads at 0x07000000, so it needs the full 16 MB of motherboard fast
+   RAM. The console's `Total Unix memory` line should read about 80 MB.
+
 3. **Log in** as `root` (no password). A list of commands appears. Photo it.
 
 If anything hangs, photo the screen, reset, and carry on with the next step.

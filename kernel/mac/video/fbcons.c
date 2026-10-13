@@ -51,6 +51,7 @@ void (*fbcons_panicfn)() = 0;
 #define FC	(&fbcons)
 #define PIX(x, y) ((VOL unsigned char *)(FC->fc_m.fm_base + \
 	(unsigned long)(y) * FC->fc_m.fm_row + (unsigned long)(x) * FC->fc_m.fm_depth / 8))
+#define TXT(x, y) (FC->fc_text[(long)(y) * FC->fc_cols + (x)])
 
 static void fb_vt();
 
@@ -140,10 +141,10 @@ register long n;
 	}
 }
 
-/* one glyph at cell (x, y) */
+/* cell v (glyph | FB_TINV | FB_TBOLD) drawn at (x, y) */
 static void
-fb_glyph(x, y, c)
-int x, y, c;
+fb_paint(x, y, v)
+int x, y, v;
 {
 	register VOL unsigned char *p;
 	register unsigned char *g;
@@ -151,14 +152,14 @@ int x, y, c;
 	register int r, b, k, d;
 
 	p = PIX(x * FB_CW, y * FB_CH);
-	g = fb_font[c & 0xFF];
+	g = fb_font[v & 0xFF];
 	row = FC->fc_m.fm_row;
 	d = FC->fc_m.fm_depth;
-	fg = FC->fc_inv ? FC->fc_bg : FC->fc_fg;
-	bg = FC->fc_inv ? FC->fc_fg : FC->fc_bg;
+	fg = v & FB_TINV ? FC->fc_bg : FC->fc_fg;
+	bg = v & FB_TINV ? FC->fc_fg : FC->fc_bg;
 	for (r = 0; r < FB_CH; r++, p += row) {
 		b = g[r];
-		if (FC->fc_bold)
+		if (v & FB_TBOLD)
 			b |= b >> 1;
 		switch (d) {
 		case 1:
@@ -185,6 +186,37 @@ int x, y, c;
 	}
 }
 
+/* one glyph at cell (x, y) in the current attributes */
+static void
+fb_glyph(x, y, c)
+int x, y, c;
+{
+	register int v;
+
+	v = (c & 0xFF) | (FC->fc_inv ? FB_TINV : 0) | (FC->fc_bold ? FB_TBOLD : 0);
+	if (FC->fc_text)
+		TXT(x, y) = v;
+	if (!FC->fc_hide)
+		fb_paint(x, y, v);
+}
+
+/* n cells of the text from index s to index d */
+static void
+fb_tmove(d, s, n)
+register long d, s, n;
+{
+	register unsigned short *t = FC->fc_text;
+
+	if (t == 0)
+		return;
+	if (d < s)
+		for (; n > 0; n--)
+			t[d++] = t[s++];
+	else
+		for (d += n, s += n; n > 0; n--)
+			t[--d] = t[--s];
+}
+
 /* cells x0..x1 of rows y0..y1 to the background */
 static void
 fb_erase(x0, y0, x1, y1)
@@ -194,6 +226,12 @@ int x0, y0, x1, y1;
 	register int r, n;
 
 	if (x0 > x1 || y0 > y1)
+		return;
+	if (FC->fc_text)
+		for (r = y0; r <= y1; r++)
+			for (n = x0; n <= x1; n++)
+				TXT(n, r) = FB_TBLANK;
+	if (FC->fc_hide)
 		return;
 	n = (x1 - x0 + 1) * FC->fc_m.fm_depth;	/* 8 pixels = depth bytes */
 	p = PIX(x0 * FB_CW, y0 * FB_CH);
@@ -219,7 +257,9 @@ int top, bot, n;
 	w = (long)FC->fc_cols * FC->fc_m.fm_depth;
 	row = FC->fc_m.fm_row;
 	if (n > 0) {
-		cnt = (bot - top + 1 - n) * FB_CH;
+		fb_tmove((long)top * FC->fc_cols, (long)(top + n) * FC->fc_cols,
+		    (long)(bot - top + 1 - n) * FC->fc_cols);
+		cnt = FC->fc_hide ? 0 : (bot - top + 1 - n) * FB_CH;
 		d = PIX(0, top * FB_CH);
 		s = PIX(0, (top + n) * FB_CH);
 		if (w == row)
@@ -230,7 +270,9 @@ int top, bot, n;
 		fb_erase(0, bot - n + 1, FC->fc_cols - 1, bot);
 	} else if (n < 0) {
 		n = -n;
-		cnt = (bot - top + 1 - n) * FB_CH;
+		fb_tmove((long)(top + n) * FC->fc_cols, (long)top * FC->fc_cols,
+		    (long)(bot - top + 1 - n) * FC->fc_cols);
+		cnt = FC->fc_hide ? 0 : (bot - top + 1 - n) * FB_CH;
 		if (w == row)
 			fb_move(PIX(0, (top + n) * FB_CH), PIX(0, top * FB_CH), w * cnt);
 		else {
@@ -261,8 +303,12 @@ int y, x, n;
 	if (n == 0)
 		return;
 	span = cols - x - (n > 0 ? n : -n);
+	if (n > 0)
+		fb_tmove((long)y * cols + x + n, (long)y * cols + x, (long)span);
+	else
+		fb_tmove((long)y * cols + x, (long)y * cols + x - n, (long)span);
 	p = PIX(x * FB_CW, y * FB_CH);
-	for (r = 0; r < FB_CH; r++, p += FC->fc_m.fm_row)
+	for (r = FC->fc_hide ? FB_CH : 0; r < FB_CH; r++, p += FC->fc_m.fm_row)
 		if (n > 0)
 			fb_move(p + n * d, p, (long)span * d);
 		else
@@ -281,7 +327,7 @@ fb_cursor()
 	register unsigned long v, o;
 	register int r, k, n;
 
-	if (FC->fc_x >= FC->fc_cols || FC->fc_y >= FC->fc_rows)
+	if (FC->fc_hide || FC->fc_x >= FC->fc_cols || FC->fc_y >= FC->fc_rows)
 		return;
 	v = FC->fc_fg ^ FC->fc_bg;
 	n = FC->fc_m.fm_depth;
@@ -796,10 +842,7 @@ fbcons_active()
 	return FC->fc_on;
 }
 
-/*
- * mac_stop: whatever held the renderer will not finish; draw what was
- * queued so the last messages are on the screen.
- */
+/* Let go of the renderer, drawing what was queued meanwhile. */
 void
 fbcons_unlock()
 {
@@ -807,6 +850,18 @@ fbcons_unlock()
 		return;
 	FC->fc_busy = 1;
 	fb_release();
+}
+
+/*
+ * Stop, MMU off: whatever held the renderer will not finish; draw what
+ * was queued so the last messages are on the screen.  The cells are in
+ * mapped memory, out of reach now.
+ */
+void
+fbcons_stop()
+{
+	FC->fc_text = 0;
+	fbcons_unlock();
 }
 
 /*
@@ -824,6 +879,126 @@ fbcons_grab()
 		FC->fc_busy = 1;
 	FB_IPLX(s);
 	return ok;
+}
+
+/* pixel i of the cell row at p */
+static unsigned long
+fb_getpix(p, i)
+register VOL unsigned char *p;
+register int i;
+{
+	register int d = FC->fc_m.fm_depth;
+
+	switch (d) {
+	case 8:
+		return p[i];
+	case 16:
+		return (unsigned long)p[2 * i] << 8 | p[2 * i + 1];
+	case 32:
+		p += 4 * i;
+		return (unsigned long)p[0] << 24 | (unsigned long)p[1] << 16 |
+		    (unsigned long)p[2] << 8 | p[3];
+	default:
+		i *= d;
+		return p[i >> 3] >> (8 - d - (i & 7)) & ((1 << d) - 1);
+	}
+}
+
+/* the cell fbcons drew at (x, y), read back from the screen; blank if none */
+static int
+fb_readcell(x, y)
+int x, y;
+{
+	unsigned char b[FB_CH];
+	register VOL unsigned char *p;
+	register unsigned char *g;
+	register unsigned long v, fg, bg;
+	register int r, i, c, k, gb, any, all;
+
+	v = FC->fc_m.fm_depth == 32 ? ~0UL : (1UL << FC->fc_m.fm_depth) - 1;
+	fg = FC->fc_fg & v;
+	bg = FC->fc_bg & v;
+	any = 0;
+	all = 0xFF;
+	p = PIX(x * FB_CW, y * FB_CH);
+	for (r = 0; r < FB_CH; r++, p += FC->fc_m.fm_row) {
+		b[r] = 0;
+		for (i = 0; i < FB_CW; i++)
+			if ((v = fb_getpix(p, i)) == fg)
+				b[r] |= 0x80 >> i;
+			else if (v != bg)
+				return FB_TBLANK;
+		any |= b[r];
+		all &= b[r];
+	}
+	if (any == 0)
+		return FB_TBLANK;
+	if (all == 0xFF)
+		return FB_TBLANK | FB_TINV;
+	/* k: bit 0 bold, bit 1 inverse; the middle row rules most glyphs out */
+	for (k = 0; k < 4; k++)
+		for (c = 0x20; c < 0x120; c++) {
+			g = fb_font[c & 0xFF];
+			for (r = FB_CH / 2; r < FB_CH + FB_CH / 2; r++) {
+				gb = g[r % FB_CH];
+				if (k & 1)
+					gb |= gb >> 1;
+				if (k & 2)
+					gb = ~gb & 0xFF;
+				if (gb != b[r % FB_CH])
+					break;
+			}
+			if (r == FB_CH + FB_CH / 2)
+				return (c & 0xFF) | (k & 1 ? FB_TBOLD : 0) | (k & 2 ? FB_TINV : 0);
+		}
+	return FB_TBLANK;
+}
+
+/*
+ * Keep cells (fc_rows by fc_cols) from now on, filled from what is on
+ * the screen.  The caller holds the renderer.
+ */
+void
+fbcons_text(t)
+unsigned short *t;
+{
+	register int x, y;
+
+	if (FC->fc_cdrawn)
+		fb_cursor();
+	for (y = 0; y < FC->fc_rows; y++)
+		for (x = 0; x < FC->fc_cols; x++)
+			t[(long)y * FC->fc_cols + x] = fb_readcell(x, y);
+	FC->fc_text = t;
+}
+
+/* Another owner has the screen: draw only into the cells.  Renderer held. */
+void
+fbcons_hide()
+{
+	if (FC->fc_cdrawn)
+		fb_cursor();
+	FC->fc_hide = 1;
+}
+
+/* The screen is back: repaint it from the cells.  Renderer held, or a panic. */
+void
+fbcons_show()
+{
+	register unsigned long w;
+	register int x, y, v;
+
+	FC->fc_hide = 0;
+	FC->fc_cdrawn = 0;
+	w = (FC->fc_m.fm_width * FC->fc_m.fm_depth + 7) / 8;
+	for (y = 0; y < FC->fc_m.fm_height; y++)
+		fb_fill(PIX(0, y), (long)w, FC->fc_bg);
+	if (FC->fc_text == 0)
+		return;
+	for (y = 0; y < FC->fc_rows; y++)
+		for (x = 0; x < FC->fc_cols; x++)
+			if ((v = TXT(x, y)) != FB_TBLANK)
+				fb_paint(x, y, v);
 }
 
 /*
@@ -846,6 +1021,8 @@ register struct fbmode *m;
 	if (m->fm_row < m->fm_width * d / 8 || (m->fm_row & 1) || (m->fm_base & 1))
 		return 0;
 	FC->fc_on = 0;
+	FC->fc_text = 0;
+	FC->fc_hide = 0;
 	FC->fc_m = *m;
 	FC->fc_m.fm_base = FB_MAP(m->fm_base);
 	FC->fc_cols = m->fm_width / FB_CW;

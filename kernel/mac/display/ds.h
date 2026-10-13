@@ -99,7 +99,6 @@ struct dssess {
 	long		s_id;		/* creation serial; 0 console */
 	long		s_uid;
 	char		s_name[16];
-	caddr_t		s_shadow;	/* the console's shadow, contiguous */
 	unsigned long	*s_pfn;		/* shadow page frames of the mapped region */
 	unsigned long	s_npg;		/* frames owned: the first s_npg entries */
 	unsigned long	s_size;		/* bytes mapped */
@@ -128,6 +127,7 @@ struct dssess {
 	int		s_vmode;	/* FBIOSMODE's mode, index + 1; 0 the display's */
 	unsigned long	s_voff;		/* its own VRAM, from d_page; 0 none */
 	unsigned long	s_vpan;		/* shown from there into it */
+	unsigned long	s_ext;		/* bytes of its region touched so far */
 #endif
 };
 
@@ -186,18 +186,22 @@ int	ds_setmode();		/* (s, id) -> errno */
 #ifdef DS_AMIGA
 int	ds_setpan();		/* (s, offset) -> errno */
 /*
- * A card with room for more than one frame gives sessions their own
- * VRAM: such a session maps it, shown or not, and needs no copy.
+ * On a card with panning a user session keeps its whole region at full
+ * depth (DS_FULL): in front at d_page, hidden in VRAM of its own while
+ * a frame is spare (DS_OWNV: mapped there, shown or not, no copy), else
+ * in its shadow.
  */
 extern unsigned long am_dsphys, am_dsvram, am_vslot();
 #define DS_PHYS(va)	((va) + am_dsphys)
 #define DS_VOFF(s)	((s)->s_voff)
 #define DS_OWNV(s)	((s)->s_voff != 0)
+#define DS_FULL(s)	(am_dsvram != 0 && (s) != &ds_sess[0])
 #define DS_VSPAN	(am_dsvram > ds_disp.d_vsize ? am_dsvram : ds_disp.d_vsize)
 #else
 #define DS_PHYS(va)	(va)
 #define DS_VOFF(s)	0
 #define DS_OWNV(s)	0
+#define DS_FULL(s)	0
 #define DS_VSPAN	ds_disp.d_vsize
 #endif
 #ifdef DS_ATARI

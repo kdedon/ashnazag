@@ -16,24 +16,18 @@ LIBGCC=$(ls "$TC"/lib/gcc-lib/m68k-cbm-sysv4/*/libgcc.a | tail -1)
 mkdir "$O/extra"
 (cd "$O/extra" && ar x "$SYS/usr/ccs/lib/libc.so" && rm -f libc.so.1 &&
  ar rc ../libextra.a $(ar t "$SYS/usr/ccs/lib/libc.so" | grep -v '^libc.so.1$'))
-# Warp3D.library's host side, with Mesa's software renderer when it is
-# built, and its DRI drivers when they are
+# Warp3D.library's host side: Mesa's software renderer and the DRI drivers
 GLW=${GLW:-$AUX/images/work/gl}
 TC95=$AUX/toolchain/amix-gcc295
-W3D= GL= DRI= DRILIB=
-if [ -f "$GLW/lib/libdrihost.a" ]; then
-    DRI="-DW3D_DRI -I$AUX/kernel/mac/display"
-    DRILIB=$GLW/lib/libdrihost.a
-fi
-if [ -f "$GLW/lib/libOSMesa.a" ]; then
-    [ -x "$TC95/bin/m68k-cbm-sysv4-gcc" ] || { echo "[FAIL] Mesa is built but $TC95 is missing" >&2; exit 1; }
-    nice -n 19 "$TC95/bin/m68k-cbm-sysv4-gcc" -O2 -m68040 -fomit-frame-pointer -Wall $DRI \
-        -I"$GLW/include" -I"$G/amiga" -c "$G/amiga/w3d.c" -o "$O/w3d.o"
-    nice -n 19 "$TC95/bin/m68k-cbm-sysv4-gcc" -O2 -m68040 -fomit-frame-pointer -Wall \
-        -c "$G/amiga/fastmem.c" -o "$O/fastmem.o"
-    W3D=-DWARP3D
-    GL="$O/fastmem.o $O/w3d.o $DRILIB $GLW/lib/libOSMesa.a $SYS/usr/ccs/lib/libm.a $(ls "$TC95"/lib/gcc-lib/m68k-cbm-sysv4/*/libgcc.a | tail -1)"
-fi
+for f in "$GLW/lib/libOSMesa.a" "$GLW/lib/libdrihost.a" "$TC95/bin/m68k-cbm-sysv4-gcc"; do
+    [ -f "$f" ] || { echo "[FAIL] $f missing: build Mesa (gl/build.sh) or set GLW" >&2; exit 1; }
+done
+nice -n 19 "$TC95/bin/m68k-cbm-sysv4-gcc" -O2 -m68040 -fomit-frame-pointer -Wall -DW3D_DRI -I"$AUX/kernel/mac/display" \
+    -I"$GLW/include" -I"$G/amiga" -c "$G/amiga/w3d.c" -o "$O/w3d.o"
+nice -n 19 "$TC95/bin/m68k-cbm-sysv4-gcc" -O2 -m68040 -fomit-frame-pointer -Wall \
+    -c "$G/amiga/fastmem.c" -o "$O/fastmem.o"
+W3D=-DWARP3D
+GL="$O/fastmem.o $O/w3d.o $GLW/lib/libdrihost.a $GLW/lib/libOSMesa.a $SYS/usr/ccs/lib/libm.a $(ls "$TC95"/lib/gcc-lib/m68k-cbm-sysv4/*/libgcc.a | tail -1)"
 for source in amiga/startmig amiga/migdisp amiga/rtgtransport amiga/input amiga/hostfs \
     amiga/hostfsbroker amiga/sysroot amiga/miglog amiga/migsnd amiga/migfloppy amiga/amfm sndout; do
     nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -Wall -D__STDC__=0 $W3D \

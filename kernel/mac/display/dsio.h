@@ -54,7 +54,7 @@
 #define FBF_BLANK	0x02
 #define FBF_SETMODE	0x04
 #define FBF_CMAP	0x08	/* CLUT can be written */
-#define FBF_OWNV	0x10	/* the session's own VRAM: kept at full depth while hidden */
+#define FBF_OWNV	0x10	/* the whole region kept at full depth while hidden; FBIOPAN */
 
 struct fbinfo {
 	unsigned long	fi_type;

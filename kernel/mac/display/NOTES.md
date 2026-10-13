@@ -60,7 +60,7 @@ Not implemented: `FBIOVIEW`, `DSIOCSHOTKEY`, `EVIOCBELL`, `EVIOCINJECT`, `/dev/c
                  ds_srv ─────────────┬─────────────────────┘
                                      v
    ds_switch: unload both sessions' user translations, VRAM -> old shadow,
-   new shadow -> VRAM, fbcons base moves, CLUT, notes, synthetic key ups
+   new shadow -> VRAM (console: text only, repainted), CLUT, notes, synthetic key ups
 ```
 
 - **Why queuerun.** A switch calls `hat_unload` on other processes' segments. STREAMS service
@@ -148,9 +148,11 @@ Only QEMU's model has run these:
 
 Shadows are page frames from the free list (`page_get`), outside kvseg, the fixed 4 MB kernel
 heap at 0x40040000; the kernel copies and draws through the identity map, so frames above 1 GB
-are refused (`ENOMEM`). The console's shadow is one physically contiguous run, as `fbcons` draws
-into it while hidden; it is taken with the first session and kept. A user session's frames
-are freed when it ends, by close or kill. The stock `kvm_init` puts the page array and page
+are refused (`ENOMEM`). The console has no shadow: on the display's first open `fbcons` reads
+its cells back from the screen into a kmem array (glyph and attributes, 2 bytes a cell), keeps
+them, draws only into them while hidden and repaints from them when shown. A user session's frames
+are freed when it ends, by close or kill. A Videl session's shadow holds only what its mode shows;
+it grows when the session leaves the front in a larger mode. The stock `kvm_init` puts the page array and page
 hash in kvseg, 60 bytes per page (about 2 MB at 128 MB).
 
 `mac/patch_kvmpages.py` makes `kvm_init` use the array's address in a cached window onto the

@@ -41,6 +41,8 @@ struct fbvt {
 
 struct fbcons {
 	int		fc_on;
+	unsigned short	*fc_text;	/* cells, rows by cols: glyph | FB_TINV | FB_TBOLD */
+	int		fc_hide;	/* screen lent to another owner: cells only */
 	struct fbmode	fc_m;
 	int		fc_cols, fc_rows;
 	int		fc_x, fc_y;
@@ -59,6 +61,10 @@ struct fbcons {
 	unsigned long	fc_lost;	/* nested bytes dropped */
 };
 
+#define FB_TINV		0x100
+#define FB_TBOLD	0x200
+#define FB_TBLANK	' '
+
 extern struct fbcons fbcons;
 extern struct fbvt fbvt_kern, fbvt_tty;
 extern unsigned char fb_font[256][16];
@@ -69,8 +75,12 @@ void	fbcons_kputc();		/* (c): kernel printf mirror */
 void	fbcons_putc();		/* (c): console tty output, VT100 subset */
 void	fbcons_write();		/* (buf, n): same, a block */
 int	fbcons_active();	/* 1 while the screen is the console */
-void	fbcons_unlock();	/* mac_stop: draw what an interrupted owner queued */
+void	fbcons_unlock();	/* let go of the renderer, draw what was queued */
+void	fbcons_stop();		/* MMU off: draw what an interrupted owner queued */
 int	fbcons_grab();		/* take the renderer to move the screen; 0 if busy */
+void	fbcons_text();		/* (cells): read the screen into cells, keep them */
+void	fbcons_hide();		/* screen lent away: output goes to the cells */
+void	fbcons_show();		/* screen back: repaint it from the cells */
 extern void (*fbcons_panicfn)();	/* called once, when a panic first draws */
 
 /* mode discovery (fbprobe.c) */
