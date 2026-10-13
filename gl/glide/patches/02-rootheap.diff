@@ -1,0 +1,54 @@
+--- a/fxglide.h
++++ b/fxglide.h
+@@ -1463,7 +1463,10 @@
+   } deviceArchProcs;
+ };
+ 
+-extern struct _GlideRoot_s GR_CDECL _GlideRoot;
++/* on the heap from the first open: a program that never opens the card pays nothing */
++extern struct _GlideRoot_s GR_CDECL *_GlideRootp;
++#define _GlideRoot (*_GlideRootp)
++FxBool _grRootAlloc(void);
+ #if GLIDE_MULTIPLATFORM
+ extern GrGCFuncs _curGCFuncs;
+ #endif
+--- a/diglide.c
++++ b/diglide.c
+@@ -143,7 +143,15 @@
+ static char glideIdent[] = "@#%" VERSIONSTR ;
+ 
+ /* the root of all EVIL */
+-struct _GlideRoot_s GR_CDECL _GlideRoot;
++struct _GlideRoot_s GR_CDECL *_GlideRootp;
++
++FxBool
++_grRootAlloc(void)
++{
++  if (!_GlideRootp)
++    _GlideRootp = calloc(1, sizeof *_GlideRootp);
++  return _GlideRootp != NULL;
++}
+ /* This is global to speed up the function call wrappers */
+ 
+ /*---------------------------------------------------------------------------
+@@ -341,6 +349,8 @@
+   GDBG_INIT();
+   
+   GDBG_INFO(80,"grGlideInit()\n");
++  if (!_grRootAlloc())
++    return;
+   _GlideInitEnvironment();                      /* the main init code */
+   FXUNUSED(*glideIdent);
+ 
+--- a/linhwc.c
++++ b/linhwc.c
+@@ -97,6 +97,9 @@
+ 	       int fbOffset, int backOffset, int depthOffset, 
+ 	       int textureOffset, int textureSize, 
+ 	       volatile int *fifoPtr, volatile int *fifoRead) {
++  extern FxBool _grRootAlloc(void);
++
++  _grRootAlloc();
+   driInfo.pFB=pFB;
+   driInfo.pRegs=pRegs;
+   driInfo.deviceID=deviceID;

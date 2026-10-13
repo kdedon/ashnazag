@@ -1,0 +1,797 @@
+diff -ruN pa/xc/lib/GL/mesa/src/drv/tdfx/tdfx_context.c pb/xc/lib/GL/mesa/src/drv/tdfx/tdfx_context.c
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_context.c
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_context.c
+@@ -184,7 +184,11 @@
+       return GL_FALSE;
+    }
+ 
++#ifdef __AMIX__
++   fxMesa->Glide.grDRIOpen( (char*) fxScreen->fb.map, fxScreen->regs.map, fxScreen->deviceID,
++#else
+    fxMesa->Glide.grDRIOpen( (char*) sPriv->pFB, fxScreen->regs.map, fxScreen->deviceID,
++#endif
+ 	      fxScreen->width, fxScreen->height, fxScreen->mem, fxScreen->cpp,
+ 	      fxScreen->stride, fxScreen->fifoOffset, fxScreen->fifoSize,
+ 	      fxScreen->fbOffset, fxScreen->backOffset, fxScreen->depthOffset,
+@@ -227,10 +231,8 @@
+    ctx = fxMesa->glCtx;
+    if ( TDFX_IS_NAPALM( fxMesa ) ) {
+       ctx->Const.MaxTextureLevels = 12;
+-      ctx->Const.NumCompressedTextureFormats = 1;
+    } else {
+       ctx->Const.MaxTextureLevels = 9;
+-      ctx->Const.NumCompressedTextureFormats = 0;
+    }
+    ctx->Const.MaxTextureUnits = TDFX_IS_BANSHEE( fxMesa ) ? 1 : 2;
+ 
+@@ -707,6 +709,20 @@
+  */
+ GLboolean tdfxInitGlide(tdfxContextPtr tmesa)
+ {
++#ifdef __AMIX__
++   /* Glide is linked in: each entry by its own name */
++   switch (tmesa->fxScreen->deviceID) {
++   case PCI_CHIP_BANSHEE:
++   case PCI_CHIP_VOODOO3:
++      break;
++   default:
++      __driUtilMessage("unrecognized 3dfx deviceID: 0x%x",
++                       tmesa->fxScreen->deviceID);
++      return GL_FALSE;
++   }
++#define GET_FUNCTION(PTR, NAME)						\
++   { extern void PTR(); tmesa->Glide.PTR = (void *) PTR; }
++#else
+    static const char *defaultGlide = "libglide3.so";
+    const char *libName;
+    void *libHandle;
+@@ -761,6 +777,7 @@
+       __driUtilMessage("couldn't find Glide function %s in %s.",	\
+               NAME, libName);						\
+    }
++#endif
+ 
+    GET_FUNCTION(grDrawPoint, "grDrawPoint");
+    GET_FUNCTION(grDrawLine, "grDrawLine");
+@@ -866,6 +883,7 @@
+    GET_FUNCTION(grDRIResetSAREA, "grDRIResetSAREA");
+    GET_FUNCTION(grDRIBufferSwap, "grDRIBufferSwap");
+ 
++#ifndef __AMIX__
+    /*
+     * Extension functions:
+     * Just use dlysm() because we want a NULL pointer if the function is
+@@ -888,6 +906,7 @@
+    tmesa->Glide.txImgQuantize = dlsym(libHandle, "txImgQuantize");
+    tmesa->Glide.txImgDequantizeFXT1 = dlsym(libHandle, "_txImgDequantizeFXT1");
+    tmesa->Glide.txErrorSetCallback = dlsym(libHandle, "txErrorSetCallback");
++#endif
+    
+ #ifdef DEBUG_TRAP
+    /* wrap the drawing functions so we can trap them */
+diff -ruN pa/xc/lib/GL/mesa/src/drv/tdfx/tdfx_context.h pb/xc/lib/GL/mesa/src/drv/tdfx/tdfx_context.h
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_context.h
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_context.h
+@@ -56,9 +56,17 @@
+ #include "context.h"
+ #include "macros.h"
+ #include "matrix.h"
+-#include "mem.h"
++#include "imports.h"
+ #include "mtypes.h"
+ 
++/* Mesa 4's names for Mesa 5's: units 0 and 1 in one texture-enable mask */
++#define TEXTURE0_2D		TEXTURE_2D_BIT
++#define TEXTURE1_2D		(TEXTURE_2D_BIT << 4)
++#define TEXTURE0_ANY		0x0f
++#define TEXTURE1_ANY		0xf0
++#define TDFX_TEXENABLED(ctx)	((ctx)->Texture.Unit[0]._ReallyEnabled | \
++				 (ctx)->Texture.Unit[1]._ReallyEnabled << 4)
++
+ #include "tdfx_screen.h"
+ 
+ 
+@@ -252,6 +260,10 @@
+ typedef struct tdfx_context *tdfxContextPtr;
+ 
+ 
++#ifdef __AMIX__
++#include "tdfx_sarea.h"
++typedef tdfx_sarea_t TDFXSAREAPriv;
++#else
+ typedef struct {
+    volatile int fifoPtr;
+    volatile int fifoRead;
+@@ -260,6 +272,7 @@
+    volatile int texOwner;
+ }
+ TDFXSAREAPriv;
++#endif
+ 
+ 
+ typedef struct {
+@@ -342,12 +355,30 @@
+ /* ================================================================
+  * The vertex structures.
+  */
++/* Glide reads the colour as one ARGB long */
++#ifdef MESA_BIG_ENDIAN
++typedef struct {
++   GLubyte	alpha;
++   GLubyte	red;
++   GLubyte	green;
++   GLubyte	blue;
++} tdfx_color_t;
++#define TDFX_CB 3
++#define TDFX_CG 2
++#define TDFX_CR 1
++#define TDFX_CA 0
++#else
+ typedef struct {
+    GLubyte	blue;
+    GLubyte	green;
+    GLubyte	red;
+    GLubyte	alpha;
+ } tdfx_color_t;
++#define TDFX_CB 0
++#define TDFX_CG 1
++#define TDFX_CR 2
++#define TDFX_CA 3
++#endif
+ 
+ typedef struct {
+    GLfloat x, y, z;			/* Coordinates in screen space */
+diff -ruN pa/xc/lib/GL/mesa/src/drv/tdfx/tdfx_pixels.c pb/xc/lib/GL/mesa/src/drv/tdfx/tdfx_pixels.c
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_pixels.c
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_pixels.c
+@@ -616,7 +616,7 @@
+        !ctx->Color.ColorMask[2] ||
+        !ctx->Color.ColorMask[3] ||
+        ctx->Color.ColorLogicOpEnabled ||
+-       ctx->Texture._ReallyEnabled ||
++       TDFX_TEXENABLED(ctx) ||
+        ctx->Depth.OcclusionTest ||
+        fxMesa->Fallback)       
+    {
+diff -ruN pa/xc/lib/GL/mesa/src/drv/tdfx/tdfx_render.c pb/xc/lib/GL/mesa/src/drv/tdfx/tdfx_render.c
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_render.c
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_render.c
+@@ -67,7 +67,7 @@
+    mask &= ~(DD_ACCUM_BIT);
+ 
+    if (mask & DD_STENCIL_BIT) {
+-      if (!fxMesa->haveHwStencil || ctx->Stencil.WriteMask != 0xff) {
++      if (!fxMesa->haveHwStencil || ctx->Stencil.WriteMask[0] != 0xff) {
+          /* Napalm seems to have trouble with stencil write masks != 0xff */
+          /* do stencil clear in software */
+          mask &= ~(DD_STENCIL_BIT);
+@@ -275,7 +275,7 @@
+                                         fxMesa->Color.ClearAlpha,
+                                         fxMesa->Depth.Clear);
+ 	 FX_grColorMaskv_NoLock(ctx, true4);
+-	 if (ctx->Color.DrawDestMask & FRONT_LEFT_BIT)
++	 if (ctx->Color._DrawDestMask & FRONT_LEFT_BIT)
+             fxMesa->Glide.grRenderBuffer(GR_BUFFER_FRONTBUFFER);
+ 	 if (!ctx->Depth.Test || !ctx->Depth.Mask)
+ 	    fxMesa->Glide.grDepthMask(FXFALSE);
+@@ -295,7 +295,7 @@
+                fxMesa->Glide.grDepthMask(FXTRUE);
+             }
+             FX_grColorMaskv_NoLock(ctx, true4);
+-            if (ctx->Color.DrawDestMask & FRONT_LEFT_BIT)
++            if (ctx->Color._DrawDestMask & FRONT_LEFT_BIT)
+                fxMesa->Glide.grRenderBuffer(GR_BUFFER_FRONTBUFFER);
+          }
+       }
+diff -ruN pa/xc/lib/GL/mesa/src/drv/tdfx/tdfx_screen.c pb/xc/lib/GL/mesa/src/drv/tdfx/tdfx_screen.c
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_screen.c
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_screen.c
+@@ -36,7 +36,13 @@
+ 
+ #include <X11/Xlibint.h>
+ 
++#ifdef __AMIX__
++#include <sys/resource.h>
++#include "sarea.h"
++#include "amixdrirec.h"
++#else
+ #include "tdfx_dri.h"
++#endif
+ #include "tdfx_context.h"
+ #include "tdfx_lock.h"
+ #include "tdfx_vb.h"
+@@ -62,6 +68,97 @@
+ 
+ 
+ 
++#ifdef __AMIX__
++/*
++ * The device private is the display session's; the VRAM layout is the
++ * kernel's, in the shared area.  Glide gets all of VRAM and the
++ * registers from the kernel's maps.
++ */
++static GLboolean
++tdfxCreateScreen( __DRIscreenPrivate *sPriv )
++{
++   tdfxScreenPrivate *fxScreen;
++   AMIXDRIPtr dp = (AMIXDRIPtr) sPriv->pDevPriv;
++   TDFXSAREAPriv *sa = (TDFXSAREAPriv *)
++      ((char *) sPriv->pSAREA + sizeof(XF86DRISAREARec));
++   drmHandle offset, handle;
++   drmSize size;
++   drmMapType type;
++   drmMapFlags flags;
++   struct rlimit rl;
++   int i, mtrr;
++
++   if ( sPriv->devPrivSize < sizeof(AMIXDRIRec) || dp->cpp != 2 ) {
++      __driUtilMessage( "3dfx DRI driver needs a 16-bit screen" );
++      return GL_FALSE;
++   }
++   if ( sa->fifoSize == 0 ) {
++      __driUtilMessage( "3dfx DRI driver: no VRAM left for 3D" );
++      return GL_FALSE;
++   }
++   fxScreen = (tdfxScreenPrivate *) Xmalloc( sizeof(tdfxScreenPrivate) );
++   if ( !fxScreen )
++      return GL_FALSE;
++   memset( fxScreen, 0, sizeof(*fxScreen) );
++   fxScreen->driScrnPriv = sPriv;
++   sPriv->private = (void *) fxScreen;
++
++   for ( i = 0; drmGetMap( sPriv->fd, i, &offset, &size, &type, &flags,
++			   &handle, &mtrr ) == 0; i++ ) {
++      if ( type == DRM_REGISTERS ) {
++	 /* the register groups Glide uses: I/O, command fifo, 2D, 3D */
++	 fxScreen->regs.handle = offset;
++	 fxScreen->regs.size = size < 0x600000 ? size : 0x600000;
++      } else if ( type == DRM_FRAME_BUFFER ) {
++	 fxScreen->fb.handle = offset;
++	 fxScreen->fb.size = size;
++      }
++   }
++   fxScreen->deviceID		= sa->deviceID;
++   fxScreen->width		= dp->width;
++   fxScreen->height		= dp->height;
++   fxScreen->mem		= fxScreen->fb.size;
++   fxScreen->cpp		= dp->cpp;
++   fxScreen->stride		= dp->stride;
++   fxScreen->fifoOffset		= sa->fifoOffset;
++   fxScreen->fifoSize		= sa->fifoSize;
++   fxScreen->fbOffset		= dp->frontOffset;
++   fxScreen->backOffset		= sa->backOffset;
++   fxScreen->depthOffset	= sa->depthOffset;
++   fxScreen->textureOffset	= sa->textureOffset;
++   fxScreen->textureSize	= sa->textureSize;
++   fxScreen->sarea_priv_offset	= sizeof(XF86DRISAREARec);
++
++   /* the default 16 MB of mappings a process may have does not fit VRAM */
++   if ( getrlimit( RLIMIT_VMEM, &rl ) == 0 && rl.rlim_cur != RLIM_INFINITY ) {
++      rl.rlim_cur += fxScreen->regs.size + fxScreen->fb.size;
++      if ( rl.rlim_max != RLIM_INFINITY && rl.rlim_cur > rl.rlim_max )
++	 rl.rlim_cur = rl.rlim_max;
++      (void) setrlimit( RLIMIT_VMEM, &rl );
++   }
++   if ( !fxScreen->regs.size || !fxScreen->fb.size ||
++	drmMap( sPriv->fd, fxScreen->regs.handle,
++		fxScreen->regs.size, &fxScreen->regs.map ) ) {
++      __driUtilMessage( "3dfx DRI driver: no register map (0x%lx, %lu bytes)",
++			(unsigned long) fxScreen->regs.handle,
++			(unsigned long) fxScreen->regs.size );
++      Xfree( fxScreen );
++      sPriv->private = NULL;
++      return GL_FALSE;
++   }
++   if ( drmMap( sPriv->fd, fxScreen->fb.handle,
++		fxScreen->fb.size, &fxScreen->fb.map ) ) {
++      __driUtilMessage( "3dfx DRI driver: no VRAM map (0x%lx, %lu bytes)",
++			(unsigned long) fxScreen->fb.handle,
++			(unsigned long) fxScreen->fb.size );
++      drmUnmap( fxScreen->regs.map, fxScreen->regs.size );
++      Xfree( fxScreen );
++      sPriv->private = NULL;
++      return GL_FALSE;
++   }
++   return GL_TRUE;
++}
++#else
+ static GLboolean
+ tdfxCreateScreen( __DRIscreenPrivate *sPriv )
+ {
+@@ -100,6 +197,7 @@
+ 
+    return GL_TRUE;
+ }
++#endif
+ 
+ 
+ static void
+@@ -109,6 +207,9 @@
+ 
+    if ( fxScreen ) {
+       drmUnmap( fxScreen->regs.map, fxScreen->regs.size );
++#ifdef __AMIX__
++      drmUnmap( fxScreen->fb.map, fxScreen->fb.size );
++#endif
+ 
+       Xfree( fxScreen );
+       sPriv->private = NULL;
+@@ -221,7 +322,7 @@
+ 
+       if ( curDrawPriv == driDrawPriv ) {
+ 	 /* swapping window bound to current context, flush first */
+-	 _mesa_swapbuffers( ctx );
++	 _mesa_notifySwapBuffers( ctx );
+ 	 LOCK_HARDWARE( fxMesa );
+       }
+       else {
+diff -ruN pa/xc/lib/GL/mesa/src/drv/tdfx/tdfx_screen.h pb/xc/lib/GL/mesa/src/drv/tdfx/tdfx_screen.h
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_screen.h
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_screen.h
+@@ -47,6 +47,9 @@
+ 
+ typedef struct {
+    tdfxRegion regs;
++#ifdef __AMIX__
++   tdfxRegion fb;			/* all of VRAM */
++#endif
+ 
+    int deviceID;
+    int width;
+diff -ruN pa/xc/lib/GL/mesa/src/drv/tdfx/tdfx_span.c pb/xc/lib/GL/mesa/src/drv/tdfx/tdfx_span.c
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_span.c
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_span.c
+@@ -1308,17 +1308,17 @@
+ 
+ /* Set the buffer used for reading */
+ static void tdfxDDSetReadBuffer( GLcontext *ctx,
+-				 GLframebuffer *buffer, GLenum mode )
++				 GLframebuffer *buffer, GLuint bufferBit )
+ {
+    tdfxContextPtr fxMesa = TDFX_CONTEXT(ctx);
+    (void) buffer;
+ 
+-   switch ( mode ) {
+-   case GL_FRONT_LEFT:
++   switch ( bufferBit ) {
++   case FRONT_LEFT_BIT:
+       fxMesa->ReadBuffer = GR_BUFFER_FRONTBUFFER;
+       break;
+ 
+-   case GL_BACK_LEFT:
++   case BACK_LEFT_BIT:
+       fxMesa->ReadBuffer = GR_BUFFER_BACKBUFFER;
+       break;
+ 
+@@ -1336,7 +1336,7 @@
+    tdfxContextPtr fxMesa = TDFX_CONTEXT(ctx);
+    struct swrast_device_driver *swdd = _swrast_GetDeviceDriverReference( ctx );
+ 
+-   swdd->SetReadBuffer = tdfxDDSetReadBuffer;
++   swdd->SetBuffer = tdfxDDSetReadBuffer;
+ 
+    if ( VISUAL_EQUALS_RGBA(ctx->Visual, 5, 6, 5, 0) )
+    {
+diff -ruN pa/xc/lib/GL/mesa/src/drv/tdfx/tdfx_state.c pb/xc/lib/GL/mesa/src/drv/tdfx/tdfx_state.c
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_state.c
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_state.c
+@@ -37,6 +37,7 @@
+  */
+ 
+ #include "mtypes.h"
++#include "colormac.h"
+ #include "texformat.h"
+ #include "texstore.h"
+ 
+@@ -66,7 +67,9 @@
+    tdfxContextPtr fxMesa = TDFX_CONTEXT(ctx);
+    GrCmpFnc_t func;
+    GrAlphaBlendFnc_t srcRGB, dstRGB, srcA, dstA;
+-   GrAlpha_t ref = ctx->Color.AlphaRef;
++   GrAlpha_t ref;
++
++   UNCLAMPED_FLOAT_TO_UBYTE(ref, ctx->Color.AlphaRef);
+ 
+    if ( TDFX_DEBUG & DEBUG_VERBOSE_API ) {
+       fprintf( stderr, "%s()\n", __FUNCTION__ );
+@@ -257,7 +260,7 @@
+    }
+ }
+ 
+-static void tdfxDDAlphaFunc( GLcontext *ctx, GLenum func, GLchan ref )
++static void tdfxDDAlphaFunc( GLcontext *ctx, GLenum func, GLfloat ref )
+ {
+    tdfxContextPtr fxMesa = TDFX_CONTEXT( ctx );
+ 
+@@ -468,13 +471,13 @@
+ 
+    if (fxMesa->haveHwStencil) {
+       if (ctx->Stencil.Enabled) {
+-         fxMesa->Stencil.Function = ctx->Stencil.Function - GL_NEVER;
+-         fxMesa->Stencil.RefValue = ctx->Stencil.Ref;
+-         fxMesa->Stencil.ValueMask = ctx->Stencil.ValueMask;
+-         fxMesa->Stencil.WriteMask = ctx->Stencil.WriteMask;
+-         fxMesa->Stencil.FailFunc = convertGLStencilOp(ctx->Stencil.FailFunc);
+-         fxMesa->Stencil.ZFailFunc =convertGLStencilOp(ctx->Stencil.ZFailFunc);
+-         fxMesa->Stencil.ZPassFunc =convertGLStencilOp(ctx->Stencil.ZPassFunc);
++         fxMesa->Stencil.Function = ctx->Stencil.Function[0] - GL_NEVER;
++         fxMesa->Stencil.RefValue = ctx->Stencil.Ref[0];
++         fxMesa->Stencil.ValueMask = ctx->Stencil.ValueMask[0];
++         fxMesa->Stencil.WriteMask = ctx->Stencil.WriteMask[0];
++         fxMesa->Stencil.FailFunc = convertGLStencilOp(ctx->Stencil.FailFunc[0]);
++         fxMesa->Stencil.ZFailFunc =convertGLStencilOp(ctx->Stencil.ZFailFunc[0]);
++         fxMesa->Stencil.ZPassFunc =convertGLStencilOp(ctx->Stencil.ZPassFunc[0]);
+          fxMesa->Stencil.Clear = ctx->Stencil.Clear & 0xff;
+       }
+       fxMesa->dirty |= TDFX_UPLOAD_STENCIL;
+@@ -796,9 +799,15 @@
+ 
+ 
+ static void tdfxDDClearColor( GLcontext *ctx,
+-			      const GLchan color[4] )
++			      const GLfloat fcolor[4] )
+ {
+    tdfxContextPtr fxMesa = TDFX_CONTEXT(ctx);
++   GLubyte color[4];
++
++   UNCLAMPED_FLOAT_TO_UBYTE(color[0], fcolor[0]);
++   UNCLAMPED_FLOAT_TO_UBYTE(color[1], fcolor[1]);
++   UNCLAMPED_FLOAT_TO_UBYTE(color[2], fcolor[2]);
++   UNCLAMPED_FLOAT_TO_UBYTE(color[3], fcolor[3]);
+    FLUSH_BATCH( fxMesa );
+    fxMesa->Color.ClearColor = TDFXPACKCOLOR888( color[0], color[1], color[2] );
+    fxMesa->Color.ClearAlpha = color[3];
+@@ -871,7 +880,7 @@
+    m[MAT_SZ] = v[MAT_SZ];
+    m[MAT_TZ] = v[MAT_TZ];
+ 
+-   fxMesa->SetupNewInputs |= VERT_CLIP;
++   fxMesa->SetupNewInputs |= VERT_BIT_CLIP;
+ }
+ 
+ 
+@@ -1006,20 +1015,20 @@
+ 
+    FLUSH_BATCH( fxMesa );
+ 
+-   switch( mode) {
+-   case GL_FRONT_LEFT:
++   switch ( ctx->Color._DrawDestMask ) {
++   case FRONT_LEFT_BIT:
+       fxMesa->DrawBuffer = fxMesa->ReadBuffer = GR_BUFFER_FRONTBUFFER;
+       fxMesa->new_state |= TDFX_NEW_RENDER;
+       FALLBACK( fxMesa, TDFX_FALLBACK_DRAW_BUFFER, GL_FALSE );
+       break;
+ 
+-   case GL_BACK_LEFT:
++   case BACK_LEFT_BIT:
+       fxMesa->DrawBuffer = fxMesa->ReadBuffer = GR_BUFFER_BACKBUFFER;
+       fxMesa->new_state |= TDFX_NEW_RENDER;
+       FALLBACK( fxMesa, TDFX_FALLBACK_DRAW_BUFFER, GL_FALSE );
+       break;
+ 
+-   case GL_NONE:
++   case 0:
+       FX_grColorMaskv( ctx, false4 );
+       FALLBACK( fxMesa, TDFX_FALLBACK_DRAW_BUFFER, GL_FALSE );
+       break;
+@@ -1373,7 +1382,7 @@
+     */
+    ctx->Driver.ClearIndex		= NULL;
+    ctx->Driver.ClearColor		= tdfxDDClearColor;
+-   ctx->Driver.SetDrawBuffer		= tdfxDDSetDrawBuffer;
++   ctx->Driver.DrawBuffer		= tdfxDDSetDrawBuffer;
+ 
+    ctx->Driver.IndexMask		= NULL;
+    ctx->Driver.ColorMask		= tdfxDDColorMask;
+diff -ruN pa/xc/lib/GL/mesa/src/drv/tdfx/tdfx_texstate.c pb/xc/lib/GL/mesa/src/drv/tdfx/tdfx_texstate.c
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_texstate.c
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_texstate.c
+@@ -1543,7 +1543,7 @@
+ 
+    if (TDFX_IS_NAPALM(fxMesa)) {
+       /* see if we really need to update the unit */
+-      if (fxMesa->TexState.Enabled != ctx->Texture._ReallyEnabled ||
++      if (fxMesa->TexState.Enabled != TDFX_TEXENABLED(ctx) ||
+           envMode != fxMesa->TexState.EnvMode[0] ||
+           envMode == GL_COMBINE_EXT ||
+           baseFormat != fxMesa->TexState.TexFormat[0]) {
+@@ -1577,7 +1577,7 @@
+          otherEnv->Alpha.Shift = 0;
+          otherEnv->Alpha.Invert = FXFALSE;
+ 
+-         fxMesa->TexState.Enabled = ctx->Texture._ReallyEnabled;
++         fxMesa->TexState.Enabled = TDFX_TEXENABLED(ctx);
+          fxMesa->TexState.EnvMode[0] = envMode;
+          fxMesa->TexState.TexFormat[0] = baseFormat;
+          fxMesa->TexState.EnvMode[1] = 0;
+@@ -1588,7 +1588,7 @@
+       /* Voodoo3 */
+ 
+       /* see if we really need to update the unit */
+-      if (fxMesa->TexState.Enabled != ctx->Texture._ReallyEnabled ||
++      if (fxMesa->TexState.Enabled != TDFX_TEXENABLED(ctx) ||
+           envMode != fxMesa->TexState.EnvMode[0] ||
+           envMode == GL_COMBINE_EXT ||
+           baseFormat != fxMesa->TexState.TexFormat[0]) {
+@@ -1596,7 +1596,7 @@
+             /* software fallback */
+             FALLBACK(fxMesa, TDFX_FALLBACK_TEXTURE_ENV, GL_TRUE);
+          }
+-         fxMesa->TexState.Enabled = ctx->Texture._ReallyEnabled;
++         fxMesa->TexState.Enabled = TDFX_TEXENABLED(ctx);
+          fxMesa->TexState.EnvMode[0] = envMode;
+          fxMesa->TexState.TexFormat[0] = baseFormat;
+          fxMesa->TexState.EnvMode[1] = 0;
+@@ -1850,7 +1850,7 @@
+       GLboolean hw1 = GL_TRUE, hw2 = GL_TRUE;
+ 
+       /* check if we really need to update glide unit 1 */
+-      if (fxMesa->TexState.Enabled != ctx->Texture._ReallyEnabled ||
++      if (fxMesa->TexState.Enabled != TDFX_TEXENABLED(ctx) ||
+           envMode0 != fxMesa->TexState.EnvMode[1] ||
+           envMode0 == GL_COMBINE_EXT ||
+           baseImage0->Format != fxMesa->TexState.TexFormat[1] ||
+@@ -1862,7 +1862,7 @@
+       }
+ 
+       /* check if we really need to update glide unit 0 */
+-      if (fxMesa->TexState.Enabled != ctx->Texture._ReallyEnabled ||
++      if (fxMesa->TexState.Enabled != TDFX_TEXENABLED(ctx) ||
+           envMode1 != fxMesa->TexState.EnvMode[0] ||
+           envMode1 == GL_COMBINE_EXT ||
+           baseImage1->Format != fxMesa->TexState.TexFormat[0] ||
+@@ -1873,7 +1873,7 @@
+          fxMesa->TexState.TexFormat[0] = baseImage1->Format;
+       }
+ 
+-      fxMesa->TexState.Enabled = ctx->Texture._ReallyEnabled;
++      fxMesa->TexState.Enabled = TDFX_TEXENABLED(ctx);
+ 
+       if (!hw1 || !hw2) {
+          FALLBACK(fxMesa, TDFX_FALLBACK_TEXTURE_ENV, GL_TRUE);
+@@ -1887,7 +1887,7 @@
+          unit0 = 0;
+       unit1 = 1 - unit0;
+ 
+-      if (fxMesa->TexState.Enabled != ctx->Texture._ReallyEnabled ||
++      if (fxMesa->TexState.Enabled != TDFX_TEXENABLED(ctx) ||
+           envMode0 != fxMesa->TexState.EnvMode[unit0] ||
+           envMode0 == GL_COMBINE_EXT ||
+           envMode1 != fxMesa->TexState.EnvMode[unit1] ||
+@@ -1906,7 +1906,7 @@
+          fxMesa->TexState.TexFormat[unit0] = baseImage0->Format;
+          fxMesa->TexState.EnvMode[unit1] = envMode1;
+          fxMesa->TexState.TexFormat[unit1] = baseImage1->Format;
+-         fxMesa->TexState.Enabled = ctx->Texture._ReallyEnabled;
++         fxMesa->TexState.Enabled = TDFX_TEXENABLED(ctx);
+       }
+    }
+ }
+@@ -1916,7 +1916,7 @@
+ tdfxUpdateTextureState( GLcontext *ctx )
+ {
+    tdfxContextPtr fxMesa = TDFX_CONTEXT(ctx);
+-   GLuint tex2Denabled = ctx->Texture._ReallyEnabled;
++   GLuint tex2Denabled = TDFX_TEXENABLED(ctx);
+ 
+    if (!fxMesa->haveTwoTMUs)
+       tex2Denabled &= TEXTURE0_2D;
+@@ -2027,7 +2027,7 @@
+       fxMesa->tScale1 = ti1->tScale;
+    }
+ 
+-   if (ctx->Texture._ReallyEnabled == TEXTURE0_2D) {
++   if (TDFX_TEXENABLED(ctx) == TEXTURE0_2D) {
+       if (shared->umaTexMemory) {
+          fxMesa->TexSource[0].StartAddress = ti0->tm[0]->startAddr;
+          fxMesa->TexSource[0].EvenOdd = GR_MIPMAPLEVELMASK_BOTH;
+@@ -2058,14 +2058,14 @@
+          }
+       }
+    }
+-   else if (ctx->Texture._ReallyEnabled == TEXTURE1_2D) {
++   else if (TDFX_TEXENABLED(ctx) == TEXTURE1_2D) {
+       if (shared->umaTexMemory) {
+          fxMesa->TexSource[0].StartAddress = ti1->tm[0]->startAddr;
+          fxMesa->TexSource[0].EvenOdd = GR_MIPMAPLEVELMASK_BOTH;
+          fxMesa->TexSource[0].Info = &(ti1->info);
+       }
+    }
+-   else if (ctx->Texture._ReallyEnabled == (TEXTURE0_2D | TEXTURE1_2D)) {
++   else if (TDFX_TEXENABLED(ctx) == (TEXTURE0_2D | TEXTURE1_2D)) {
+       if (shared->umaTexMemory) {
+          const FxU32 tmu0 = 0, tmu1 = 1;
+          fxMesa->TexSource[tmu0].StartAddress = ti0->tm[0]->startAddr;
+diff -ruN pa/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tris.c pb/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tris.c
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tris.c
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tris.c
+@@ -332,10 +332,10 @@
+ 
+ #define TDFX_COLOR( dst, src )			\
+ do {						\
+-   dst[0] = src[2];				\
+-   dst[1] = src[1];				\
+-   dst[2] = src[0];				\
+-   dst[3] = src[3];				\
++   dst[TDFX_CB] = src[2];			\
++   dst[TDFX_CG] = src[1];			\
++   dst[TDFX_CR] = src[0];			\
++   dst[TDFX_CA] = src[3];			\
+ } while (0)
+ 
+ #define DEPTH_SCALE 1.0
+@@ -378,7 +378,7 @@
+  ***********************************************************************/
+ 
+ #define IND (0)
+-#define TAG(x) x
++#define TAG(x) x##_plain
+ #include "tnl_dd/t_dd_tritmp.h"
+ 
+ #define IND (TDFX_OFFSET_BIT)
+@@ -513,7 +513,7 @@
+ 
+ static void init_rast_tab( void )
+ {
+-   init();
++   init_plain();
+    init_offset();
+    init_twoside();
+    init_twoside_offset();
+@@ -997,7 +997,7 @@
+       if (index == 0) {
+ 	 tnl->Driver.Render.PrimTabVerts = tdfx_render_tab_verts;
+ 	 tnl->Driver.Render.PrimTabElts = tdfx_render_tab_elts;
+-	 tnl->Driver.Render.ClippedLine = line; /* from tritmp.h */
++	 tnl->Driver.Render.ClippedLine = line_plain; /* from tritmp.h */
+ 	 tnl->Driver.Render.ClippedPolygon = tdfxFastRenderClippedPoly;
+       } else {
+ 	 tnl->Driver.Render.PrimTabVerts = _tnl_render_tab_verts;
+diff -ruN pa/xc/lib/GL/mesa/src/drv/tdfx/tdfx_vb.c pb/xc/lib/GL/mesa/src/drv/tdfx/tdfx_vb.c
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_vb.c
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_vb.c
+@@ -26,7 +26,7 @@
+  
+ #include "glheader.h"
+ #include "mtypes.h"
+-#include "mem.h"
++#include "imports.h"
+ #include "macros.h"
+ #include "colormac.h"
+ #include "mmath.h"
+@@ -271,18 +271,18 @@
+    if (!newinputs)
+       return;
+ 
+-   if (newinputs & VERT_CLIP) {
++   if (newinputs & VERT_BIT_CLIP) {
+       setup_tab[fxMesa->SetupIndex].emit( ctx, start, count, v, stride );   
+    } else {
+       GLuint ind = 0;
+ 
+-      if (newinputs & VERT_RGBA)
++      if (newinputs & VERT_BIT_COLOR0)
+ 	 ind |= TDFX_RGBA_BIT;
+       
+-      if (newinputs & VERT_TEX0) 
++      if (newinputs & VERT_BIT_TEX0) 
+ 	 ind |= TDFX_TEX0_BIT;
+ 
+-      if (newinputs & VERT_TEX1)
++      if (newinputs & VERT_BIT_TEX1)
+ 	 ind |= TDFX_TEX0_BIT|TDFX_TEX1_BIT;
+ 
+       if (fxMesa->SetupIndex & TDFX_PTEX_BIT)
+@@ -303,9 +303,9 @@
+    tdfxContextPtr fxMesa = TDFX_CONTEXT( ctx );
+    GLuint ind = TDFX_XYZ_BIT|TDFX_RGBA_BIT;
+ 
+-   if (ctx->Texture._ReallyEnabled & TEXTURE1_ANY) 
++   if (TDFX_TEXENABLED(ctx) & TEXTURE1_ANY) 
+       ind |= TDFX_W_BIT|TDFX_TEX1_BIT|TDFX_TEX0_BIT;
+-   else if (ctx->Texture._ReallyEnabled & TEXTURE0_ANY) 
++   else if (TDFX_TEXENABLED(ctx) & TEXTURE0_ANY) 
+       ind |= TDFX_W_BIT|TDFX_TEX0_BIT;
+    else if (ctx->Fog.Enabled)
+       ind |= TDFX_W_BIT;
+diff -ruN pa/xc/lib/GL/mesa/src/drv/tdfx/tdfx_vbtmp.h pb/xc/lib/GL/mesa/src/drv/tdfx/tdfx_vbtmp.h
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_vbtmp.h
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_vbtmp.h
+@@ -12,8 +12,8 @@
+    GLubyte (*col)[4];
+    GLuint tc0_stride, tc1_stride, col_stride;
+    GLuint tc0_size, tc1_size;
+-   GLfloat (*proj)[4] = VB->ProjectedClipPtr->data; 
+-   GLuint proj_stride = VB->ProjectedClipPtr->stride;
++   GLfloat (*proj)[4] = VB->NdcPtr->data; 
++   GLuint proj_stride = VB->NdcPtr->stride;
+    tdfxVertex *v = (tdfxVertex *)dest;
+    GLfloat u0scale,v0scale,u1scale,v1scale;
+    const GLubyte *mask = VB->ClipMask;
+@@ -81,10 +81,10 @@
+ 	    *(GLuint *)&v->v.color = *(GLuint *)col;
+ #else
+ 	    GLubyte *b = (GLubyte *) &v->v.color;
+-	    b[0] = col[0][2];
+-	    b[1] = col[0][1];
+-	    b[2] = col[0][0];
+-	    b[3] = col[0][3];
++	    b[TDFX_CB] = col[0][2];
++	    b[TDFX_CG] = col[0][1];
++	    b[TDFX_CR] = col[0][0];
++	    b[TDFX_CA] = col[0][3];
+ 
+ #endif
+ 	    STRIDE_4UB(col, col_stride);
+@@ -138,10 +138,10 @@
+ 	    *(GLuint *)&v->v.color = *(GLuint *)&col[i];
+ #else
+ 	    GLubyte *b = (GLubyte *) &v->v.color;
+-	    b[0] = col[i][2];
+-	    b[1] = col[i][1];
+-	    b[2] = col[i][0];
+-	    b[3] = col[i][3];
++	    b[TDFX_CB] = col[i][2];
++	    b[TDFX_CG] = col[i][1];
++	    b[TDFX_CR] = col[i][0];
++	    b[TDFX_CA] = col[i][3];
+ 
+ #endif
+ 	 }
+@@ -185,8 +185,8 @@
+    struct vertex_buffer *VB = &TNL_CONTEXT(ctx)->vb;
+    GLubyte (*col)[4];
+    GLuint col_stride;
+-   GLfloat (*proj)[4] = VB->ProjectedClipPtr->data; 
+-   GLuint proj_stride = VB->ProjectedClipPtr->stride;
++   GLfloat (*proj)[4] = VB->NdcPtr->data; 
++   GLuint proj_stride = VB->NdcPtr->stride;
+    GLfloat *v = (GLfloat *)dest;
+    const GLubyte *mask = VB->ClipMask;
+    const GLfloat *s = fxMesa->hw_viewport;
+@@ -223,10 +223,10 @@
+ 	 proj =  (GLfloat (*)[4])((GLubyte *)proj +  proj_stride);
+ 	 {
+ 	    GLubyte *b = (GLubyte *)&v[3];
+-	    b[0] = col[0][2];
+-	    b[1] = col[0][1];
+-	    b[2] = col[0][0];
+-	    b[3] = col[0][3];
++	    b[TDFX_CB] = col[0][2];
++	    b[TDFX_CG] = col[0][1];
++	    b[TDFX_CR] = col[0][0];
++	    b[TDFX_CA] = col[0][3];
+ 	    STRIDE_4UB(col, col_stride);
+ 	 }
+       }
+@@ -240,10 +240,10 @@
+ 	 }
+ 	 {
+ 	    GLubyte *b = (GLubyte *)&v[3];
+-	    b[0] = col[i][2];
+-	    b[1] = col[i][1];
+-	    b[2] = col[i][0];
+-	    b[3] = col[i][3];
++	    b[TDFX_CB] = col[i][2];
++	    b[TDFX_CG] = col[i][1];
++	    b[TDFX_CR] = col[i][0];
++	    b[TDFX_CA] = col[i][3];
+ 	 }
+       }
+    }
+@@ -277,10 +277,10 @@
+ 
+    for (i=start; i < end; i++, STRIDE_F(v, stride)) {
+       GLubyte *b = (GLubyte *)v;
+-      b[0] = col[0][2];
+-      b[1] = col[0][1];
+-      b[2] = col[0][0];
+-      b[3] = col[0][3];
++      b[TDFX_CB] = col[0][2];
++      b[TDFX_CG] = col[0][1];
++      b[TDFX_CR] = col[0][0];
++      b[TDFX_CA] = col[0][3];
+       STRIDE_4UB( col, col_stride );
+    }
+ }

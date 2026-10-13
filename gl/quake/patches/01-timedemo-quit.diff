@@ -1,0 +1,11 @@
+--- a/src/cl_demo.c
++++ b/src/cl_demo.c
+@@ -335,6 +335,8 @@
+ 	if (!time)
+ 		time = 1;
+ 	Con_Printf ("%i frames %5.1f seconds %5.1f fps\n", frames, time, frames/time);
++	if (COM_CheckParm ("-tdquit"))
++		Sys_Quit ();
+ }
+ 
+ /*

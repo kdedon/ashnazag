@@ -1,0 +1,24 @@
+diff -ruN a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_context.c b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_context.c
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_context.c	2026-10-13 02:09:55.576753693 -0500
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_context.c	2026-10-13 02:09:55.577753694 -0500
+@@ -74,6 +74,7 @@
+ 
+    _mesa_enable_extension( ctx, "GL_HP_occlusion_test" );
+    _mesa_enable_extension( ctx, "GL_EXT_paletted_texture" );
++   _mesa_enable_extension( ctx, "GL_EXT_shared_texture_palette" );
+    _mesa_enable_extension( ctx, "GL_EXT_texture_lod_bias" );
+ 
+    if ( fxMesa->haveTwoTMUs ) {
+diff -ruN a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tex.c b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tex.c
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tex.c	2026-10-13 02:09:55.579753697 -0500
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tex.c	2026-10-13 02:09:55.580753698 -0500
+@@ -556,6 +556,9 @@
+     else {
+         /* global texture palette */
+         convertPalette(fxMesa->glbPalette.data, &ctx->Texture.Palette);
++        fxMesa->TexPalette.Type = GR_TEXTABLE_PALETTE_6666_EXT;
++        fxMesa->TexPalette.Data = &(fxMesa->glbPalette);
++        fxMesa->dirty |= TDFX_UPLOAD_TEXTURE_PALETTE;
+     }
+     fxMesa->new_state |= TDFX_NEW_TEXTURE; /* XXX too heavy-handed */
+ }

@@ -21,7 +21,7 @@ Direct boot also runs `display/hostio.py`: `t_display` sends it requests on SCC 
 | Group | Programs |
 |---|---|
 | `smoke` | t_sys t_file t_proc t_pipe t_dlm t_guestdlm t_envram t_gate t_vtop |
-| `core` | smoke plus t_arith t_mem t_sig t_streams t_time t_tty t_page t_moddemo t_stress t_env t_ufs |
+| `core` | smoke plus t_arith t_mem t_sig t_streams t_time t_prof t_tty t_page t_moddemo t_stress t_env t_ufs |
 | `mac` | t_aux t_mac t_mac6 t_mac76 t_mac81 t_env |
 | `tos` | t_tos t_xaaes t_env |
 | `mint`, `cpm`, `amiga`, `display`, `sound`, `win16`, `gl` | t_mint; t_cpm; t_amiga t_radeon t_env; t_display; t_sound; t_win16; t_gl |
@@ -63,6 +63,7 @@ INFO time.clk_tck: 60
 | `t_pipe` | pipe (duplex, I_NREAD, capacity, blocking writer, EAGAIN/O_NDELAY, EOF, SIGPIPE/EPIPE), 1 MB transfers, FIFOs, dup/dup2/F_DUPFD, close-on-exec, record locks, poll/select |
 | `t_sig` | kill/signal/sigaction, SA_RESETHAND, masks and pending, alarm, SIGCHLD and SIG_IGN reaping, EINTR vs SA_RESTART, stop/continue, process groups, SIGFPE/SIGILL, siglongjmp from handlers and faults |
 | `t_time` | time, gettimeofday and times() against sleep(2) and a 5 s poll (tick rate), monotonic time, CPU time |
+| `t_prof` | profil(2): two profiled and one plain CPU-bound child for 8 s keep identical FP and integer results, profiled histograms fill |
 | `t_tty` | console isatty, TCGETA/TCSETA and TCGETS/tcsetattr round trips (same values written back), ldterm on the stream |
 | `t_arith` | 32/64-bit multiply, divide, shifts; FP and libm in a child; FP state across context switches |
 | `t_sys` | uname, sysinfo, getppid, limits, EMFILE, environment through exec, `/proc` readdir/PIOCPSINFO/PIOCSTATUS/memory read, kernel counters via `/dev/kmem` |

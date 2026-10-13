@@ -34,6 +34,7 @@ static struct {
 	{ "t_pipe", 90 },
 	{ "t_sig", 90 },
 	{ "t_time", 60 },
+	{ "t_prof", 90 },
 	{ "t_tty", 30 },
 	{ "t_arith", 60 },
 	{ "t_cc295", 120 },

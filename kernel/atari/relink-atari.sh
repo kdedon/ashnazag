@@ -173,6 +173,7 @@ python3 "$K/guest/patch_vec.py" "$OUT" "$W/guest/gates.lst"
 # the fatal user-fault notice through the guest filter: a fault the guest's
 # own vector takes is no notice
 python3 "$PORT/src/patch_usptrap.py" "$OUT"
+python3 "$PORT/src/patch_profclk.py" "$OUT"
 
 btext=$(m68k-linux-gnu-size -A "$BASE" | awk '$1==".text"{print $2}')
 bad=0

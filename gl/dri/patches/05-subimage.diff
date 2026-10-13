@@ -1,0 +1,111 @@
+diff -ruN pa/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tex.c pb/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tex.c
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tex.c	2026-10-12 22:10:20.833799705 -0500
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tex.c	2026-10-12 22:10:20.835799709 -0500
+@@ -1097,6 +1097,12 @@
+                                 format, type, pixels, packing);
+     }
+ 
++    /* a resident level gets only the changed rows */
++    if (ti->isInTM && !ti->reloadImages && mml->hScale == 1 &&
++        level >= ti->minLevel && level <= ti->maxLevel) {
++        tdfxTMReloadMipMapLevel(ctx, texObj, level, yoffset, yoffset + height - 1);
++        return;
++    }
+     ti->reloadImages = GL_TRUE; /* signal the image needs to be reloaded */
+     fxMesa->new_state |= TDFX_NEW_TEXTURE;  /* XXX this might be a bit much */
+ }
+diff -ruN pa/xc/lib/GL/mesa/src/drv/tdfx/tdfx_texman.c pb/xc/lib/GL/mesa/src/drv/tdfx/tdfx_texman.c
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_texman.c	2026-10-12 22:10:20.833799705 -0500
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_texman.c	2026-10-12 22:10:20.835799709 -0500
+@@ -729,12 +729,15 @@
+ 
+ void
+ tdfxTMReloadMipMapLevel(GLcontext *ctx, struct gl_texture_object *tObj,
+-                        GLint level)
++                        GLint level, GLint t0, GLint t1)
+ {
+     tdfxContextPtr fxMesa = TDFX_CONTEXT(ctx);
+     tdfxTexInfo *ti = TDFX_TEXTURE_DATA(tObj);
+     GrLOD_t glideLod;
+     FxU32 tmu;
++    struct gl_texture_image *img = tObj->Image[level];
++    GLubyte *data = (GLubyte *) img->Data +
++        t0 * TDFX_TEXIMAGE_DATA(img)->width * img->TexFormat->TexelBytes;
+ 
+     tmu = ti->whichTMU;
+     glideLod =  ti->info.largeLodLog2 - level + tObj->BaseLevel;
+@@ -745,52 +748,52 @@
+     switch (tmu) {
+     case TDFX_TMU0:
+     case TDFX_TMU1:
+-        fxMesa->Glide.grTexDownloadMipMapLevel(tmu,
++        fxMesa->Glide.grTexDownloadMipMapLevelPartial(tmu,
+                                     ti->tm[tmu]->startAddr,
+                                     glideLod,
+                                     ti->info.largeLodLog2,
+                                     ti->info.aspectRatioLog2,
+                                     ti->info.format,
+                                     GR_MIPMAPLEVELMASK_BOTH,
+-                                    tObj->Image[level]->Data);
++                                    data, t0, t1);
+         break;
+     case TDFX_TMU_SPLIT:
+-        fxMesa->Glide.grTexDownloadMipMapLevel(GR_TMU0,
++        fxMesa->Glide.grTexDownloadMipMapLevelPartial(GR_TMU0,
+                                     ti->tm[GR_TMU0]->startAddr,
+                                     glideLod,
+                                     ti->info.largeLodLog2,
+                                     ti->info.aspectRatioLog2,
+                                     ti->info.format,
+                                     GR_MIPMAPLEVELMASK_ODD,
+-                                    tObj->Image[level]->Data);
++                                    data, t0, t1);
+ 
+-        fxMesa->Glide.grTexDownloadMipMapLevel(GR_TMU1,
++        fxMesa->Glide.grTexDownloadMipMapLevelPartial(GR_TMU1,
+                                     ti->tm[GR_TMU1]->startAddr,
+                                     glideLod,
+                                     ti->info.largeLodLog2,
+                                     ti->info.aspectRatioLog2,
+                                     ti->info.format,
+                                     GR_MIPMAPLEVELMASK_EVEN,
+-                                    tObj->Image[level]->Data);
++                                    data, t0, t1);
+         break;
+     case TDFX_TMU_BOTH:
+-        fxMesa->Glide.grTexDownloadMipMapLevel(GR_TMU0,
++        fxMesa->Glide.grTexDownloadMipMapLevelPartial(GR_TMU0,
+                                     ti->tm[GR_TMU0]->startAddr,
+                                     glideLod,
+                                     ti->info.largeLodLog2,
+                                     ti->info.aspectRatioLog2,
+                                     ti->info.format,
+                                     GR_MIPMAPLEVELMASK_BOTH,
+-                                    tObj->Image[level]->Data);
++                                    data, t0, t1);
+ 
+-        fxMesa->Glide.grTexDownloadMipMapLevel(GR_TMU1,
++        fxMesa->Glide.grTexDownloadMipMapLevelPartial(GR_TMU1,
+                                     ti->tm[GR_TMU1]->startAddr,
+                                     glideLod,
+                                     ti->info.largeLodLog2,
+                                     ti->info.aspectRatioLog2,
+                                     ti->info.format,
+                                     GR_MIPMAPLEVELMASK_BOTH,
+-                                    tObj->Image[level]->Data);
++                                    data, t0, t1);
+         break;
+ 
+     default:
+diff -ruN pa/xc/lib/GL/mesa/src/drv/tdfx/tdfx_texman.h pb/xc/lib/GL/mesa/src/drv/tdfx/tdfx_texman.h
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_texman.h	2026-10-12 22:10:20.833799705 -0500
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_texman.h	2026-10-12 22:10:20.835799709 -0500
+@@ -51,7 +51,7 @@
+ 
+ extern void tdfxTMReloadMipMapLevel( GLcontext *ctx,
+ 				     struct gl_texture_object *tObj,
+-				     GLint level );
++				     GLint level, GLint t0, GLint t1 );
+ 
+ extern void tdfxTMMoveInTM_NoLock( tdfxContextPtr fxMesa,
+                                    struct gl_texture_object *tObj,

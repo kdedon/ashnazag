@@ -40,8 +40,7 @@ N="nice -n 19"
 
 GCA_URL=https://github.com/isoriano1968/gcc-cross-amix
 GCA_PIN=206bc9589dc8b0bae1cb2deb1c5bc7e5d3d8e190
-PORT_URL=https://github.com/asokero/amix-040-060-port
-PORT_PIN=54fba4de3da276e5d09d5ea09e2c76a13ec20ffa
+. "$AUX/kernel/port-tree.sh"
 IDE_URL=https://github.com/hmlio/amix-gayle-ide
 IDE_PIN=71480b065c6efbc1a6fc3e6c490a5f50d102f795
 BU_V=2.43.1
@@ -295,13 +294,9 @@ gitpin $IDE_URL $IDE_PIN "$AUX/ref/amix-gayle-ide"
 
 step "68040/68060 port at $PORT_PIN"
 PT=$AUX/kernel/amix-040-060-port
-gitpin $PORT_URL $PORT_PIN "$PT"
-for p in "$AUX/kernel/port-local.diff" "$AUX/kernel/port-segvn.diff" \
-	"$AUX/kernel/mac/hat-boundary/hat-chgprot040.diff"; do
-	if ! git -C "$PT" apply -R --check "$p" 2>/dev/null; then
-		git -C "$PT" apply "$p" || die "$p does not apply"
-	fi
-done
+[ -d "$PT/.git" ] || git clone -q $PORT_URL "$PT"
+git -C "$PT" cat-file -e "$PORT_PIN^{commit}" 2>/dev/null || git -C "$PT" fetch -q origin
+port_sync "$PT" || die "port tree not set up"
 cat > "$PT/config.sh" <<EOF
 # written by tools/setup.sh
 AUX="$AUX"

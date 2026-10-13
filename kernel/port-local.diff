@@ -266,3 +266,83 @@ index 8b9f5f0..e29aec6 100644
  
  	if [ "${AMIX_ALLOW_UNKNOWN_STOCK:-0}" = "1" ]; then
  		echo "[!] ==================================================================="
+diff --git a/relink-040.sh b/relink-040.sh
+index da977d2..f2e7b49 100644
+--- a/relink-040.sh
++++ b/relink-040.sh
+@@ -1065,6 +1065,9 @@ run_step 1 python3 "$HERE/src/patch_inituser.py" "$OUT"
+ echo "[*] 060-B: framesz[4] = 16 (68060 format-4 access-error frame; inert on 030/040)"
+ python3 "$HERE/src/patch_framesz060.py" "$OUT"
+ 
++echo "[*] addupc_clk: leave the profiling tick's preempt to intret (USP)"
++run_step 1 python3 "$HERE/src/patch_profclk.py" "$OUT"
++
+ # F1-M2 (2026-08-24): sendsig calls fpu_setup with no fpu_present gate, so on a 68LC060 the
+ # first delivered signal executes FRESTORE in supervisor mode.  Relocation retarget, the same
+ # mechanism as patch_dbgpublish.py above; the wrapper's 040 arm is a plain tail jump.  Runs
+diff --git a/src/patch_profclk.py b/src/patch_profclk.py
+new file mode 100644
+index 0000000..f935c39
+--- /dev/null
++++ b/src/patch_profclk.py
+@@ -0,0 +1,29 @@
++# addupc_clk runs inside the clock interrupt and calls preempt() when runrun
++# is set.  The interrupt path keeps no USP slot that the switch restores, so
++# the process resumes on whatever USP the last process left: profil(2)
++# programs die with garbage PCs.  Skip the call; intret preempts on the way
++# back to user mode through the trap path, which saves and restores USP.
++import sys
++
++IMG = sys.argv[1] if len(sys.argv) > 1 else "build/unix-040"
++TEXT_OFF = 0x34
++SITE = 0x5A052
++OLD = bytes.fromhex("4ab9000000006700")     # tstl runrun; beqw
++NEW = bytes.fromhex("4ab9000000006000")     # tstl runrun; braw
++
++
++def main():
++    buf = bytearray(open(IMG, "rb").read())
++    cur = bytes(buf[TEXT_OFF + SITE:TEXT_OFF + SITE + 8])
++    if cur == NEW:
++        print("  [skip] addupc_clk preempt already skipped @0x%05x" % SITE)
++        return
++    if cur != OLD:
++        raise SystemExit("ABORT: addupc_clk @0x%05x has %s, expected %s (base drifted?)"
++                         % (SITE, cur.hex(), OLD.hex()))
++    buf[TEXT_OFF + SITE:TEXT_OFF + SITE + 8] = NEW
++    open(IMG, "wb").write(buf)
++    print("  [ok]   addupc_clk @0x%05x: preempt left to intret" % SITE)
++
++
++main()
+# Idle enters the stock STOP at waitloc-4: clock then charges idle ticks as idle, not to the current process.
+diff --git a/src/mainmarks.s b/src/mainmarks.s
+index 9e84745..d8eb608 100644
+--- a/src/mainmarks.s
++++ b/src/mainmarks.s
+@@ -238,8 +238,8 @@ Lidw_done:
+ 	addqw	&4,%sp
+ 	moveml	%sp@+,%d3/%a2
+ Lidw_skip:
+-	stop	&0x2000			| stock idle wait -- let the boot run naturally
+-	rts
++	| clock accounts STOP at the native waitloc return PC.
++	jmp	waitloc-4
+ 	nop
+ 
+ | ---------------------------------------------------------------------------
+diff --git a/src/runtime040.s b/src/runtime040.s
+index d887aa0..7194460 100644
+--- a/src/runtime040.s
++++ b/src/runtime040.s
+@@ -39,8 +39,8 @@ Lrt_sch:
+ | idle OVERRIDE -- stock idle wait.  --weaken-symbol idle.
+ 	.globl	idle
+ idle:
+-	stop	&0x2000
+-	rts
++	| clock accounts STOP at the native waitloc return PC.
++	jmp	waitloc-4
+ 
+ | ---------------------------------------------------------------------------
+ | hardbus PAGE-CROSSING FIX -- GENUINE fix (origin: sigkill_dbg.s, minus logging).

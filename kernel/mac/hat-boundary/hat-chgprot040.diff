@@ -1,0 +1,18 @@
+--- a/src/hat_chgprot040.s
++++ b/src/hat_chgprot040.s
+@@ -100,6 +100,7 @@
+ 	movel	%d2,%d0			| A absent/garbage -> next 32MB (2^25) boundary
+ 	andil	&0xfe000000,%d0
+ 	addil	&0x2000000,%d0
++	bcsw	Lcp_done
+ 	movel	%d0,%d2
+ 	braw	Lcp_chkmore
+ Lcp_aok:
+@@ -132,6 +133,7 @@
+ 	movel	%d2,%d0			| B absent/garbage -> next 256KB (2^18) boundary
+ 	andil	&0xfffc0000,%d0
+ 	addil	&0x40000,%d0
++	bcsw	Lcp_done
+ 	movel	%d0,%d2
+ 	braw	Lcp_chkmore
+ Lcp_bok:

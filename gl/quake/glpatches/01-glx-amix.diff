@@ -1,0 +1,95 @@
+--- a/src/gl_vidlinuxglx.c	2026-10-12 11:22:17.616759542 -0500
++++ b/src/gl_vidlinuxglx.c	2026-10-12 11:22:17.629759566 -0500
+@@ -20,12 +20,16 @@
+ #include <termios.h>
+ #include <sys/ioctl.h>
+ #include <sys/stat.h>
++#ifndef AMIX
+ #include <sys/vt.h>
++#endif
+ #include <stdarg.h>
+ #include <stdio.h>
+ #include <signal.h>
+ 
++#ifndef AMIX
+ #include <dlfcn.h>
++#endif
+ 
+ #include "quakedef.h"
+ 
+@@ -34,8 +38,24 @@
+ #include <X11/keysym.h>
+ #include <X11/cursorfont.h>
+ 
++#ifdef AMIX
++/* no DGA or VidMode extension; GL entry points from libGL, not dlsym */
++#define XF86DGAQueryVersion(d, a, b)		0
++#define XF86DGADirectVideo(d, s, f)
++#define XF86DGADirectMouse			0
++#define XF86VidModeQueryVersion(d, a, b)	0
++#define XF86VidModeGetAllModeLines(d, s, n, m)
++#define XF86VidModeSwitchToMode(d, s, m)
++#define XF86VidModeSetViewPort(d, s, x, y)
++typedef struct { int hdisplay, vdisplay; } XF86VidModeModeInfo;
++#define dlopen(f, m)	((void *)1)
++#define dlsym(h, n)	amix_glsym(n)
++#define dlclose(h)
++static void *amix_glsym(const char *n);
++#else
+ #include <X11/extensions/xf86dga.h>
+ #include <X11/extensions/xf86vmode.h>
++#endif
+ 
+ #define WARP_WIDTH              320
+ #define WARP_HEIGHT             200
+@@ -510,9 +530,9 @@
+ 		pal += 3;
+ 		
+ 		v = (255<<24) + (r<<0) + (g<<8) + (b<<16);
+-		*table++ = v;
++		*table++ = LittleLong(v);
+ 	}
+-	d_8to24table[255] &= 0xffffff;	// 255 is transparent
++	d_8to24table[255] &= LittleLong(0xffffff);	// 255 is transparent
+ 
+ 	for (i=0; i < (1<<15); i++) {
+ 		/* Maps
+@@ -543,7 +563,8 @@
+ {
+ 	void *prjobj;
+ 
+-	if (strstr(gl_extensions, "GL_SGIS_multitexture ") && !COM_CheckParm("-nomtex")) {
++	if ((strstr(gl_extensions, "GL_SGIS_multitexture ") || strstr(gl_extensions, "GL_ARB_multitexture ")) &&
++	    !COM_CheckParm("-nomtex")) {
+ 		Con_Printf("Found GL_SGIS_multitexture...\n");
+ 
+ 		if ((prjobj = dlopen(NULL, RTLD_LAZY)) == NULL) {
+@@ -564,6 +585,28 @@
+ 	}
+ }
+ 
++#ifdef AMIX
++/* SGIS multitexture on top of ARB: same calls, other target enums */
++static void mtex_coord(GLenum t, GLfloat s, GLfloat u)
++{
++	glMultiTexCoord2fARB(t - TEXTURE0_SGIS + GL_TEXTURE0_ARB, s, u);
++}
++
++static void mtex_select(GLenum t)
++{
++	glActiveTextureARB(t - TEXTURE0_SGIS + GL_TEXTURE0_ARB);
++}
++
++static void *amix_glsym(const char *n)
++{
++	if (!strcmp(n, "glMTexCoord2fSGIS"))
++		return (void *)mtex_coord;
++	if (!strcmp(n, "glSelectTextureSGIS"))
++		return (void *)mtex_select;
++	return (void *)glXGetProcAddressARB((const GLubyte *)n);
++}
++#endif
++
+ /*
+ ===============
+ GL_Init

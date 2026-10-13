@@ -1,0 +1,1269 @@
+diff -ruN pa/xc/lib/GL/mesa/src/drv/r200/r200_cmdbuf.c pb/xc/lib/GL/mesa/src/drv/r200/r200_cmdbuf.c
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_cmdbuf.c
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_cmdbuf.c
+@@ -39,7 +39,7 @@
+ #include "r200_sanity.h"
+ #include "radeon_reg.h"
+ 
+-#include "mem.h"
++#include "imports.h"
+ #include "macros.h"
+ #include "context.h"
+ #include "swrast/swrast.h"
+diff -ruN pa/xc/lib/GL/mesa/src/drv/r200/r200_context.c pb/xc/lib/GL/mesa/src/drv/r200/r200_context.c
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_context.c
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_context.c
+@@ -55,7 +55,7 @@
+ #include "api_arrayelt.h"
+ #include "context.h"
+ #include "simple_list.h"
+-#include "mem.h"
++#include "imports.h"
+ #include "matrix.h"
+ #include "state.h"
+ #include "extensions.h"
+@@ -549,7 +549,7 @@
+       rmesa = (r200ContextPtr) dPriv->driContextPriv->driverPrivate;
+       ctx = rmesa->glCtx;
+       if (ctx->Visual.doubleBufferMode) {
+-         _mesa_swapbuffers( ctx );  /* flush pending rendering comands */
++         _mesa_notifySwapBuffers( ctx );  /* flush pending rendering comands */
+ 
+          if ( rmesa->doPageFlip ) {
+             r200PageFlip( dPriv );
+diff -ruN pa/xc/lib/GL/mesa/src/drv/r200/r200_context.h pb/xc/lib/GL/mesa/src/drv/r200/r200_context.h
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_context.h
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_context.h
+@@ -44,6 +44,29 @@
+ 
+ #include "macros.h"
+ #include "mtypes.h"
++
++/* Mesa 4's texture-enable mask (five bits a unit) and draw buffer, from Mesa 5's state */
++#define TEXTURE0_1D		TEXTURE_1D_BIT
++#define TEXTURE0_2D		TEXTURE_2D_BIT
++#define TEXTURE0_3D		TEXTURE_3D_BIT
++#define TEXTURE0_CUBE		TEXTURE_CUBE_BIT
++#define TEXTURE0_RECT		TEXTURE_RECT_BIT
++#define TEXTURE0_ANY		0x1f
++#define TEXTURE1_1D		(TEXTURE_1D_BIT << 5)
++#define TEXTURE1_2D		(TEXTURE_2D_BIT << 5)
++#define TEXTURE1_3D		(TEXTURE_3D_BIT << 5)
++#define TEXTURE1_CUBE		(TEXTURE_CUBE_BIT << 5)
++#define TEXTURE1_RECT		(TEXTURE_RECT_BIT << 5)
++#define TEXTURE1_ANY		(0x1f << 5)
++#define R200_TEXENABLED(ctx)	((ctx)->Texture.Unit[0]._ReallyEnabled | \
++				 (ctx)->Texture.Unit[1]._ReallyEnabled << 5)
++#ifdef __AMIX__
++#include <poll.h>
++/* no usleep: poll sleeps whole milliseconds */
++#define usleep(us)		poll((struct pollfd *) 0, 0, ((us) + 999) / 1000)
++#endif
++#define R200_DRAWBUFFER(ctx)	((ctx)->Color._DrawDestMask == FRONT_LEFT_BIT ? GL_FRONT_LEFT : \
++				 (ctx)->Color._DrawDestMask == BACK_LEFT_BIT ? GL_BACK_LEFT : GL_NONE)
+ #include "r200_reg.h"
+ 
+ struct r200_context;
+diff -ruN pa/xc/lib/GL/mesa/src/drv/r200/r200_ioctl.c pb/xc/lib/GL/mesa/src/drv/r200/r200_ioctl.c
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_ioctl.c
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_ioctl.c
+@@ -39,7 +39,7 @@
+ #include "r200_sanity.h"
+ #include "radeon_reg.h"
+ 
+-#include "mem.h"
++#include "imports.h"
+ #include "macros.h"
+ #include "context.h"
+ #include "swrast/swrast.h"
+diff -ruN pa/xc/lib/GL/mesa/src/drv/r200/r200_lock.c pb/xc/lib/GL/mesa/src/drv/r200/r200_lock.c
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_lock.c
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_lock.c
+@@ -51,7 +51,7 @@
+    int use_back;
+    rmesa->doPageFlip = rmesa->sarea->pfAllowPageFlip;
+ 
+-   use_back = (rmesa->glCtx->Color.DriverDrawBuffer == GL_BACK_LEFT);
++   use_back = (R200_DRAWBUFFER(rmesa->glCtx) == GL_BACK_LEFT);
+    use_back ^= (rmesa->sarea->pfCurrentPage == 1);
+    
+    if (use_back) {
+@@ -97,7 +97,7 @@
+ 
+    if ( rmesa->lastStamp != dPriv->lastStamp ) {
+       r200UpdatePageFlipping( rmesa );
+-      r200SetCliprects( rmesa, rmesa->glCtx->Color.DriverDrawBuffer );
++      r200SetCliprects( rmesa, R200_DRAWBUFFER(rmesa->glCtx) );
+       r200UpdateViewportOffset( rmesa->glCtx );
+       rmesa->lastStamp = dPriv->lastStamp;
+    }
+diff -ruN pa/xc/lib/GL/mesa/src/drv/r200/r200_maos_arrays.c pb/xc/lib/GL/mesa/src/drv/r200/r200_maos_arrays.c
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_maos_arrays.c
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_maos_arrays.c
+@@ -35,7 +35,7 @@
+ #include "glheader.h"
+ #include "mtypes.h"
+ #include "colormac.h"
+-#include "mem.h"
++#include "imports.h"
+ #include "mmath.h"
+ #include "macros.h"
+ 
+@@ -339,7 +339,7 @@
+    }
+    
+ 
+-   if (inputs & VERT_NORM) {
++   if (inputs & VERT_BIT_NORMAL) {
+       if (!rmesa->tcl.norm.buf)
+ 	 emit_vector( ctx, 
+ 		      &(rmesa->tcl.norm), 
+@@ -352,7 +352,7 @@
+       component[nr++] = &rmesa->tcl.norm;
+    }
+ 
+-   if (inputs & VERT_RGBA) {
++   if (inputs & VERT_BIT_COLOR0) {
+       if (VB->ColorPtr[0]->Type == GL_UNSIGNED_BYTE) {
+ 	 if (!rmesa->tcl.rgba.buf)
+ 	    emit_ubyte_rgba( ctx, 
+@@ -391,7 +391,7 @@
+    }
+ 
+ 
+-   if (inputs & VERT_SPEC_RGB) {
++   if (inputs & VERT_BIT_COLOR1) {
+       if (!rmesa->tcl.spec.buf) {
+ 	 if (VB->SecondaryColorPtr[0]->Type != GL_UNSIGNED_BYTE)
+ 	    r200_import_float_spec_colors( ctx );
+@@ -413,7 +413,7 @@
+ /*    vtx = (rmesa->hw.tcl.cmd[TCL_OUTPUT_VTXFMT] & */
+ /* 	  ~(R200_TCL_VTX_Q0|R200_TCL_VTX_Q1)); */
+       
+-   if (inputs & VERT_TEX0) {
++   if (inputs & VERT_BIT_TEX0) {
+       if (!rmesa->tcl.tex[0].buf)
+ 	 emit_vector( ctx, 
+ 		      &(rmesa->tcl.tex[0]), 
+@@ -426,7 +426,7 @@
+       component[nr++] = &rmesa->tcl.tex[0];
+    }
+ 
+-   if (inputs & VERT_TEX1) {
++   if (inputs & VERT_BIT_TEX1) {
+       if (!rmesa->tcl.tex[1].buf)
+ 	 emit_vector( ctx, 
+ 		      &(rmesa->tcl.tex[1]), 
+@@ -461,21 +461,21 @@
+    if (R200_DEBUG & DEBUG_VERTS) 
+       _tnl_print_vert_flags( __FUNCTION__, newinputs );
+ 
+-   if (newinputs & VERT_OBJ) 
++   if (newinputs & VERT_BIT_POS) 
+      r200ReleaseDmaRegion( rmesa, &rmesa->tcl.obj, __FUNCTION__ );
+ 
+-   if (newinputs & VERT_NORM) 
++   if (newinputs & VERT_BIT_NORMAL) 
+       r200ReleaseDmaRegion( rmesa, &rmesa->tcl.norm, __FUNCTION__ );
+ 
+-   if (newinputs & VERT_RGBA) 
++   if (newinputs & VERT_BIT_COLOR0) 
+       r200ReleaseDmaRegion( rmesa, &rmesa->tcl.rgba, __FUNCTION__ );
+ 
+-   if (newinputs & VERT_SPEC_RGB) 
++   if (newinputs & VERT_BIT_COLOR1) 
+       r200ReleaseDmaRegion( rmesa, &rmesa->tcl.spec, __FUNCTION__ );
+ 
+-   if (newinputs & VERT_TEX0)
++   if (newinputs & VERT_BIT_TEX0)
+       r200ReleaseDmaRegion( rmesa, &rmesa->tcl.tex[0], __FUNCTION__ );
+ 
+-   if (newinputs & VERT_TEX1)
++   if (newinputs & VERT_BIT_TEX1)
+       r200ReleaseDmaRegion( rmesa, &rmesa->tcl.tex[1], __FUNCTION__ );
+ }
+diff -ruN pa/xc/lib/GL/mesa/src/drv/r200/r200_maos_vbtmp.h pb/xc/lib/GL/mesa/src/drv/r200/r200_maos_vbtmp.h
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_maos_vbtmp.h
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_maos_vbtmp.h
+@@ -70,14 +70,14 @@
+     */
+    if (VB->ObjPtr->size < 3) {
+       if (VB->ObjPtr->flags & VEC_NOT_WRITEABLE) {
+-	 VB->import_data( ctx, VERT_OBJ, VEC_NOT_WRITEABLE );
++	 VB->import_data( ctx, VERT_BIT_POS, VEC_NOT_WRITEABLE );
+       }
+       _mesa_vector4f_clean_elem( VB->ObjPtr, VB->Count, 2 );
+    }
+ 
+    if (DO_W && VB->ObjPtr->size < 4) {
+       if (VB->ObjPtr->flags & VEC_NOT_WRITEABLE) {
+-	 VB->import_data( ctx, VERT_OBJ, VEC_NOT_WRITEABLE );
++	 VB->import_data( ctx, VERT_BIT_POS, VEC_NOT_WRITEABLE );
+       }
+       _mesa_vector4f_clean_elem( VB->ObjPtr, VB->Count, 3 );
+    }
+@@ -91,7 +91,7 @@
+       tc2_stride = VB->TexCoordPtr[t2]->stride;
+       if (DO_PTEX && VB->TexCoordPtr[t2]->size < 4) {
+ 	 if (VB->TexCoordPtr[t2]->flags & VEC_NOT_WRITEABLE) {
+-	    VB->import_data( ctx, VERT_TEX2, VEC_NOT_WRITEABLE );
++	    VB->import_data( ctx, VERT_BIT_TEX2, VEC_NOT_WRITEABLE );
+ 	 }
+ 	 _mesa_vector4f_clean_elem( VB->TexCoordPtr[t2], VB->Count, 3 );
+       }
+@@ -104,12 +104,12 @@
+ 	 tc1_stride = VB->TexCoordPtr[t1]->stride;
+ 	 if (DO_PTEX && VB->TexCoordPtr[t1]->size < 4) {
+ 	    if (VB->TexCoordPtr[t1]->flags & VEC_NOT_WRITEABLE) {
+-	       VB->import_data( ctx, VERT_TEX1, VEC_NOT_WRITEABLE );
++	       VB->import_data( ctx, VERT_BIT_TEX1, VEC_NOT_WRITEABLE );
+ 	    }
+ 	    _mesa_vector4f_clean_elem( VB->TexCoordPtr[t1], VB->Count, 3 );
+ 	 }
+       } else {
+-	 tc1 = (GLuint (*)[4])&ctx->Current.Texcoord[1]; /* could be anything, really */
++	 tc1 = (GLuint (*)[4])&ctx->Current.Attrib[VERT_ATTRIB_TEX0 + (1)]; /* could be anything, really */
+ 	 tc1_stride = 0;
+       }
+    }
+@@ -121,12 +121,12 @@
+ 	 tc0 = (GLuint (*)[4])VB->TexCoordPtr[t0]->data;
+ 	 if (DO_PTEX && VB->TexCoordPtr[t0]->size < 4) {
+ 	    if (VB->TexCoordPtr[t0]->flags & VEC_NOT_WRITEABLE) {
+-	       VB->import_data( ctx, VERT_TEX0, VEC_NOT_WRITEABLE );
++	       VB->import_data( ctx, VERT_BIT_TEX0, VEC_NOT_WRITEABLE );
+ 	    }
+ 	    _mesa_vector4f_clean_elem( VB->TexCoordPtr[t0], VB->Count, 3 );
+ 	 }
+       } else {
+-	 tc0 = (GLuint (*)[4])&ctx->Current.Texcoord[0]; /* could be anything, really */
++	 tc0 = (GLuint (*)[4])&ctx->Current.Attrib[VERT_ATTRIB_TEX0 + (0)]; /* could be anything, really */
+ 	 tc0_stride = 0;
+       }
+ 	 
+@@ -138,7 +138,7 @@
+ 	 norm = (GLuint (*)[3])VB->NormalPtr->data;
+       } else {
+ 	 norm_stride = 0;
+-	 norm = (GLuint (*)[3])&ctx->Current.Normal;
++	 norm = (GLuint (*)[3])&ctx->Current.Attrib[VERT_ATTRIB_NORMAL];
+       }
+    }
+ 
+diff -ruN pa/xc/lib/GL/mesa/src/drv/r200/r200_maos_verts.c pb/xc/lib/GL/mesa/src/drv/r200/r200_maos_verts.c
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_maos_verts.c
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_maos_verts.c
+@@ -256,19 +256,19 @@
+       }
+    }
+ 
+-   if (inputs & VERT_NORM) {
++   if (inputs & VERT_BIT_NORMAL) {
+       req |= R200_CP_VC_FRMT_N0;
+    }
+    
+-   if (inputs & VERT_RGBA) {
++   if (inputs & VERT_BIT_COLOR0) {
+       req |= R200_CP_VC_FRMT_PKCOLOR;
+    }
+ 
+-   if (inputs & VERT_SPEC_RGB) {
++   if (inputs & VERT_BIT_COLOR1) {
+       req |= R200_CP_VC_FRMT_PKSPEC;
+    }
+ 
+-   if (inputs & VERT_TEX0) {
++   if (inputs & VERT_BIT_TEX0) {
+       req |= R200_CP_VC_FRMT_ST0;
+ 
+       if (VB->TexCoordPtr[0]->size == 4) {
+@@ -277,7 +277,7 @@
+       }
+    }
+ 
+-   if (inputs & VERT_TEX1) {
++   if (inputs & VERT_BIT_TEX1) {
+       req |= R200_CP_VC_FRMT_ST1;
+ 
+       if (VB->TexCoordPtr[1]->size == 4) {
+diff -ruN pa/xc/lib/GL/mesa/src/drv/r200/r200_pixel.c pb/xc/lib/GL/mesa/src/drv/r200/r200_pixel.c
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_pixel.c
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_pixel.c
+@@ -96,7 +96,7 @@
+ 		    !ctx->Color.ColorMask[2] ||
+ 		    !ctx->Color.ColorMask[3] ||
+ 		    ctx->Color.ColorLogicOpEnabled ||
+-		    ctx->Texture._ReallyEnabled ||
++		    R200_TEXENABLED(ctx) ||
+ 		    ctx->Depth.OcclusionTest
+            ) &&
+ 	   ctx->Current.RasterPosValid);
+diff -ruN pa/xc/lib/GL/mesa/src/drv/r200/r200_screen.c pb/xc/lib/GL/mesa/src/drv/r200/r200_screen.c
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_screen.c
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_screen.c
+@@ -34,12 +34,15 @@
+ 
+ #include <dlfcn.h>
+ #include <stdlib.h>
++#ifdef __AMIX__
++#include <sys/resource.h>
++#endif
+ 
+ #include "r200_screen.h"
+ #include "r200_context.h"
+ #include "r200_ioctl.h"
+ 
+-#include "mem.h"
++#include "imports.h"
+ #include "context.h"
+ 
+ #if 1
+@@ -59,13 +62,106 @@
+ 
+ static r200ScreenPtr __r200Screen;
+ 
++#ifdef __AMIX__
++#include "sarea.h"
++#include "amixdrirec.h"
++#define drm_sarea_t		XF86DRISAREARec
++#define drm_radeon_sarea_t	RADEONSAREAPriv
++#include "radeon_amix.h"
++
++/*
++ * The device private is the display session's, the rest the kernel's
++ * layout in the shared area: make the record an X server's radeon
++ * driver would have sent.  All VRAM up to the 3D buffers is mapped in
++ * place of the session's frame, as spans reach back and depth through it.
++ */
++static RADEONDRIPtr
++r200AmixDevPriv( __DRIscreenPrivate *sPriv, RADEONDRIPtr p )
++{
++   AMIXDRIPtr dp = (AMIXDRIPtr) sPriv->pDevPriv;
++   radeon_amix_layout_t *l = (radeon_amix_layout_t *)
++      ((char *) sPriv->pSAREA + RADEON_AMIX_LAYOUT);
++   drmHandle offset, handle, hFB = 0;
++   drmSize size;
++   drmMapType type;
++   drmMapFlags flags;
++   drmAddress map;
++   struct rlimit rl;
++   unsigned long end;
++   int i, mtrr;
++
++   if ( sPriv->devPrivSize < sizeof(AMIXDRIRec) || (dp->cpp != 2 && dp->cpp != 4) ) {
++      __driUtilMessage( "R200 DRI driver needs a 16- or 32-bit screen" );
++      return NULL;
++   }
++   if ( l->chipFamily != RADEON_FAMILY_R200 || l->backSize == 0 ) {
++      __driUtilMessage( "R200 DRI driver: no R200 or no VRAM left for 3D" );
++      return NULL;
++   }
++   memset( p, 0, sizeof(*p) );
++   p->deviceID		= l->deviceID;
++   p->width		= dp->width;
++   p->height		= dp->height;
++   p->depth		= dp->depth;
++   p->bpp		= dp->cpp * 8;
++   p->IsPCI		= 1;
++   p->frontOffset	= dp->frontOffset;
++   p->frontPitch	= dp->stride / dp->cpp;
++   p->backOffset	= l->backOffset;
++   p->backPitch		= p->frontPitch;
++   p->depthOffset	= l->depthOffset;
++   p->depthPitch	= p->frontPitch;
++   p->textureOffset	= l->textureOffset;
++   p->textureSize	= l->textureSize;
++   p->log2TexGran	= l->log2TexGran;
++   p->registerHandle	= l->registerHandle;
++   p->registerSize	= l->registerSize;
++   p->statusHandle	= l->statusHandle;
++   p->statusSize	= l->statusSize;
++   p->sarea_priv_offset	= l->sarea_priv_offset;
++
++   end = dp->frontOffset + dp->stride * dp->height;
++   if ( end < l->backOffset + l->backSize )
++      end = l->backOffset + l->backSize;
++   if ( end < l->depthOffset + l->depthSize )
++      end = l->depthOffset + l->depthSize;
++   for ( i = 0; drmGetMap( sPriv->fd, i, &offset, &size, &type, &flags,
++			   &handle, &mtrr ) == 0; i++ )
++      if ( type == DRM_FRAME_BUFFER )
++	 hFB = offset;
++   /* the default 16 MB of mappings a process may have is too few */
++   if ( getrlimit( RLIMIT_VMEM, &rl ) == 0 && rl.rlim_cur != RLIM_INFINITY ) {
++      rl.rlim_cur += end + 4 * 1024 * 1024;
++      if ( rl.rlim_max != RLIM_INFINITY && rl.rlim_cur > rl.rlim_max )
++	 rl.rlim_cur = rl.rlim_max;
++      (void) setrlimit( RLIMIT_VMEM, &rl );
++   }
++   if ( !hFB || drmMap( sPriv->fd, hFB, end, &map ) ) {
++      __driUtilMessage( "R200 DRI driver: no VRAM map (%lu bytes)", end );
++      return NULL;
++   }
++   drmUnmap( (drmAddress) sPriv->pFB, sPriv->fbSize );
++   sPriv->pFB = (unsigned char *) map;
++   sPriv->fbSize = end;
++   return p;
++}
++#endif
++
+ /* Create the device specific screen private data struct.
+  */
+ static r200ScreenPtr 
+ r200CreateScreen( __DRIscreenPrivate *sPriv )
+ {
+    r200ScreenPtr r200Screen;
++#ifdef __AMIX__
++   static RADEONDRIRec amixPriv;
++   RADEONDRIPtr r200DRIPriv = r200AmixDevPriv( sPriv, &amixPriv );
++
++   if ( !r200DRIPriv )
++      return NULL;
++#else
+    RADEONDRIPtr r200DRIPriv = (RADEONDRIPtr)sPriv->pDevPriv;
++#endif
+ 
+    /* Check the DRI version */
+    {
+@@ -80,6 +176,7 @@
+       }
+    }
+ 
++#ifndef __AMIX__
+    /* Check that the DDX driver version is compatible */
+    if ( sPriv->ddxMajor != 4 ||
+ 	sPriv->ddxMinor < 0 ) {
+@@ -88,6 +185,7 @@
+ 			sPriv->ddxMajor, sPriv->ddxMinor, sPriv->ddxPatch );
+       return NULL;
+    }
++#endif
+ 
+    /* Check that the DRM driver version is compatible 
+     *    -- R200 support added at 1.5.0.
+@@ -398,6 +496,7 @@
+ void
+ __driRegisterExtensions( void )
+ {
++#ifndef __AMIX__
+    /* dlopen ourself */
+    void *dll = dlopen(NULL, RTLD_GLOBAL);
+    if (dll) {
+@@ -433,4 +532,5 @@
+ 
+       dlclose(dll);
+    }
++#endif
+ }
+diff -ruN pa/xc/lib/GL/mesa/src/drv/r200/r200_span.c pb/xc/lib/GL/mesa/src/drv/r200/r200_span.c
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_span.c
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_span.c
+@@ -287,12 +287,12 @@
+ 
+ static void r200SetReadBuffer( GLcontext *ctx,
+ 				 GLframebuffer *colorBuffer,
+-				 GLenum mode )
++				 GLuint bufferBit )
+ {
+    r200ContextPtr rmesa = R200_CONTEXT(ctx);
+ 
+-   switch ( mode ) {
+-   case GL_FRONT_LEFT:
++   switch ( bufferBit ) {
++   case FRONT_LEFT_BIT:
+       if ( rmesa->doPageFlip && rmesa->sarea->pfCurrentPage == 1 ) {
+         rmesa->state.pixel.readOffset = rmesa->r200Screen->backOffset;
+         rmesa->state.pixel.readPitch  = rmesa->r200Screen->backPitch;
+@@ -301,7 +301,7 @@
+       	rmesa->state.pixel.readPitch  = rmesa->r200Screen->frontPitch;
+       }
+       break;
+-   case GL_BACK_LEFT:
++   case BACK_LEFT_BIT:
+       if ( rmesa->doPageFlip && rmesa->sarea->pfCurrentPage == 1 ) {
+       	rmesa->state.pixel.readOffset = rmesa->r200Screen->frontOffset;
+       	rmesa->state.pixel.readPitch  = rmesa->r200Screen->frontPitch;
+@@ -359,7 +359,7 @@
+    r200ContextPtr rmesa = R200_CONTEXT(ctx);
+    struct swrast_device_driver *swdd = _swrast_GetDeviceDriverReference(ctx);
+ 
+-   swdd->SetReadBuffer = r200SetReadBuffer;
++   swdd->SetBuffer = r200SetReadBuffer;
+ 
+    switch ( rmesa->r200Screen->cpp ) {
+    case 2:
+diff -ruN pa/xc/lib/GL/mesa/src/drv/r200/r200_state.c pb/xc/lib/GL/mesa/src/drv/r200/r200_state.c
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_state.c
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_state.c
+@@ -40,7 +40,7 @@
+ #include "r200_swtcl.h"
+ #include "r200_vtxfmt.h"
+ 
+-#include "mem.h"
++#include "imports.h"
+ #include "mmath.h"
+ #include "enums.h"
+ #include "colormac.h"
+@@ -58,10 +58,13 @@
+  * Alpha blending
+  */
+ 
+-static void r200AlphaFunc( GLcontext *ctx, GLenum func, GLchan ref )
++static void r200AlphaFunc( GLcontext *ctx, GLenum func, GLfloat fref )
+ {
+    r200ContextPtr rmesa = R200_CONTEXT(ctx);
+    int pp_misc = rmesa->hw.ctx.cmd[CTX_PP_MISC];
++   GLubyte ref;
++
++   UNCLAMPED_FLOAT_TO_UBYTE( ref, fref );
+ 
+    R200_STATECHANGE( rmesa, ctx );
+ 
+@@ -1202,7 +1205,7 @@
+    GLuint p;
+ 
+    for (p = 0; p < ctx->Const.MaxClipPlanes; p++) {
+-      if (ctx->Transform.ClipEnabled[p]) {
++      if ((ctx->Transform.ClipPlanesEnabled & (1 << (p)))) {
+ 	 GLint *ip = (GLint *)ctx->Transform._ClipUserPlane[p];
+ 
+ 	 R200_STATECHANGE( rmesa, ucp[p] );
+@@ -1223,8 +1226,8 @@
+ 			       GLint ref, GLuint mask )
+ {
+    r200ContextPtr rmesa = R200_CONTEXT(ctx);
+-   GLuint refmask = ((ctx->Stencil.Ref << R200_STENCIL_REF_SHIFT) |
+-		     (ctx->Stencil.ValueMask << R200_STENCIL_MASK_SHIFT));
++   GLuint refmask = ((ctx->Stencil.Ref[0] << R200_STENCIL_REF_SHIFT) |
++		     (ctx->Stencil.ValueMask[0] << R200_STENCIL_MASK_SHIFT));
+ 
+    R200_STATECHANGE( rmesa, ctx );
+    R200_STATECHANGE( rmesa, msk );
+@@ -1233,7 +1236,7 @@
+    rmesa->hw.msk.cmd[MSK_RB3D_STENCILREFMASK] &= ~(R200_STENCIL_REF_MASK|
+ 						   R200_STENCIL_VALUE_MASK);
+ 
+-   switch ( ctx->Stencil.Function ) {
++   switch ( ctx->Stencil.Function[0] ) {
+    case GL_NEVER:
+       rmesa->hw.ctx.cmd[CTX_RB3D_ZSTENCILCNTL] |= R200_STENCIL_TEST_NEVER;
+       break;
+@@ -1270,7 +1273,7 @@
+    R200_STATECHANGE( rmesa, msk );
+    rmesa->hw.msk.cmd[MSK_RB3D_STENCILREFMASK] &= ~R200_STENCIL_WRITE_MASK;
+    rmesa->hw.msk.cmd[MSK_RB3D_STENCILREFMASK] |=
+-      (ctx->Stencil.WriteMask << R200_STENCIL_WRITEMASK_SHIFT);
++      (ctx->Stencil.WriteMask[0] << R200_STENCIL_WRITEMASK_SHIFT);
+ }
+ 
+ static void r200StencilOp( GLcontext *ctx, GLenum fail,
+@@ -1283,7 +1286,7 @@
+ 					       R200_STENCIL_ZFAIL_MASK |
+ 					       R200_STENCIL_ZPASS_MASK);
+ 
+-   switch ( ctx->Stencil.FailFunc ) {
++   switch ( ctx->Stencil.FailFunc[0] ) {
+    case GL_KEEP:
+       rmesa->hw.ctx.cmd[CTX_RB3D_ZSTENCILCNTL] |= R200_STENCIL_FAIL_KEEP;
+       break;
+@@ -1310,7 +1313,7 @@
+       break;
+    }
+ 
+-   switch ( ctx->Stencil.ZFailFunc ) {
++   switch ( ctx->Stencil.ZFailFunc[0] ) {
+    case GL_KEEP:
+       rmesa->hw.ctx.cmd[CTX_RB3D_ZSTENCILCNTL] |= R200_STENCIL_ZFAIL_KEEP;
+       break;
+@@ -1337,7 +1340,7 @@
+       break;
+    }
+ 
+-   switch ( ctx->Stencil.ZPassFunc ) {
++   switch ( ctx->Stencil.ZPassFunc[0] ) {
+    case GL_KEEP:
+       rmesa->hw.ctx.cmd[CTX_RB3D_ZSTENCILCNTL] |= R200_STENCIL_ZPASS_KEEP;
+       break;
+@@ -1372,7 +1375,7 @@
+    rmesa->state.stencil.clear = 
+       ((GLuint) ctx->Stencil.Clear |
+        (0xff << R200_STENCIL_MASK_SHIFT) |
+-       (ctx->Stencil.WriteMask << R200_STENCIL_WRITEMASK_SHIFT));
++       (ctx->Stencil.WriteMask[0] << R200_STENCIL_WRITEMASK_SHIFT));
+ }
+ 
+ 
+@@ -1483,9 +1486,12 @@
+  * Miscellaneous
+  */
+ 
+-static void r200ClearColor( GLcontext *ctx, const GLchan c[4] )
++static void r200ClearColor( GLcontext *ctx, const GLfloat fc[4] )
+ {
+    r200ContextPtr rmesa = R200_CONTEXT(ctx);
++   GLubyte c[4];
++
++   UNCLAMPED_FLOAT_TO_RGBA_CHAN( c, fc );
+    rmesa->state.color.clear = r200PackColor( rmesa->r200Screen->cpp,
+ 					       c[0], c[1], c[2], c[3] );
+ }
+@@ -1570,7 +1576,7 @@
+ 
+    R200_FIREVERTICES(rmesa);	/* don't pipeline cliprect changes */
+ 
+-   switch ( mode ) {
++   switch ( R200_DRAWBUFFER(ctx) ) {
+    case GL_FRONT_LEFT:
+       FALLBACK( rmesa, R200_FALLBACK_DRAW_BUFFER, GL_FALSE );
+       if ( rmesa->doPageFlip && rmesa->sarea->pfCurrentPage == 1 ) {
+@@ -1960,7 +1966,7 @@
+       if (!ctx->Texture.Unit[unit]._ReallyEnabled) 
+ 	 continue;
+ 
+-      if (ctx->TextureMatrix[unit].type != MATRIX_IDENTITY) {
++      if (ctx->TextureMatrixStack[unit].Top->type != MATRIX_IDENTITY) {
+ 	 rmesa->TexMatEnabled |= (R200_TEXGEN_TEXMAT_0_ENABLE|
+ 				  R200_TEXMAT_0_ENABLE) << unit;
+ 
+@@ -1972,11 +1978,11 @@
+ 	     */
+ 	    _math_matrix_mul_matrix( &rmesa->tmpmat, 
+ 				     &rmesa->TexGenMatrix[unit],
+-				     &ctx->TextureMatrix[unit] );
++				     ctx->TextureMatrixStack[unit].Top );
+ 	    upload_matrix( rmesa, rmesa->tmpmat.m, R200_MTX_TEX0+unit );
+ 	 } 
+ 	 else {
+-	    upload_matrix( rmesa, ctx->TextureMatrix[unit].m, 
++	    upload_matrix( rmesa, ctx->TextureMatrixStack[unit].Top->m, 
+ 			   R200_MTX_TEX0+unit );
+ 	 }
+       }
+@@ -2022,8 +2028,8 @@
+    /* Need these for lighting (shouldn't upload otherwise)
+     */
+    if (new_state & (_NEW_MODELVIEW)) {
+-      upload_matrix( rmesa, ctx->ModelView.m, R200_MTX_MV );
+-      upload_matrix_t( rmesa, ctx->ModelView.inv, R200_MTX_IMV );
++      upload_matrix( rmesa, ctx->ModelviewMatrixStack.Top->m, R200_MTX_MV );
++      upload_matrix_t( rmesa, ctx->ModelviewMatrixStack.Top->inv, R200_MTX_IMV );
+    }
+ 
+    /* Does this need to be triggered on eg. modelview for
+@@ -2040,7 +2046,7 @@
+    /* emit all active clip planes if projection matrix changes.
+     */
+    if (new_state & (_NEW_PROJECTION)) {
+-      if (ctx->Transform._AnyClip) 
++      if (ctx->Transform.ClipPlanesEnabled) 
+ 	 r200UpdateClipPlanes( ctx );
+    }
+ 
+@@ -2095,7 +2101,7 @@
+    ctx->Driver.UpdateState		= r200InvalidateState;
+    ctx->Driver.LightingSpaceChange      = r200LightingSpaceChange;
+ 
+-   ctx->Driver.SetDrawBuffer		= r200SetDrawBuffer;
++   ctx->Driver.DrawBuffer		= r200SetDrawBuffer;
+ 
+    ctx->Driver.AlphaFunc		= r200AlphaFunc;
+    ctx->Driver.BlendEquation		= r200BlendEquation;
+diff -ruN pa/xc/lib/GL/mesa/src/drv/r200/r200_state_init.c pb/xc/lib/GL/mesa/src/drv/r200/r200_state_init.c
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_state_init.c
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_state_init.c
+@@ -40,7 +40,7 @@
+ #include "r200_swtcl.h"
+ #include "r200_vtxfmt.h"
+ 
+-#include "mem.h"
++#include "imports.h"
+ #include "mmath.h"
+ #include "enums.h"
+ #include "colormac.h"
+@@ -131,16 +131,16 @@
+ 
+ 
+ CHECK( always, GL_TRUE )
+-CHECK( tex_any, ctx->Texture._ReallyEnabled )
++CHECK( tex_any, R200_TEXENABLED(ctx) )
+ CHECK( tex, ctx->Texture.Unit[idx]._ReallyEnabled )
+ CHECK( fog, ctx->Fog.Enabled )
+ TCL_CHECK( tcl, GL_TRUE )
+-TCL_CHECK( tcl_tex_any, ctx->Texture._ReallyEnabled )
++TCL_CHECK( tcl_tex_any, R200_TEXENABLED(ctx) )
+ TCL_CHECK( tcl_tex, ctx->Texture.Unit[idx]._ReallyEnabled )
+ TCL_CHECK( tcl_lighting, ctx->Light.Enabled )
+ TCL_CHECK( tcl_eyespace_or_lighting, ctx->_NeedEyeCoords || ctx->Light.Enabled )
+ TCL_CHECK( tcl_light, ctx->Light.Enabled && ctx->Light.Light[idx].Enabled )
+-TCL_CHECK( tcl_ucp, ctx->Transform.ClipEnabled[idx] )
++TCL_CHECK( tcl_ucp, (ctx->Transform.ClipPlanesEnabled & (1 << (idx))) )
+ /* TCL_CHECK( tcl_eyespace_or_fog, ctx->_NeedEyeCoords || ctx->Fog.Enabled )  */
+ 
+ 
+diff -ruN pa/xc/lib/GL/mesa/src/drv/r200/r200_swtcl.c pb/xc/lib/GL/mesa/src/drv/r200/r200_swtcl.c
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_swtcl.c
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_swtcl.c
+@@ -36,7 +36,7 @@
+ #include "mtypes.h"
+ #include "colormac.h"
+ #include "enums.h"
+-#include "mem.h"
++#include "imports.h"
+ #include "mmath.h"
+ #include "macros.h"
+ #include "image.h"
+@@ -374,9 +374,9 @@
+    if (ctx->Fog.Enabled || (ctx->_TriangleCaps & DD_SEPARATE_SPECULAR))
+       ind |= R200_SPEC_BIT;
+ 
+-   if (ctx->Texture._ReallyEnabled & TEXTURE1_ANY)
++   if (R200_TEXENABLED(ctx) & TEXTURE1_ANY)
+       ind |= R200_TEX0_BIT|R200_TEX1_BIT;
+-   else if (ctx->Texture._ReallyEnabled & TEXTURE0_ANY)
++   else if (R200_TEXENABLED(ctx) & TEXTURE0_ANY)
+       ind |= R200_TEX0_BIT;
+ 
+    r200SetVertexFormat( ctx, ind );
+@@ -534,7 +534,7 @@
+    tnl->Driver.Render.PrimitiveNotify( ctx, flags & PRIM_MODE_MASK );
+    tnl->Driver.Render.BuildVertices( ctx, start, count, ~0 );
+    tnl->Driver.Render.PrimTabVerts[flags&PRIM_MODE_MASK]( ctx, start, count, flags );
+-   R200_CONTEXT(ctx)->swtcl.SetupNewInputs = VERT_CLIP;
++   R200_CONTEXT(ctx)->swtcl.SetupNewInputs = VERT_BIT_CLIP;
+ }
+ 
+ static void ELT_FALLBACK( GLcontext *ctx,
+@@ -546,7 +546,7 @@
+    tnl->Driver.Render.PrimitiveNotify( ctx, flags & PRIM_MODE_MASK );
+    tnl->Driver.Render.BuildVertices( ctx, start, count, ~0 );
+    tnl->Driver.Render.PrimTabElts[flags&PRIM_MODE_MASK]( ctx, start, count, flags );
+-   R200_CONTEXT(ctx)->swtcl.SetupNewInputs = VERT_CLIP;
++   R200_CONTEXT(ctx)->swtcl.SetupNewInputs = VERT_BIT_CLIP;
+ }
+ 
+ 
+@@ -680,20 +680,20 @@
+ static void r200_check_render( GLcontext *ctx,
+ 				 struct gl_pipeline_stage *stage )
+ {
+-   GLuint inputs = VERT_OBJ|VERT_CLIP|VERT_RGBA;
++   GLuint inputs = VERT_BIT_POS|VERT_BIT_CLIP|VERT_BIT_COLOR0;
+ 
+    if (ctx->RenderMode == GL_RENDER) {
+       if (ctx->_TriangleCaps & DD_SEPARATE_SPECULAR)
+-	 inputs |= VERT_SPEC_RGB;
++	 inputs |= VERT_BIT_COLOR1;
+ 
+       if (ctx->Texture.Unit[0]._ReallyEnabled)
+-	 inputs |= VERT_TEX(0);
++	 inputs |= VERT_BIT_TEX(0);
+ 
+       if (ctx->Texture.Unit[1]._ReallyEnabled)
+-	 inputs |= VERT_TEX(1);
++	 inputs |= VERT_BIT_TEX(1);
+ 
+       if (ctx->Fog.Enabled)
+-	 inputs |= VERT_FOG_COORD;
++	 inputs |= VERT_BIT_FOG;
+    }
+ 
+    stage->inputs = inputs;
+@@ -869,7 +869,7 @@
+ 
+ 
+ #define IND (0)
+-#define TAG(x) x
++#define TAG(x) x##_plain
+ #include "tnl_dd/t_dd_tritmp.h"
+ 
+ #define IND (R200_TWOSIDE_BIT)
+@@ -887,7 +887,7 @@
+ 
+ static void init_rast_tab( void )
+ {
+-   init();
++   init_plain();
+    init_twoside();
+    init_unfilled();
+    init_twoside_unfilled();
+@@ -1133,7 +1133,7 @@
+       GLfloat f;
+ 
+       if (ctx->Fog.FogCoordinateSource == GL_FOG_COORDINATE_EXT)
+-         f = _mesa_z_to_fogfactor(ctx, ctx->Current.FogCoord);
++         f = _mesa_z_to_fogfactor(ctx, ctx->Current.Attrib[VERT_ATTRIB_FOG][0]);
+       else
+          f = _mesa_z_to_fogfactor(ctx, ctx->Current.RasterDistance);
+ 
+diff -ruN pa/xc/lib/GL/mesa/src/drv/r200/r200_tcl.c pb/xc/lib/GL/mesa/src/drv/r200/r200_tcl.c
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_tcl.c
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_tcl.c
+@@ -326,7 +326,7 @@
+ 				     struct gl_pipeline_stage *stage )
+ {
+    r200ContextPtr rmesa = R200_CONTEXT(ctx);
+-   GLuint inputs = VERT_OBJ;
++   GLuint inputs = VERT_BIT_POS;
+ 
+    /* Validate state:
+     */
+@@ -344,37 +344,37 @@
+       /* Make all this event-driven:
+        */
+       if (ctx->Light.Enabled) {
+-	 inputs |= VERT_NORM;
++	 inputs |= VERT_BIT_NORMAL;
+ 
+ 	 if (ctx->Light.ColorMaterialEnabled) {
+-	    inputs |= VERT_RGBA;
++	    inputs |= VERT_BIT_COLOR0;
+ 	 }
+       }
+       else {
+-	 inputs |= VERT_RGBA;
++	 inputs |= VERT_BIT_COLOR0;
+ 	 
+ 	 if (ctx->_TriangleCaps & DD_SEPARATE_SPECULAR) {
+-	    inputs |= VERT_SPEC_RGB;
++	    inputs |= VERT_BIT_COLOR1;
+ 	 }
+       }
+ 
+       if (ctx->Texture.Unit[0]._ReallyEnabled) {
+ 	 if (ctx->Texture.Unit[0].TexGenEnabled) {
+ 	    if (rmesa->TexGenNeedNormals[0]) {
+-	       inputs |= VERT_NORM;
++	       inputs |= VERT_BIT_NORMAL;
+ 	    }
+ 	 } else {
+-	    inputs |= VERT_TEX(0);
++	    inputs |= VERT_BIT_TEX(0);
+ 	 }
+       }
+ 
+       if (ctx->Texture.Unit[1]._ReallyEnabled) {
+ 	 if (ctx->Texture.Unit[1].TexGenEnabled) {
+ 	    if (rmesa->TexGenNeedNormals[1]) {
+-	       inputs |= VERT_NORM;
++	       inputs |= VERT_BIT_NORMAL;
+ 	    }
+ 	 } else {
+-	    inputs |= VERT_TEX(1);
++	    inputs |= VERT_BIT_TEX(1);
+ 	 }
+       }
+ 
+diff -ruN pa/xc/lib/GL/mesa/src/drv/r200/r200_tex.c pb/xc/lib/GL/mesa/src/drv/r200/r200_tex.c
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_tex.c
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_tex.c
+@@ -42,7 +42,7 @@
+ #include "context.h"
+ #include "enums.h"
+ #include "image.h"
+-#include "mem.h"
++#include "imports.h"
+ #include "mmath.h"
+ #include "simple_list.h"
+ #include "texformat.h"
+@@ -182,7 +182,7 @@
+    r200SetTexWrap( t, texObj->WrapS, texObj->WrapT );
+    r200SetTexMaxAnisotropy( t, texObj->MaxAnisotropy );
+    r200SetTexFilter( t, texObj->MinFilter, texObj->MagFilter );
+-   r200SetTexBorderColor( t, texObj->BorderColor );
++   r200SetTexBorderColor( t, texObj->_BorderChan );
+    return t;
+ }
+ 
+@@ -632,7 +632,7 @@
+       break;
+ 
+    case GL_TEXTURE_BORDER_COLOR:
+-      r200SetTexBorderColor( t, texObj->BorderColor );
++      r200SetTexBorderColor( t, texObj->_BorderChan );
+       break;
+ 
+    case GL_TEXTURE_BASE_LEVEL:
+diff -ruN pa/xc/lib/GL/mesa/src/drv/r200/r200_texmem.c pb/xc/lib/GL/mesa/src/drv/r200/r200_texmem.c
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_texmem.c
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_texmem.c
+@@ -49,7 +49,7 @@
+ #include "macros.h"
+ #include "simple_list.h"
+ #include "enums.h"
+-#include "mem.h"
++#include "imports.h"
+ 
+ #include <unistd.h>	/* for usleep */
+ 
+@@ -318,6 +318,34 @@
+  */
+ 
+ 
++
++#ifdef MESA_BIG_ENDIAN
++/*
++ * The card reads texels little-endian and the upload passes bytes
++ * unchanged: swap each texel of a host-order image.  1-byte texels
++ * need nothing.  The copy is freed by the caller.
++ */
++static void *r200SwapTexels( const void *src, GLuint n, GLuint bytes )
++{
++   const GLubyte *s = (const GLubyte *) src;
++   GLubyte *d, *p;
++   GLuint i;
++
++   if ( bytes != 2 && bytes != 4 )
++      return NULL;
++   if ( !(d = (GLubyte *) MALLOC( n * bytes )) )
++      return NULL;
++   for ( i = 0, p = d; i < n; i++, s += bytes, p += bytes ) {
++      if ( bytes == 2 ) {
++	 p[0] = s[1]; p[1] = s[0];
++      } else {
++	 p[0] = s[3]; p[1] = s[2]; p[2] = s[1]; p[3] = s[0];
++      }
++   }
++   return d;
++}
++#endif
++
+ static void r200UploadAGPClientSubImage( r200ContextPtr rmesa,
+ 					 r200TexObjPtr t, 
+ 					 struct gl_texture_image *texImage,
+@@ -464,6 +492,21 @@
+ 	       tex += src_pitch;
+ 	    }
+ 	 }
++#ifdef MESA_BIG_ENDIAN
++	 {
++	    GLuint b = texFormat->TexelBytes, i, n = lines * blit_pitch / b;
++	    GLubyte *p = (GLubyte *) region.address, c;
++
++	    for ( i = 0; b > 1 && i < n; i++, p += b ) {
++	       if ( b == 2 ) {
++		  c = p[0]; p[0] = p[1]; p[1] = c;
++	       } else {
++		  c = p[0]; p[0] = p[3]; p[3] = c;
++		  c = p[1]; p[1] = p[2]; p[2] = c;
++	       }
++	    }
++	 }
++#endif
+ 
+ 	 r200EmitWait( rmesa, RADEON_WAIT_3D );
+ 
+@@ -502,6 +545,9 @@
+    GLint ret;
+    drmRadeonTexture tex;
+    drmRadeonTexImage tmp;
++#ifdef MESA_BIG_ENDIAN
++   void *swapped;
++#endif
+    int level = hwlevel + t->firstLevel;
+ 
+    if ( R200_DEBUG & DEBUG_TEXTURE ) {
+@@ -599,6 +645,13 @@
+    tex.image = &tmp;
+ 
+    memcpy( &tmp, &t->image[hwlevel], sizeof(drmRadeonTexImage) );
++#ifdef MESA_BIG_ENDIAN
++   swapped = r200SwapTexels( texImage->Data,
++			     texImage->RowStride * imageHeight * texImage->Depth,
++			     texFormat->TexelBytes );
++   if ( swapped )
++      tmp.data = swapped;
++#endif
+ 
+    LOCK_HARDWARE( rmesa );
+    do {
+@@ -612,6 +665,10 @@
+    } while ( ret && errno == EAGAIN );
+ 
+    UNLOCK_HARDWARE( rmesa );
++#ifdef MESA_BIG_ENDIAN
++   if ( swapped )
++      FREE( swapped );
++#endif
+ 
+    if ( ret ) {
+       fprintf( stderr, "DRM_R200_TEXTURE: return = %d\n", ret );
+diff -ruN pa/xc/lib/GL/mesa/src/drv/r200/r200_texstate.c pb/xc/lib/GL/mesa/src/drv/r200/r200_texstate.c
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_texstate.c
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_texstate.c
+@@ -43,7 +43,7 @@
+ #include "context.h"
+ #include "enums.h"
+ #include "macros.h"
+-#include "mem.h"
++#include "imports.h"
+ #include "mmath.h"
+ #include "simple_list.h"
+ #include "texformat.h"
+diff -ruN pa/xc/lib/GL/mesa/src/drv/r200/r200_vtxfmt.c pb/xc/lib/GL/mesa/src/drv/r200/r200_vtxfmt.c
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_vtxfmt.c
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_vtxfmt.c
+@@ -43,7 +43,7 @@
+ #include "api_noop.h"
+ #include "api_arrayelt.h"
+ #include "context.h"
+-#include "mem.h"
++#include "imports.h"
+ #include "mmath.h"
+ #include "mtypes.h"
+ #include "enums.h"
+@@ -111,30 +111,30 @@
+    assert(vb.context == ctx);
+ 
+    if (rmesa->vb.vtxfmt_0 & R200_VTX_N0) {
+-      ctx->Current.Normal[0] = vb.normalptr[0];
+-      ctx->Current.Normal[1] = vb.normalptr[1];
+-      ctx->Current.Normal[2] = vb.normalptr[2];
++      ctx->Current.Attrib[VERT_ATTRIB_NORMAL][0] = vb.normalptr[0];
++      ctx->Current.Attrib[VERT_ATTRIB_NORMAL][1] = vb.normalptr[1];
++      ctx->Current.Attrib[VERT_ATTRIB_NORMAL][2] = vb.normalptr[2];
+    }
+ 
+    switch( VTX_COLOR(rmesa->vb.vtxfmt_0, 0) ) {
+    case R200_VTX_PK_RGBA:
+-      ctx->Current.Color[0] = UBYTE_TO_FLOAT( vb.colorptr->red );
+-      ctx->Current.Color[1] = UBYTE_TO_FLOAT( vb.colorptr->green );
+-      ctx->Current.Color[2] = UBYTE_TO_FLOAT( vb.colorptr->blue );
+-      ctx->Current.Color[3] = UBYTE_TO_FLOAT( vb.colorptr->alpha );
++      ctx->Current.Attrib[VERT_ATTRIB_COLOR0][0] = UBYTE_TO_FLOAT( vb.colorptr->red );
++      ctx->Current.Attrib[VERT_ATTRIB_COLOR0][1] = UBYTE_TO_FLOAT( vb.colorptr->green );
++      ctx->Current.Attrib[VERT_ATTRIB_COLOR0][2] = UBYTE_TO_FLOAT( vb.colorptr->blue );
++      ctx->Current.Attrib[VERT_ATTRIB_COLOR0][3] = UBYTE_TO_FLOAT( vb.colorptr->alpha );
+       break;
+ 
+    case R200_VTX_FP_RGB:
+-      ctx->Current.Color[0] = vb.floatcolorptr[0];
+-      ctx->Current.Color[1] = vb.floatcolorptr[1];
+-      ctx->Current.Color[2] = vb.floatcolorptr[2];
++      ctx->Current.Attrib[VERT_ATTRIB_COLOR0][0] = vb.floatcolorptr[0];
++      ctx->Current.Attrib[VERT_ATTRIB_COLOR0][1] = vb.floatcolorptr[1];
++      ctx->Current.Attrib[VERT_ATTRIB_COLOR0][2] = vb.floatcolorptr[2];
+       break;
+ 
+    case R200_VTX_FP_RGBA:
+-      ctx->Current.Color[0] = vb.floatcolorptr[0];
+-      ctx->Current.Color[1] = vb.floatcolorptr[1];
+-      ctx->Current.Color[2] = vb.floatcolorptr[2];
+-      ctx->Current.Color[3] = vb.floatcolorptr[3];
++      ctx->Current.Attrib[VERT_ATTRIB_COLOR0][0] = vb.floatcolorptr[0];
++      ctx->Current.Attrib[VERT_ATTRIB_COLOR0][1] = vb.floatcolorptr[1];
++      ctx->Current.Attrib[VERT_ATTRIB_COLOR0][2] = vb.floatcolorptr[2];
++      ctx->Current.Attrib[VERT_ATTRIB_COLOR0][3] = vb.floatcolorptr[3];
+       break;
+       
+    default:
+@@ -142,23 +142,23 @@
+    }
+       
+    if (VTX_COLOR(rmesa->vb.vtxfmt_0, 1) == R200_VTX_PK_RGBA) {
+-      ctx->Current.SecondaryColor[0] = UBYTE_TO_FLOAT( vb.specptr->red );
+-      ctx->Current.SecondaryColor[1] = UBYTE_TO_FLOAT( vb.specptr->green );
+-      ctx->Current.SecondaryColor[2] = UBYTE_TO_FLOAT( vb.specptr->blue );
++      ctx->Current.Attrib[VERT_ATTRIB_COLOR1][0] = UBYTE_TO_FLOAT( vb.specptr->red );
++      ctx->Current.Attrib[VERT_ATTRIB_COLOR1][1] = UBYTE_TO_FLOAT( vb.specptr->green );
++      ctx->Current.Attrib[VERT_ATTRIB_COLOR1][2] = UBYTE_TO_FLOAT( vb.specptr->blue );
+    } 
+ 
+    if (rmesa->vb.vtxfmt_1 & (7 << R200_VTX_TEX0_COMP_CNT_SHIFT)) {
+-      ctx->Current.Texcoord[0][0] = vb.texcoordptr[0][0];
+-      ctx->Current.Texcoord[0][1] = vb.texcoordptr[0][1];
+-      ctx->Current.Texcoord[0][2] = 0.0F;
+-      ctx->Current.Texcoord[0][3] = 1.0F;
++      ctx->Current.Attrib[VERT_ATTRIB_TEX0 + (0)][0] = vb.texcoordptr[0][0];
++      ctx->Current.Attrib[VERT_ATTRIB_TEX0 + (0)][1] = vb.texcoordptr[0][1];
++      ctx->Current.Attrib[VERT_ATTRIB_TEX0 + (0)][2] = 0.0F;
++      ctx->Current.Attrib[VERT_ATTRIB_TEX0 + (0)][3] = 1.0F;
+    }
+ 
+    if (rmesa->vb.vtxfmt_1 & (7 << R200_VTX_TEX1_COMP_CNT_SHIFT)) {
+-      ctx->Current.Texcoord[1][0] = vb.texcoordptr[1][0];
+-      ctx->Current.Texcoord[1][1] = vb.texcoordptr[1][1];
+-      ctx->Current.Texcoord[1][2] = 0.0F;
+-      ctx->Current.Texcoord[1][3] = 1.0F;
++      ctx->Current.Attrib[VERT_ATTRIB_TEX0 + (1)][0] = vb.texcoordptr[1][0];
++      ctx->Current.Attrib[VERT_ATTRIB_TEX0 + (1)][1] = vb.texcoordptr[1][1];
++      ctx->Current.Attrib[VERT_ATTRIB_TEX0 + (1)][2] = 0.0F;
++      ctx->Current.Attrib[VERT_ATTRIB_TEX0 + (1)][3] = 1.0F;
+    }
+ 
+    ctx->Driver.NeedFlush &= ~FLUSH_UPDATE_CURRENT;
+@@ -412,7 +412,7 @@
+    glBegin( prim );
+    
+    if (rmesa->vb.installed_color_3f_sz == 4)
+-      alpha = ctx->Current.Color[3];
++      alpha = ctx->Current.Attrib[VERT_ATTRIB_COLOR0][3];
+ 
+    /* Replay saved vertices
+     */
+@@ -608,8 +608,8 @@
+ 	    ind0 |= R200_VTX_N0;
+ 	 }
+       } else {
+-	 if (ctx->Current.Texcoord[0][2] != 0.0F ||
+-	     ctx->Current.Texcoord[0][3] != 1.0) {
++	 if (ctx->Current.Attrib[VERT_ATTRIB_TEX0 + (0)][2] != 0.0F ||
++	     ctx->Current.Attrib[VERT_ATTRIB_TEX0 + (0)][3] != 1.0) {
+ 	    if (R200_DEBUG & (DEBUG_VFMT|DEBUG_FALLBACKS))
+ 	       fprintf(stderr, "%s: rq0\n", __FUNCTION__);
+ 	    return GL_FALSE;
+@@ -624,8 +624,8 @@
+ 	    ind0 |= R200_VTX_N0;
+ 	 }
+       } else {
+-	 if (ctx->Current.Texcoord[1][2] != 0.0F ||
+-	     ctx->Current.Texcoord[1][3] != 1.0) {
++	 if (ctx->Current.Attrib[VERT_ATTRIB_TEX0 + (1)][2] != 0.0F ||
++	     ctx->Current.Attrib[VERT_ATTRIB_TEX0 + (1)][3] != 1.0) {
+ 	    if (R200_DEBUG & (DEBUG_VFMT|DEBUG_FALLBACKS))
+ 	       fprintf(stderr, "%s: rq1\n", __FUNCTION__);
+ 	    return GL_FALSE;
+@@ -643,13 +643,13 @@
+    rmesa->vb.prim = &ctx->Driver.CurrentExecPrimitive;
+ 
+    vb.vertex_size = 3;
+-   vb.normalptr = ctx->Current.Normal;
++   vb.normalptr = ctx->Current.Attrib[VERT_ATTRIB_NORMAL];
+    vb.colorptr = NULL;
+-   vb.floatcolorptr = ctx->Current.Color;
++   vb.floatcolorptr = ctx->Current.Attrib[VERT_ATTRIB_COLOR0];
+    vb.specptr = NULL;
+-   vb.floatspecptr = ctx->Current.SecondaryColor;
+-   vb.texcoordptr[0] = ctx->Current.Texcoord[0];
+-   vb.texcoordptr[1] = ctx->Current.Texcoord[1];
++   vb.floatspecptr = ctx->Current.Attrib[VERT_ATTRIB_COLOR1];
++   vb.texcoordptr[0] = ctx->Current.Attrib[VERT_ATTRIB_TEX0 + (0)];
++   vb.texcoordptr[1] = ctx->Current.Attrib[VERT_ATTRIB_TEX0 + (1)];
+ 
+    /* Run through and initialize the vertex components in the order
+     * the hardware understands:
+@@ -657,56 +657,56 @@
+    if (ind0 & R200_VTX_N0) {
+       vb.normalptr = &vb.vertex[vb.vertex_size].f;
+       vb.vertex_size += 3;
+-      vb.normalptr[0] = ctx->Current.Normal[0];
+-      vb.normalptr[1] = ctx->Current.Normal[1];
+-      vb.normalptr[2] = ctx->Current.Normal[2];
++      vb.normalptr[0] = ctx->Current.Attrib[VERT_ATTRIB_NORMAL][0];
++      vb.normalptr[1] = ctx->Current.Attrib[VERT_ATTRIB_NORMAL][1];
++      vb.normalptr[2] = ctx->Current.Attrib[VERT_ATTRIB_NORMAL][2];
+    }
+ 
+    if (VTX_COLOR(ind0, 0) == R200_VTX_PK_RGBA) {
+       vb.colorptr = &vb.vertex[vb.vertex_size].color;
+       vb.vertex_size += 1;
+-      UNCLAMPED_FLOAT_TO_CHAN( vb.colorptr->red,   ctx->Current.Color[0] );
+-      UNCLAMPED_FLOAT_TO_CHAN( vb.colorptr->green, ctx->Current.Color[1] );
+-      UNCLAMPED_FLOAT_TO_CHAN( vb.colorptr->blue,  ctx->Current.Color[2] );
+-      UNCLAMPED_FLOAT_TO_CHAN( vb.colorptr->alpha, ctx->Current.Color[3] );
++      UNCLAMPED_FLOAT_TO_CHAN( vb.colorptr->red,   ctx->Current.Attrib[VERT_ATTRIB_COLOR0][0] );
++      UNCLAMPED_FLOAT_TO_CHAN( vb.colorptr->green, ctx->Current.Attrib[VERT_ATTRIB_COLOR0][1] );
++      UNCLAMPED_FLOAT_TO_CHAN( vb.colorptr->blue,  ctx->Current.Attrib[VERT_ATTRIB_COLOR0][2] );
++      UNCLAMPED_FLOAT_TO_CHAN( vb.colorptr->alpha, ctx->Current.Attrib[VERT_ATTRIB_COLOR0][3] );
+    }
+    else if (VTX_COLOR(ind0, 0) == R200_VTX_FP_RGBA) {
+       vb.floatcolorptr = &vb.vertex[vb.vertex_size].f;
+       vb.vertex_size += 4;
+-      vb.floatcolorptr[0] = ctx->Current.Color[0];
+-      vb.floatcolorptr[1] = ctx->Current.Color[1];
+-      vb.floatcolorptr[2] = ctx->Current.Color[2];
+-      vb.floatcolorptr[3] = ctx->Current.Color[3];
++      vb.floatcolorptr[0] = ctx->Current.Attrib[VERT_ATTRIB_COLOR0][0];
++      vb.floatcolorptr[1] = ctx->Current.Attrib[VERT_ATTRIB_COLOR0][1];
++      vb.floatcolorptr[2] = ctx->Current.Attrib[VERT_ATTRIB_COLOR0][2];
++      vb.floatcolorptr[3] = ctx->Current.Attrib[VERT_ATTRIB_COLOR0][3];
+    }
+    else if (VTX_COLOR(ind0, 0) == R200_VTX_FP_RGB) {
+       vb.floatcolorptr = &vb.vertex[vb.vertex_size].f;
+       vb.vertex_size += 3;
+-      vb.floatcolorptr[0] = ctx->Current.Color[0];
+-      vb.floatcolorptr[1] = ctx->Current.Color[1];
+-      vb.floatcolorptr[2] = ctx->Current.Color[2];
++      vb.floatcolorptr[0] = ctx->Current.Attrib[VERT_ATTRIB_COLOR0][0];
++      vb.floatcolorptr[1] = ctx->Current.Attrib[VERT_ATTRIB_COLOR0][1];
++      vb.floatcolorptr[2] = ctx->Current.Attrib[VERT_ATTRIB_COLOR0][2];
+    }   
+    
+    if (VTX_COLOR(ind0, 1) == R200_VTX_PK_RGBA) {
+       vb.specptr = &vb.vertex[vb.vertex_size].color;
+       vb.vertex_size += 1;
+-      UNCLAMPED_FLOAT_TO_CHAN( vb.specptr->red,   ctx->Current.SecondaryColor[0] );
+-      UNCLAMPED_FLOAT_TO_CHAN( vb.specptr->green, ctx->Current.SecondaryColor[1] );
+-      UNCLAMPED_FLOAT_TO_CHAN( vb.specptr->blue,  ctx->Current.SecondaryColor[2] );
++      UNCLAMPED_FLOAT_TO_CHAN( vb.specptr->red,   ctx->Current.Attrib[VERT_ATTRIB_COLOR1][0] );
++      UNCLAMPED_FLOAT_TO_CHAN( vb.specptr->green, ctx->Current.Attrib[VERT_ATTRIB_COLOR1][1] );
++      UNCLAMPED_FLOAT_TO_CHAN( vb.specptr->blue,  ctx->Current.Attrib[VERT_ATTRIB_COLOR1][2] );
+    }
+ 
+ 
+    if (ind1 & (7 << R200_VTX_TEX0_COMP_CNT_SHIFT)) {
+       vb.texcoordptr[0] = &vb.vertex[vb.vertex_size].f;
+       vb.vertex_size += 2;
+-      vb.texcoordptr[0][0] = ctx->Current.Texcoord[0][0];
+-      vb.texcoordptr[0][1] = ctx->Current.Texcoord[0][1];   
++      vb.texcoordptr[0][0] = ctx->Current.Attrib[VERT_ATTRIB_TEX0 + (0)][0];
++      vb.texcoordptr[0][1] = ctx->Current.Attrib[VERT_ATTRIB_TEX0 + (0)][1];   
+    } 
+ 
+    if (ind1 & (7 << R200_VTX_TEX1_COMP_CNT_SHIFT)) {
+       vb.texcoordptr[1] = &vb.vertex[vb.vertex_size].f;
+       vb.vertex_size += 2;
+-      vb.texcoordptr[1][0] = ctx->Current.Texcoord[1][0];
+-      vb.texcoordptr[1][1] = ctx->Current.Texcoord[1][1];
++      vb.texcoordptr[1][0] = ctx->Current.Attrib[VERT_ATTRIB_TEX0 + (1)][0];
++      vb.texcoordptr[1][1] = ctx->Current.Attrib[VERT_ATTRIB_TEX0 + (1)][1];
+    } 
+ 
+    if (rmesa->vb.installed_vertex_format != rmesa->vb.vtxfmt_0) {
+diff -ruN pa/xc/lib/GL/mesa/src/drv/r200/r200_vtxfmt_c.c pb/xc/lib/GL/mesa/src/drv/r200/r200_vtxfmt_c.c
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_vtxfmt_c.c
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_vtxfmt_c.c
+@@ -281,7 +281,7 @@
+    dest[0] = UBYTE_TO_FLOAT(r);
+    dest[1] = UBYTE_TO_FLOAT(g);
+    dest[2] = UBYTE_TO_FLOAT(b);
+-   vb.context->Current.Color[3] = UBYTE_TO_FLOAT(a);
++   vb.context->Current.Attrib[VERT_ATTRIB_COLOR0][3] = UBYTE_TO_FLOAT(a);
+ }
+ 
+ static void r200_Color4ubv_3f( const GLubyte *v )
+@@ -290,7 +290,7 @@
+    dest[0] = UBYTE_TO_FLOAT(v[0]);
+    dest[1] = UBYTE_TO_FLOAT(v[1]);
+    dest[2] = UBYTE_TO_FLOAT(v[2]);
+-   vb.context->Current.Color[3] = UBYTE_TO_FLOAT(v[3]);
++   vb.context->Current.Attrib[VERT_ATTRIB_COLOR0][3] = UBYTE_TO_FLOAT(v[3]);
+ }
+ 
+ 
+@@ -316,7 +316,7 @@
+    dest[0] = r;
+    dest[1] = g;
+    dest[2] = b;
+-   vb.context->Current.Color[3] = a;
++   vb.context->Current.Attrib[VERT_ATTRIB_COLOR0][3] = a;
+ }
+ 
+ static void r200_Color4fv_3f( const GLfloat *v )
+@@ -325,7 +325,7 @@
+    dest[0] = v[0];
+    dest[1] = v[1];
+    dest[2] = v[2];
+-   vb.context->Current.Color[3] = v[3]; 
++   vb.context->Current.Attrib[VERT_ATTRIB_COLOR0][3] = v[3]; 
+ }
+ 
+ 
+@@ -555,7 +555,7 @@
+ 									\
+       if (rmesa->vb.installed_color_3f_sz != NR) {			\
+          rmesa->vb.installed_color_3f_sz = NR;				\
+-         if (NR == 3) ctx->Current.Color[3] = 1.0;			\
++         if (NR == 3) ctx->Current.Attrib[VERT_ATTRIB_COLOR0][3] = 1.0;			\
+          if (ctx->Driver.NeedFlush & FLUSH_UPDATE_CURRENT) {		\
+             r200_copy_to_current( ctx );				\
+             _mesa_install_exec_vtxfmt( ctx, &rmesa->vb.vtxfmt );	\

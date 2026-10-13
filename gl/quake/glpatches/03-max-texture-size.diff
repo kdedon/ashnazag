@@ -1,0 +1,13 @@
+--- a/src/gl_draw.c	2026-10-12 12:08:26.745461417 -0500
++++ b/src/gl_draw.c	2026-10-12 12:08:26.761461414 -0500
+@@ -386,6 +386,10 @@
+ 	if (!Q_strncasecmp ((char *)gl_renderer, "3dfx",4) ||
+ 		strstr((char *)gl_renderer, "Glide"))
+ 		Cvar_Set ("gl_max_size", "256");
++	// nor can other cards that don't say so by name
++	glGetIntegerv (GL_MAX_TEXTURE_SIZE, &i);
++	if (i > 0 && i < gl_max_size.value)
++		Cvar_Set ("gl_max_size", va("%i", i));
+ 
+ 	Cmd_AddCommand ("gl_texturemode", &Draw_TextureMode_f);
+ 

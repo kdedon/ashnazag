@@ -1,0 +1,11 @@
+--- a/src/sys_amix.c
++++ b/src/sys_amix.c
+@@ -111,7 +111,7 @@
+ void Sys_Printf (char *fmt, ...)
+ {
+ 	va_list		argptr;
+-	char		text[1024];
++	char		text[4096];
+ 	unsigned char		*p;
+ 
+ 	va_start (argptr,fmt);

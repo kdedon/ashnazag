@@ -1,0 +1,407 @@
+diff --git a/xc/lib/GL/dri/dri_glx.c b/xc/lib/GL/dri/dri_glx.c
+index ea5a308..68c3a33 100644
+--- a/xc/lib/GL/dri/dri_glx.c
++++ b/xc/lib/GL/dri/dri_glx.c
+@@ -43,7 +43,9 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ #include "xf86dri.h"
+ #include "sarea.h"
+ #include <stdio.h>
++#ifndef __AMIX__
+ #include <dlfcn.h>
++#endif
+ #include "dri_glx.h"
+ #include <sys/types.h>
+ #include <stdarg.h>
+@@ -192,6 +194,38 @@ static void ExtractDir(int index, const char *paths, int dirLen, char *dir)
+  * Return:
+  *   handle from dlopen, or NULL if driver file not found.
+  */
++#ifdef __AMIX__
++/*
++ * Drivers are linked in, listed in __driDrivers: no shared objects to
++ * open, and a dlopened object could not see libGL's symbols anyway.
++ */
++static __DRIdriver *OpenDriver(const char *driverName)
++{
++   __DRIdriverEntry *e;
++   __DRIdriver *driver;
++
++   for (driver = Drivers; driver; driver = driver->next)
++      if (strcmp(driver->name, driverName) == 0)
++         return driver;
++   for (e = __driDrivers; e->name; e++)
++      if (strcmp(e->name, driverName) == 0)
++         break;
++   if (!e->name) {
++      ErrorMessageF("no driver %s linked in\n", driverName);
++      return NULL;
++   }
++   driver = (__DRIdriver *) Xmalloc(sizeof(__DRIdriver));
++   if (!driver)
++      return NULL;
++   driver->name = e->name;
++   driver->handle = NULL;
++   driver->createScreenFunc = (CreateScreenFunc) e->createScreen;
++   driver->registerExtensionsFunc = (RegisterExtensionsFunc) e->registerExtensions;
++   driver->next = Drivers;
++   Drivers = driver;
++   return driver;
++}
++#else
+ static __DRIdriver *OpenDriver(const char *driverName)
+ {
+    char *libPaths = NULL;
+@@ -263,6 +297,7 @@ static __DRIdriver *OpenDriver(const char *driverName)
+    ErrorMessageF("unable to find driver: %s_dri.so\n", driverName);
+    return NULL;
+ }
++#endif
+ 
+ 
+ /*
+@@ -334,8 +369,10 @@ static void driDestroyDisplay(Display *dpy, void *private)
+         const int numScreens = ScreenCount(dpy);
+         int i;
+         for (i = 0; i < numScreens; i++) {
++#ifndef __AMIX__
+             if (pdpyp->libraryHandles[i])
+                 dlclose(pdpyp->libraryHandles[i]);
++#endif
+         }
+         Xfree(pdpyp->libraryHandles);
+ 	Xfree(pdpyp);
+diff --git a/xc/lib/GL/glx/glxclient.h b/xc/lib/GL/glx/glxclient.h
+index c43cc1c..b137cae 100644
+--- a/xc/lib/GL/glx/glxclient.h
++++ b/xc/lib/GL/glx/glxclient.h
+@@ -689,6 +689,18 @@ extern void _XSend(Display*, const void*, long);
+ #endif
+ 
+ 
++#if defined(__AMIX__) && defined(GLX_DIRECT_RENDERING)
++/* a DRI driver linked into libGL; the list ends with a null name */
++typedef struct {
++    const char *name;
++    void *(*createScreen)(Display *dpy, int scrn, __DRIscreen *psc,
++                          int numConfigs, __GLXvisualConfig *config);
++    void *(*registerExtensions)(void);
++} __DRIdriverEntry;
++
++extern __DRIdriverEntry __driDrivers[];
++#endif
++
+ /*
+ ** GLX_BUILT_IN_XMESA controls whether libGL has a built-in verions of
+ ** Mesa that can render to non-GLX displays.
+diff --git a/xc/lib/GL/glx/glxcmds.c b/xc/lib/GL/glx/glxcmds.c
+index 226b505..b82c7fb 100644
+--- a/xc/lib/GL/glx/glxcmds.c
++++ b/xc/lib/GL/glx/glxcmds.c
+@@ -167,6 +167,10 @@ GLXContext CreateContext(Display *dpy, XVisualInfo *vis,
+ 	** available.
+ 	*/
+ 	priv = __glXInitialize(dpy);
++#ifdef __AMIX__
++	/* the server has no GL: every context is direct */
++	allowDirect = True;
++#endif
+ 	if (allowDirect && priv->driDisplay.private) {
+ 	    __GLXscreenConfigs *psc = &priv->screenConfigs[vis->screen];
+ 	    if (psc && psc->driScreen.private) {
+@@ -182,6 +186,13 @@ GLXContext CreateContext(Display *dpy, XVisualInfo *vis,
+ 		}
+ 	    }
+ 	}
++#ifdef __AMIX__
++	if (!gc->isDirect) {
++	    Xfree(gc->buf);
++	    Xfree(gc);
++	    return NULL;
++	}
++#endif
+ #endif
+ 
+ 	/* Send the glXCreateContext request */
+@@ -2187,7 +2198,7 @@ static struct name_address_pair GLX_functions[] = {
+    { "glXFreeMemoryNV", (GLvoid *) glXFreeMemoryNV, NULL },
+ 
+    /*** GLX_MESA_agp_pointer ***/
+-   { "glXGetAGPOffsetMESA", (GLvoid *) glXGetAGPOffsetMESA, NULL },
++   { "glXGetAGPOffsetMESA", (GLvoid *) GLX_PREFIX(glXGetAGPOffsetMESA), NULL },
+ 
+    { NULL, NULL, NULL }   /* end of list */
+ };
+diff --git a/xc/programs/Xserver/GL/dri/xf86dri.c b/xc/programs/Xserver/GL/dri/xf86dri.c
+index 7920b21..87a39b0 100644
+--- a/xc/programs/Xserver/GL/dri/xf86dri.c
++++ b/xc/programs/Xserver/GL/dri/xf86dri.c
+@@ -53,12 +53,19 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ #include "servermd.h"
+ #define _XF86DRI_SERVER_
+ #include "xf86dristr.h"
++#ifdef __AMIX__
++#include "amixdri.h"
++#ifndef DISPATCH_PROC
++#define DISPATCH_PROC(func) int func(ClientPtr)
++#endif
++#else
+ #include "swaprep.h"
+ #include "dri.h"
+ #include "sarea.h"
+ #include "dristruct.h"
+ #include "xf86.h"
+ #include "xf86drm.h"
++#endif
+ 
+ static int DRIErrorBase;
+ 
+diff --git a/xc/programs/Xserver/hw/xfree86/os-support/linux/drm/xf86drm.c b/xc/programs/Xserver/hw/xfree86/os-support/linux/drm/xf86drm.c
+index 33ea6e6..3c60920 100644
+--- a/xc/programs/Xserver/hw/xfree86/os-support/linux/drm/xf86drm.c
++++ b/xc/programs/Xserver/hw/xfree86/os-support/linux/drm/xf86drm.c
+@@ -193,6 +193,95 @@ static drmHashEntry *drmGetEntry(int fd)
+     return entry;
+ }
+ 
++#ifdef __AMIX__
++/*
++ * A node a card, /dev/dri/cardN, made at install; only the card behind
++ * the display opens.  Every open is a client of its own, so the name
++ * and bus id only pick the card.
++ */
++#define AMIX_CARDS 2
++
++static int drmOpenMinor(int minor, int create)
++{
++    int  fd;
++    char buf[64];
++
++    sprintf(buf, DRM_DEV_NAME, DRM_DIR_NAME, minor);
++    if ((fd = open(buf, O_RDWR, 0)) >= 0) return fd;
++    return -errno;
++}
++
++int drmAvailable(void)
++{
++    drmVersionPtr version;
++    int           retval = 0;
++    int           fd, minor;
++
++    for (minor = 0; minor < AMIX_CARDS && !retval; minor++) {
++	if ((fd = drmOpenMinor(minor, 0)) < 0) continue;
++	if ((version = drmGetVersion(fd))) {
++	    retval = 1;
++	    drmFreeVersion(version);
++	}
++	close(fd);
++    }
++    return retval;
++}
++
++int drmOpen(const char *name, const char *busid)
++{
++    drmVersionPtr version;
++    char          *id;
++    int           fd, ok, minor;
++
++    for (minor = 0; minor < AMIX_CARDS; minor++) {
++	if ((fd = drmOpenMinor(minor, 0)) < 0) continue;
++	if (busid) {
++	    id = drmGetBusid(fd);
++	    ok = id && !strcmp(id, busid);
++	    if (id) drmFreeBusid(id);
++	} else {
++	    version = drmGetVersion(fd);
++	    ok = version && !strcmp(version->name, name);
++	    if (version) drmFreeVersion(version);
++	}
++	if (ok) return fd;
++	close(fd);
++    }
++    return -1;
++}
++
++/* the display session of fbfd, an open /dev/fbN, becomes fd's */
++int drmDSBind(int fd, int fbfd, drmDSBindPtr bind)
++{
++    drm_dsbind_t b;
++
++    memset(&b, 0, sizeof(b));
++    b.fd = fbfd;
++    if (ioctl(fd, DRM_IOCTL_DSBIND, &b)) return -errno;
++    bind->session  = b.session;
++    bind->offset   = b.offset;
++    bind->vram     = b.vram;
++    bind->vramsize = b.vramsize;
++    return 0;
++}
++
++/* the card behind fbfd's display, bound to its session; -ENXIO none */
++int drmOpenSession(int fbfd, drmDSBindPtr bind)
++{
++    int fd, minor, e = -ENXIO;
++
++    for (minor = 0; minor < AMIX_CARDS; minor++) {
++	if ((fd = drmOpenMinor(minor, 0)) < 0) {
++	    if (fd != -ENOENT && fd != -ENXIO) e = fd;
++	    continue;
++	}
++	if ((e = drmDSBind(fd, fbfd, bind)) == 0) return fd;
++	close(fd);
++    }
++    return e;
++}
++#else
+ static int drmOpenDevice(long dev, int minor)
+ {
+     stat_t          st;
+@@ -406,6 +495,7 @@ int drmOpen(const char *name, const char *busid)
+     if (busid) return drmOpenByBusid(busid);
+     return drmOpenByName(name);
+ }
++#endif
+ 
+ void drmFreeVersion(drmVersionPtr v)
+ {
+@@ -679,8 +769,12 @@ int drmMap(int fd,
+ 
+     if (fd < 0) return -EINVAL;
+ 
++#ifdef __AMIX__
++    pagesize_mask = 4095;	/* the 68040 MMU's page */
++#else
+     if (!pagesize_mask)
+ 	pagesize_mask = getpagesize() - 1;
++#endif
+ 
+     size = (size + pagesize_mask) & ~pagesize_mask;
+ 
+@@ -730,6 +824,15 @@ drmBufInfoPtr drmGetBufInfo(int fd)
+     return NULL;
+ }
+ 
++#ifdef __AMIX__
++/* the buffers' one mapping, freed with them */
++typedef struct {
++    drmBufMap  map;
++    drmAddress base;
++    drmSize    size;
++} drmAmixBufMap;
++#endif
++
+ drmBufMapPtr drmMapBufs(int fd)
+ {
+     drm_buf_map_t bufs;
+@@ -748,6 +851,46 @@ drmBufMapPtr drmMapBufs(int fd)
+ 	    drmFree(bufs.list);
+ 	    return NULL;
+ 	}
++#ifdef __AMIX__
++	/*
++	 * The kernel maps nothing: virtual is the buffer map's handle and
++	 * each address an offset in it.
++	 */
++	{
++	    drmAmixBufMap *am;
++	    drmHandle     off, handle;
++	    drmSize       size;
++	    drmMapType    type;
++	    drmMapFlags   flags;
++	    drmAddress    base;
++	    int           j, mtrr;
++
++	    for (j = 0; drmGetMap(fd, j, &off, &size, &type, &flags,
++				  &handle, &mtrr) == 0; j++)
++		if (off == (drmHandle)bufs.virtual)
++		    break;
++	    if (off != (drmHandle)bufs.virtual ||
++		drmMap(fd, off, size, &base)) {
++		drmFree(bufs.list);
++		return NULL;
++	    }
++	    am = drmMalloc(sizeof(*am));
++	    am->base = base;
++	    am->size = size;
++	    retval = &am->map;
++	    retval->count = bufs.count;
++	    retval->list  = drmMalloc(bufs.count * sizeof(*retval->list));
++	    for (i = 0; i < bufs.count; i++) {
++		retval->list[i].idx     = bufs.list[i].idx;
++		retval->list[i].total   = bufs.list[i].total;
++		retval->list[i].used    = 0;
++		retval->list[i].address = (char *)base +
++		    (unsigned long)bufs.list[i].address;
++	    }
++	    drmFree(bufs.list);
++	    return retval;
++	}
++#endif
+ 				/* Now, copy it all back into the
+                                    client-visible data structure... */
+ 	retval = drmMalloc(sizeof(*retval));
+@@ -768,6 +911,14 @@ int drmUnmapBufs(drmBufMapPtr bufs)
+ {
+     int i;
+ 
++#ifdef __AMIX__
++    drmAmixBufMap *am = (drmAmixBufMap *)bufs;
++
++    drmUnmap(am->base, am->size);
++    drmFree(bufs->list);
++    drmFree(am);
++    return 0;
++#endif
+     for (i = 0; i < bufs->count; i++) {
+ 	munmap(bufs->list[i].address, bufs->list[i].total);
+     }
+@@ -1434,7 +1585,7 @@ int drmCommandWriteRead(int fd, unsigned long drmCommandIndex,
+     return 0;
+ }
+ 
+-#if defined(XFree86Server) || defined(DRM_USE_MALLOC)
++#if defined(XFree86Server)
+ static void drmSIGIOHandler(int interrupt, void *closure)
+ {
+     unsigned long key;
+diff --git a/xc/programs/Xserver/hw/xfree86/os-support/xf86drm.h b/xc/programs/Xserver/hw/xfree86/os-support/xf86drm.h
+index 1dccaa0..bd1ddb1 100644
+--- a/xc/programs/Xserver/hw/xfree86/os-support/xf86drm.h
++++ b/xc/programs/Xserver/hw/xfree86/os-support/xf86drm.h
+@@ -353,6 +353,18 @@ do {	register unsigned int __old __asm("o0");		\
+ 
+ #endif
+ 
++#elif defined(__m68k__) || defined(m68k)
++
++#define DRM_CAS(lock,old,new,__ret)				\
++	do {							\
++		unsigned int __o = (old);			\
++		__asm__ __volatile__("cas.l %0,%2,(%1)"		\
++			: "=d" (__o)				\
++			: "a" (&__drm_dummy_lock(lock)), "d" (new), "0" (__o) \
++			: "memory", "cc");			\
++		__ret = __o != (old);				\
++	} while (0)
++
+ #elif defined(__powerpc__)
+ 
+ #define DRM_CAS(lock,old,new,__ret)			\
+@@ -454,6 +466,18 @@ do {	register unsigned int __old __asm("o0");		\
+             }                                                          \
+ 	} while(0)
+ 
++#ifdef __AMIX__
++typedef struct _drmDSBind {
++    long          session;	/* the display session's id */
++    unsigned long offset;	/* its frame in the frame buffer map */
++    unsigned long vram;		/* VRAM free for back, depth, textures */
++    unsigned long vramsize;
++} drmDSBindRec, *drmDSBindPtr;
++
++extern int           drmDSBind(int fd, int fbfd, drmDSBindPtr bind);
++extern int           drmOpenSession(int fbfd, drmDSBindPtr bind);
++#endif
++
+ /* General user-level programmer's API: unprivileged */
+ extern int           drmAvailable(void);
+ extern int           drmOpen(const char *name, const char *busid);

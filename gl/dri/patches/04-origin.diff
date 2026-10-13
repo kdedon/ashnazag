@@ -1,0 +1,115 @@
+diff -ruN pa/xc/lib/GL/mesa/src/drv/tdfx/tdfx_render.c pb/xc/lib/GL/mesa/src/drv/tdfx/tdfx_render.c
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_render.c	2026-10-12 16:57:02.370294231 -0500
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_render.c	2026-10-12 16:57:02.371294233 -0500
+@@ -567,9 +567,9 @@
+    }
+    else if (fxMesa->numClipRects == 1) {
+       fxMesa->Glide.grClipWindow(fxMesa->pClipRects[0].x1,
+-                            fxMesa->screen_height - fxMesa->pClipRects[0].y2,
++                            fxMesa->pClipRects[0].y1,
+                             fxMesa->pClipRects[0].x2,
+-                            fxMesa->screen_height - fxMesa->pClipRects[0].y1);
++                            fxMesa->pClipRects[0].y2);
+    }
+    /* else, we'll do a cliprect loop around all drawing */
+ 
+diff -ruN pa/xc/lib/GL/mesa/src/drv/tdfx/tdfx_state.c pb/xc/lib/GL/mesa/src/drv/tdfx/tdfx_state.c
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_state.c	2026-10-12 16:57:02.372294235 -0500
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_state.c	2026-10-12 16:57:09.855310222 -0500
+@@ -695,17 +695,17 @@
+       switch ( ctx->Polygon.CullFaceMode ) {
+       case GL_FRONT:
+ 	 if ( ctx->Polygon.FrontFace == GL_CCW ) {
+-	    mode = GR_CULL_POSITIVE;
+-	 } else {
+ 	    mode = GR_CULL_NEGATIVE;
++	 } else {
++	    mode = GR_CULL_POSITIVE;
+ 	 }
+ 	 break;
+ 
+       case GL_BACK:
+ 	 if ( ctx->Polygon.FrontFace == GL_CCW ) {
+-	    mode = GR_CULL_NEGATIVE;
+-	 } else {
+ 	    mode = GR_CULL_POSITIVE;
++	 } else {
++	    mode = GR_CULL_NEGATIVE;
+ 	 }
+ 	 break;
+ 
+@@ -875,8 +875,8 @@
+ 
+    m[MAT_SX] = v[MAT_SX];
+    m[MAT_TX] = v[MAT_TX] + fxMesa->x_offset + TRI_X_OFFSET;
+-   m[MAT_SY] = v[MAT_SY];
+-   m[MAT_TY] = v[MAT_TY] + fxMesa->y_delta + TRI_Y_OFFSET;
++   m[MAT_SY] = -v[MAT_SY];
++   m[MAT_TY] = fxMesa->y_offset + fxMesa->height - v[MAT_TY] + TRI_Y_OFFSET;
+    m[MAT_SZ] = v[MAT_SZ];
+    m[MAT_TZ] = v[MAT_TZ];
+ 
+@@ -1365,7 +1365,8 @@
+    fxMesa->CullMode			= GR_CULL_DISABLE;
+ 
+    fxMesa->Glide.ColorFormat		= GR_COLORFORMAT_ABGR;
+-   fxMesa->Glide.Origin			= GR_ORIGIN_LOWER_LEFT;
++   /* rows top-down as on screen: the viewport flips y, which also flips winding */
++   fxMesa->Glide.Origin			= GR_ORIGIN_UPPER_LEFT;
+    fxMesa->Glide.Initialized		= FXFALSE;
+ }
+ 
+diff -ruN pa/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tris.c pb/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tris.c
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tris.c	2026-10-12 16:57:02.375294242 -0500
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tris.c	2026-10-12 16:57:02.376294244 -0500
+@@ -124,7 +124,7 @@
+ 
+    if (fxMesa->vertexFormat == TDFX_LAYOUT_TINY) {
+       dst->win[0] = src->tv.x - fxMesa->x_offset;
+-      dst->win[1] = src->tv.y - (fxMesa->screen_height - fxMesa->height - fxMesa->y_offset);
++      dst->win[1] = fxMesa->y_offset + fxMesa->height - src->tv.y;
+       dst->win[2] = src->tv.z;
+       dst->win[3] = 1.0;
+ 
+@@ -137,7 +137,7 @@
+       GLfloat w = 1.0 / src->v.rhw;
+ 
+       dst->win[0] = src->v.x - fxMesa->x_offset;
+-      dst->win[1] = fxMesa->screen_height - fxMesa->y_offset - src->v.y;
++      dst->win[1] = fxMesa->y_offset + fxMesa->height - src->v.y;
+       dst->win[2] = src->v.z;
+       dst->win[3] = src->v.rhw;
+ 
+@@ -344,7 +344,7 @@
+ #define VERT_X(_v) _v->v.x
+ #define VERT_Y(_v) _v->v.y
+ #define VERT_Z(_v) _v->v.z
+-#define AREA_IS_CCW( a ) (a < 0)
++#define AREA_IS_CCW( a ) (a > 0)
+ #define GET_VERTEX(e) (fxMesa->verts + (e<<fxMesa->vertex_stride_shift))
+ 
+ #define VERT_SET_RGBA( v, c )    TDFX_COLOR( v->ub4[coloroffset], c )
+@@ -1025,9 +1025,9 @@
+       return GL_FALSE;
+    else {   
+       fxMesa->Glide.grClipWindow(fxMesa->pClipRects[pass].x1,
+-		   fxMesa->screen_height - fxMesa->pClipRects[pass].y2,
++		   fxMesa->pClipRects[pass].y1,
+ 		   fxMesa->pClipRects[pass].x2,
+-		   fxMesa->screen_height - fxMesa->pClipRects[pass].y1);
++		   fxMesa->pClipRects[pass].y2);
+       
+       return GL_TRUE;
+    }
+@@ -1078,9 +1078,9 @@
+ 
+    if (fxMesa->numClipRects && !(fxMesa->RenderIndex & TDFX_FALLBACK_BIT)) {
+       fxMesa->Glide.grClipWindow(fxMesa->pClipRects[0].x1,
+-		   fxMesa->screen_height - fxMesa->pClipRects[0].y2,
++		   fxMesa->pClipRects[0].y1,
+ 		   fxMesa->pClipRects[0].x2,
+-		   fxMesa->screen_height - fxMesa->pClipRects[0].y1);
++		   fxMesa->pClipRects[0].y2);
+       if (fxMesa->numClipRects > 1)
+          tnl->Driver.Render.Multipass = multipass_cliprect;
+       else

@@ -1,0 +1,378 @@
+diff -ruN pa/glide/fifo.c pb/glide/fifo.c
+--- a/fifo.c
++++ b/fifo.c
+@@ -961,13 +961,13 @@
+             FIFO_CACHE_FLUSH(gc->cmdTransportInfo.fifoPtr);
+             GR_CAGP_SET(bump, 1);
+ #else /* !__POWERPC__ && !PCI_BUMP_N_GRIND */             
+-            SET(*gc->cmdTransportInfo.fifoPtr++, gc->cmdTransportInfo.fifoJmpHdr[0]);
+-            SET(*gc->cmdTransportInfo.fifoPtr++, gc->cmdTransportInfo.fifoJmpHdr[1]);
++            SET_FIFO(*gc->cmdTransportInfo.fifoPtr++, gc->cmdTransportInfo.fifoJmpHdr[0]);
++            SET_FIFO(*gc->cmdTransportInfo.fifoPtr++, gc->cmdTransportInfo.fifoJmpHdr[1]);
+             GR_CAGP_SET(bump, 2);
+ #endif /* !__POWERPC__ && !PCI_BUMP_N_GRIND */
+             gc->cmdTransportInfo.lastBump = gc->cmdTransportInfo.fifoStart;
+           } else {
+-            SET(*gc->cmdTransportInfo.fifoPtr, gc->cmdTransportInfo.fifoJmpHdr[0]);
++            SET_FIFO(*gc->cmdTransportInfo.fifoPtr, gc->cmdTransportInfo.fifoJmpHdr[0]);
+           }
+         }
+           
+diff -ruN pa/glide/fxcmd.h pb/glide/fxcmd.h
+--- a/fxcmd.h
++++ b/fxcmd.h
+@@ -410,6 +410,8 @@
+ #    define SET_LINEAR(d, s)     SET_FIFO((d), (s))
+ #    define SET_LINEAR_16(d, s)  SET_FIFO((d), ((((FxU32)(s)) >> 16UL) | \
+                                                (((FxU32)(s)) << 16UL)))
++#  elif defined(__m68k__)
++     /* fxhal.h has them */
+ #  else /* !SET_BSWAP */
+ #    undef GET
+ #    undef GET16
+diff -ruN pa/glide/fxglide.h pb/glide/fxglide.h
+--- a/fxglide.h
++++ b/fxglide.h
+@@ -1050,7 +1050,7 @@
+           *curPktData = __writeData, \
+           i; \
+         for(i = 0; i < (__writeCount); i++) { \
+-          SET(*curFifoPtr++, *curPktData++); \
++          SET_FIFO(*curFifoPtr++, *curPktData++); \
+         } \
+         GR_INC_SIZE((__writeCount) * sizeof(FxU32)); \
+         gc->cmdTransportInfo.fifoRoom -= ((FxU32)curFifoPtr - (FxU32)gc->cmdTransportInfo.fifoPtr); \
+@@ -1489,6 +1489,9 @@
+ #  define P6FENCE __eieio()
+ #elif defined(__GNUC__) && defined(__i386__)
+ #define P6FENCE asm("xchg %%eax, %0" : : "m" (_GlideRoot.p6Fencer) : "eax");
++#elif defined(__GNUC__) && defined(__m68k__)
++/* card pages are mapped serialized: stores reach the bus in order */
++#  define P6FENCE
+ #else  /* !defined ( P6FENCE ) */
+ #  error "P6 Fencing code needs to be added for this compiler"
+ #endif /* !defined ( P6FENCE ) */
+diff -ruN pa/glide/fxhal.h pb/glide/fxhal.h
+--- a/fxhal.h
++++ b/fxhal.h
+@@ -249,7 +249,64 @@
+ #else /* !defined(__MWERKS__) && POWERPC */
+ #error "Define byte swapped macros for GET/SET"
+ #endif /* !defined(__MWERKS__) && POWERPC */
++#elif defined(__m68k__)
++/*
++ * The bridge passes bytes in address order: a register long reaches the
++ * card byte reversed.  The command fifo lies in the frame buffer
++ * aperture, which swaps the bytes of each 16-bit pixel and so turns a
++ * long's halves around.
++ */
++#undef GET
++#undef GET16
++#undef SET
++#undef SET16
++#undef SETF
++#undef SET_FIFO
++#undef SETF_FIFO
++
++static __inline__ FxU32 _amixSwab32(FxU32 v)
++{
++	__asm__("rol.w &8,%0\n\tswap %0\n\trol.w &8,%0" : "=d" (v) : "0" (v));
++	return v;
++}
++
++static __inline__ FxU32 _amixWswap32(FxU32 v)
++{
++	__asm__("swap %0" : "=d" (v) : "0" (v));
++	return v;
++}
++
++static __inline__ FxU32 _amixFbits(float f)
++{
++	union { float f; FxU32 u; } x;
++
++	x.f = f;
++	return x.u;
++}
++
++#define GET(s)          _amixSwab32(*(volatile FxU32 *)&(s))
++#define GET16(s)        ((FxU16)(_amixSwab32(*(volatile FxU16 *)&(s)) >> 16))
++#define SET(d, s)       (*(volatile FxU32 *)&(d) = _amixSwab32(s))
++#define SET16(d, s)     (*(volatile FxU16 *)&(d) = _amixSwab32((FxU16)(s)) >> 16)
++#define SETF(d, s)      (*(volatile FxU32 *)&(d) = _amixSwab32(_amixFbits(s)))
++#define SET_FIFO(d, s)  (*(volatile FxU32 *)&(d) = _amixWswap32(s))
++#define SETF_FIFO(d, s) (*(volatile FxU32 *)&(d) = _amixWswap32(_amixFbits(s)))
++/* 16-bit texels arrive in place; 8-bit ones need their pairs swapped */
++#define SET_LINEAR(d, s)    SET_FIFO(d, s)
++#define SET_LINEAR_16(d, s) (*(volatile FxU32 *)&(d) = (s))
++#define SET_LINEAR_8(d, s)  SET_FIFO(d, _amixSwab32(s))
++/* frame buffer pixels read and written by the CPU need no swapping */
++#define LFB_GET(s)      (s)
++#define LFB_GET16(s)    (*(volatile FxU16 *)&(s))
++#define LFB_SET(d, s)   ((d) = (s))
++#define LFB_SET16(d, s) (*(volatile FxU16 *)&(d) = (s))
+ #endif /* SET_BSWAP */
++#ifndef LFB_GET
++#define LFB_GET(s)      GET(s)
++#define LFB_GET16(s)    GET16(s)
++#define LFB_SET(d, s)   SET(d, s)
++#define LFB_SET16(d, s) SET16(d, s)
++#endif
+ 
+ #define GET_IO8(p)      pioInByte(p)
+ #define GET_IO16(p)     pioInWord(p)
+diff -ruN pa/glide/gglide.c pb/glide/gglide.c
+--- a/gglide.c
++++ b/gglide.c
+@@ -1212,6 +1212,15 @@
+ 
+   cnt=driInfo.numClip;
+   if (cnt) {
++#ifdef __m68k__
++    /* the 2D engine holds nobody's state for the front: give it all */
++    REG_GROUP_BEGIN_WAX(clip0min, 4, 0xf);
++    REG_GROUP_SET_WAX(hw, clip0min, 0);
++    REG_GROUP_SET_WAX(hw, clip0max, 0x1fff1fff);
++    REG_GROUP_SET_WAX(hw, dstBaseAddr, gc->buffers[0]);
++    REG_GROUP_SET_WAX(hw, dstFormat, driInfo.stride | (3<<16));
++    REG_GROUP_END();
++#endif
+     /* Copy */
+     regMask=0;
+     ADDWAXMASK(regMask, srcBaseAddr, srcBaseAddr);
+diff -ruN pa/glide/glfb.c pb/glide/glfb.c
+--- a/glfb.c
++++ b/glfb.c
+@@ -719,13 +719,13 @@
+         while(scanline--) {
+           end = (FxU32*)((char*)srcData + length - 2);
+           while(srcData < end) {
+-            SET(dstData[0], srcData[0]);
++            LFB_SET(dstData[0], srcData[0]);
+             dstData++;
+             srcData++;
+           }
+                     
+           if (((int)length) & 0x2) {
+-            SET16((*(FxU16*)&(dstData[0])),
++            LFB_SET16((*(FxU16*)&(dstData[0])),
+                   (*(FxU16*)&(srcData[0])));
+             dstData = (FxU32*)(((FxU16*)dstData) + 1);
+             srcData = (FxU32*)(((FxU16*)srcData) + 1);
+@@ -738,19 +738,19 @@
+         while(scanline--) {
+           end = (FxU32*)((char*)srcData + length - 2);
+           
+-          SET16((*(FxU16*)&(dstData[0])),
++          LFB_SET16((*(FxU16*)&(dstData[0])),
+                 (*(FxU16*)&(srcData[0])));
+           dstData = (FxU32*)(((FxU16*)dstData) + 1);
+           srcData = (FxU32*)(((FxU16*)srcData) + 1);
+                     
+           while(srcData < end) {
+-            SET(dstData[0], srcData[0]);
++            LFB_SET(dstData[0], srcData[0]);
+             dstData++;
+             srcData++;
+           }
+                     
+           if (!(length & 0x2)) {
+-            SET16((*(FxU16*)&(dstData[0])),
++            LFB_SET16((*(FxU16*)&(dstData[0])),
+                   (*(FxU16*)&(srcData[0])));
+             dstData = (FxU32*)(((FxU16*)dstData) + 1);
+             srcData = (FxU32*)(((FxU16*)srcData) + 1);
+@@ -775,7 +775,7 @@
+       while(scanline--) {
+         end = (FxU32*)((char*)srcData + length);
+         while(srcData < end) {
+-          SET(dstData[0], srcData[0]);
++          LFB_SET(dstData[0], srcData[0]);
+           dstData++;
+           srcData++;
+         }
+@@ -925,11 +925,11 @@
+         end = (FxU32*)((char*)srcData + length - 2);
+ 
+         while(srcData < end) {
+-          *dstData++ = GR_GET(*srcData++);
++          *dstData++ = LFB_GET(*srcData++);
+         }
+ 
+         if (((int)length) & 0x2) {
+-          (*(FxU16*)dstData) = GR_GET16(*srcData);
++          (*(FxU16*)dstData) = LFB_GET16(*srcData);
+           dstData = (FxU32*)(((FxU16*)dstData) + 1);
+           srcData = (FxU32*)(((FxU16*)srcData) + 1);
+         }
+@@ -941,16 +941,16 @@
+       while(scanline--) {
+         end = (FxU32*)((char*)srcData + length - 2);
+ 
+-        (*(FxU16*)dstData) = (FxU16)GR_GET16(*srcData);
++        (*(FxU16*)dstData) = (FxU16)LFB_GET16(*srcData);
+         dstData = (FxU32*)(((FxU16*)dstData) + 1);
+         srcData = (FxU32*)(((FxU16*)srcData) + 1);
+ 
+         while(srcData < end) {
+-          *dstData++ = GR_GET(*srcData++);
++          *dstData++ = LFB_GET(*srcData++);
+         }
+ 
+         if (!(((int)length) & 0x2)) {
+-          (*(FxU16*)dstData) = GR_GET16(*srcData);
++          (*(FxU16*)dstData) = LFB_GET16(*srcData);
+           dstData = (FxU32*)(((FxU16*)dstData) + 1);
+           srcData = (FxU32*)(((FxU16*)srcData) + 1);
+         }
+diff -ruN pa/glide/gtexdl.c pb/glide/gtexdl.c
+--- a/gtexdl.c
++++ b/gtexdl.c
+@@ -705,7 +705,7 @@
+         texOffset += (t * texStrideBytes);
+         for (; t <= maxT; t++) {
+           LINEAR_WRITE_BEGIN(1, SSTCP_PKT5_LFB, texOffset, 0x0UL, 0x0UL);
+-          LINEAR_WRITE_SET(((FxU32*)texOffset), *(const FxU16*)src8);
++          LINEAR_WRITE_SET(((FxU32*)texOffset), src8[0] | src8[1] << 8);
+           LINEAR_WRITE_END();
+ 
+           src8 += 2;
+@@ -722,7 +722,7 @@
+           LINEAR_WRITE_BEGIN((maxS >> 2), SSTCP_PKT5_LFB, texAddress, 0x0UL, 0x0UL);
+           
+           for (s = 0; s < maxS; s += 4) {
+-            LINEAR_WRITE_SET(((FxU32*)texAddress), *(const FxU32*)src8);
++            LINEAR_WRITE_SET_8(((FxU32*)texAddress), *(const FxU32*)src8);
+ 
+             src8 += 4;
+             texAddress += 4;
+@@ -741,7 +741,7 @@
+         texOffset += (t * texStrideBytes);
+         for(; t <= maxT; t++) {
+           LINEAR_WRITE_BEGIN(1, SSTCP_PKT5_LFB, texOffset, 0x00UL, 0x00UL);
+-          LINEAR_WRITE_SET_16(texOffset, *src16);
++          LINEAR_WRITE_SET(texOffset, *src16);
+           LINEAR_WRITE_END();
+ 
+           src16 += 1;
+diff -ruN pa/glide/hwcio.h pb/glide/hwcio.h
+--- a/hwcio.h
++++ b/hwcio.h
+@@ -47,40 +47,40 @@
+ #define HWC_IO_STORE(regInfo, reg, val)\
+ GDBG_INFO(120, "Storing 0x%x to IO Register %s\n", val,\
+   ioRegNames[(offsetof(SstIORegs, reg)) >> 2]);\
+-((SstIORegs *) regInfo.ioMemBase)->reg = val
++SET(((SstIORegs *) regInfo.ioMemBase)->reg, val)
+ 
+ #define HWC_IO_LOAD(regInfo, reg, val)\
+-val = ((SstIORegs *) regInfo.ioMemBase)->reg;\
++val = GET(((SstIORegs *) regInfo.ioMemBase)->reg);\
+ GDBG_INFO(120, "Loaded 0x%x from IO Register %s\n", val,\
+   ioRegNames[(offsetof(SstIORegs, reg)) >> 2]);
+ 
+ #define HWC_CAGP_STORE(regInfo, reg, val)\
+ GDBG_INFO(120, "Storing 0x%x to CAGP Register %s\n", val,\
+   cmdAGPRegNames[(offsetof(SstCRegs, reg)) >> 2]);\
+-((SstCRegs *) (regInfo.cmdAGPBase))->reg = val
++SET(((SstCRegs *) (regInfo.cmdAGPBase))->reg, val)
+ 
+ #define HWC_CAGP_LOAD(regInfo, reg, val)\
+-val = ((SstCRegs *) (regInfo).cmdAGPBase)->reg;\
++val = GET(((SstCRegs *) (regInfo).cmdAGPBase)->reg);\
+ GDBG_INFO(120, "Loaded 0x%x from CAGP Register %s\n", val,\
+   cmdAGPRegNames[(offsetof(SstCRegs, reg)) >> 2]);
+   
+ #define HWC_WAX_STORE(regInfo, reg, val)\
+ GDBG_INFO(120, "Storing 0x%x to WAX Register %s\n", val,\
+   waxRegnames[(offsetof(SstGRegs, reg)) >> 2]);\
+-((SstGRegs *) regInfo.waxBase)->reg = val
++SET(((SstGRegs *) regInfo.waxBase)->reg, val)
+ 
+ #define HWC_WAX_LOAD(regInfo, reg, val)\
+-val = ((SstGRegs *) regInfo.waxBase)->reg;\
++val = GET(((SstGRegs *) regInfo.waxBase)->reg);\
+ GDBG_INFO(120, "Loaded 0x%x from WAX Register %s\n", val,\
+   waxRegnames[(offsetof(SstGRegs, reg)) >> 2]);
+ 
+ #define HWC_SST_STORE(regInfo, reg, val)\
+ GDBG_INFO(120, "Storing 0x%x to 3D Register %s\n", val,\
+  sstRegNames[(offsetof(SstRegs, reg)) >> 2]);\
+-((SstRegs *) regInfo.sstBase)->reg = val
++SET(((SstRegs *) regInfo.sstBase)->reg, val)
+ 
+ #define HWC_SST_LOAD(regInfo, reg, val)\
+-val = ((SstRegs *) regInfo.sstBase)->reg;\
++val = GET(((SstRegs *) regInfo.sstBase)->reg);\
+ GDBG_INFO(120, "Loaded 0x%x from WAX Register %s\n", val,\
+  sstRegNames[(offsetof(SstRegs, reg)) >> 2]);
+ 
+diff -ruN pa/glide/linhwc.c pb/glide/linhwc.c
+--- a/linhwc.c
++++ b/linhwc.c
+@@ -59,15 +59,12 @@
+ #include <minihwc.h>
+ #include <hwcio.h>
+ #include <stdlib.h>
++#include <stddef.h>
+ #include <string.h>
+ #include <math.h>
+-#include <X11/Xlib.h>
+-#include <X11/extensions/xf86dga.h>
+-#include <X11/extensions/xf86vmode.h>
+ #include "lindri.h"
+ 
+-static FxU32 fenceVar;
+-#define P6FENCE asm("xchg %%eax, %0" : : "m" (fenceVar) : "eax");
++#define P6FENCE
+ 
+ #define MAXFIFOSIZE     0x40000
+ #define FIFOPAD         0x0000
+@@ -678,6 +675,10 @@
+ hwcGammaTable(hwcBoardInfo *bInfo, FxU32 nEntries, FxU32 *r, FxU32 *g, FxU32 *b)
+ {
+ #define FN_NAME "hwcGammaTable"
++#ifdef __m68k__
++  /* the display service owns the palette */
++  return FXTRUE;
++#else
+   FxU32 gRamp[256];
+   FxU32 i;
+   FxU32 dacBase;
+@@ -722,6 +723,7 @@
+   }
+ 
+   return FXTRUE;
++#endif
+   
+ #undef FN_NAME
+ } /* hwcGammaTable */
+diff -ruN pa/glide/xtexdl_def.c pb/glide/xtexdl_def.c
+--- a/xtexdl_def.c
++++ b/xtexdl_def.c
+@@ -80,7 +80,7 @@
+ 
+   for(; t < endTAligned; t += (0x01UL << kTexelAlignShift)) {
+     LINEAR_WRITE_BEGIN(1, PACKET5_MODE, (FxU32)tex_address, 0x00UL, 0x00UL);
+-    LINEAR_WRITE_SET(tex_address, *(const FxU32*)src8);
++    LINEAR_WRITE_SET_8(tex_address, *(const FxU32*)src8);
+     LINEAR_WRITE_END();
+     
+     src8 += 4;
+@@ -166,7 +166,7 @@
+ 
+   for(; t < endTAligned; t += (0x01UL << kTexelAlignShift)) {
+     LINEAR_WRITE_BEGIN(1, PACKET5_MODE, (FxU32)tex_address, 0x00UL, 0x00UL);
+-    LINEAR_WRITE_SET(tex_address, *(const FxU32*)src8);
++    LINEAR_WRITE_SET_8(tex_address, *(const FxU32*)src8);
+     LINEAR_WRITE_END();
+     
+     src8 += 4;
+@@ -321,7 +321,7 @@
+   /* Copy things that are going to be dword aligned */
+   for (; t <= maxT; t++) {
+     LINEAR_WRITE_BEGIN(1, PACKET5_MODE, (FxU32)tex_address, 0x00UL, 0x00UL);
+-    LINEAR_WRITE_SET(tex_address, *(const FxU32*)src16);
++    LINEAR_WRITE_SET_16(tex_address, *(const FxU32*)src16);
+     LINEAR_WRITE_END();
+     
+     src16 += 2;

@@ -1,0 +1,36 @@
+--- a/src/sys_amix.c	2026-10-12 11:22:21.804767126 -0500
++++ b/src/sys_amix.c	2026-10-12 11:27:12.468298839 -0500
+@@ -41,6 +41,9 @@
+ #include <sys/wait.h>
+ #include <sys/mman.h>
+ #include <errno.h>
++#ifdef GLQUAKE
++#include <sys/resource.h>
++#endif
+ 
+ #include "quakedef.h"
+ 
+@@ -429,7 +432,23 @@
+ 	j = COM_CheckParm("-mem");
+ 	if (j)
+ 		parms.memsize = (int) (Q_atof(com_argv[j+1]) * 1024 * 1024);
++#ifdef GLQUAKE
++	{
++		/* the heap, GL's texture copies and the card's maps outgrow
++		   the default soft limits */
++		static int lim[] = { RLIMIT_DATA, RLIMIT_VMEM };
++		struct rlimit rl;
++
++		for (j = 0; j < 2; j++)
++			if (getrlimit(lim[j], &rl) == 0 && rl.rlim_cur != rl.rlim_max) {
++				rl.rlim_cur = rl.rlim_max;
++				setrlimit(lim[j], &rl);
++			}
++	}
++#endif
+ 	parms.membase = malloc (parms.memsize);
++	if (!parms.membase)
++		Sys_Error ("no memory for a %d byte heap", parms.memsize);
+ 
+ 	parms.basedir = basedir;
+ // caching is disabled by default, use -cachedir to enable

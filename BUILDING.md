@@ -44,7 +44,7 @@ images. The last four packages are only for building QEMU.
 | `toolchain/dl/syssrc.tgz` | NetBSD 10.1 kernel sources (68040/060 support packages) | archive.netbsd.org, sha256 pinned |
 | `toolchain/qemu-local` | QEMU 8.2.2 with `toolchain/qemu-patches` | `setup.sh --qemu` (runs `toolchain/build-qemu.sh`) |
 | `toolchain/src/freetype-2.13.3` | FreeType 2.13.3 sources: the Win16 environment's TrueType (its TrueType driver, bytecode interpreter and black-and-white rasterizer only), used under its GPLv2 option | SourceForge, sha256 pinned; `kernel/guest/win16/ft/freetype.sh` (also run by the Win16 builds when missing) |
-| `kernel/amix-040-060-port` | 68040/68060 port | [amix-040-060-port](https://github.com/asokero/amix-040-060-port) at `54fba4d` plus `kernel/port-local.diff`; setup writes its `config.sh` |
+| `kernel/amix-040-060-port` | 68040/68060 port | [amix-040-060-port](https://github.com/asokero/amix-040-060-port) at `54fba4d` plus the diffs in `kernel/port-tree.sh`; setup writes its `config.sh` |
 
 The patched QEMU is required for the tests: stock QEMU 8.2 loses 68040 page writes under
 paging. Ubuntu 24.04's `gcc-m68k-linux-gnu` and `binutils-m68k-linux-gnu` (gcc 13.2,

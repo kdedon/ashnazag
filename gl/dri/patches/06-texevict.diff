@@ -1,0 +1,99 @@
+diff -ruN a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_context.h b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_context.h
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_context.h	2026-10-13 01:01:16.706337287 -0500
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_context.h	2026-10-13 01:01:16.706337287 -0500
+@@ -931,6 +931,7 @@
+    GLfloat sScale1, tScale1;
+ 
+    GLuint texBindNumber;
++   GLuint texFrameBind;
+    GLint tmuSrc;
+ 
+    int screen_width;
+diff -ruN a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_screen.c b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_screen.c
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_screen.c	2026-10-13 01:01:16.685337245 -0500
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_screen.c	2026-10-13 01:01:16.706337287 -0500
+@@ -387,6 +387,7 @@
+ #endif
+ 
+    fxMesa->stats.swapBuffer++;
++   fxMesa->texFrameBind = fxMesa->texBindNumber;
+ 
+    if (ctx) {
+       if (ctx->DriverCtx != fxMesa) {
+diff -ruN a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_texman.c b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_texman.c
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_texman.c	2026-10-13 01:01:16.684337243 -0500
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_texman.c	2026-10-13 01:01:16.706337287 -0500
+@@ -378,12 +378,16 @@
+ FindOldestObject(tdfxContextPtr fxMesa, FxU32 tmu)
+ {
+     const GLuint bindnumber = fxMesa->texBindNumber;
+-    struct gl_texture_object *oldestObj, *obj, *lowestPriorityObj;
++    /* binds since the last swap: younger textures are in this frame */
++    const GLuint frameAge = bindnumber - fxMesa->texFrameBind;
++    struct gl_texture_unit *unit = fxMesa->glCtx->Texture.Unit;
++    struct gl_texture_object *oldestObj, *youngestObj, *obj, *lowestPriorityObj;
+     GLfloat lowestPriority;
+-    GLuint oldestAge;
++    GLuint oldestAge, youngestAge;
+ 
+-    oldestObj = NULL;
++    oldestObj = youngestObj = NULL;
+     oldestAge = 0;
++    youngestAge = UINT_MAX;
+ 
+     lowestPriority = 1.0F;
+     lowestPriorityObj = NULL;
+@@ -394,20 +398,19 @@
+         if (info && info->isInTM &&
+             ((info->whichTMU == tmu) || (info->whichTMU == TDFX_TMU_BOTH) ||
+              (info->whichTMU == TDFX_TMU_SPLIT))) {
+-            GLuint age, lasttime;
++            GLuint age = bindnumber - info->lastTimeUsed;
+ 
+             assert(info->tm[0]);
+-            lasttime = info->lastTimeUsed;
+-
+-            if (lasttime > bindnumber)
+-                age = bindnumber + (UINT_MAX - lasttime + 1); /* TO DO: check wrap around */
+-            else
+-                age = bindnumber - lasttime;
+ 
+             if (age >= oldestAge) {
+                 oldestAge = age;
+                 oldestObj = obj;
+             }
++            if (age < youngestAge && obj != unit[0]._Current &&
++                obj != unit[1]._Current) {
++                youngestAge = age;
++                youngestObj = obj;
++            }
+ 
+             /* examine priority */
+             if (obj->Priority < lowestPriority) {
+@@ -419,17 +422,17 @@
+ 
+     if (lowestPriority < 1.0) {
+         ASSERT(lowestPriorityObj);
+-        /*
+-        printf("discard %d pri=%f\n", lowestPriorityObj->Name, lowestPriority);
+-        */
+         return lowestPriorityObj;
+     }
+-    else {
+-        /*
+-        printf("discard %d age=%d\n", oldestObj->Name, oldestAge);
+-        */
+-        return oldestObj;
+-    }
++    /*
++     * When all of memory was used this frame, the frame needs more than
++     * fits: dropping the least recently used would evict every texture
++     * before its next use.  Dropping the most recent keeps the rest for
++     * the next frame.
++     */
++    if (oldestAge <= frameAge && youngestObj)
++        return youngestObj;
++    return oldestObj;
+ }
+ 
+ 
