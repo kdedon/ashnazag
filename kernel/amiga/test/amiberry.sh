@@ -8,7 +8,9 @@
 # AMIBERRY: the install prefix (default toolchain/amiberry/usr).
 # KICK: a Kickstart ROM for the machine.  CPU: 68040 (default) or 68060.
 # MACHINE: a3000 (default; the disk is SCSI unit 6) or a4000 (AGA; the
-# disk is the IDE master).
+# disk is the IDE master).  CSPPC: the CyberStorm PPC's flash image; the
+# card replaces the CPU and its RAM, the disk is unit CSPPCID (default 0)
+# on its SCSI.  CDROM: an ISO image as a CD-ROM on that SCSI, unit 1.
 # STATE: config, home and IPC socket
 # directory (default hdfdir/run).  CARDS: Amiberry board names on the
 # PCI bus (default "ne2000_pci es1370 fm801").  GFX: a graphics card
@@ -49,12 +51,19 @@ cpu_speed=max
 cachesize=0
 chipmem_size=4
 a3000mem_size=16
-mbresmem_size=32
+$(if [ -n "$CSPPC" ]; then
+	echo cpuboard_type=CyberStormPPC; echo "cpuboard_rom_file=$CSPPC"; echo cpuboardmem1_size=128
+else
+	echo mbresmem_size=32
+fi)
 fastmem_size=0
 z3mem_size=0
 z3mapping=uae
 $([ ! -d "$H/boot" ] || echo "filesystem2=rw,DH0:AmigaBoot:$H/boot,5")
-$(if [ "$MACHINE" = a4000 ]; then
+$(if [ -n "$CSPPC" ]; then
+	echo "hardfile2=rw,SD${CSPPCID:-0}:$H/amix.hdf,0,0,0,512,-128,,scsi${CSPPCID:-0}_cpuboard"
+	[ -z "$CDROM" ] || printf 'cdimage0=%s,image\nuaehf2=cd0,ro,:,0,0,0,2048,0,,scsi1_cpuboard\n' "$CDROM"
+elif [ "$MACHINE" = a4000 ]; then
 	echo "hardfile2=rw,DH1:$H/amix.hdf,0,0,0,512,0,,ide0_mainboard"
 else
 	echo "hardfile2=rw,SD6:$H/amix.hdf,0,0,0,512,-128,,scsi6_a3000"

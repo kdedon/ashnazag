@@ -281,6 +281,8 @@ v3ds_attach()
 		printf("voodoo3: no timing for %dx%d\n", v3ds_width, v3ds_height);
 		return EINVAL;
 	}
+	if (am_rtgbusy())
+		return EBUSY;
 	if ((d = opci_find((struct opci_dev *)0, 0x121a, 0x0005)) == 0 &&
 	    (d = opci_find((struct opci_dev *)0, 0x121a, 0x0003)) == 0)
 		return ENXIO;

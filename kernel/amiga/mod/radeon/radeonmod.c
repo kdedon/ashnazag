@@ -1,5 +1,5 @@
 /*
- * The radeon DRM as a loadable driver: /dev/dri/card0 (major 63) over
+ * The radeon DRM as a loadable driver: /dev/dri/card1 (major 66) over
  * the card the radeonds module set up for the display service.
  */
 #include "sys/types.h"
@@ -26,7 +26,7 @@ static int radeon_flag;
 struct mod_drv_data radeon_drvdata[] = {
 	{ { 0 }, 0, 0,
 	  { radeon_svr4open, radeon_svr4close, radeon_svr4read, radeon_svr4write, radeon_svr4ioctl,
-	    radeon_svr4mmap, spec_segmap, 0, 0, 0, 0, 0, &radeon_flag }, 63, 1 }
+	    radeon_svr4mmap, spec_segmap, 0, 0, 0, 0, 0, &radeon_flag }, 66, 1 }
 };
 
 static int

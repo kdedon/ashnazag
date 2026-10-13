@@ -244,9 +244,9 @@ int stride, width, height, depth;
 
     d->active = FALSE;
     if (d->fd <= 0) {
-	if ((d->fd = open("/dev/dri/card0", O_RDWR)) < 0) {
-	    if (errno != ENOENT && errno != ENXIO)
-		ErrorF("DRI: /dev/dri/card0: %s\n", strerror(errno));
+	if ((d->fd = drmOpenSession(fbfd, &b)) < 0) {
+	    if (d->fd != -ENXIO)
+		ErrorF("DRI: no DRM for the display: %s\n", strerror(-d->fd));
 	    return FALSE;
 	}
 	(void) fcntl(d->fd, F_SETFD, 1);
@@ -261,10 +261,10 @@ int stride, width, height, depth;
 	d->minor = 0;
 	d->patch = 0;
 	drmFreeVersion(v);
-	if ((e = drmDSBind(d->fd, fbfd, &b)) < 0 || (e = -EINVAL, !DRIFindMaps(d)) ||
+	if ((e = -EINVAL, !DRIFindMaps(d)) ||
 	    (e = drmMap(d->fd, d->hSAREA, SAREA_MAX, &a)) < 0 ||
 	    (e = drmCreateContext(d->fd, &d->ctx)) < 0) {
-	    ErrorF("DRI: %s: no session binding, maps or context: %s\n", d->name, strerror(-e));
+	    ErrorF("DRI: %s: no maps or context: %s\n", d->name, strerror(-e));
 	    close(d->fd);
 	    d->fd = -1;
 	    return FALSE;

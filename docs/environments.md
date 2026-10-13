@@ -38,8 +38,8 @@ Known issues: System 6 is slow and has no colour.
 
 ## Amiga
 
-`startmig` boots Kickstart 3.2 to Workbench; SYS: is `~/Amiga` (`makeamiga`). `-m MB` sets
-fast RAM (or `fastmb=MB` in `.env`). The display is RTG through Picasso96, 8-, 16- or
+`startmig` boots Kickstart 3.2 to Workbench; SYS: is `~/Amiga` (`makeamiga`). Fast RAM is up to
+64 MB, fitted to free memory; `-m MB` (or `fastmb=MB` in `.env`) sets it. The display is RTG through Picasso96, 8-, 16- or
 32-bit where the host has the mode; there is no chipset display. Sound goes through AHI.
 Warp3D.library draws on a Voodoo3 when the screen is in its memory, else with software Mesa.
 
@@ -68,7 +68,8 @@ H: home, R: `/`. Design: `docs/win16-design.md`.
 `startx` starts twm; `xsession` offers a menu, or `xsession twm|xview|mac|tos|amiga|win|console|cpm`.
 With xdm the session chooser lists the same.
 X draws 8-bit by default; `startx -- -depth 16` or `-depth 32` (or `DEPTH=16` in `/etc/default/x`)
-gives a TrueColor screen where the display has that mode (Voodoo3, ZZ9000, Atari).
+gives a TrueColor screen where the display has that mode (Voodoo3, ZZ9000, Atari; on the Mac
+when it booted at that depth, set in Monitors).
 OpenGL is Mesa 5 in software; on a Voodoo3, direct rendering through its DRI driver.
 
 ## Native ports

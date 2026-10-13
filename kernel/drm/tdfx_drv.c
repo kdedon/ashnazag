@@ -53,6 +53,14 @@ do {									\
 
 #define DRIVER_AMIX_MAPS(dev)	tdfx_amix_layout(dev)
 static void tdfx_amix_layout(drm_device_t *dev);
+
+/*
+ * A client killed while it held the lock may have left half a packet in
+ * the command fifo, and the next one would wait for the card forever:
+ * start the fifo afresh.
+ */
+#define HAVE_DRIVER_RELEASE	1
+#define DRIVER_RELEASE()	tdfx_amix_layout(dev)
 #endif
 
 #define DRIVER_AUTHOR		"VA Linux Systems Inc."

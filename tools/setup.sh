@@ -23,7 +23,8 @@
 #   --x11             fetch X11R6.3 and x11r6.3-amix into ref/
 #   --tos-src         fetch EmuTOS and fVDI into ref/
 #   --gl              fetch Mesa 5.0.2 and its demos, the XFree86 4.3
-#                     sources holding DRM and DRI (1, 3), and quake-amix,
+#                     sources holding DRM and DRI (1, 3), quake-amix and
+#                     id's Quake (GL renderer),
 #                     into ref/
 #   --winuae          fetch WinUAE into toolchain/winuae, run under
 #                     Wine (needs wine; Xvfb is fetched when missing)
@@ -73,6 +74,8 @@ GLIDE_TGZ=glide_2002.04.10.orig.tar.gz
 GLIDE_SUM=de43d7756424fa25300f55677aba06be240549da90327da84778722dbad45af8
 QUAKE_URL=https://github.com/asokero/quake-amix
 QUAKE_PIN=e7634c9e3a93901cf723a2d1ef6f2b57f71ee114
+QUAKEID_URL=https://github.com/id-Software/Quake
+QUAKEID_PIN=bf4ac424ce754894ac8f1dae6a3981954bc9852d
 WINUAE_URL=https://download.abime.net/winuae/releases/WinUAE6030_x64.zip
 WINUAE_SUM=f8b7c44e8ab2f68db49b4205793848b4496464dbee3c036921840d82627f4fc3
 
@@ -357,6 +360,8 @@ if [ -n "$GL" ]; then
 	cp -p "$(fetch $GLIDE_URL $GLIDE_SUM $GLIDE_TGZ)" "$AUX/ref/glide/dist/$GLIDE_TGZ"
 	step "quake-amix"
 	gitpin $QUAKE_URL $QUAKE_PIN "$AUX/ref/quake-amix"
+	step "id Quake (GL renderer)"
+	gitpin $QUAKEID_URL $QUAKEID_PIN "$AUX/ref/quake-id"
 fi
 if [ -n "$QEMU" ] && [ ! -x "$TC/qemu-local/usr/bin/qemu-system-m68k" ]; then
 	step "QEMU 8.2.2 with the 68040 fix"

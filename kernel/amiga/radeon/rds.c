@@ -450,6 +450,8 @@ rds_attach()
 		printf("radeon: no timing for %dx%d\n", rds_width, rds_height);
 		return EINVAL;
 	}
+	if (am_rtgbusy())
+		return EBUSY;
 	for (i = 0; i < sizeof ids / sizeof ids[0] && d == 0; i++)
 		d = opci_find((struct opci_dev *)0, 0x1002, ids[i]);
 	if (d == 0)

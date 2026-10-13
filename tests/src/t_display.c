@@ -912,6 +912,74 @@ t_kill()
 		t_check("console_restored", strcmp(r2, "same") == 0, "console screen: %s", r2);
 }
 
+/* kernel heap bytes in use, by size class */
+static long
+kmused()
+{
+	return t_kmem("kmeminfo+12") + t_kmem("kmeminfo+16") + t_kmem("kmeminfo+20");
+}
+
+/*
+ * Session shadows come from page frames, not the kernel heap: sessions
+ * ended by close and by kill leave heap use and free memory as they were.
+ */
+static void
+t_heap()
+{
+	long u0, r0, u, grew = 0, id;
+	int i, fd, ok = 1, rdy[2], status;
+	pid_t pid;
+	char c;
+
+	if (t_kmem("kmeminfo") < 0 || t_kmem("availrmem") < 0) {
+		t_skip("heap_flat", "no kernel symbols");
+		return;
+	}
+	u0 = kmused();
+	r0 = t_kmem("availrmem");
+	for (i = 0; i < 6 && ok; i++) {
+		fd = fbopen();
+		id = fd >= 0 ? acquire(fd, 1, "heap") : -1;
+		u = kmused();
+		if (u - u0 > grew)
+			grew = u - u0;
+		ok = id > 0;
+		if (fd >= 0)
+			close(fd);
+		ok = ok && waitfront(0L, 5);
+		if (!ok || pipe(rdy) < 0)
+			break;
+		pid = fork();
+		if (pid == 0) {
+			fd = fbopen();
+			if (fd < 0 || acquire(fd, 1, "heapkill") <= 0)
+				_exit(1);
+			write(rdy[1], "r", 1);
+			for (;;)
+				pause();
+		}
+		ok = pid > 0 && read(rdy[0], &c, 1) == 1;
+		u = kmused();
+		if (u - u0 > grew)
+			grew = u - u0;
+		if (pid > 0) {
+			kill(pid, SIGKILL);
+			t_waitchild(pid, &status, 10);
+		}
+		close(rdy[0]);
+		close(rdy[1]);
+		ok = ok && waitfront(0L, 5);
+	}
+	sleep(1);
+	u = kmused();
+	t_check("heap_cycles", ok, "cycle %d: %s", i, T_ERR);
+	t_check("heap_no_shadow", grew < (long)fi.fi_size / 4 && grew < 0x10000,
+	    "heap grew %ld bytes for a %ld-byte session", grew, (long)fi.fi_size);
+	t_check("heap_flat", u - u0 < 0x4000, "heap in use %ld -> %ld", u0, u);
+	t_check("heap_pages_back", t_kmem("availrmem") >= r0 - 4,
+	    "free pages %ld -> %ld", r0, t_kmem("availrmem"));
+}
+
 static int
 modid()
 {
@@ -1026,6 +1094,7 @@ main()
 		close(fd);
 	t_check("close_front", waitfront(0L, 5), "front %ld after the last close", front());
 	t_kill();
+	t_heap();
 	t_module();
 	return t_done();
 }

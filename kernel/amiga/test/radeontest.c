@@ -110,7 +110,7 @@ char **argv;
 	drm_radeon_irq_wait_t iw;
 	drm_radeon_sarea_t *rs;
 	radeon_amix_layout_t *lp;
-	char name[32], date[32], desc[64];
+	char dev[16], name[32], date[32], desc[64];
 	volatile unsigned short *fb;
 	volatile unsigned char *vt;
 	volatile unsigned int *lock;
@@ -133,8 +133,17 @@ char **argv;
 	w = fi.fi_width;
 	h = fi.fi_height;
 
-	if ((dfd = open("/dev/dri/card0", O_RDWR)) < 0)
-		die("/dev/dri/card0");
+	/* the card behind the display is the one whose DRM takes the session */
+	for (i = 0; i < 2; i++) {
+		sprintf(dev, "/dev/dri/card%d", i);
+		b.fd = fd;
+		if ((dfd = open(dev, O_RDWR)) >= 0 && ioctl(dfd, DRM_IOCTL_DSBIND, &b) == 0)
+			break;
+		if (dfd >= 0)
+			close(dfd);
+	}
+	if (i == 2)
+		die("no DRM for the display");
 	memset(&v, 0, sizeof v);
 	v.name = name; v.name_len = sizeof name - 1;
 	v.date = date; v.date_len = sizeof date - 1;
@@ -146,11 +155,8 @@ char **argv;
 	    v.version_patchlevel, name);
 	check("driver radeon 1.7", strcmp(name, "radeon") == 0 && v.version_major == 1 &&
 	    v.version_minor >= 7);
-	b.fd = fd;
-	if (ioctl(dfd, DRM_IOCTL_DSBIND, &b) < 0)
-		die("DSBIND");
-	printf("radeontest: session %ld frame 0x%lx, free VRAM 0x%lx+0x%lx\n",
-	    b.session, b.offset, b.vram, b.vramsize);
+	printf("radeontest: %s, session %ld frame 0x%lx, free VRAM 0x%lx+0x%lx\n",
+	    dev, b.session, b.offset, b.vram, b.vramsize);
 
 	memset(&fbm, 0, sizeof fbm); shm = fbm;
 	for (i = 0; ; i++) {

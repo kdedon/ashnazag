@@ -35,6 +35,7 @@ struct am_rtg {
 };
 
 extern int am_rtgattach();	/* (struct am_rtg *) 0, or EBUSY once in use */
+extern int am_rtgbusy();	/* () 0, or EBUSY once a card or the chipset has it */
 extern int am_rtgdetach();	/* (struct am_rtg *) 0, or EBUSY while in use */
 
 #endif

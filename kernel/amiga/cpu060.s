@@ -19,3 +19,14 @@ Lnot060:
 	movel	%d1,%sp
 	movel	%a1,%a0@(16)
 	jmp	__amix_pstart
+
+| AGA fetch mode, colour bank and colour offsets back to their reset
+| values once the console's copper list has replaced AmigaOS's: that
+| list sets them, and the console's lists only know the ECS registers.
+	.globl	screeninit
+screeninit:
+	jsr	__amix_screeninit
+	movew	&0,0xdff1fc		| FMODE
+	movew	&0x0c00,0xdff106	| BPLCON3
+	movew	&0x0011,0xdff10c	| BPLCON4
+	rts

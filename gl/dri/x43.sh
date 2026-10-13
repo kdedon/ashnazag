@@ -6,14 +6,15 @@
 #
 # Out: DEST/xc/... (only the files listed below), from ref/xfree86-4.3/dist
 # (tools/setup.sh --gl) and gl/dri/patches/*.diff.  Does nothing when DEST
-# is complete.
+# was made by this script and these patches.
 set -e
 D=$(cd "$(dirname "$0")" && pwd)
 AUX=$(cd "$D/../.." && pwd)
 DIST=$AUX/ref/xfree86-4.3/dist
 DEST=$1
 [ -n "$DEST" ] || { echo "usage: x43.sh DEST" >&2; exit 2; }
-[ -f "$DEST/.done" ] && exit 0
+SUM=$(cat "$0" "$D"/patches/*.diff | cksum)
+[ "$(cat "$DEST/.done" 2>/dev/null)" = "$SUM" ] && exit 0
 for n in 1 3; do
 	[ -f "$DIST/X430src-$n.tgz" ] || { echo "$DIST/X430src-$n.tgz missing: sh tools/setup.sh --gl" >&2; exit 1; }
 done
@@ -44,4 +45,4 @@ nice -n 19 tar xzf "$DIST/X430src-3.tgz" -C "$DEST" \
 for p in "$D"/patches/*.diff; do
 	patch -s -p1 -d "$DEST" < "$p"
 done
-touch "$DEST/.done"
+echo "$SUM" > "$DEST/.done"

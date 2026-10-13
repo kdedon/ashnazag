@@ -287,6 +287,13 @@ struct am_rtg *r;
 	return 0;
 }
 
+/* EBUSY when an attach would fail, before a card is touched */
+int
+am_rtgbusy()
+{
+	return am_screen || am_rtg ? EBUSY : 0;
+}
+
 int
 am_rtgdetach(r)
 struct am_rtg *r;

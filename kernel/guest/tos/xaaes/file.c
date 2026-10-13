@@ -687,6 +687,9 @@ sock_op(int op, long hfd, long arg, char *buf, long len, char *addr, long *alenp
 			}
 			return so.rv;
 		}
+		/* a virtual interrupt broke into the host call; connect would go on without us */
+		if (r == -H_EINTR && op != 3 && !(curproc->sigpending & ~curproc->p_sigmask))
+			continue;
 		if ((op != 5 && op != 6 && op != 7) || r != -H_EAGAIN ||
 		    (r = host_wait(hfd, op == 6, ndelay)) != 0) {
 			if (r != EAGAIN && r != EINTR && r != -H_EINPROGRESS)

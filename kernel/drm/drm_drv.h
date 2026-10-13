@@ -921,6 +921,16 @@ int DRM(close)(dev_t kdev, int flags, int fmt, DRM_STRUCTPROC *p)
 #endif
 
 #ifdef __AMIX__
+	/*
+	 * Clients lock and unlock in user space while the word names their
+	 * context: clear it, so a later client given the same context asks.
+	 */
+	if (dev->lock.hw_lock)
+		DRM_SAREA_SYNC();
+	if (dev->lock.hw_lock && !_DRM_LOCK_IS_HELD(dev->lock.hw_lock->lock)
+	    && dev->lock.filp == priv)
+		DRM(lock_free)(dev, &dev->lock.hw_lock->lock,
+		    _DRM_LOCKING_CONTEXT(dev->lock.hw_lock->lock));
 	if (dev->lock.hw_lock && _DRM_LOCK_IS_HELD(dev->lock.hw_lock->lock)
 	    && dev->lock.filp == priv) {
 #else

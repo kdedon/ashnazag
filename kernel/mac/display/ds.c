@@ -32,9 +32,9 @@
 #include "sys/signal.h"
 #include "vm/as.h"
 #include "vm/seg.h"
+#endif
 #include "vm/page.h"
 #include "sys/tuneable.h"
-#endif
 #include "fbcons.h"
 #include "adb.h"
 #include "ds.h"
@@ -43,6 +43,7 @@ extern struct streamtab coinfo;
 
 extern timestruc_t hrestime;
 extern long lbolt;
+extern int availrmem;
 extern int hat_cm_fb_add();
 extern void adbkbd_cons();
 extern void (*fbcons_panicfn)();
@@ -341,7 +342,7 @@ ds_vblintr()
 }
 
 #ifdef DS_AMIGA
-static caddr_t ds_shadow();
+static int ds_shadow();
 
 void
 ds_am_console()
@@ -382,9 +383,7 @@ register struct dssess *s;
 unsigned long id;
 {
 	struct fbinfo fi;
-	caddr_t mem, shadow;
-	unsigned long *pfn, size, msize;
-	register int n;
+	register int n, e;
 
 	if ((n = am_vmfind(id)) < 0)
 		return ENXIO;
@@ -404,17 +403,10 @@ unsigned long id;
 			fbcons_unlock();
 			return EBUSY;
 		}
-		mem = s->s_mem, msize = s->s_memsize, shadow = s->s_shadow;
-		pfn = s->s_pfn, size = s->s_size;
-		s->s_size = fi.fi_size;
-		if (ds_shadow(s) == 0) {
-			s->s_mem = mem, s->s_memsize = msize, s->s_shadow = shadow;
-			s->s_pfn = pfn, s->s_size = size;
+		if ((e = ds_shadow(s, fi.fi_size, 0)) != 0) {
 			fbcons_unlock();
-			return ENOMEM;
+			return e;
 		}
-		kmem_free((caddr_t)pfn, (size >> DS_PGSHIFT) * 4);
-		kmem_free(mem, msize);
 	}
 	s->s_vmode = n + 1;
 	ds_stdcmap(s, (int)fi.fi_depth);
@@ -559,41 +551,105 @@ int type;
 static unsigned long ds_keep;
 #endif
 
-static caddr_t
-ds_shadow(s)
-register struct dssess *s;
+static void ds_shfree();
+
+/* frees n frames from pfn */
+static void
+ds_pgfree(pfn, n)
+unsigned long *pfn, n;
 {
-	register unsigned long size = s->s_size, i, pa, keep = size;
+	register page_t *pp;
+	register unsigned long i;
+
+	for (i = 0; i < n; i++) {
+		pp = page_numtopp(pfn[i]);
+		if (--pp->p_keepcnt == 0)
+			page_abort(pp);
+	}
+	pages_pp_kernel -= n;
+	availrmem += n;
+}
+
+/*
+ * s gets a zeroed shadow of size bytes in place of its old one: page frames
+ * from the free list, outside the kernel heap.  The kernel reaches them
+ * through the identity map below 1 GB.  The console's frames are one run,
+ * since the console draws into its shadow while hidden.  wait: may sleep
+ * for memory.  Process context; errno.
+ */
+static int
+ds_shadow(s, size, wait)
+register struct dssess *s;
+unsigned long size;
+int wait;
+{
+	register unsigned long i, j, n, keep = size;
+	register page_t *pp, *lo;
+	unsigned long *pfn;
 
 #ifdef DS_AMIGA
 	if (ds_keep && keep > ds_keep)
 		keep = ds_keep;
 #endif
-	s->s_kept = keep;
-	s->s_memsize = keep + (keep < size ? 2 : 1) * DS_PGSIZE;
-	s->s_mem = (caddr_t)kmem_zalloc(s->s_memsize, KM_NOSLEEP);
-	if (s->s_mem == 0)
-		return 0;
-	s->s_pfn = (unsigned long *)kmem_zalloc((size >> DS_PGSHIFT) * 4, KM_NOSLEEP);
-	if (s->s_pfn == 0) {
-		kmem_free(s->s_mem, s->s_memsize);
-		s->s_mem = 0;
-		return 0;
+	n = (keep >> DS_PGSHIFT) + (keep < size);
+	pfn = (unsigned long *)kmem_zalloc((size >> DS_PGSHIFT) * 4, KM_NOSLEEP);
+	if (pfn == 0)
+		return ENOMEM;
+	if (availrmem - (int)n < tune.t_minarmem) {
+		kmem_free((caddr_t)pfn, (size >> DS_PGSHIFT) * 4);
+		return ENOMEM;
 	}
-	s->s_shadow = (caddr_t)(((unsigned long)s->s_mem + DS_PGOFF) & ~DS_PGOFF);
-	for (i = 0; i < size >> DS_PGSHIFT; i++) {
-		pa = vtop(s->s_shadow + ((i < keep >> DS_PGSHIFT ? i : keep >> DS_PGSHIFT) <<
-		    DS_PGSHIFT), (caddr_t)0);
-		if (pa == 0) {
-			kmem_free((caddr_t)s->s_pfn, (size >> DS_PGSHIFT) * 4);
-			kmem_free(s->s_mem, s->s_memsize);
-			s->s_mem = 0;
-			return 0;
+	availrmem -= n;
+	pages_pp_kernel += n;
+	if (s == &ds_sess[0]) {
+		if ((lo = pp = page_get(n << DS_PGSHIFT, P_NOSLEEP | P_PHYSCONTIG)) != 0)
+			for (i = 1; i < n; i++)
+				if ((pp = pp->p_next) < lo)
+					lo = pp;
+		for (i = 0; lo && i < n; i++)
+			pfn[i] = page_pptonum(lo + i);
+	} else
+		for (i = 0; i < n; i++) {
+			if ((pp = page_get(DS_PGSIZE, wait ? P_CANWAIT : P_NOSLEEP)) == 0)
+				break;
+			pfn[i] = page_pptonum(pp);
 		}
-		s->s_pfn[i] = pa >> DS_PGSHIFT;
+	for (j = 0; j < i; j++)
+		if (pfn[j] >= DS_IDMAX >> DS_PGSHIFT)
+			break;
+	if (i < n || j < n) {
+		ds_pgfree(pfn, i);
+		availrmem += n - i;
+		pages_pp_kernel -= n - i;
+		kmem_free((caddr_t)pfn, (size >> DS_PGSHIFT) * 4);
+		return ENOMEM;
 	}
+	for (i = n; i < size >> DS_PGSHIFT; i++)
+		pfn[i] = pfn[n - 1];
 	DS_CPUSHA();
-	return s->s_shadow;
+	for (i = 0; i < n; i++)
+		bzero((caddr_t)(pfn[i] << DS_PGSHIFT), DS_PGSIZE);
+	ds_shfree(s);
+	s->s_pfn = pfn;
+	s->s_npg = n;
+	s->s_size = size;
+	s->s_kept = keep;
+	if (s == &ds_sess[0])
+		s->s_shadow = (caddr_t)(pfn[0] << DS_PGSHIFT);
+	return 0;
+}
+
+static void
+ds_shfree(s)
+register struct dssess *s;
+{
+	if (s->s_pfn == 0)
+		return;
+	ds_pgfree(s->s_pfn, s->s_npg);
+	kmem_free((caddr_t)s->s_pfn, (s->s_size >> DS_PGSHIFT) * 4);
+	s->s_shadow = 0;
+	s->s_pfn = 0;
+	s->s_npg = 0;
 }
 
 static void
@@ -603,12 +659,7 @@ register struct dssess *s;
 #ifdef DS_ATARI
 	s->s_gtop = 0;
 #endif
-	if (s->s_mem == 0)
-		return;
-	kmem_free((caddr_t)s->s_pfn, (s->s_size >> DS_PGSHIFT) * 4);
-	kmem_free(s->s_mem, s->s_memsize);
-	s->s_mem = s->s_shadow = 0;
-	s->s_pfn = 0;
+	ds_shfree(s);
 #ifdef DS_ATARI
 	if (s->s_vid) {
 		kmem_free((caddr_t)s->s_vid, sizeof *s->s_vid);
@@ -637,10 +688,8 @@ int *errp, vid;
 	register struct dssess *s = 0;
 	register int i;
 
-	if (ds_sess[0].s_mem == 0 && ds_shadow(&ds_sess[0]) == 0) {
-		*errp = ENOMEM;
+	if (ds_sess[0].s_pfn == 0 && (*errp = ds_shadow(&ds_sess[0], ds_sess[0].s_size, 0)))
 		return 0;
-	}
 	for (i = 1; i <= DS_NSESS; i++)
 		if (!ds_sess[i].s_used) {
 			s = &ds_sess[i];
@@ -689,14 +738,14 @@ int *errp, vid;
 	s->s_voff = am_vslot();
 	s->s_vpan = 0;
 #endif
-	if (!DS_OWNV(s) && ds_shadow(s) == 0) {
+	if (!DS_OWNV(s) && (i = ds_shadow(s, s->s_size, 1)) != 0) {
 #ifdef DS_ATARI
 		if (s->s_vid)
 			kmem_free((caddr_t)s->s_vid, sizeof *s->s_vid);
 		s->s_vid = 0;
 #endif
 		s->s_used = 0;
-		*errp = ENOMEM;
+		*errp = i;
 		return 0;
 	}
 #ifdef DS_ATARI
@@ -795,6 +844,25 @@ register unsigned long n;
 	}
 }
 
+/* VRAM to s's shadow, or the shadow to VRAM (out), a page at a time */
+static void
+ds_shcopy(s, vram, out)
+register struct dssess *s;
+caddr_t vram;
+int out;
+{
+	register unsigned long i, *p, *v;
+
+	for (i = 0; i < s->s_kept >> DS_PGSHIFT; i++) {
+		p = (unsigned long *)(s->s_pfn[i] << DS_PGSHIFT);
+		v = (unsigned long *)(vram + (i << DS_PGSHIFT));
+		if (out)
+			ds_lcopy(v, p, (unsigned long)DS_PGSIZE);
+		else
+			ds_lcopy(p, v, (unsigned long)DS_PGSIZE);
+	}
+}
+
 /* up events for everything s saw go down */
 static void
 ds_release(s)
@@ -854,7 +922,7 @@ register struct dssess *to;
 
 	if (to == from)
 		return 0;
-	if (!ds_disp.d_on || !to->s_used || to->s_dead || ds_sess[0].s_mem == 0)
+	if (!ds_disp.d_on || !to->s_used || to->s_dead || ds_sess[0].s_pfn == 0)
 		return EINVAL;
 	if (!fbcons_grab())
 		return EBUSY;
@@ -867,7 +935,7 @@ register struct dssess *to;
 	ds_unloadsess(to);
 	DS_CPUSHA();
 	if (!from->s_dead && !DS_OWNV(from))
-		ds_lcopy((unsigned long *)from->s_shadow, (unsigned long *)vram, from->s_kept);
+		ds_shcopy(from, vram, 0);
 	if (from == &ds_sess[0])
 		fbcons.fc_m.fm_base = (unsigned long)ds_sess[0].s_shadow +
 		    ds_disp.d_info.fi_offset;
@@ -898,7 +966,7 @@ register struct dssess *to;
 		(*ds_sndown)(0);
 #endif
 	if (!DS_OWNV(to))
-		ds_lcopy((unsigned long *)vram, (unsigned long *)to->s_shadow, to->s_kept);
+		ds_shcopy(to, vram, 1);
 	if (to == &ds_sess[0])
 		fbcons.fc_m.fm_base = ds_disp.d_base;
 	DS_CPUSHA();
@@ -1368,8 +1436,6 @@ unsigned long id;
 {
 	struct fbinfo fi;
 	struct dsvid *v;
-	caddr_t mem, shadow;
-	unsigned long *pfn, size, msize;
 	register int n;
 
 	if (DS_GUEST(s))
@@ -1386,20 +1452,13 @@ unsigned long id;
 			fbcons_unlock();
 			return EBUSY;
 		}
-		mem = s->s_mem, msize = s->s_memsize, shadow = s->s_shadow;
-		pfn = s->s_pfn, size = s->s_size;
-		s->s_size = ds_disp.d_vsize;
 		v = (struct dsvid *)kmem_zalloc(sizeof *v, KM_NOSLEEP);
-		if (v == 0 || ds_shadow(s) == 0) {
+		if (v == 0 || ds_shadow(s, ds_disp.d_vsize, 0) != 0) {
 			if (v)
 				kmem_free((caddr_t)v, sizeof *v);
-			s->s_mem = mem, s->s_memsize = msize, s->s_shadow = shadow;
-			s->s_pfn = pfn, s->s_size = size;
 			fbcons_unlock();
 			return ENOMEM;
 		}
-		kmem_free((caddr_t)pfn, (size >> DS_PGSHIFT) * 4);
-		kmem_free(mem, msize);
 		s->s_vmode = n + 1;	/* first: s is no guest */
 		s->s_vid = v;
 		if (s == ds_front) {	/* the console's mode is on the Videl */

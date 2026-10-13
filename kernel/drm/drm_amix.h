@@ -235,6 +235,7 @@ DRM(amix_leave)(struct dssess *from, int done)
 
 	if (l == 0)
 		return 0;
+	DRM_SAREA_SYNC();
 	if (done) {
 		if (dev->lock.filp == 0 && dev->lock.pid == 0 &&
 		    _DRM_LOCKING_CONTEXT(l->lock) == DRM_KERNEL_CONTEXT &&

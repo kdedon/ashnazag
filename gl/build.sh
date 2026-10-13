@@ -218,17 +218,28 @@ fi
 xlink() {	# program, objects
 	p=$1; shift
 	$N "$OLD/bin/$T-ld" -o "$GLW/bin/$p" "$SYS/usr/ccs/lib/crt1.o" "$SYS/usr/ccs/lib/crti.o" \
-		"$@" "$GLW/lib/libGL.a" "$XL/Xext/libXext.a" "$XL/X11/libX11.a" \
+		"$@" "$GLW/obj/sampler.o" "$GLW/lib/libGL.a" "$XL/Xext/libXext.a" "$XL/X11/libX11.a" \
 		-L"$SYS/usr/lib" -lsocket -lnsl "$SYS/usr/lib/libc.so.1" "$SYS/usr/ccs/lib/libm.a" \
 		"$GLW/libextra.a" "$LIBGCC" "$SYS/usr/ccs/lib/crtn.o"
 	echo "== $GLW/bin/$p"
 }
+
+# QPROF=file samples the PC of any program linked through xlink
+$N "$CC" $CFLAGS -U_XOPEN_SOURCE -c "$D/src/sampler.c" -o "$GLW/obj/sampler.o"
 
 # DRI set-up without a card driver, and Mesa's renderer without a DRI driver
 $N "$CC" $CFLAGS $DRIFL -U_XOPEN_SOURCE -I"$M/include" -I"$S" -I"$AUX/x11/src/dri" \
 	-I"$AUX/kernel/mac/display" \
 	-c "$D/src/dritest.c" -o "$GLW/obj/dritest.o"
 xlink dritest "$GLW/obj/dritest.o"
+
+# mipmapped uploads, every size and format Quake uses
+$N "$CC" $CFLAGS -I"$GLW/include" -I"$XINC" -c "$D/src/miptest.c" -o "$GLW/obj/miptest.o"
+xlink miptest "$GLW/obj/miptest.o"
+
+# per-frame overhead
+$N "$CC" $CFLAGS -I"$GLW/include" -I"$XINC" -c "$D/src/swaptest.c" -o "$GLW/obj/swaptest.o"
+xlink swaptest "$GLW/obj/swaptest.o"
 
 DEMOS=$AUX/ref/mesa/dist/MesaDemos-5.0.2.tar.gz
 [ -f "$DEMOS" ] || exit 0

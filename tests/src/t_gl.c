@@ -1,7 +1,7 @@
 /*
  * t_gl.c -- software GL: scenes with known pixels rendered into an off-screen
- * buffer (clear, smooth shading, depth test, lighting, texturing), then the
- * frame time of a lit, textured, depth-tested sphere.
+ * buffer (clear, smooth shading, depth test, lighting, texturing, mipmaps),
+ * then the frame time of a lit, textured, depth-tested sphere.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -187,6 +187,62 @@ test_texture()
 	glDeleteTextures(1, &id);
 }
 
+/*
+ * a 16x4 texture mipmapped down to 1x1, a colour per level, each level
+ * drawn at its own size; then half of level 0 replaced
+ */
+static void
+test_mipmap()
+{
+	static unsigned char lv[5][3] = {
+		{ 255, 0, 0 }, { 0, 255, 0 }, { 0, 0, 255 },
+		{ 255, 255, 0 }, { 0, 255, 255 }
+	};
+	static unsigned char tex[16 * 4 * 4];
+	char name[32];
+	int lum, l, w, h, x, i;
+
+	for (lum = 0; lum < 2; lum++) {
+		reset();
+		glMatrixMode(GL_PROJECTION);
+		glOrtho(0, W, 0, H, -1, 1);
+		glMatrixMode(GL_MODELVIEW);
+		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+		glEnable(GL_TEXTURE_2D);
+		for (l = 0, w = 16, h = 4; l < 5; l++, w /= 2, h = h > 1 ? h / 2 : 1) {
+			for (i = 0; i < w * h; i++)
+				if (lum)
+					tex[i] = 40 + 40 * l;
+				else
+					memcpy(tex + i * 4, lv[l], 3), tex[i * 4 + 3] = 255;
+			glTexImage2D(GL_TEXTURE_2D, l, lum ? GL_LUMINANCE : 3, w, h, 0,
+			    lum ? GL_LUMINANCE : GL_RGBA, GL_UNSIGNED_BYTE, tex);
+		}
+		for (l = x = 0, w = 16, h = 4; l < 5; x += w + 1, l++, w /= 2, h = h > 1 ? h / 2 : 1)
+			rect(x, 0, x + w, h, 0);
+		glFinish();
+		for (l = x = 0, w = 16, h = 4; l < 5; x += w + 1, l++, w /= 2, h = h > 1 ? h / 2 : 1) {
+			sprintf(name, "mipmap.%s%d", lum ? "lum" : "rgb", l);
+			if (lum)
+				check(name, x + w / 2, h / 2, 40 + 40 * l, 40 + 40 * l, 40 + 40 * l, 1);
+			else
+				check(name, x + w / 2, h / 2, lv[l][0], lv[l][1], lv[l][2], 0);
+		}
+		memset(tex, 250, sizeof tex);
+		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 2, 16, 2, lum ? GL_LUMINANCE : GL_RGBA,
+		    GL_UNSIGNED_BYTE, tex);
+		glClear(GL_COLOR_BUFFER_BIT);
+		rect(0, 0, 16, 4, 0);
+		glFinish();
+		sprintf(name, "mipmap.%ssub", lum ? "lum" : "rgb");
+		check(name, 8, 3, 250, 250, 250, 1);
+		check(name, 8, 0, lum ? 40 : 255, lum ? 40 : 0, lum ? 40 : 0, 1);
+	}
+}
+
 /* a lit, textured, depth-tested sphere of 24 x 12 quads, turned each frame */
 #define FW	160
 #define FH	120
@@ -289,6 +345,7 @@ main()
 	test_depth();
 	test_light();
 	test_texture();
+	test_mipmap();
 	t_check("error", glGetError() == GL_NO_ERROR, "GL error");
 	OSMesaDestroyContext(ctx);
 	test_frame();

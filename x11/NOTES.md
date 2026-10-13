@@ -113,9 +113,8 @@ so the server runs the **8 bpp cfb path** (PseudoColor, default map loaded throu
 - 1 bpp (mfb, pixel 0 white) is built but not run: needs a 1-bpp boot (A/UX Startup, or PRAM
   depth) or `FBIOSMODE`. `xcmap`-style colormap tests not run.
 - QEMU's Quadra boots at 8 bits; byte 0x48 of the PRAM (`-global mos6522-q800-via1.drive=`, a
-  256-byte file) is the built-in video's depth mode: 0x84 boots 640×480 at 32 bits, row 4096.
-  There X fails: `FBIOACQUIRE` gets `ENOMEM`, since the console's and X's shadows (1.9 MB each)
-  do not both fit the 4 MB kernel heap. 2 and 4 bits are refused.
+  256-byte file) is the built-in video's depth mode: 0x84 boots 640×480 at 32 bits, row 4096,
+  where `startx -- -depth 32` runs (depth 24, 32 bpp). 2 and 4 bits are refused.
 - `-mb3`, Control/Option/Command modifiers in clients not exercised by the test.
 - Serial console input can stop mid-line while X is in front; the test drives everything after `startx` by keyboard.
 - `EVIOCBELL` does not exist yet: no bell. LEDs not driven.

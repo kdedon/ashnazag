@@ -268,8 +268,8 @@ drihost_open(int fbfd, unsigned long frame, int width, int height, int stride, i
 
     if (H.sc.driScreen.private)
 	return H.name;
-    *err = "no /dev/dri/card0";
-    if ((H.fd = open("/dev/dri/card0", O_RDWR)) < 0)
+    *err = "no DRM for the display";
+    if ((H.fd = drmOpenSession(fbfd, &b)) < 0)
 	return 0;
     (void) fcntl(H.fd, F_SETFD, 1);
     *err = "no DRM version";
@@ -282,8 +282,8 @@ drihost_open(int fbfd, unsigned long frame, int width, int height, int stride, i
     *err = "no driver for the card";
     if (!e->name)
 	goto fail;
-    *err = "no session binding, maps or drawable";
-    if (drmDSBind(H.fd, fbfd, &b) < 0 || !findmaps() ||
+    *err = "no maps or drawable";
+    if (!findmaps() ||
 	drmMap(H.fd, H.hSAREA, SAREA_MAX, &a) < 0 || drmCreateDrawable(H.fd, &H.hw) < 0)
 	goto fail;
     H.sarea = (XF86DRISAREAPtr) a;
@@ -322,7 +322,9 @@ drihost_open(int fbfd, unsigned long frame, int width, int height, int stride, i
     H.config.greenMask = depth == 16 ? 0x07e0 : 0x00ff00;
     H.config.blueMask = depth == 16 ? 0x001f : 0x0000ff;
     H.config.bufferSize = depth;
-    H.config.depthSize = 16;
+    /* the Voodoo3's depth buffer is 16 bits; the R200's is 24+8 at 32 bits */
+    H.config.depthSize = depth == 32 && strcmp(H.name, "tdfx") ? 24 : 16;
+    H.config.stencilSize = H.config.depthSize == 24 ? 8 : 0;
     H.config.visualRating = GLX_NONE_EXT;
     H.config.transparentPixel = GLX_NONE_EXT;
     H.sc.configs = &H.config;

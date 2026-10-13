@@ -65,3 +65,8 @@ Amiberry: `KICK=a3000.rom sh kernel/amiga/test/amiberry.sh outdir` runs an A3000
 port (TCP 1234). WinUAE: `KICK=a3000.rom VOODOO3=bios.rom sh kernel/amiga/test/winuae.sh
 outdir` runs it with a 68060 and a PCI Voodoo3 (`setup.sh --winuae` installs WinUAE).
 Real hardware is untested.
+
+`sh kernel/amiga/test/handoff.sh [outdir]` builds the Radeon test disk for a real 68060
+Amiga (default `images/amiga-handoff`): everything above plus X with GLX/DRI, Warp3D,
+Quake with the user's `media/quake` data, and `TESTSHEET.md` (docs/radeon-test.md). It holds
+the user's media: private.

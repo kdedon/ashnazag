@@ -11,3 +11,6 @@ for test in startup display; do
  nice -n19 ${HOSTCC:-cc} -std=gnu89 -w -fno-builtin -D_KERNEL -DDS_AMIGA $INC "$A/test/$test.c" -o "$O/$test"
  "$O/$test"
 done
+sh "$A/csppc/script.sh" "$O"
+nice -n19 ${HOSTCC:-cc} -std=gnu89 -w -fno-builtin -no-pie -I"$O" -I"$AMIX_SYSROOT/usr/sys/amiga/alien" $INC "$A/test/csppc.c" -o "$O/csppc"
+"$O/csppc"

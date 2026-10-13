@@ -3,7 +3,8 @@
  * adapter.  Replaces the kernel's own table walk, which knows no IDE and
  * on an A4000 registers an A3000 SCSI controller that is not there.
  * Adapters are numbered by address, so the IDE port is card 0 on an
- * A4000 and its master, answering as unit 6, is c6d0.
+ * A4000 and its master, answering as unit 6, is c6d0.  A CyberStorm's
+ * SCSI, at 0xF40000, is always card 1: its unit 6 is ced0.
  */
 #include "sys/types.h"
 #include "sys/errno.h"
@@ -15,7 +16,9 @@
 
 extern bool a3091queue(), a2090queue(), a2091queue();
 extern int idepresent(), idequeue(), autocon();
-extern void ideintr(), ide_cpush();
+extern bool csppcqueue();
+extern int csppcpresent();
+extern void ideintr(), ide_cpush(), csppcintr();
 extern void (*int2_tbl[])();
 
 /* ide.c runs interrupt driven only when it finds itself in this table */
@@ -38,10 +41,20 @@ static struct {
 	char	*name;
 } q[SDCARDS];
 
-static int inited;
+static int inited, ide, csppc;
 static void (*int2_prev)();
 
 /* PIO goes through the uncached identity window; keep the cache out of it */
+/* an A4000 IDE port that did not answer still takes card 0 */
+static bool
+noq(c, cp)
+struct sdcom *cp;
+{
+	cp->okay = FALSE;
+	(*cp->intr)(cp);
+	return TRUE;
+}
+
 static bool
 ideq(c, cp)
 struct sdcom *cp;
@@ -56,7 +69,10 @@ ide_int2(pcb)
 char *pcb;
 {
 	(*int2_prev)(pcb);
-	ideintr();
+	if (ide)
+		ideintr();
+	if (csppc)
+		csppcintr();
 }
 
 static void
@@ -109,9 +125,16 @@ init()
 			insert(cards[i].f, c, a, cards[i].name);
 	}
 	if (idepresent(&a)) {
-		ide_hook();
+		ide = 1;
 		insert(ideq, 0, a, "A4000 IDE");
+	} else if (aga)
+		insert(noq, 0, (char *)0xDA0000, "A4000 IDE");
+	if (csppcpresent()) {
+		csppc = 1;
+		insert(csppcqueue, 0, (char *)0xF40000, "CyberStorm SCSI");
 	}
+	if (ide || csppc)
+		ide_hook();
 }
 
 int

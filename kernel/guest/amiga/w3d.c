@@ -480,14 +480,15 @@ CreateContext(unsigned long *err, unsigned long *tags)
     /*
      * Mesa leaves many allocations unchecked, and a null pointer here is
      * the guest's chip memory: create only with room for the context
-     * (about 0.7 MB) and its depth buffer; the probe stays in the heap
+     * (about 0.7 MB) and its depth buffer, as wide as a pixel (16 or 24
+     * bits, as on the cards); the probe stays in the heap
      */
     if (c->dri)
         ;
-    else if ((probe = malloc(MESA_ROOM + c->w * c->h * (2 + c->bpp))) != 0) {
+    else if ((probe = malloc(MESA_ROOM + c->w * c->h * (c->bpp + c->bpp))) != 0) {
         free(probe);
         backbuf(c, 1);
-    } else if ((probe = malloc(MESA_ROOM + c->w * c->h * 2)) != 0)
+    } else if ((probe = malloc(MESA_ROOM + c->w * c->h * c->bpp)) != 0)
         free(probe);
     else {
         miglog(0, "Warp3D: CreateContext: no memory for Mesa");
@@ -497,7 +498,7 @@ CreateContext(unsigned long *err, unsigned long *tags)
     }
     c->cmask = 1;
     c->zval = ~0UL;
-    if (!c->dri && (!(c->gl = OSMesaCreateContextExt(fmt, 16, 0, 0, 0)) || !make(c))) {
+    if (!c->dri && (!(c->gl = OSMesaCreateContextExt(fmt, c->bpp == 4 ? 24 : 16, 0, 0, 0)) || !make(c))) {
         miglog(0, "Warp3D: CreateContext: no Mesa context");
         if (c->gl) OSMesaDestroyContext(c->gl);
         if (c->back) free(c->back);
@@ -1150,13 +1151,12 @@ ClearZBuffer(char *w, double *z)
     c = (struct ctx *)L(w, C_DRIVER);
     if (c->dri && rtg->hidden) return NOTVISIBLE;
     d = d < 0 ? 0 : d > 1 ? 1 : d;
-    v = (unsigned short)(d * 65535.0);
-    if (!(c->state & S_SCISSOR) && !c->dri && OSMesaGetDepthBuffer(c->gl, &zw, &zh, &zb, &zbuf) && zb == 2 &&
-        zh == c->h) {
+    if (!(c->state & S_SCISSOR) && !c->dri && OSMesaGetDepthBuffer(c->gl, &zw, &zh, &zb, &zbuf) && zh == c->h) {
+        v = zb == 2 ? (unsigned short)(d * 65535.0) : (unsigned long)(d * 16777215.0);
         /* only rows drawn since a clear to the same value; Z rows count from the bottom */
         if (v != c->zval) c->z0 = 0, c->z1 = zh;
         if (c->z0 < c->z1)
-            fill32((unsigned short *)zbuf + (zh - c->z1) * zw, v << 16 | v, (c->z1 - c->z0) * zw * 2);
+            fill32((char *)zbuf + (zh - c->z1) * zw * zb, zb == 2 ? v << 16 | v : v, (c->z1 - c->z0) * zw * zb);
         c->zval = v;
         c->z0 = c->z1 = 0;
         return OK;

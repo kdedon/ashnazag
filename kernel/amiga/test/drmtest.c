@@ -99,7 +99,7 @@ char **argv;
 	drm_map_t m, regm, fbm, shm;
 	drm_ctx_t ctx;
 	drm_lock_t lk;
-	char name[32], date[32], desc[64], bus[64];
+	char dev[16], name[32], date[32], desc[64], bus[64];
 	volatile unsigned short *fb;
 	volatile unsigned int *lock;
 	unsigned long w, h, x, y, n;
@@ -120,8 +120,17 @@ char **argv;
 	w = fi.fi_width;
 	h = fi.fi_height;
 
-	if ((dfd = open("/dev/dri/card0", O_RDWR)) < 0)
-		die("/dev/dri/card0");
+	/* the card behind the display is the one whose DRM takes the session */
+	for (i = 0; i < 2; i++) {
+		sprintf(dev, "/dev/dri/card%d", i);
+		b.fd = fd;
+		if ((dfd = open(dev, O_RDWR)) >= 0 && ioctl(dfd, DRM_IOCTL_DSBIND, &b) == 0)
+			break;
+		if (dfd >= 0)
+			close(dfd);
+	}
+	if (i == 2)
+		die("no DRM for the display");
 	memset(&v, 0, sizeof v);
 	v.name = name; v.name_len = sizeof name - 1;
 	v.date = date; v.date_len = sizeof date - 1;
@@ -133,6 +142,10 @@ char **argv;
 	desc[v.desc_len < sizeof desc ? v.desc_len : sizeof desc - 1] = 0;
 	printf("drmtest: version %d.%d.%d %s %s (%s)\n", v.version_major, v.version_minor,
 	    v.version_patchlevel, name, date, desc);
+	if (strcmp(name, "tdfx") != 0) {
+		fprintf(stderr, "drmtest: a Voodoo3 test; the display is on %s\n", name);
+		return 1;
+	}
 	memset(&u, 0, sizeof u);
 	u.unique = bus;
 	u.unique_len = sizeof bus - 1;
@@ -140,11 +153,8 @@ char **argv;
 		die("GET_UNIQUE");
 	bus[u.unique_len < sizeof bus ? u.unique_len : sizeof bus - 1] = 0;
 	printf("drmtest: unique %s\n", bus);
-	b.fd = fd;
-	if (ioctl(dfd, DRM_IOCTL_DSBIND, &b) < 0)
-		die("DSBIND");
-	printf("drmtest: session %ld frame 0x%lx, free VRAM 0x%lx+0x%lx\n",
-	    b.session, b.offset, b.vram, b.vramsize);
+	printf("drmtest: %s, session %ld frame 0x%lx, free VRAM 0x%lx+0x%lx\n",
+	    dev, b.session, b.offset, b.vram, b.vramsize);
 
 	memset(&regm, 0, sizeof regm); fbm = shm = regm;
 	for (i = 0; ; i++) {

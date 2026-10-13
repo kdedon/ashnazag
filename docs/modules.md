@@ -35,6 +35,7 @@ hand.
 | `zz9000` | Amiga | `/dev/zz9000`: MNT ZZ9000 RTG and its display-service screen |
 | `voodoo3` | Amiga | PCI Voodoo3 or Banshee as the display-service screen |
 | `tdfx` | Amiga | `/dev/dri/card0`: DRM for the Voodoo3's 3D |
+| `radeon` | Amiga | `/dev/dri/card1`: DRM for the Radeon's 3D |
 | `floppy` | Amiga | `/dev/floppyN` (62): raw tracks for the floppy service |
 
 ## Services

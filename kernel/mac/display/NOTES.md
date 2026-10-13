@@ -146,9 +146,12 @@ Only QEMU's model has run these:
 
 ## Memory above 64 MB
 
-Shadows come from `kmem_zalloc`, which maps into kvseg, a fixed 4 MB kernel heap at
-0x40040000. The stock `kvm_init` also puts the page array and page hash there, 60 bytes per
-page (about 2 MB at 128 MB), which leaves too little for several shadows.
+Shadows are page frames from the free list (`page_get`), outside kvseg, the fixed 4 MB kernel
+heap at 0x40040000; the kernel copies and draws through the identity map, so frames above 1 GB
+are refused (`ENOMEM`). The console's shadow is one physically contiguous run, as `fbcons` draws
+into it while hidden; it is taken with the first session and kept. A user session's frames
+are freed when it ends, by close or kill. The stock `kvm_init` puts the page array and page
+hash in kvseg, 60 bytes per page (about 2 MB at 128 MB).
 
 `mac/patch_kvmpages.py` makes `kvm_init` use the array's address in a cached window onto the
 first 16 MB of RAM (VA = PA | 0x60000000, built by `mac_iomap_build` with the kernel's RAM
@@ -157,7 +160,6 @@ kvseg did. `mac_ramwin_check` halts at boot if the array does not fit the window
 
 - RAM above 128 MB is ignored ("config: memory limited to 128 MB"): the segmap window
   (0x40440000-0x48440000) is sized from RAM and would overlap kvsegu.
-- The heap still holds only a few shadows (0x79000 each at 640x480x8, more at higher depths).
 
 ## Known limits
 

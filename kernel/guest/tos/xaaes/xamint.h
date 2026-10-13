@@ -165,6 +165,7 @@ extern long old_trap1, old_trap2, old_etv;
 #define	HO_TRUNC	0x200
 #define	HO_EXCL		0x400
 #define	HO_NOCTTY	0x800
+#define	H_EINTR		4
 #define	H_EAGAIN	11
 #define	H_EINPROGRESS	150
 

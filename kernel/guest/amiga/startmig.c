@@ -264,6 +264,31 @@ romok(b, name)
 	return 1;
 }
 
+/*
+ * Fast RAM nobody chose: the largest step the system can reserve, one
+ * step less when that is short of mb, so the helpers and X keep room.
+ */
+static unsigned long
+fitfast(mb)
+	unsigned long mb;
+{
+	static unsigned long step[] = { 64, 48, 32, 24, 16, 12, 8, 4 };
+	int i, n = sizeof step / sizeof step[0];
+
+	for (i = 0; i < n; i++) {
+		if (step[i] > mb)
+			continue;
+		if (envmem_region(FASTBASE, step[i] << 20, 0, -1) == 0) {
+			munmap((caddr_t)FASTBASE, step[i] << 20);
+			if (step[i] < mb && i + 1 < n)
+				i++;
+			miglog(0, "fast RAM %lu MB, fitted to free memory", step[i]);
+			return step[i];
+		}
+	}
+	return mb;
+}
+
 /* KEY=value from FILE (1), or 0; a number in megabytes */
 static int
 setting(file, key, mb)
@@ -1025,7 +1050,7 @@ main(argc, argv)
 	int readonly = 0, rootreadonly = 0, census = 0, kick = 1, romarg = 0, hostrom = 0;
 	unsigned long fastmb = 64;
 	char envfile[1100];
-	int fastarg = 0, pv = 1, n, dfd, direct, go[2], ack[2];
+	int fastarg = 0, fit = 0, pv = 1, n, dfd, direct, go[2], ack[2];
 	stack_t ss;
 	static char altstack[16384];
 	unsigned long w, h;
@@ -1091,14 +1116,15 @@ main(argc, argv)
 		/* fast RAM: -m, else the environment's, else the system's; read before
 		 * the lock, which closing the metadata file would drop */
 		sprintf(envfile, "%.1000s/.env", sysroot);
-		if (!fastarg && !setting(envfile, "fastmb", &fastmb))
-			setting("/etc/default/amiga", "FAST_MB", &fastmb);
+		fit = !fastarg && !setting(envfile, "fastmb", &fastmb) &&
+		    !setting("/etc/default/amiga", "FAST_MB", &fastmb);
 		readonly |= rootreadonly;
 		if (!readonly && (lockfd = envlock("startmig", "amiga", sysroot)) == -1)
 			return 1;
 		openlog(sysroot, !readonly);
 		miglog(0, "SYS: is %.500s%s", sysroot, readonly ? ", read-only" : "");
-		miglog(0, "fast RAM %lu MB", fastmb);
+		if (!fit)
+			miglog(0, "fast RAM %lu MB", fastmb);
 	}
 	if (!romarg && access(rom, 0) < 0)
 		rom = "/etc/amiga/kicka3000.rom";
@@ -1223,6 +1249,8 @@ main(argc, argv)
 	 * Private memory: the kernel reserves memory and swap for all of it
 	 * up front, though pages cost nothing until touched.
 	 */
+	if (fit && !probe)
+		fastmb = fitfast(fastmb);
 	if (fastmb && envmem_region(FASTBASE, fastmb << 20, 0, -1) < 0) {
 		miglog(1, "fast RAM of %lu MB: %s; free memory and swap are too small. "
 		    "Add swap, or choose less with -m, fastmb= in the environment's .env "

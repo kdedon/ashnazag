@@ -73,6 +73,8 @@ zzds_attach()
 	long base, size;
 	unsigned long room;
 
+	if (am_rtgbusy())
+		return EBUSY;
 	if (!autocon(ZZ9K_PRODUCT_PC_Z2, 0, &base, &size))
 		return ENXIO;
 	room = (unsigned long)size - ZZ9K_FB_OFFSET - ZZ9K_Z2_RESERVED_TAIL;

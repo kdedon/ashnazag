@@ -2,6 +2,9 @@
 # winuae.sh -- boot the mkhdf.sh disk in WinUAE under Wine on a virtual
 # X display: an A3000 with a 68060, a Prometheus, a Voodoo3 3000 and an
 # RTL8029 on PCI.  Serial goes to TCP port SERPORT (default 1235).
+# MACHINE: a3000 (default; the disk is SCSI unit 6) or a4000 (AGA; the
+# disk is the IDE master).  BRIDGE: prometheus (default) or mediator
+# (a Mediator 4000 Mk II).
 #
 #   sh winuae.sh hdfdir [seconds]
 #
@@ -25,6 +28,8 @@ CPU=${CPU:-68060}
 CARDS=${CARDS-ne2000_pci}
 XD=${XDISPLAY:-:77}
 GFX=${GFX-V3_3000}
+MACHINE=${MACHINE:-a3000}
+BRIDGE=${BRIDGE:-prometheus}
 [ -f "$KICK" ] || { echo "[FAIL] KICK: no Kickstart ROM"; exit 1; }
 [ -f "$W/bin/winuae64.exe" ] || { echo "[FAIL] no WinUAE; run tools/setup.sh --winuae"; exit 1; }
 mkdir -p "$W/run"
@@ -54,8 +59,11 @@ cat > "$C" <<EOF
 config_hardware=true
 use_gui=no
 kickstart_rom_file=$(win "$KICK")
-chipset=ecs
-chipset_compatible=A3000
+$(if [ "$MACHINE" = a4000 ]; then
+	echo chipset=aga; echo chipset_compatible=A4000
+else
+	echo chipset=ecs; echo chipset_compatible=A3000
+fi)
 cpu_model=$CPU
 fpu_model=$CPU
 mmu_model=$CPU
@@ -69,14 +77,19 @@ mbresmem_size=32
 fastmem_size=0
 z3mem_size=0
 z3mapping=uae
-filesystem2=rw,DH0:AmigaBoot:$(win "$H/boot"),5
-hardfile2=rw,SD6:$(win "$H/amix.hdf"),0,0,0,512,-128,,scsi6_a3000
+$(if [ "$MACHINE" = a4000 ]; then
+	printf '%s\n' "hardfile2=rw,DH1:$(win "$H/amix.hdf"),0,0,0,512,0,,ide0_mainboard"
+else
+	printf '%s\n' "filesystem2=rw,DH0:AmigaBoot:$(win "$H/boot"),5"
+	printf '%s\n' "hardfile2=rw,SD6:$(win "$H/amix.hdf"),0,0,0,512,-128,,scsi6_a3000"
+fi)
 serial_port=TCP://127.0.0.1:${SERPORT:-1235}
 serial_direct=true
 sound_output=none
 gfx_api=directdraw
-prometheus_rom_file=:ENABLED
+${BRIDGE}_rom_file=:ENABLED
 EOF
+[ "$BRIDGE" != mediator ] || echo "mediator_rom_options=subtype=4000mkii" >> "$C"
 for c in $CARDS; do
 	echo "${c}_rom_file=:ENABLED" >> "$C"
 done

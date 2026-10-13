@@ -18,6 +18,7 @@
 #endif
 #define DS_PGSIZE	(1 << DS_PGSHIFT)
 #define DS_PGOFF	(DS_PGSIZE - 1)
+#define DS_IDMAX	0x40000000UL	/* end of the kernel's identity map of RAM */
 
 #define DS_NSESS	9	/* user sessions: hotkeys 1..9 */
 #define DS_NFBH		16	/* open /dev/fbN files */
@@ -98,10 +99,9 @@ struct dssess {
 	long		s_id;		/* creation serial; 0 console */
 	long		s_uid;
 	char		s_name[16];
-	caddr_t		s_mem;		/* shadow as allocated */
-	unsigned long	s_memsize;
-	caddr_t		s_shadow;	/* page-aligned shadow of the mapped region */
-	unsigned long	*s_pfn;		/* its page frames */
+	caddr_t		s_shadow;	/* the console's shadow, contiguous */
+	unsigned long	*s_pfn;		/* shadow page frames of the mapped region */
+	unsigned long	s_npg;		/* frames owned: the first s_npg entries */
 	unsigned long	s_size;		/* bytes mapped */
 	unsigned long	s_kept;		/* bytes the shadow keeps; the rest share a page */
 	int		s_dead;		/* released: maps fault */

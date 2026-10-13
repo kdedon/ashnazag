@@ -9,7 +9,7 @@
 # UNIX_Root ufs = c6d0s1, UNIX_Swap = c6d0s2) and outdir/boot/, the
 # AmigaDOS volume: S/Startup-Sequence runs unix_boot040 on the kernel.
 # A login runs on the serial port.  The root holds the amilib, opci, pci
-# ne, zz9000, voodoo3, tdfx, radeonds, radeon, floppy and v3bars modules (floppy loaded at boot, zz9000, voodoo3 or radeonds when the card is there), modadmin, lspci and pci.ids, fltool, tcpcat, drmtest, radeontest, /dev/pci, /dev/ne0 and /dev/dri/card0, registered at
+# ne, zz9000, voodoo3, tdfx, radeonds, radeon, floppy and v3bars modules (floppy loaded at boot, the first of zz9000, voodoo3 and radeonds found, order in /etc/default/display), modadmin, lspci and pci.ids, fltool, tcpcat, drmtest, radeontest, /dev/pci, /dev/ne0, /dev/dri/card0 (tdfx) and card1 (radeon), registered at
 # run level 2; ne0 comes up as 10.0.2.15 (Amiberry's user-mode network).
 # AMIX_TAPE: tape segments (default media/amix-tape).  UNIXBOOT: the
 # unix_boot040 executable.  OPENPCI: openpci's unpacked archive (Libs/
@@ -21,15 +21,21 @@
 # kernel's .elf), whose packages are installed instead.  AMIGAENV:
 # mkamiga.sh's outdir, for Kickstart, the floppies and SYS:.  X11PKG:
 # x11/package.sh's pkg directory; X and the tape's clients are installed.
-# GLBIN: gl/build.sh's bin directory; its dritest and glxgears go to
+# GLBIN: gl/build.sh's bin directory; its dritest, glxgears, miptest and swaptest go to
 # /usr/x11r6/bin (with X11PKG).
 # QUAKE: gl/quake/build.sh's quake, installed as /usr/games/quake; with
 # QUAKEPAK (the user's id1/pak0.pak) the game data goes to /usr/games/id1.
+# GLQUAKE: its glquake (GL=yes), installed as /usr/games/glquake.
+# EXTRA: a file of manifest lines added last, over the others.
 # AUTORUN: a command run as root at the end of boot, output on the
 # console and in /tmp/autorun.out.
 # HOST: a3000 (default; SCSI unit 6, AmigaDOS boots from outdir/boot/) or
 # a4000 (IDE master, which also answers as unit 6; the AmigaDOS volume is
 # a bootable FFS partition AmigaBoot after the AMIX ones, s3).
+# ROOTBUS: empty (default; root on the host's own controller, c6d0) or
+# csppc: a CyberStorm PPC or MK III's SCSI, target CSPPCID (default 0),
+# root c<8+id>d0s1 (c8d0s1), swap s2; outdir/boot/ is made as for an a3000 and both boot volumes
+# run p5cfg before the loader.
 set -e
 A=$(cd "$(dirname "$0")/.." && pwd)
 K=$(cd "$A/.." && pwd)
@@ -43,6 +49,11 @@ LOADBASE=${LOADBASE:-0x08000000}
 case ${HOST:=a3000} in
 a3000|a4000) ;;
 *) echo "[FAIL] HOST: a3000 or a4000"; exit 1 ;;
+esac
+case ${ROOTBUS:=} in
+'') D=c6 ;;
+csppc) CSPPCID=${CSPPCID:-0}; D=c$(printf %x $((8 + CSPPCID))) ;;
+*) echo "[FAIL] ROOTBUS: empty or csppc"; exit 1 ;;
 esac
 PY="nice -n 19 python3"
 . "$AUX/toolchain/src/gcc-cross-amix/build/env.sh"
@@ -62,10 +73,27 @@ x() { (cd "$S" && cpio -i --quiet --to-stdout "$1" < tape/02); }
 { x etc/inittab
   echo 'ser:23:respawn:/usr/lib/saf/ttymon -g -h -p "login: " -d /dev/term/ser -l 9600'
 } > "$S/inittab"
-x etc/vfstab | sed -e 's,^/dev/dsk/c0d0s1[	 ].*,/dev/dsk/c6d0s1	/dev/rdsk/c6d0s1	/	ufs	1	no	-,' > "$S/vfstab"
-grep -q '^/dev/dsk/c6d0s1.*ufs' "$S/vfstab" || { echo "[FAIL] tape vfstab changed"; exit 1; }
+x etc/vfstab | sed -e "s,^/dev/dsk/c0d0s1[	 ].*,/dev/dsk/${D}d0s1	/dev/rdsk/${D}d0s1	/	ufs	1	no	-," > "$S/vfstab"
+grep -q "^/dev/dsk/${D}d0s1.*ufs" "$S/vfstab" || { echo "[FAIL] tape vfstab changed"; exit 1; }
 printf 'amiga\n' > "$S/nodename"
-printf '/sbin/modadmin -r cdev pci 60 >/dev/null\n/sbin/modadmin -r sdev ne 61 >/dev/null\n/sbin/modadmin -r cdev zz9000 49 >/dev/null\n/sbin/modadmin -l zz9000 >/dev/null 2>&1\n/sbin/modadmin -l voodoo3 >/dev/null 2>&1\nif /sbin/modadmin -l radeonds >/dev/null 2>&1\nthen /sbin/modadmin -r cdev radeon 63 >/dev/null\nelse /sbin/modadmin -r cdev tdfx 63 >/dev/null\nfi\n/sbin/modadmin -r cdev floppy 62 >/dev/null\n/sbin/modadmin -l floppy >/dev/null\n' > "$S/S05dlm"
+cat > "$S/S05dlm" <<'DLM'
+/sbin/modadmin -r cdev pci 60 >/dev/null
+/sbin/modadmin -r sdev ne 61 >/dev/null
+/sbin/modadmin -r cdev zz9000 49 >/dev/null
+CARDS="zz9000 voodoo3 radeonds"
+[ -f /etc/default/display ] && . /etc/default/display
+for m in $CARDS
+do /sbin/modadmin -l $m >/dev/null 2>&1 && break
+done
+/sbin/modadmin -r cdev tdfx 63 >/dev/null
+/sbin/modadmin -r cdev radeon 66 >/dev/null
+/sbin/modadmin -r cdev floppy 62 >/dev/null
+/sbin/modadmin -l floppy >/dev/null
+DLM
+cat > "$S/display" <<'DSP'
+# Display cards by preference: the first found drives the screen.
+CARDS="zz9000 voodoo3 radeonds"
+DSP
 cat > "$S/network-config" <<'NC'
 /usr/sbin/slink addaen /dev/ne0 ne0 &&
 	/usr/sbin/ifconfig ne0 10.0.2.15 netmask 255.255.255.0 up -trailers &&
@@ -102,6 +130,7 @@ fi
 sed -e "s/^	\\. = 0;/	. = $LOADBASE;/" "$A/amiga.ld" > "$S/unix.ld"
 m68k-elf-ld -T "$S/unix.ld" -o "$S/unix.linked" "$KERNEL"
 $PY "$A/test/namelist.py" "$KERNEL" "$S/unix.linked" "$S/unix"
+[ -z "$ROOTBUS" ] || $PY "$A/test/rootdev.py" "$S/unix" 1 $CSPPCID
 { x etc/group; echo "display::25:root"; } > "$S/group"
 ENV=
 if [ -n "$PKG" ]; then
@@ -128,11 +157,16 @@ if [ -n "$AUTORUN" ]; then
 	ENV="$ENV
 f /etc/rc2.d/S99autorun 744 0 3 S99autorun"
 fi
-if [ -n "$QUAKE" ]; then
-	m68k-elf-strip -o "$S/bin/quake" "$QUAKE"
+if [ -n "$QUAKE$GLQUAKE" ]; then
 	ENV="$ENV
-d /usr/games 755 2 2
-f /usr/games/quake 555 2 2 bin/quake"
+d /usr/games 755 2 2"
+	for p in quake glquake; do
+		eval q=\$$(echo $p | tr a-z A-Z)
+		[ -n "$q" ] || continue
+		m68k-elf-strip -o "$S/bin/$p" "$q"
+		ENV="$ENV
+f /usr/games/$p 555 2 2 bin/$p"
+	done
 	[ -z "$QUAKEPAK" ] || ENV="$ENV
 d /usr/games/id1 777 2 2
 f /usr/games/id1/pak0.pak 444 2 2 $(cd "$(dirname "$QUAKEPAK")" && pwd)/$(basename "$QUAKEPAK")"
@@ -143,7 +177,7 @@ if [ -n "$X11PKG" ]; then
 a tape/13
 a tape/14
 `grep -v '^f /etc/inittab ' "$XP/x11.manifest" | sed -e "s, x11pkg/, $XP/,"`"
-	for p in dritest glxgears; do
+	for p in dritest glxgears miptest swaptest; do
 		[ -n "$GLBIN" ] && [ -f "$GLBIN/$p" ] || continue
 		m68k-elf-strip -o "$S/bin/$p" "$GLBIN/$p"
 		ENV="$ENV
@@ -151,6 +185,8 @@ f /usr/x11r6/bin/$p 555 2 2 bin/$p"
 	done
 fi
 
+[ -z "$EXTRA" ] || ENV="$ENV
+`cat "$EXTRA"`"
 cat > "$S/root.manifest" <<EOF
 a tape/02
 a tape/03
@@ -176,6 +212,7 @@ f /usr/bin/kread 555 2 2 bin/kread
 f /usr/bin/drmtest 555 2 2 bin/drmtest
 f /usr/bin/radeontest 555 2 2 bin/radeontest
 f /etc/rc2.d/S05dlm 744 0 3 S05dlm
+f /etc/default/display 644 0 3 display
 f /etc/inet/network-config 444 0 3 network-config
 c /dev/pci 444 0 3 60 0
 c /dev/ne0 600 0 3 61 0
@@ -199,6 +236,7 @@ c /dev/floppy3 666 0 3 62 3
 c /dev/zz9000 660 0 25 49 0
 d /dev/dri 755 0 3
 c /dev/dri/card0 660 0 25 63 0
+c /dev/dri/card1 660 0 25 66 0
 d /etc/conf/pci 755 0 3
 f /etc/conf/pci/openpci.library 644 0 3 openpci.library
 $CONF
@@ -211,13 +249,19 @@ cp "$UNIXBOOT" "$S/amigaboot/unix_boot040"
 cp "$KERNEL" "$S/amigaboot/unix"
 rm -rf "$O/boot"
 BOOTPART=
-if [ "$HOST" = a4000 ]; then
-	printf 'SYS:unix_boot040 SYS:unix %s\n' "$LOADBASE" > "$S/amigaboot/S/Startup-Sequence"
-	BOOTPART="AmigaBoot:DOS\\1:8:@$S/amigaboot"
-else
-	printf 'DH0:unix_boot040 DH0:unix %s\n' "$LOADBASE" > "$S/amigaboot/S/Startup-Sequence"
-	cp -R "$S/amigaboot" "$O/boot"
+V=DH0
+[ "$HOST" = a3000 ] || V=SYS
+: > "$S/amigaboot/S/Startup-Sequence"
+if [ -n "$ROOTBUS" ]; then
+	$PY "$A/test/rootdev.py" "$S/amigaboot/unix" 1 $CSPPCID
+	m68k-linux-gnu-as -m68020 -o "$S/p5cfg.o" "$A/csppc/p5cfg.s"
+	m68k-linux-gnu-objcopy -O binary -j .text "$S/p5cfg.o" "$S/p5cfg.bin"
+	$PY "$A/test/hunk.py" "$S/p5cfg.bin" "$S/amigaboot/p5cfg"
+	echo "$V:p5cfg" > "$S/amigaboot/S/Startup-Sequence"
 fi
+printf '%s:unix_boot040 %s:unix %s\n' $V $V "$LOADBASE" >> "$S/amigaboot/S/Startup-Sequence"
+[ "$HOST" = a3000 ] || BOOTPART="AmigaBoot:DOS\\1:8:@$S/amigaboot"
+[ "$HOST" = a4000 ] && [ -z "$ROOTBUS" ] || cp -R "$S/amigaboot" "$O/boot"
 # a new file: an emulator still running keeps writing to the old one
 $PY "$A/test/rdb.py" "$O/amix.hdf.new" "UNIX_Root:UNI\\1:$ROOTMB:$S/root.img" "UNIX_Swap:resv:32" $BOOTPART
 mv "$O/amix.hdf.new" "$O/amix.hdf"
