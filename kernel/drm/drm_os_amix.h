@@ -26,6 +26,9 @@
 #define __REALLY_HAVE_AGP	0
 #define __REALLY_HAVE_MTRR	0
 #define __REALLY_HAVE_SG	(__HAVE_SG)
+#ifndef __BIG_ENDIAN
+#define __BIG_ENDIAN		4321
+#endif
 
 #undef DRM_DEBUG
 #define DRM_TIME_SLICE		(HZ / 20)
@@ -48,6 +51,9 @@
 #define DRM_IOCTL_ARGS		dev_t kdev, u_long cmd, caddr_t data, int flags, DRM_STRUCTPROC *p
 #define DRM_SUSER(p)		drv_priv((p)->p_cred)
 #define DRM_IRQ_ARGS		char *arg
+/* the bridge's interrupt server chain asks whether the card interrupted */
+#define DRM_IRQ_TYPE		int
+#define DRM_IRQ_RETURN(v)	return (v)
 /* one card; each open has a minor of its own, which names its file */
 #define DRM_DEVICE		drm_device_t *dev = &DRM(softc)[0]
 #define DRM_NMINOR		64
@@ -80,12 +86,19 @@ do {									\
 	}								\
 } while (0)
 #define DRM_HZ			HZ
+/* interrupts held off from the test to the sleep: no wakeup slips between */
 #define DRM_WAIT_ON(ret, queue, timeout, condition)			\
-while (!(condition)) {							\
-	ret = DRM(tsleep)((caddr_t)&(queue), (timeout));		\
+do {									\
+	int s_ = DRM(splhi)();						\
+	while (!(condition)) {						\
+		ret = DRM(tsleep)((caddr_t)&(queue), (timeout));	\
+		if (ret)						\
+			break;						\
+	}								\
+	DRM(splx)(s_);							\
 	if (ret)							\
 		return ret;						\
-}
+} while (0)
 #define DRM_WAKEUP(queue)	wakeup((caddr_t)(queue))
 #define DRM_WAKEUP_INT(queue)	wakeup((caddr_t)(queue))
 #define DRM_INIT_WAITQUEUE(queue) do {} while (0)
@@ -145,6 +158,7 @@ typedef unsigned long	u32;
 typedef unsigned short	u16;
 typedef unsigned char	u8;
 typedef u32		dma_addr_t;
+typedef unsigned long	vm_offset_t;
 typedef u32		atomic_t;
 typedef u32		cycles_t;
 typedef u32		spinlock_t;
@@ -237,6 +251,20 @@ DRM(swab32)(u32 v)
  */
 #define DRM_SAREA_SYNC()	__asm__ __volatile__(".word 0xf478" : : : "memory")
 
+/*
+ * Memory the card masters (ring, buffers, PCI GART table, read pointer
+ * and scratch writeback) is copyback in the kernel and possibly in its
+ * clients.  Before the card reads, push every dirty line; before the
+ * CPU reads what the card wrote, drop stale ones.  cpusha does both;
+ * the nop drains the 68060's store buffer.
+ */
+static __inline__ void
+DRM(dma_sync)(void)
+{
+	__asm__ __volatile__(".word 0xf478\n\tnop" : : : "memory");
+}
+#define DRM_DMA_SYNC()		DRM(dma_sync)()
+
 static __inline__ unsigned int
 DRM(cmpxchg)(volatile unsigned int *p, unsigned int old, unsigned int new)
 {
@@ -316,6 +344,8 @@ struct callout { int c_unused; };
 #define wait_queue_head_t	int
 #define agp_memory		void
 #define jiffies			lbolt
+/* vblank reply times: clock ticks are fine enough */
+#define microtime(tv)		((tv)->tv_sec = lbolt / HZ, (tv)->tv_usec = lbolt % HZ * (1000000 / HZ))
 
 #define DRM_ERROR(fmt, arg...) \
 	printf("[" DRM_NAME ":%s] *ERROR* " fmt, __FUNCTION__ , ## arg)

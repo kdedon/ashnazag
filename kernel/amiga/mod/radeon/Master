@@ -1,0 +1,3 @@
+# radeon: the DRM for the Radeon the radeonds module drives, /dev/dri/card0
+$depend opci radeonds
+radeon	radeon	m	0	0	0

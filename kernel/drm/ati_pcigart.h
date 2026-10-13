@@ -50,6 +50,10 @@
 # define ATI_MAX_PCIGART_PAGES		8192	/* 32 MB aperture, 4K pages */
 # define ATI_PCIGART_PAGE_SIZE		4096	/* PCI GART page size */
 
+#ifdef __AMIX__
+static char *DRM(gart_raw);
+#endif
+
 static unsigned long DRM(ati_alloc_pcigart_table)( void )
 {
 	unsigned long address;
@@ -57,7 +61,14 @@ static unsigned long DRM(ati_alloc_pcigart_table)( void )
 	DRM_DEBUG( "\n" );
 
 #ifdef __AMIX__
-	address = (unsigned long) opci_dmaalloc( DRM(card).c_dev, (1 << ATI_PCIGART_TABLE_ORDER) * PAGE_SIZE, OPCI_DMA_NOCACHE );
+	/* twice the size, to align the table to it */
+	DRM(gart_raw) = opci_dmaalloc( DRM(card).c_dev, (2 << ATI_PCIGART_TABLE_ORDER) * PAGE_SIZE, OPCI_DMA_NOCACHE );
+	address = (unsigned long) DRM(gart_raw);
+	if ( address ) {
+		unsigned long sz = (1 << ATI_PCIGART_TABLE_ORDER) * PAGE_SIZE;
+
+		address = (address + sz - 1) & ~(sz - 1);
+	}
 #else
 	address = (unsigned long) malloc( (1 << ATI_PCIGART_TABLE_ORDER) * PAGE_SIZE, DRM(M_DRM), M_WAITOK );
 #endif
@@ -71,7 +82,7 @@ static void DRM(ati_free_pcigart_table)( unsigned long address )
 	DRM_DEBUG( "\n" );
 
 #ifdef __AMIX__
-	opci_dmafree( DRM(card).c_dev, (char *)address, (1 << ATI_PCIGART_TABLE_ORDER) * PAGE_SIZE );
+	opci_dmafree( DRM(card).c_dev, DRM(gart_raw), (2 << ATI_PCIGART_TABLE_ORDER) * PAGE_SIZE );
 #else
 	free( (void *)address, DRM(M_DRM));
 #endif
@@ -135,6 +146,9 @@ int DRM(ati_pcigart_init)( drm_device_t *dev,
 			page_base += ATI_PCIGART_PAGE_SIZE;
 		}
 	}
+#ifdef __AMIX__
+	DRM_DMA_SYNC();
+#endif
 
 	ret = 1;
 

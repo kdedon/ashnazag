@@ -83,6 +83,9 @@ case " $ONLY " in "  "|*/t_win16.c*|*/t_stable.c*) sh "$T/win16/mkvol.sh" "$W16B
 # t_quake's volume (SCSI disk 5), only when asked for: a timedemo takes long
 QKB=$B/quake
 case " $ONLY " in */t_quake.c*) sh "$T/quake/mkvol.sh" "$QKB" ;; *) rm -rf "$QKB" ;; esac
+# t_v200's volume (SCSI disk 4): its native host and the user's Flash dump
+V2B=$B/v200
+case " $ONLY " in "  "|*/t_v200.c*) sh "$T/v200/mkvol.sh" "$V2B" ;; *) rm -rf "$V2B" ;; esac
 # t_ufs's volume: /d/f0../d/f3 in t_pattern (run-qemu.sh adds it as SCSI disk 2)
 UFSB=$B/ufs
 if [ -z "$NET" ]; then
@@ -107,6 +110,8 @@ if [ -z "$TESTKB" ]; then
 	[ -d "$CPMB/root" ] && TESTKB=$((TESTKB + 128 + 3 * $(du -sk "$CPMB/root" | cut -f1)))
 	[ ! -f "$B/bin/t_gl" ] || TESTKB=$((TESTKB + $(du -sk "$B/bin/t_gl" | cut -f1)))
 	[ ! -f "$W16B/startwin" ] || TESTKB=$((TESTKB + 64 + $(du -sk "$W16B/startwin" | cut -f1)))
+	# t_v200: the 4 MB Flash copy and 256 KB RAM file in /tmp
+	[ ! -f "$V2B/v200.img" ] || TESTKB=$((TESTKB + 4096 + 256 + 64))
 fi
 
 # /etc/group with the display devices' group
@@ -284,7 +289,11 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 		echo "b /dev/dsk/c5d0s0 600 0 3 18 5"
 		echo "d /quake 755 0 3"
 	fi
-	if [ -f "$AMIB/sys.img" ] || [ -f "$UFSB/ufs.img" ] || [ -f "$AUXB/macsys.img" ] ||
+	if [ -f "$V2B/v200.img" ]; then
+		echo "b /dev/dsk/c4d0s0 600 0 3 18 4"
+		echo "d /v200 755 0 3"
+	fi
+	if [ -f "$AMIB/sys.img" ] || [ -f "$UFSB/ufs.img" ] || [ -f "$V2B/v200.img" ] || [ -f "$AUXB/macsys.img" ] ||
 	    [ -f "$W16B/win16.img" ] || [ -f "$QKB/quake.img" ]; then
 		echo "d /usr/lib/fs/ufs 755 0 3"
 		echo "f /usr/lib/fs/ufs/mount 555 0 3 $RD/build/core/usr/lib/fs/ufs/mount"

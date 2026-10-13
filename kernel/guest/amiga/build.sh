@@ -25,7 +25,8 @@ if [ -f "$GLW/lib/libdrihost.a" ]; then
     DRI="-DW3D_DRI -I$AUX/kernel/mac/display"
     DRILIB=$GLW/lib/libdrihost.a
 fi
-if [ -f "$GLW/lib/libOSMesa.a" ] && [ -x "$TC95/bin/m68k-cbm-sysv4-gcc" ]; then
+if [ -f "$GLW/lib/libOSMesa.a" ]; then
+    [ -x "$TC95/bin/m68k-cbm-sysv4-gcc" ] || { echo "[FAIL] Mesa is built but $TC95 is missing" >&2; exit 1; }
     nice -n 19 "$TC95/bin/m68k-cbm-sysv4-gcc" -O2 -m68040 -fomit-frame-pointer -Wall $DRI \
         -I"$GLW/include" -I"$G/amiga" -c "$G/amiga/w3d.c" -o "$O/w3d.o"
     nice -n 19 "$TC95/bin/m68k-cbm-sysv4-gcc" -O2 -m68040 -fomit-frame-pointer -Wall \

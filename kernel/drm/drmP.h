@@ -389,6 +389,9 @@ typedef struct drm_sg_mem {
 	int             pages;
 	struct page     **pagelist;
 	dma_addr_t	*busaddr;
+#ifdef __AMIX__
+	unsigned long	vram;		/* nonzero: VRAM at this bus address, not host memory */
+#endif
 } drm_sg_mem_t;
 
 typedef struct drm_sigdata {
@@ -467,6 +470,7 @@ struct drm_device {
 	pci_intr_handle_t	ih;
 #elif defined(__AMIX__)
 	int		  irq;
+	struct opci_intr  irq_oi;
 #endif
 	void		  *irqh;	/* Handle from bus_setup_intr      */
 	atomic_t	  context_flag;	/* Context swapping flag	   */
@@ -604,7 +608,11 @@ extern int	     DRM(dma_get_buffers)(drm_device_t *dev, drm_dma_t *dma);
 #if __HAVE_DMA_IRQ
 extern int           DRM(irq_install)( drm_device_t *dev, int irq );
 extern int           DRM(irq_uninstall)( drm_device_t *dev );
-extern void          DRM(dma_service)( DRM_IRQ_ARGS );
+#ifndef DRM_IRQ_TYPE
+#define DRM_IRQ_TYPE		void
+#define DRM_IRQ_RETURN(v)	return
+#endif
+extern DRM_IRQ_TYPE  DRM(dma_service)( DRM_IRQ_ARGS );
 extern void          DRM(driver_irq_preinstall)( drm_device_t *dev );
 extern void          DRM(driver_irq_postinstall)( drm_device_t *dev );
 extern void          DRM(driver_irq_uninstall)( drm_device_t *dev );

@@ -1,6 +1,11 @@
 # TI-89 / TI-92 Plus / Voyage 200 environment: feasibility plan
 
-Status: research from public hardware notes (TIGCC/GCC4TI headers, TiEmu/TilEm register docs). Nothing run.
+Status (2026-10-12): stage 1-2 on the Voyage 200. A full Flash dump (AMS 2.09, 3.10) boots
+from reset through its own boot code on QEMU Quadra to the desktop; Home computes 12+34 from
+host keys (t_v200). Census findings: Flash is Sharp/Intel style (0x5050, 0x2020/0xD0D0 erase,
+0x1010 program, status bit 7), not AMD; $600000 bit 2 is the battery comparator; AMS posts
+keys to $C00000 (open bus). Not yet: archive survives a restart (model written, untested),
+OFF/ON, link, contrast, TI-89/92+, .v2u upgrade files with a boot stub.
 Addresses below are from memory of those notes; stage 0 confirms each against the ROM before relying on it.
 
 ## 1. Hardware AMS touches

@@ -33,6 +33,7 @@ kernel() {
 	has "040/060 port clone" f "$AUX/kernel/amix-040-060-port/relink-040.sh"
 	has "port config.sh" f "$AUX/kernel/amix-040-060-port/config.sh"
 	has "port-local.diff applied" git -C "$AUX/kernel/amix-040-060-port" apply -R --check "$AUX/kernel/port-local.diff"
+	has "A4000 IDE driver" f "$AUX/ref/amix-gayle-ide/src/ide.c"
 }
 suite() {
 	kernel

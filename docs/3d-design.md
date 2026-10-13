@@ -145,6 +145,23 @@ Open: 3D writes through the LFB need `lfbMode` swizzling and the register map pa
 
 Test: `drmtest` (in the Amiga test disk; `mkhdf.sh AUTORUN=` runs it at boot): RGB565 session, version, unique, bind, maps, context, lock (SAREA word `0x80000001`), a red band through the FB map, a green rectangle by the 2D engine through the register map (read back `0x07e0`), unlock, and no lock while hidden.
 
+### 1.7 Radeon as built (not yet run on a card)
+
+| Part | As built |
+|---|---|
+| Display | module `radeonds` (`kernel/amiga/radeon/rds.c`): R100 to RV280, primary CRTC and analogue output, VESA timings at the size in its `Space.c`, PLL from the reference divider the card started with (`rds_refkhz` 27 MHz). 8/16/32 bits per session; `SURFACE_CNTL` swaps aperture 0 per depth so CPU pixels are host order. VRAM at card address 0 (`MC_FB_LOCATION`, `DISPLAY_BASE_ADDR`), as the DRM sets it |
+| Start-up | registers left byte-swapped by an earlier driver (the config mirror at 0x0F00 reads vendor 0x1002 reversed) get the swap fields cleared. A card with a CRTC on or `CONFIG_MEMSIZE` set is taken as started. Else the module copies the PC ROM (ROM BAR; a blank one is enabled through `BUS_CNTL` with display and VIP off) and runs its legacy init tables without executing ROM code: ASIC_INIT_1, PLL_INIT, ASIC_INIT_2, ASIC_INIT_4, RAM_RESET, ASIC_INIT_3, memory size (detected-memory or memory-config table; probed on R100/RV100/RV200), DYN_CLK_1 (`rdsinit.c`, from Linux's combios code, MIT). Refused with a console reason: no ROM, Open Firmware (Mac) ROM, no table header, ATOM ROM. Console: bridge and card ids, then `already initialised`, `initialised from ROM tables` or `refused: <reason>` |
+| Module | `radeon` (`$depend opci radeonds`), `/dev/dri/card0` major 63; the test disk registers it instead of `tdfx` when `radeonds` loads |
+| First open | in X's place: the CP's memory (ring 256 KB, read pointer page, 16 DMA buffers of 64 KB) at the bottom of the VRAM the sessions leave, reached by the CPU through the card's second aperture (never swapped, so stores land as in host memory) and fetched by the CP locally at its card address; the card never masters across the bridge (`BUS_MASTER_DIS` kept), GART off, host-path read cache off for the writeback. `radeon_pcigart` 1 in the module's `Space.c` instead takes PCI GART memory from `opci_dmaalloc` (GART table aligned to its size), for bridges proven to bus-master. CP init with `is_pci`, R200 microcode for R200/RV250/RV280; CP started; interrupt through `opci_intr`. Back, depth (each sized for 32 bits) and textures above. Layout for clients: `radeon_amix_layout_t` after the radeon SAREA (`radeon_amix.h`) |
+| Front | the backend's pan and depth changes retarget the DRM's front, back and depth offsets, pitches and formats; back and depth take the front's pitch |
+| Byte order | registers swapped by `DRM_READ32/WRITE32`; ring and indirect buffers fetched with `BUF_SWAP_32BIT`; read pointer and scratch writeback read swapped (`SET_RING_HEAD` fixed); GART entries little-endian; texture uploads copy bytes (`HOST_DATA_SWAP_32BIT` undoes the ring swap), so r200 sends texels in the card's order |
+| 68060 caches | `DRM_DMA_SYNC` (`cpusha dc; nop`) before every ring commit (it is in `GET_RING_HEAD`), before reading writeback, after CPU writes to writeback memory and after filling the GART table |
+| Waits | `DRM_WAIT_ON` tests its condition with interrupts off, so a wakeup from the interrupt cannot slip in before the sleep |
+| Buffers | `MAP_BUFS` maps nothing in the kernel: it returns the buffers map's offset and each buffer's place; libdrm maps it; in VRAM the map's pages are the second aperture's |
+| Client | 4.3's r200 driver (`gl/dri/patches/03-r200.diff`) as `radeon` in `__driDrivers[]`: screen from `AMIXDRIRec` and the layout, Mesa 5.0.2 drift, texels swapped to the card's order, real `CPU_TO_LE32` |
+
+Test: `t_radeon` (QEMU suite) runs the table interpreter on a ROM image it builds and checks every register write, delay and poll. `radeontest` on the Amiga test disk (version, maps, layout, lock, CP idle, a green clear through the ring, a texture upload through a DMA buffer read back byte for byte, interrupt, no lock while hidden).
+
 ## 2. X server: DRI in X11R6.3 or XFree86 4.3
 
 ### 2.1 As built: direct-only GLX and XF86DRI in Xamix
@@ -161,7 +178,7 @@ Card-independent; a card's Mesa driver plugs in as below.
 | Drivers | linked in: `__driDrivers[]` (`{name, __driCreateScreen, __driRegisterExtensions}`) replaces dlopen. binutils 2.8.1 here builds no shared objects, and AMIX's `dlopen` has no `RTLD_GLOBAL`, so a driver `.so` could not see libGL's `_glapi_*` |
 | Sources | `gl/dri/x43.sh` extracts the 4.3 files and applies `gl/dri/patches`; `gl/build.sh` builds `libdrm.a` and `libGL.a`, `x11/build.sh dri` puts the server side in `hw/amix/dri` (`x11/patches/07-dri.diff`) |
 | Screen depths | the `fb` card draws 8-bit PseudoColor (`cfb`) and 16/32-bit TrueColor (`cfb16`, `cfb32`) with the display service's masks; `-depth` or `DEPTH=` in `/etc/default/x` picks the session mode. `AMIXDRIRec.depth` is bits a pixel |
-| GL visuals | a config per X visual; on a DRM screen each TrueColor visual is repeated with a new id for each further buffer set, since a client finds its config by visual. 16 bpp: double + depth 16 (the visual itself), double without depth, single + depth 16. 32 bpp: double + depth 24 + stencil 8 + alpha 8 (itself), the same without alpha, double + depth 16, double + alpha without depth, single + depth 24 + stencil 8 + alpha 8. Alpha lives in the pixel's spare byte. PseudoColor: double + depth 16 |
+| GL visuals | a config per X visual; on a DRM screen each TrueColor visual is repeated with a new id for each further buffer set, since a client finds its config by visual. 16 bpp: double + depth 16 (the visual itself), double without depth, single + depth 16. 32 bpp: double + depth 24 + stencil 8 + alpha 8 (itself), the same without alpha, double + alpha without depth, single + depth 24 + stencil 8 + alpha 8. Alpha lives in the pixel's spare byte. PseudoColor: double + depth 16 |
 | Card drivers | `tdfx` (§1.6); a card's own config list where it differs needs a hook in `AmixGLXInitVisuals` |
 
 Test: `dritest` (`gl/src/dritest.c`, in `/usr/x11r6/bin` on the Amiga test disk with `GLBIN=`): a null DRI driver, linked under the server's driver name, runs libGL's whole set-up: DRM open, magic auth through the server, SAREA and FB maps, context, drawable; the drawable's four cliprects around a covering window, a new stamp and cliprects after the cover moves, the lock free after a client that held it exits; and a child with no driver renders a red square through Mesa's Xlib renderer.
@@ -340,8 +357,8 @@ Rules from the display service:
 | 4 | RTG card 16/32-bit modes; Warp3D.library + glue + host table + PC range; OSMesa backend; per-call counters | 2 | QEMU q800 (Amiga environment), Amiberry; Cow3D, WarpTest, StarshipW3D, then the user's titles to fix the tiers |
 | 5 | DRM core port as DLM: open, ioctl copy, SAREA map, lock, session auth, SG alloc. **Done with tdfx (§1.5)**; SG untested | 1 | WinUAE (Voodoo3) |
 | 6 | `opci_dmaalloc`, `opci_busaddr`, `opci_intr` exercised by a bus-master card | – | Amiberry (ES1370, a bus master, behind its emulated bridge) |
-| 7 | Radeon display backend: POST (x86emu running the card ROM through `OPCI_LEGACYIO`/`opci_region`), PLL/CRTC/DAC from `radeon_driver.c` (~2k), VRAM per session, `SURFACE_CNTL` swap | 6 | **real card** |
-| 8 | Radeon DRM: kernel CP init, PCI GART on the bridge's DMA memory, §1.4 swaps; check Prometheus bus mastering | 5, 7 | **real card** |
+| 7 | Radeon display backend: **modes and start-up from the ROM's tables done (§1.7)**; x86emu POST only if a card's tables fail, PLL/CRTC/DAC from `radeon_driver.c` (~2k), VRAM per session, `SURFACE_CNTL` swap | 6 | **real card** |
+| 8 | Radeon DRM: kernel CP init, PCI GART on the bridge's DMA memory, §1.4 swaps (**built, §1.7**); check Prometheus bus mastering | 5, 7 | **real card** |
 | 9 | r200 DRI driver with the X-less DRI host; a GL demo in a display session | 2, 8 | **real card** |
 | 10 | Warp3D on r200 | 4, 9 | **real card** |
 | 11 | Xamix: direct-only GLX + DRI extension; libGL with DRI loader. **Done (§2.1), with 16/32-bit X screens and the Voodoo3's tdfx driver (§1.6)**; r200 remains | 3 (protocol part), 9 (rendering) | WinUAE (Voodoo3) for the protocol, **real card** for DRI |

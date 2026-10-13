@@ -19,6 +19,7 @@ nice -n19 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68000 -DDS_AMIGA -Wall -Wno-c
 nice -n19 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68000 -DDS_AMIGA -Wall -Wno-comment -fno-common \
  -I"$K/mac/display" -I"$K/mac/video" -I"$K/mac/adb" -I"$A/include" -c "$A/amigads.c" -o "$W/amigads.o"
 WEAK="--weaken-symbol dmainit --weaken-symbol execsw --weaken-symbol fmodsw"
+for s in sdopen sdqueue sdhardwarename; do WEAK="$WEAK --weaken-symbol $s"; done
 OVR="ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig kbintr unt_latch vtop hat_ptalloc uiomove aciabintr pstart"
 for s in $OVR; do WEAK="$WEAK --weaken-symbol $s"; done
 for s in sendsig valid_usr_range fsig kbintr unt_latch hat_ptalloc uiomove aciabintr pstart; do
@@ -45,7 +46,13 @@ nice -n19 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68040 -c "$A/amigarom.c" -o "
 nice -n19 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68040 -I"$A/amilib" -c "$A/amigazorro.c" -o "$W/amigazorro.o"
 nice -n19 m68k-cbm-sysv4-gcc -m68040 -c "$PORT/src/devkvmap040.s" -o "$W/devkvmap.o"
 nice -n19 m68k-cbm-sysv4-gcc -m68040 -c "$A/cpu060.s" -o "$W/cpu060.o"
-OBJS="$W/vtop.o $W/ptalloc.o $W/uiomod.o $W/amigadlm.o $W/amigarom.o $W/amigazorro.o $W/devkvmap.o $W/cpu060.o $W/ds.o $W/amigads.o $W/guest/guest.o"
+IDE=${GAYLE_IDE:-$AUX/ref/amix-gayle-ide}
+ALIEN=$AMIX_SYSROOT/usr/sys/amiga/alien
+[ -f "$IDE/src/ide.c" ] || { echo "[FAIL] no $IDE/src/ide.c (tools/setup.sh)"; exit 1; }
+nice -n19 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68040 -I"$ALIEN" -Dint2_tbl=ide_int2_tbl -c "$IDE/src/ide.c" -o "$W/ide.o"
+nice -n19 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68040 -I"$ALIEN" -c "$A/ide/amigaide.c" -o "$W/amigaide.o"
+nice -n19 m68k-cbm-sysv4-gcc -m68040 -c "$A/ide/ide040.s" -o "$W/ide040.o"
+OBJS="$W/vtop.o $W/ptalloc.o $W/uiomod.o $W/amigadlm.o $W/amigarom.o $W/amigazorro.o $W/devkvmap.o $W/cpu060.o $W/ide.o $W/amigaide.o $W/ide040.o $W/ds.o $W/amigads.o $W/guest/guest.o"
 for f in dlm_core dlm_ld dlm_sym dlm_slot dlm_str dlmconf dlm_cache dlm_hooksw; do
  OBJS="$OBJS $W/dlm/$f.o"
 done

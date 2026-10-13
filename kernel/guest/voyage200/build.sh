@@ -20,13 +20,9 @@ O=$(cd "$O" && pwd)
 CC="nice -n 19 $TC/bin/m68k-cbm-sysv4-gcc -O -Wall -Wno-comment -D__STDC__=0 -fno-builtin
 	-I$V -I$G/include -I$NH -I$AUX/kernel/mac/display -I$AUX/kernel/mac/sound"
 objs=
-for c in "$V"/voyage200.c "$V"/hash.c "$NH"/nativehost.c; do
+for c in "$V"/voyage200.c "$NH"/nativehost.c; do
 	$CC -c "$c" -o "$O/obj/$(basename "$c" .c).o"
 	objs="$objs $O/obj/$(basename "$c" .c).o"
-done
-for s in "$V/calls.s"; do
-	nice -n 19 "$TC/bin/m68k-cbm-sysv4-as" -o "$O/obj/$(basename "$s" .s).o" "$s"
-	objs="$objs $O/obj/$(basename "$s" .s).o"
 done
 # libc's nonshared members
 (cd "$O/extra" && ar x "$LIB/libc.so" && rm -f libc.so.1 && ar rc "$O/libextra.a" ./*.o)

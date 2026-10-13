@@ -1,0 +1,12 @@
+--- a/src/glheader.h
++++ b/src/glheader.h
+@@ -172,7 +172,8 @@
+ #include <byteswap.h>
+ #define CPU_TO_LE32( x )	bswap_32( x )
+ #else /*__linux__*/
+-#define CPU_TO_LE32( x )	( x )  /* fix me for non-Linux big-endian! */
++#define CPU_TO_LE32( x )	( (GLuint) (x) >> 24 | ((GLuint) (x) >> 8 & 0xff00) | \
++				  ((GLuint) (x) & 0xff00) << 8 | (GLuint) (x) << 24 )
+ #endif /*__linux__*/
+ #define MESA_BIG_ENDIAN 1
+ #else

@@ -1,0 +1,4 @@
+# radeonds: a PCI Radeon (R100 to RV280) as the display service's screen
+$depend opci
+$modtype misc
+radeonds	radeonds	m	0	0	0

@@ -24,7 +24,7 @@ Direct boot also runs `display/hostio.py`: `t_display` sends it requests on SCC 
 | `core` | smoke plus t_arith t_mem t_sig t_streams t_time t_tty t_page t_moddemo t_stress t_env t_ufs |
 | `mac` | t_aux t_mac t_mac6 t_mac76 t_mac81 t_env |
 | `tos` | t_tos t_xaaes t_env |
-| `mint`, `cpm`, `amiga`, `display`, `sound`, `win16`, `gl` | t_mint; t_cpm; t_amiga t_env; t_display; t_sound; t_win16; t_gl |
+| `mint`, `cpm`, `amiga`, `display`, `sound`, `win16`, `gl` | t_mint; t_cpm; t_amiga t_radeon t_env; t_display; t_sound; t_win16; t_gl |
 | `stable` | t_stable: each environment started and stopped five ways, leaks and idle CPU (`STABLE="mac76 cpm idle=30 cycles=1"` narrows it) |
 
 Exit status: 0 all PASS, 1 any FAIL, 2 timeout, panic or no `TESTS DONE`.
@@ -84,6 +84,7 @@ INFO time.clk_tck: 60
 | `t_xaaes` | XaAES over the MiNT layer: desktop and menu bar, TeraDesk as shell, menus, drive window, a background program keeps running and takes keys, idle CPU |
 | `t_mint` | MiNT programs as Unix processes through `/tos/bin/mintrun` |
 | `t_amiga` | `amigaguest` load and unload, ioctl validation, small guests |
+| `t_radeon` | the Radeon driver's ROM init-table interpreter on a ROM image built in the test: refusal of a missing, Open Firmware or ATOM ROM, then each table's register writes, delays and polls in order, memory size from each source, wait timeouts, a truncated ROM |
 | `t_cpm` | CP/M-68K: `startcpm`, drives on host directories |
 | `t_sound` | `/dev/asc`, the sound service and its front-session rule, `/dev/snd` and Sound Manager in System 6 and 7.6.1 |
 | `t_win16` | `startwin` and the Win16 test programs on SCSI disk 3; with your Windows and Wabi, install and Program Manager |

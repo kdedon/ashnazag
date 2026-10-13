@@ -6,7 +6,9 @@
 #   sh amiberry.sh hdfdir [seconds]
 #
 # AMIBERRY: the install prefix (default toolchain/amiberry/usr).
-# KICK: an A3000 Kickstart ROM.  CPU: 68040 (default) or 68060.
+# KICK: a Kickstart ROM for the machine.  CPU: 68040 (default) or 68060.
+# MACHINE: a3000 (default; the disk is SCSI unit 6) or a4000 (AGA; the
+# disk is the IDE master).
 # STATE: config, home and IPC socket
 # directory (default hdfdir/run).  CARDS: Amiberry board names on the
 # PCI bus (default "ne2000_pci es1370 fm801").  GFX: a graphics card
@@ -24,6 +26,7 @@ ST=${STATE:-$H/run}
 CARDS=${CARDS-ne2000_pci es1370 fm801}
 GFX=${GFX-ZZ9000_Z2}
 CPU=${CPU:-68040}
+MACHINE=${MACHINE:-a3000}
 [ -f "$KICK" ] || { echo "[FAIL] KICK: no Kickstart ROM"; exit 1; }
 mkdir -p "$ST/home/.config" "$ST/xdg"
 chmod 700 "$ST/xdg"
@@ -32,8 +35,11 @@ cat > "$C" <<EOF
 config_hardware=true
 use_gui=no
 kickstart_rom_file=$KICK
-chipset=ecs
-chipset_compatible=A3000
+$(if [ "$MACHINE" = a4000 ]; then
+	echo chipset=aga; echo chipset_compatible=A4000
+else
+	echo chipset=ecs; echo chipset_compatible=A3000
+fi)
 cpu_model=$CPU
 fpu_model=$CPU
 mmu_model=$CPU
@@ -47,8 +53,12 @@ mbresmem_size=32
 fastmem_size=0
 z3mem_size=0
 z3mapping=uae
-filesystem2=rw,DH0:AmigaBoot:$H/boot,5
-hardfile2=rw,SD6:$H/amix.hdf,0,0,0,512,-128,,scsi6_a3000
+$([ ! -d "$H/boot" ] || echo "filesystem2=rw,DH0:AmigaBoot:$H/boot,5")
+$(if [ "$MACHINE" = a4000 ]; then
+	echo "hardfile2=rw,DH1:$H/amix.hdf,0,0,0,512,0,,ide0_mainboard"
+else
+	echo "hardfile2=rw,SD6:$H/amix.hdf,0,0,0,512,-128,,scsi6_a3000"
+fi)
 serial_port=TCP://127.0.0.1:${SERPORT:-1234}
 serial_direct=true
 sound_output=none

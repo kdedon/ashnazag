@@ -56,7 +56,7 @@ tos)	G="t_tos t_xaaes t_env" ;;
 mint)	G="t_mint" ;;
 cpm)	G="t_cpm"; CPM_NO_TOS=1; export CPM_NO_TOS ;;
 smsqe)	G="t_smsqe" ;;
-amiga)	G="t_amiga t_env" ;;
+amiga)	G="t_amiga t_radeon t_env" ;;
 display) G="t_display" ;;
 sound)	G="t_sound" ;;
 win16)	G="t_win16" ;;
@@ -132,6 +132,10 @@ if [ $MODE = direct ]; then
 	[ -f "$T/build/w16/win16.img" ] && set -- "$@" \
 		-drive file="$T/build/w16/win16.img",format=raw,if=none,id=hd3,snapshot=on \
 		-device scsi-hd,scsi-id=3,drive=hd3
+	# t_v200's volume, writes discarded
+	[ -f "$T/build/v200/v200.img" ] && set -- "$@" \
+		-drive file="$T/build/v200/v200.img",format=raw,if=none,id=hd4,snapshot=on \
+		-device scsi-hd,scsi-id=4,drive=hd4
 	# t_quake's volume, writes discarded
 	[ -f "$T/build/quake/quake.img" ] && set -- "$@" \
 		-drive file="$T/build/quake/quake.img",format=raw,if=none,id=hd5,snapshot=on \

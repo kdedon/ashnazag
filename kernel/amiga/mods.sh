@@ -3,7 +3,7 @@
 #
 #   sh amiga/mods.sh kernel.elf outdir
 #
-# Out: outdir/mod.d/{amilib,opci,pci,ne,zz9000,voodoo3,tdfx,floppy,v3bars}, built for that kernel's CPU; amilib is
+# Out: outdir/mod.d/{amilib,opci,pci,ne,zz9000,voodoo3,tdfx,radeonds,radeon,floppy,v3bars}, built for that kernel's CPU; amilib is
 # checked against the kernel's exports (it must carry DLM: dlm_cacheflush),
 # opci against those and amilib's.  Install them in /etc/conf/mod.d;
 # /etc/conf/pci gets openpci.library (the openpci archive's
@@ -44,11 +44,14 @@ srcs() {
 	ne)	echo "$K/atari/netusbee/nuchip.c $K/atari/netusbee/nudlpi.c $A/mod/ne/nemod.c" ;;
 	voodoo3)	echo "$A/voodoo3/v3ds.c $A/mod/voodoo3/v3mod.c" ;;
 	tdfx)	echo "$K/drm/tdfx_drv.c $A/mod/tdfx/tdfxmod.c" ;;
+	radeonds)	echo "$A/radeon/rds.c $A/radeon/rdsinit.c $A/mod/radeonds/rdsmod.c" ;;
+	radeon)	echo "$K/drm/radeon_drv.c $K/drm/radeon_cp.c $K/drm/radeon_state.c $K/drm/radeon_irq.c" \
+		    "$K/drm/radeon_mem.c $A/mod/radeon/radeonmod.c" ;;
 	v3bars)	echo "$A/test/v3bars.c" ;;
 	esac
 }
 rm -rf "$O/mod.d"
-for m in amilib opci pci ne zz9000 voodoo3 tdfx floppy v3bars; do	# each after the module it depends on
+for m in amilib opci pci ne zz9000 voodoo3 tdfx radeonds radeon floppy v3bars; do	# each after the module it depends on
 	d=$O/src/$m
 	rm -rf "$d"; mkdir -p "$d"
 	objs=

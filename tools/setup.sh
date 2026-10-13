@@ -41,6 +41,8 @@ GCA_URL=https://github.com/isoriano1968/gcc-cross-amix
 GCA_PIN=206bc9589dc8b0bae1cb2deb1c5bc7e5d3d8e190
 PORT_URL=https://github.com/asokero/amix-040-060-port
 PORT_PIN=54fba4de3da276e5d09d5ea09e2c76a13ec20ffa
+IDE_URL=https://github.com/hmlio/amix-gayle-ide
+IDE_PIN=71480b065c6efbc1a6fc3e6c490a5f50d102f795
 BU_V=2.43.1
 BU_SUM=13f74202a3c4c51118b797a39ea4200d3f6cfbe224da6d1d95bb938480132dfd
 GCC_V=13.3.0
@@ -79,6 +81,7 @@ step() { echo "== $*"; }
 abs() { [ -e "$1" ] || die "$1: not found"; echo "$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"; }
 link() {	# source, link name in the repository
 	s=$(abs "$1"); mkdir -p "$(dirname "$2")"
+	[ ! "$s" -ef "$2" ] || [ -L "$2" ] || return 0
 	[ ! -e "$2" ] || [ -L "$2" ] || die "$2 exists and is not a link; move it away"
 	ln -sfn "$s" "$2"; echo "   $2 -> $s"
 }
@@ -171,12 +174,7 @@ fi
 [ -z "${MAC761:-}" ] || cdimage "$(abs "$MAC761")" "$AUX/media/Mac OS 7.6.1.iso"
 [ -z "${MAC81:-}" ] || cdimage "$(abs "$MAC81")" "$AUX/media/MacOS8_1.iso"
 [ -z "${TOSZIP:-}" ] || link "$TOSZIP" "$AUX/tos306us-american-24-09-1991.zip"
-if [ -n "${AMIGACD:-}" ]; then
-	link "$AMIGACD" "$AUX/AmigaOS3.2CD.iso"
-	R=$AUX/images/work/amiga-stage/media
-	[ -f "$R/ROM/kicka4000.rom" ] ||
-		$N python3 "$AUX/tools/amiga/media.py" extract "$AUX/AmigaOS3.2CD.iso" "$R" >/dev/null
-fi
+[ -z "${AMIGACD:-}" ] || link "$AMIGACD" "$AUX/AmigaOS3.2CD.iso"
 
 R=$TC/amix-root
 if [ ! -f "$R/.done" ]; then
@@ -289,6 +287,9 @@ fi
 step "FreeType for the Win16 environment's TrueType"
 sh "$AUX/kernel/guest/win16/ft/freetype.sh" > /dev/null || die "FreeType: see kernel/guest/win16/ft/freetype.sh"
 
+step "A4000 IDE driver at $IDE_PIN"
+gitpin $IDE_URL $IDE_PIN "$AUX/ref/amix-gayle-ide"
+
 step "68040/68060 port at $PORT_PIN"
 PT=$AUX/kernel/amix-040-060-port
 gitpin $PORT_URL $PORT_PIN "$PT"
@@ -315,6 +316,15 @@ AMIBERRY_BIN="/nonexistent"; AMIBERRY_CONF="/nonexistent"; AMIBERRY_HDF="/nonexi
 XSVGA_EXP="/nonexistent"; VA2000_SRC="/nonexistent"
 Z3660_SCSI_SRC="/nonexistent"; Z3660_NET_SRC="/nonexistent"
 EOF
+
+A=$AUX/images/work/amiga-stage
+if [ -e "$AUX/AmigaOS3.2CD.iso" ] && [ ! -f "$A/root/etc/amiga/kicka4000.rom" ]; then
+	step "Amiga staging from the AmigaOS 3.2 CD"
+	rm -rf "$A.new"; mkdir -p "$(dirname "$A")"
+	sh "$AUX/images/amigaenv/mkamiga.sh" "$A.new" > "$TC/amiga-stage.log" 2>&1 ||
+		die "Amiga staging failed; see $TC/amiga-stage.log"
+	rm -rf "$A"; mv "$A.new" "$A"
+fi
 
 if [ -n "$TOSSRC" ]; then
 	step "EmuTOS 1.4 and fVDI"

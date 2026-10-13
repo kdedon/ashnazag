@@ -1,6 +1,6 @@
 #!/bin/sh
-# mkhdf.sh -- an AMIX disk for an emulated A3000, and the AmigaDOS
-# directory that boots it.
+# mkhdf.sh -- an AMIX disk for an A3000 or A4000, and the AmigaDOS
+# volume that boots it.
 #
 #   sh mkhdf.sh [kernel [outdir]]
 #
@@ -9,7 +9,7 @@
 # UNIX_Root ufs = c6d0s1, UNIX_Swap = c6d0s2) and outdir/boot/, the
 # AmigaDOS volume: S/Startup-Sequence runs unix_boot040 on the kernel.
 # A login runs on the serial port.  The root holds the amilib, opci, pci
-# ne, zz9000, voodoo3, tdfx, floppy and v3bars modules (floppy loaded at boot, zz9000 or voodoo3 when the card is there), modadmin, lspci and pci.ids, fltool, tcpcat, drmtest, /dev/pci, /dev/ne0 and /dev/dri/card0, registered at
+# ne, zz9000, voodoo3, tdfx, radeonds, radeon, floppy and v3bars modules (floppy loaded at boot, zz9000, voodoo3 or radeonds when the card is there), modadmin, lspci and pci.ids, fltool, tcpcat, drmtest, radeontest, /dev/pci, /dev/ne0 and /dev/dri/card0, registered at
 # run level 2; ne0 comes up as 10.0.2.15 (Amiberry's user-mode network).
 # AMIX_TAPE: tape segments (default media/amix-tape).  UNIXBOOT: the
 # unix_boot040 executable.  OPENPCI: openpci's unpacked archive (Libs/
@@ -27,6 +27,9 @@
 # QUAKEPAK (the user's id1/pak0.pak) the game data goes to /usr/games/id1.
 # AUTORUN: a command run as root at the end of boot, output on the
 # console and in /tmp/autorun.out.
+# HOST: a3000 (default; SCSI unit 6, AmigaDOS boots from outdir/boot/) or
+# a4000 (IDE master, which also answers as unit 6; the AmigaDOS volume is
+# a bootable FFS partition AmigaBoot after the AMIX ones, s3).
 set -e
 A=$(cd "$(dirname "$0")/.." && pwd)
 K=$(cd "$A/.." && pwd)
@@ -37,6 +40,10 @@ O=${2:-$K/build/amiga/hdf}
 TAPE=${AMIX_TAPE:-$AUX/media/amix-tape}
 ROOTMB=${ROOTMB:-128}
 LOADBASE=${LOADBASE:-0x08000000}
+case ${HOST:=a3000} in
+a3000|a4000) ;;
+*) echo "[FAIL] HOST: a3000 or a4000"; exit 1 ;;
+esac
 PY="nice -n 19 python3"
 . "$AUX/toolchain/src/gcc-cross-amix/build/env.sh"
 PATH="$AUX/toolchain/linux/bin:$AUX/toolchain/bin:$PATH"
@@ -58,7 +65,7 @@ x() { (cd "$S" && cpio -i --quiet --to-stdout "$1" < tape/02); }
 x etc/vfstab | sed -e 's,^/dev/dsk/c0d0s1[	 ].*,/dev/dsk/c6d0s1	/dev/rdsk/c6d0s1	/	ufs	1	no	-,' > "$S/vfstab"
 grep -q '^/dev/dsk/c6d0s1.*ufs' "$S/vfstab" || { echo "[FAIL] tape vfstab changed"; exit 1; }
 printf 'amiga\n' > "$S/nodename"
-printf '/sbin/modadmin -r cdev pci 60 >/dev/null\n/sbin/modadmin -r sdev ne 61 >/dev/null\n/sbin/modadmin -r cdev zz9000 49 >/dev/null\n/sbin/modadmin -l zz9000 >/dev/null 2>&1\n/sbin/modadmin -l voodoo3 >/dev/null 2>&1\n/sbin/modadmin -r cdev tdfx 63 >/dev/null\n/sbin/modadmin -r cdev floppy 62 >/dev/null\n/sbin/modadmin -l floppy >/dev/null\n' > "$S/S05dlm"
+printf '/sbin/modadmin -r cdev pci 60 >/dev/null\n/sbin/modadmin -r sdev ne 61 >/dev/null\n/sbin/modadmin -r cdev zz9000 49 >/dev/null\n/sbin/modadmin -l zz9000 >/dev/null 2>&1\n/sbin/modadmin -l voodoo3 >/dev/null 2>&1\nif /sbin/modadmin -l radeonds >/dev/null 2>&1\nthen /sbin/modadmin -r cdev radeon 63 >/dev/null\nelse /sbin/modadmin -r cdev tdfx 63 >/dev/null\nfi\n/sbin/modadmin -r cdev floppy 62 >/dev/null\n/sbin/modadmin -l floppy >/dev/null\n' > "$S/S05dlm"
 cat > "$S/network-config" <<'NC'
 /usr/sbin/slink addaen /dev/ne0 ne0 &&
 	/usr/sbin/ifconfig ne0 10.0.2.15 netmask 255.255.255.0 up -trailers &&
@@ -76,6 +83,7 @@ $CC -I"$A/include" -o "$S/bin/lspci" "$A/pci/lspci.c"
 $CC -I"$K/guest/include" -o "$S/bin/fltool" "$A/floppy/fltool.c"
 $CC -o "$S/bin/kread" "$A/test/kread.c"
 $CC -I"$K/mac/display" -I"$K/drm" -o "$S/bin/drmtest" "$A/test/drmtest.c"
+$CC -I"$K/mac/display" -I"$K/drm" -o "$S/bin/radeontest" "$A/test/radeontest.c"
 # libc.so is an archive: the shared part and the static rest
 SYS=$AMIX_SYSROOT
 rm -rf "$S/libc"; mkdir -p "$S/libc"
@@ -166,6 +174,7 @@ f /usr/bin/fltool 555 2 2 bin/fltool
 f /usr/bin/tcpcat 555 2 2 bin/tcpcat
 f /usr/bin/kread 555 2 2 bin/kread
 f /usr/bin/drmtest 555 2 2 bin/drmtest
+f /usr/bin/radeontest 555 2 2 bin/radeontest
 f /etc/rc2.d/S05dlm 744 0 3 S05dlm
 f /etc/inet/network-config 444 0 3 network-config
 c /dev/pci 444 0 3 60 0
@@ -179,6 +188,8 @@ f /etc/conf/mod.d/ne 644 0 3 mods/mod.d/ne
 f /etc/conf/mod.d/zz9000 644 0 3 mods/mod.d/zz9000
 f /etc/conf/mod.d/voodoo3 644 0 3 mods/mod.d/voodoo3
 f /etc/conf/mod.d/tdfx 644 0 3 mods/mod.d/tdfx
+f /etc/conf/mod.d/radeonds 644 0 3 mods/mod.d/radeonds
+f /etc/conf/mod.d/radeon 644 0 3 mods/mod.d/radeon
 f /etc/conf/mod.d/floppy 644 0 3 mods/mod.d/floppy
 f /etc/conf/mod.d/v3bars 644 0 3 mods/mod.d/v3bars
 c /dev/floppy0 666 0 3 62 0
@@ -195,13 +206,20 @@ $ENV
 EOF
 (cd "$DR" && $PY mkufs.py -s "$ROOTMB" -t 723000000 -r "$S" "$S/root.manifest" "$S/root.img")
 $PY "$DR/ufscheck.py" "$S/root.img" -l > "$S/root.lst" || { tail -20 "$S/root.lst"; exit 1; }
+mkdir -p "$S/amigaboot/S"
+cp "$UNIXBOOT" "$S/amigaboot/unix_boot040"
+cp "$KERNEL" "$S/amigaboot/unix"
+rm -rf "$O/boot"
+BOOTPART=
+if [ "$HOST" = a4000 ]; then
+	printf 'SYS:unix_boot040 SYS:unix %s\n' "$LOADBASE" > "$S/amigaboot/S/Startup-Sequence"
+	BOOTPART="AmigaBoot:DOS\\1:8:@$S/amigaboot"
+else
+	printf 'DH0:unix_boot040 DH0:unix %s\n' "$LOADBASE" > "$S/amigaboot/S/Startup-Sequence"
+	cp -R "$S/amigaboot" "$O/boot"
+fi
 # a new file: an emulator still running keeps writing to the old one
-$PY "$A/test/rdb.py" "$O/amix.hdf.new" "UNIX_Root:UNI\\1:$ROOTMB:$S/root.img" "UNIX_Swap:resv:32"
+$PY "$A/test/rdb.py" "$O/amix.hdf.new" "UNIX_Root:UNI\\1:$ROOTMB:$S/root.img" "UNIX_Swap:resv:32" $BOOTPART
 mv "$O/amix.hdf.new" "$O/amix.hdf"
 rm -f "$S/root.img"
-
-mkdir -p "$O/boot/S"
-cp "$UNIXBOOT" "$O/boot/unix_boot040"
-cp "$KERNEL" "$O/boot/unix"
-printf 'DH0:unix_boot040 DH0:unix %s\n' "$LOADBASE" > "$O/boot/S/Startup-Sequence"
-echo "[OK] $O/amix.hdf, $O/boot"
+echo "[OK] $O/amix.hdf ($HOST)"

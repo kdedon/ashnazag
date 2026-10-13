@@ -19,6 +19,7 @@ for n in 1 3; do
 done
 rm -rf "$DEST"; mkdir -p "$DEST"
 OS=xc/programs/Xserver/hw/xfree86/os-support
+ATI=xc/programs/Xserver/hw/xfree86/drivers/ati
 nice -n 19 tar xzf "$DIST/X430src-1.tgz" -C "$DEST" \
 	xc/include/GL/glx.h xc/include/GL/glxint.h xc/include/GL/glxmd.h \
 	xc/include/GL/glxproto.h xc/include/GL/glxtokens.h \
@@ -31,12 +32,15 @@ nice -n 19 tar xzf "$DIST/X430src-1.tgz" -C "$DEST" \
 	xc/lib/GL/dri/dri_util.h xc/lib/GL/dri/XF86dri.c xc/lib/GL/dri/xf86dri.h \
 	xc/lib/GL/dri/xf86dristr.h \
 	xc/lib/GL/mesa/src/drv/tdfx xc/lib/GL/mesa/src/drv/common/depthtmp.h \
-	xc/lib/GL/mesa/src/drv/common/spantmp.h xc/lib/GL/mesa/src/drv/common/stenciltmp.h
+	xc/lib/GL/mesa/src/drv/common/spantmp.h xc/lib/GL/mesa/src/drv/common/stenciltmp.h \
+	xc/lib/GL/mesa/src/drv/r200 xc/lib/GL/mesa/src/drv/common/mm.c \
+	xc/lib/GL/mesa/src/drv/common/mm.h xc/lib/GL/mesa/src/drv/common/hwlog.h
 nice -n 19 tar xzf "$DIST/X430src-3.tgz" -C "$DEST" \
 	xc/programs/Xserver/GL/dri/xf86dri.c xc/programs/Xserver/GL/dri/sarea.h \
 	xc/programs/Xserver/GL/include/GL/xf86glx.h \
 	$OS/xf86drm.h $OS/linux/drm/xf86drm.c $OS/linux/drm/xf86drmHash.c \
-	$OS/linux/drm/xf86drmRandom.c $OS/linux/drm/xf86drmSL.c
+	$OS/linux/drm/xf86drmRandom.c $OS/linux/drm/xf86drmSL.c \
+	$ATI/radeon_common.h $ATI/radeon_dri.h $ATI/radeon_reg.h $ATI/radeon_sarea.h
 for p in "$D"/patches/*.diff; do
 	patch -s -p1 -d "$DEST" < "$p"
 done

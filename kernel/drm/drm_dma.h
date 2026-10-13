@@ -528,6 +528,15 @@ int DRM(irq_install)( drm_device_t *dev, int irq )
 	DRM(driver_irq_preinstall)( dev );
 
 				/* Install handler */
+#ifdef __AMIX__
+	/* the bridge's interrupt server; irq only names it to clients */
+	dev->irq_oi.oi_fn = (int (*)())DRM(dma_service);
+	dev->irq_oi.oi_arg = (char *)dev;
+	if ( opci_intr( DRM(card).c_dev, &dev->irq_oi ) != 0 ) {
+		dev->irq = 0;
+		return ENOENT;
+	}
+#else
 	dev->irqrid = 0;
 	dev->irqr = bus_alloc_resource(dev->device, SYS_RES_IRQ, &dev->irqrid,
 				      0, ~0, 1, RF_SHAREABLE);
@@ -549,6 +558,7 @@ int DRM(irq_install)( drm_device_t *dev, int irq )
 		DRM_UNLOCK;
 		return retcode;
 	}
+#endif
 
 				/* After installing handler */
 	DRM(driver_irq_postinstall)( dev );
@@ -559,13 +569,17 @@ int DRM(irq_install)( drm_device_t *dev, int irq )
 int DRM(irq_uninstall)( drm_device_t *dev )
 {
 	int irq;
+#ifndef __AMIX__
 	int irqrid;
+#endif
 	
 	DRM_LOCK;
 	irq = dev->irq;
+#ifndef __AMIX__
 	irqrid = dev->irqrid;
-	dev->irq = 0;
 	dev->irqrid = 0;
+#endif
+	dev->irq = 0;
 	DRM_UNLOCK;
 
 	if ( !irq )
@@ -575,8 +589,12 @@ int DRM(irq_uninstall)( drm_device_t *dev )
 
 	DRM(driver_irq_uninstall)( dev );
 
+#ifdef __AMIX__
+	opci_unintr( &dev->irq_oi );
+#else
 	bus_teardown_intr(dev->device, dev->irqr, dev->irqh);
 	bus_release_resource(dev->device, SYS_RES_IRQ, irqrid, dev->irqr);
+#endif
 	
 	return 0;
 }

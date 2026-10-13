@@ -44,13 +44,13 @@ typedef struct {
 /*
  * A TrueColor visual gets one X visual more for each further set of
  * buffers: the client finds a configuration by its visual.  Alpha and
- * stencil only where a pixel has 32 bits.
+ * stencil only where a pixel has 32 bits, whose depth buffer is 24+8.
  */
 static GLXConfigRec glxConfig16[] = {
     { 1, 16, 0, 0 }, { 1, 0, 0, 0 }, { 0, 16, 0, 0 },
 };
 static GLXConfigRec glxConfig32[] = {
-    { 1, 24, 8, 8 }, { 1, 24, 8, 0 }, { 1, 16, 0, 0 }, { 1, 0, 0, 8 }, { 0, 24, 8, 8 },
+    { 1, 24, 8, 8 }, { 1, 24, 8, 0 }, { 1, 0, 0, 8 }, { 0, 24, 8, 8 },
 };
 static GLXConfigRec glxConfigIndex = { 1, 16, 0, 0 };
 

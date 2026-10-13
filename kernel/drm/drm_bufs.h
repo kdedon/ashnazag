@@ -1071,6 +1071,11 @@ int DRM(mapbufs)( DRM_IOCTL_ARGS )
 					   &vn->v_uobj, map->offset,
 					   p->p_rlimit[RLIMIT_MEMLOCK].rlim_cur);
 #endif /* __NetBSD__ */
+#ifdef __AMIX__
+			/* libdrm maps it: the map's offset, and each buffer's place in it */
+			virtual = 0;
+			request.virtual = (void *)map->offset;
+#endif
 		} else {
 #ifdef __FreeBSD__
 			virtual = round_page((vm_offset_t)vms->vm_daddr + MAXDSIZ);
@@ -1091,10 +1096,15 @@ int DRM(mapbufs)( DRM_IOCTL_ARGS )
 					   &vn->v_uobj, 0,
 					   p->p_rlimit[RLIMIT_MEMLOCK].rlim_cur);
 #endif /* __NetBSD__ */
+#ifdef __AMIX__
+			retcode = EINVAL;
+#endif
 		}
 		if (retcode)
 			goto done;
+#ifndef __AMIX__
 		request.virtual = (void *)virtual;
+#endif
 
 		for ( i = 0 ; i < dma->buf_count ; i++ ) {
 			if ( DRM_COPY_TO_USER( &request.list[i].idx,

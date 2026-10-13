@@ -179,6 +179,19 @@ TDFL="$DRIFL -D__driCreateScreen=tdfx_driCreateScreen
 objs43 "$TDFL" "$TD" tdfx_context tdfx_dd tdfx_lock tdfx_pixels tdfx_render tdfx_screen \
 	tdfx_span tdfx_state tdfx_tex tdfx_texman tdfx_texstate tdfx_tris tdfx_vb
 TDOBJS="$OBJS $GOBJS"
+# the R200 DRI driver, drawing through the radeon DRM's command buffers
+RD=$XC/lib/GL/mesa/src/drv/r200
+sed -i "s,^#include \"macros.h\",#include \"$S/macros.h\"," "$RD"/*.[ch]
+RDFL="$DRIFL -D__driCreateScreen=r200_driCreateScreen
+	-D__driRegisterExtensions=r200_driRegisterExtensions
+	-I$XC/lib/GL/mesa/src/drv/common -I$XC/programs/Xserver/hw/xfree86/drivers/ati
+	-I$XC/programs/Xserver/GL/include -I$AUX/x11/src/dri"
+objs43 "$RDFL" "$RD" r200_context r200_sanity r200_state r200_state_init r200_swtcl \
+	r200_cmdbuf r200_ioctl r200_lock r200_maos r200_pixel r200_screen r200_span \
+	r200_tcl r200_tex r200_texmem r200_texstate r200_vtxfmt r200_vtxfmt_c
+TDOBJS="$TDOBJS $OBJS"
+objs43 "$RDFL" "$XC/lib/GL/mesa/src/drv/common" mm
+TDOBJS="$TDOBJS $OBJS"
 XOBJS="$XOBJS $TDOBJS"
 objs43 "$DRIFL" "$D/dri/src" glxdirect dri_drivers
 lib libGL.a $COBJS $XOBJS $OBJS

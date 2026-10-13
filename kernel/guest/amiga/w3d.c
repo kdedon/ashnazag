@@ -1534,4 +1534,5 @@ w3d_init(struct mig_w3d *t)
     t->count = MIG_W3D_NFN;
     t->version = MIG_W3D_VERSION;
     t->magic = MIG_W3D_MAGIC;
+    miglog(0, "Warp3D: Mesa ready");
 }

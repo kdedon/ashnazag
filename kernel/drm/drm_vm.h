@@ -83,6 +83,10 @@ int DRM(mmap)(dev_t kdev, off_t offset, int prot)
 	case _DRM_AGP:
 		return atop(offset);
 	case _DRM_SCATTER_GATHER:
+#ifdef __AMIX__
+		if (dev->sg && dev->sg->vram)
+			return atop(dev->sg->vram + (offset - dev->sg->handle));
+#endif
 	case _DRM_SHM:
 		return atop(vtophys(offset));
 	default:

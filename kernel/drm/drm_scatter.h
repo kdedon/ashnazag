@@ -36,7 +36,8 @@
 void DRM(sg_cleanup)( drm_sg_mem_t *entry )
 {
 #ifdef __AMIX__
-	opci_dmafree( DRM(card).c_dev, entry->virtual, entry->pages << PAGE_SHIFT );
+	if ( !entry->vram )
+		opci_dmafree( DRM(card).c_dev, entry->virtual, (entry->pages + 1) << PAGE_SHIFT );
 #else
 	free( entry->virtual, DRM(M_DRM) );
 #endif
@@ -100,8 +101,8 @@ int DRM(sg_alloc)( DRM_IOCTL_ARGS )
 	bzero( (void *)entry->busaddr, pages * sizeof(*entry->busaddr) );
 
 #ifdef __AMIX__
-	/* memory the card can master into, behind the bridge */
-	entry->virtual = opci_dmaalloc( DRM(card).c_dev, pages << PAGE_SHIFT, OPCI_DMA_NOCACHE );
+	/* memory the card can master into, behind the bridge; a page more to align it */
+	entry->virtual = opci_dmaalloc( DRM(card).c_dev, (pages + 1) << PAGE_SHIFT, OPCI_DMA_NOCACHE );
 #else
 	entry->virtual = malloc( pages << PAGE_SHIFT, DRM(M_DRM), M_WAITOK );
 #endif
@@ -118,9 +119,15 @@ int DRM(sg_alloc)( DRM_IOCTL_ARGS )
 		return ENOMEM;
 	}
 
+#ifdef __AMIX__
+	bzero( entry->virtual, (pages + 1) << PAGE_SHIFT );
+	DRM_DMA_SYNC();
+	entry->handle = round_page( (unsigned long)entry->virtual );
+#else
 	bzero( entry->virtual, pages << PAGE_SHIFT );
 
 	entry->handle = (unsigned long)entry->virtual;
+#endif
 
 	DRM_DEBUG( "sg alloc handle  = %08lx\n", entry->handle );
 	DRM_DEBUG( "sg alloc virtual = %p\n", entry->virtual );

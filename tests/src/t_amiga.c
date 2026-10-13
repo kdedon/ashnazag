@@ -1200,6 +1200,10 @@ warp3d()
 	time_t t0;
 	int k, i, bad = 0;
 
+	if (!miglogline("Warp3D: Mesa ready")) {
+		t_skip("warp3d", "startmig built without Mesa");
+		return;
+	}
 	t0 = time((time_t *)0);
 	sprintf(b, "%s/w3dgo", SYS);
 	close(creat(b, 0644));
@@ -1644,9 +1648,9 @@ logout(p, stp, o)
 
 	setsym("guest_adcall", 0L);
 	setsym("guest_adtest", 1L);		/* a Shut Down picked by mistake only records */
-	/* a click on the Workbench window makes its menus current */
+	/* a click on the Workbench window makes its menus current; left of the browser window */
 	host("move -2000 -2000 50");
-	host("move 100 400 50");
+	host("move 50 400 50");
 	host("click 1");
 	/* along the menu bar with the button held: the last menu to drop is Tools */
 	host("move -2000 -2000 50");
