@@ -1,38 +1,61 @@
-name: Move Project Card by Label
+name: Move project card by label
+
+# A status label sets the issue's Status on the user's project board.
+# Run by hand (workflow_dispatch) to sync every open issue.
+# PROJECT_MOVE_TOKEN: classic token with the project scope.
 
 on:
   issues:
     types: [labeled]
-  pull_request:
-    types: [labeled]
+  workflow_dispatch:
+
+permissions:
+  issues: read
 
 jobs:
   move-card:
     runs-on: ubuntu-latest
     steps:
-      # Step 1: Move to "ready" if labeled 'ready'
-      - name: Move to In Progress
-        if: github.event.label.name == 'ready'
-        uses: alex-page/github-project-automation-plus@v0.9.0
-        with:
-          project: 'Ash Nazag' # Exact name of your GitHub Project
-          column: 'Ready'            # Name of the target lane/column
-          repo-token: ${{ secrets.PROJECT_MOVE_TOKEN }}
-
-      # Step 2: Move to "In Progress" if labeled 'in-progress'
-      - name: Move to In Progress
-        if: github.event.label.name == 'in-progress'
-        uses: alex-page/github-project-automation-plus@v0.9.0
-        with:
-          project: 'Ash Nazag' # Exact name of your GitHub Project
-          column: 'In Progress'            # Name of the target lane/column
-          repo-token: ${{ secrets.PROJECT_MOVE_TOKEN }}
-
-      # Step 3: Move to "In Review" if labeled 'in-review'
-      - name: Move to In Review
-        if: github.event.label.name == 'in-review'
-        uses: alex-page/github-project-automation-plus@v0.9.0
-        with:
-          project: 'Ash Nazag'
-          column: 'In Review'
-          repo-token: ${{ secrets.PROJECT_MOVE_TOKEN }}
+      - name: Set Status
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_MOVE_TOKEN }}
+          REPO_TOKEN: ${{ github.token }}
+          LABEL: ${{ github.event.label.name }}
+          ISSUE: ${{ github.event.issue.node_id }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.repository }}
+          PROJECT: Ash Nazag
+        run: |
+          col() {
+            case "$1" in
+            ready) echo "Ready" ;;
+            "in progress") echo "In Progress" ;;
+            "in review") echo "In Review" ;;
+            esac
+          }
+          p=$(gh api graphql -f o="$OWNER" -f query='query($o:String!){user(login:$o){projectsV2(first:50){nodes{id title
+            field(name:"Status"){... on ProjectV2SingleSelectField{id options{id name}}}}}}}' \
+            --jq ".data.user.projectsV2.nodes[] | select(.title == \"$PROJECT\")")
+          pid=$(echo "$p" | jq -r .id)
+          fid=$(echo "$p" | jq -r .field.id)
+          move() {
+            oid=$(echo "$p" | jq -r --arg c "$2" '.field.options[] | select((.name|ascii_downcase) == ($c|ascii_downcase)) | .id')
+            [ -n "$oid" ] || { echo "no Status option $2; have: $(echo "$p" | jq -r '[.field.options[].name]|join(", ")')"; return 1; }
+            item=$(gh api graphql -f query='mutation($p:ID!,$c:ID!){addProjectV2ItemById(input:{projectId:$p,contentId:$c}){item{id}}}' \
+              -f p="$pid" -f c="$1" --jq .data.addProjectV2ItemById.item.id)
+            gh api graphql -f query='mutation($p:ID!,$i:ID!,$f:ID!,$o:String!){updateProjectV2ItemFieldValue(input:{projectId:$p,itemId:$i,fieldId:$f,value:{singleSelectOptionId:$o}}){projectV2Item{id}}}' \
+              -f p="$pid" -f i="$item" -f f="$fid" -f o="$oid" > /dev/null
+          }
+          if [ -n "$ISSUE" ]; then
+            c=$(col "$LABEL"); [ -n "$c" ] || exit 0
+            move "$ISSUE" "$c"
+            exit
+          fi
+          # by hand: the most advanced status label wins
+          GH_TOKEN=$REPO_TOKEN gh issue list -R "$REPO" -s open -L 1000 --json id,number,labels \
+            --jq '.[] | [.id, (.number|tostring), ([.labels[].name] | if index("in review") then "in review"
+              elif index("in progress") then "in progress" elif index("ready") then "ready" else "" end)] | @tsv' |
+          while IFS="$(printf '\t')" read -r id n l; do
+            c=$(col "$l"); [ -n "$c" ] || continue
+            move "$id" "$c" && echo "#$n $c"
+          done
