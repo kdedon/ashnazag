@@ -69,7 +69,7 @@ for s in "$KDIR"/dlm/libmod/*.s; do
 done
 # the native-environment host library and adapters, for t_native* and t_v200
 NH=$KDIR/guest/nativehost
-NHI="-I$NH -I$KDIR/guest/lisa -I$KDIR/guest/voyage200 -I$KDIR/mac/sound -I$T/nativecall"
+NHI="-I$NH -I$KDIR/guest/voyage200 -I$KDIR/mac/sound -I$T/nativecall"
 for c in nativehost nativehost_platform nativehost_ui; do
 	cc "$NH/$c.c" "$O/$c.o" $XA -I"$NH" -I"$KDIR/mac/display"
 done
@@ -109,7 +109,6 @@ for s in ${ONLY:-"$T"/src/t_*.c "$T/src/runall.c"}; do
 	t_nhplat) extra=$O/nativehost_platform.o ;;
 	t_nativecall) extra="$O/nativecall.o $O/ncprobe.o $O/nativehost.o $MODO" ;;
 	t_v200) extra=$MODO ;;
-	t_lisa) extra=$MODO ;;
 	t_radeon) cc "$KDIR/amiga/radeon/rdsinit.c" "$O/rdsinit.o"; extra=$O/rdsinit.o ;;
 	esac
 	link "$BIN/$n" "$O/$n.o" "$O/t.o" $extra
@@ -120,20 +119,6 @@ cc "$KDIR/guest/nativeenv/startnative.c" "$O/startnative.o" $XA -I"$KDIR/guest/i
 link "$BIN/startnative" "$O/startnative.o"
 cc "$T/src/natpayload.c" "$O/natpayload.o" $XA
 link "$BIN/natpayload" "$O/natpayload.o"
-# t_lisa's adapter checks: lh_<name>, from tests/lisa/<name>.c
-LI="$XA -I$KDIR/guest/lisa -I$NH -I$KDIR/mac/display -I$KDIR/mac/sound"
-L=$KDIR/guest/lisa
-cc "$L/lisa_hw.c" "$O/lisa_hw.o" $LI
-cc "$L/lisa_host.c" "$O/lisa_host.o" $LI
-cc "$L/lisa_host.c" "$O/lisa_host_ti.o" $LI -Dioctl=test_ioctl
-for c in hardware render; do
-	cc "$T/lisa/$c.c" "$O/lh_$c.o" $LI
-done
-# its variadic test_ioctl needs <stdarg.h>, so __STDC__=1
-cc "$T/lisa/publish.c" "$O/lh_publish.o" ${LI#$XA}
-link "$BIN/lh_hardware" "$O/lh_hardware.o" "$O/lisa_hw.o"
-link "$BIN/lh_render" "$O/lh_render.o" "$O/lisa_host.o" "$O/nativehost_ui.o"
-link "$BIN/lh_publish" "$O/lh_publish.o" "$O/lisa_host_ti.o" "$O/nativehost_ui.o"
 # t_env runs startmac's lock helper
 cc "$AUX/images/macenv/envlock.c" "$O/envlock.o" $XA -w
 link "$BIN/envlock" "$O/envlock.o"

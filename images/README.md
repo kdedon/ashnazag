@@ -206,7 +206,6 @@ Each environment is an SVR4 package, built from source by `images/envpkg/mkenvpk
 | `cpmenv` | `startcpm`, `/dev/cpm` |
 | `smsqenv` | `startsmsq`, SMSQ/E |
 | `win16env` | `startwin` |
-| `lisaenv` | `startlisa`, the native Lisa Office host, `/dev/lplatform` (`S05lisa`) |
 | `v200env` | `startvoyage200`, the native Voyage 200 host, `/dev/tiplatform` (`S05v200`) |
 
 Install scripts register the modules at once; the rc2 scripts do it at each boot. `pkgrm` unloads them; a registration lasts until the next boot. `pkgadd -n -a envpkg` and `pkgrm -n -a envpkg` (`envcore`'s admin file, which apkg uses too) run without questions. `pkgrm` refuses a package another one needs: remove `smsqenv` before `tosenv`. Images carry the datastreams in `/var/spool/pkg`; `images/envpkg/roundtrip.sh` checks the refusal, a removal and a reinstall. Modules built for the Mac kernel serve every host, except those `mod.atari` and `mod.amiga` replace. The image builders pre-install the packages. ROMs, OS media and other files of yours never go in a package: the image builders add them, or you copy them in.

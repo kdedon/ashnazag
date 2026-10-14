@@ -160,9 +160,8 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 		sed -e "s#@CORE@#$RD/build/core#" -e "s#@NET07@#$B/net07#" -e "s#@NETDIR@#$T/net#" "$T/net/net.manifest"
 	fi
 	[ -f "$AUXB/mod.d/uinter" ] && echo "c /dev/uinter0 666 0 3 54 0"
-	# t_nativecall's, t_lisa's and t_v200's devices
+	# t_nativecall's and t_v200's devices
 	[ -f "$AUXB/mod.d/nhcall" ] && echo "c /dev/nhcall 600 0 3 66 0"
-	[ -f "$AUXB/mod.d/lplatform" ] && echo "c /dev/lplatform 660 0 25 64 0"
 	[ -f "$AUXB/mod.d/tiplatform" ] && echo "c /dev/tiplatform 660 0 25 65 0"
 	if [ -d "$AUXB/mod.d" ]; then
 		echo "d /tests/aux 755 0 3"

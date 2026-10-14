@@ -21,7 +21,7 @@ DLM=$K/dlm
 PATH="$AUX/toolchain/linux/bin:$AUX/toolchain/bin:$PATH"
 export PATH
 NICE="nice -n 19"
-KCC="$NICE m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -Wall -I$DLM/include -I$G/include -I$G/mod/auxcore -I$G/mod/guestcore -I$K/mac/display -I$G/mod/tosguest -I$G/lisa -I$G/voyage200"
+KCC="$NICE m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -Wall -I$DLM/include -I$G/include -I$G/mod/auxcore -I$G/mod/guestcore -I$K/mac/display -I$G/mod/tosguest -I$G/voyage200"
 
 # kernel objects must compile without warnings beyond the AMIX headers' own
 kcc() {	# src obj
@@ -56,7 +56,7 @@ case "$1" in
 	! grep -qw ata_idcm "$O/exports" || KCC="$KCC -DATA060"
 	! grep -qw am_dsinit "$O/exports" || KCC="$KCC -DDS_AMIGA"
 	rm -rf "$O/mod.d"
-	for m in guestcore auxcore auxexec uinter tosguest amigaguest cpmguest lplatform tiplatform; do
+	for m in guestcore auxcore auxexec uinter tosguest amigaguest cpmguest tiplatform; do
 		d=$O/src/$m
 		rm -rf "$d"; mkdir -p "$d"
 		objs=

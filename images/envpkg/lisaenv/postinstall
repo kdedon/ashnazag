@@ -1,2 +1,0 @@
-sh /etc/rc2.d/S05lisa start || echo "$PKGINST: module usable after a reboot"
-exit 0

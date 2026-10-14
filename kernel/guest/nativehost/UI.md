@@ -19,5 +19,3 @@ is an acquisition-time check: another session can become foreground later.
 For capture, verify `FBIOGSTATE` at capture time and handle display notes.
 A controlling console and the display service's permission policy still
 apply; acquisition never grants additional rights.
-
-t_lisa's render and publish checks exercise the packing and input paths.

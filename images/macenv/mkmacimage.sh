@@ -10,7 +10,8 @@
 # desktop database is made in QEMU (mkdesktop.py, the Quadra 800 ROM).
 # The environment packages (images/envpkg/mkenvpkgs.sh and its inputs)
 # are installed as pkgadd would; AMIGASTAGE adds the Amiga's Kickstart and
-# SYS:, CUBASE (mkcubase.sh's) Cubase to guest's ~/TOS.  Given the A/UX
+# SYS:, CUBASE (mkcubase.sh's) Cubase to guest's ~/TOS, V200ZIP (default
+# media/v200.zip; V200ROM picks the dump) guest's ~/Voyage200.  Given the A/UX
 # 2.0.1 CD (CD201) and the IIci ROM (AUXROM6), System 6 goes in too
 # (startmac6).  Other inputs as x11/mkimage.sh.
 set -e
@@ -43,7 +44,7 @@ mkdir -p "$P"
 KERNEL=$KERNEL sh "$AUX/images/envpkg/mkenvpkgs.sh" "$P/envpkg" > "$P/envpkg.log" 2>&1 ||
 	{ tail "$P/envpkg.log"; exit 1; }
 ENVPKGS=
-for p in envcore macenv tosenv amigaenv cpmenv smsqenv win16env lisaenv v200env; do
+for p in envcore macenv tosenv amigaenv cpmenv smsqenv win16env v200env; do
 	f=$P/envpkg/pkgs/env/$p-1.0.pkg
 	[ ! -f "$f" ] || ENVPKGS="$ENVPKGS $f"
 done
@@ -57,6 +58,13 @@ done > "$I"
 [ ! -d "$P/envpkg/dri/cpm" ] || printf 't\t/cpm\t0\t3\t%s\n' "$P/envpkg/dri/cpm" >> "$I"
 CUBASE=${CUBASE:-$AUX/images/work/cubase/cubase.cpio}
 [ ! -f "$CUBASE" ] || echo "a $CUBASE" >> "$I"
+# the user's Voyage 200 Flash dump as guest's ~/Voyage200/media
+V200ZIP=${V200ZIP:-$AUX/media/v200.zip}
+if [ -f "$V200ZIP" ]; then
+	mkdir -p "$P/v200"
+	unzip -p "$V200ZIP" "${V200ROM:-voyage200v209.rom}" > "$P/v200/media"
+	printf 't\t/home/guest/Voyage200\t100\t1\t%s\n' "$P/v200" >> "$I"
+fi
 # the datastreams, for pkgadd -d
 for f in $ENVPKGS; do echo "f /var/spool/pkg/${f##*/} 644 0 3 $f"; done >> "$I"
 if [ "$MACNETWORK" = 1 ] && [ -f "$CD81" ]; then

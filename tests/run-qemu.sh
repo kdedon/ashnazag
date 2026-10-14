@@ -17,7 +17,7 @@
 # line), screen.png, summary.txt.
 # AMIGANET=1 (direct boot): the root also has TCP/IP, for t_amiga's
 # bsdsocket.library checks (user-mode network, no echo service).
-# GROUP=smoke|core|mac|tos|mint|cpm|smsqe|amiga|display|sound|win16|gl|quake|native|lisa|v200|stable runs that set only.
+# GROUP=smoke|core|mac|tos|mint|cpm|smsqe|amiga|display|sound|win16|gl|quake|native|v200|stable runs that set only.
 # Exit: 0 all PASS, 1 any FAIL, 2 timeout, panic or no TESTS DONE.
 # up to QSLOTS QEMUs at once (tools/qslot.sh)
 # one run per checkout at a time: they share tests/build
@@ -63,10 +63,9 @@ win16)	G="t_win16" ;;
 gl)	G="t_gl" ;;
 quake)	G="t_quake" ;;
 native)	G="t_nativehost t_nhplat t_nativecall t_natenv" ;;
-lisa)	G="t_lisa t_natenv" ;;
 v200)	G="t_v200 t_natenv" ;;
 stable)	G="t_stable"; TMO=${TMO0:-14400} ;;
-*)	echo "GROUP: smoke core mac tos mint cpm smsqe amiga display sound win16 gl quake native lisa v200 stable"; exit 2 ;;
+*)	echo "GROUP: smoke core mac tos mint cpm smsqe amiga display sound win16 gl quake native v200 stable"; exit 2 ;;
 esac
 if [ -n "${G:-}" ]; then
 	ONLY="$T/src/runall.c"

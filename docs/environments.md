@@ -74,9 +74,9 @@ OpenGL is Mesa 5 in software; on a Voodoo3, direct rendering through its DRI dri
 
 ## Native ports
 
-`startlisa` and `startvoyage200` (packages `lisaenv`, `v200env`) run a native 68k host
-program: `/usr/lib/lisa/native` and `/usr/lib/voyage200/native`, or one you supply. Put the
-program in `~/Lisa` or `~/Voyage200` as `native` and its system media as `media`, or give
-`-x PROGRAM -m MEDIA`; `-e NAME` uses a named subdirectory.
+`startvoyage200` (package `v200env`) runs a native 68k host program:
+`/usr/lib/voyage200/native`, or one you supply. Put the program in `~/Voyage200` as `native`
+and its system media as `media`, or give `-x PROGRAM -m MEDIA`; `-e NAME` uses a named
+subdirectory.
 For the Voyage 200, `media` is your Flash dump (AMS 2.09 and 3.10 tested); it boots from
 reset to the AMS desktop, and the archive is kept in `flash.img` beside it. Cmd-Q quits.

@@ -1,7 +1,7 @@
 #!/bin/sh
 # xsession -- the X session chooser and its sessions.
 #
-#   xsession [twm|xview|mac|tos|amiga|win|lisa|voyage200|console|cpm]
+#   xsession [twm|xview|mac|tos|amiga|win|voyage200|console|cpm]
 #
 # Under xdm (no argument) it offers the installed sessions with the last
 # one, kept in $HOME/.xsession-choice, as the default: Return or 10 s
@@ -37,7 +37,6 @@ envs=
 [ -x /usr/bin/starttos ] && envs="$envs tos"
 [ -x /usr/bin/startmig ] && envs="$envs amiga"
 [ -x /usr/bin/startwin ] && envs="$envs win"
-[ -x /usr/bin/startlisa ] && /usr/bin/startlisa -q 2>/dev/null && envs="$envs lisa"
 [ -x /usr/bin/startvoyage200 ] && /usr/bin/startvoyage200 -q 2>/dev/null && envs="$envs voyage200"
 # CP/M-68K runs in a terminal, listed last so the others keep their numbers
 cpm=
@@ -50,7 +49,6 @@ label() {
 	tos) echo "TOS environment" ;;
 	amiga) echo "Amiga environment" ;;
 	win) echo "Windows 3.x programs (Win16)" ;;
-	lisa) echo "Lisa native environment" ;;
 	voyage200) echo "TI Voyage200 native environment" ;;
 	console) echo "Console (full-screen terminal)" ;;
 	cpm) echo "CP/M-68K environment" ;;
@@ -129,7 +127,7 @@ xview)
 	xterm -geometry 80x24+16+40 &
 	exec olvwm
 	;;
-mac|tos|amiga|win|lisa|voyage200)
+mac|tos|amiga|win|voyage200)
 	exec xdmenv $name
 	;;
 console|cpm)
