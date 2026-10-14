@@ -1,12 +1,13 @@
 name: Move project card by label
 
 # A status label sets the issue's Status on the user's project board.
+# Removing one sends the card to the remaining status, else Backlog.
 # Run by hand (workflow_dispatch) to sync every open issue.
 # PROJECT_MOVE_TOKEN: classic token with the project scope.
 
 on:
   issues:
-    types: [labeled]
+    types: [labeled, unlabeled]
   workflow_dispatch:
 
 permissions:
@@ -22,6 +23,7 @@ jobs:
           REPO_TOKEN: ${{ github.token }}
           LABEL: ${{ github.event.label.name }}
           ISSUE: ${{ github.event.issue.node_id }}
+          LABELS: ${{ toJSON(github.event.issue.labels.*.name) }}
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.repository }}
           PROJECT: Ash Nazag
@@ -47,7 +49,10 @@ jobs:
               -f p="$pid" -f i="$item" -f f="$fid" -f o="$oid" > /dev/null
           }
           if [ -n "$ISSUE" ]; then
-            c=$(col "$LABEL"); [ -n "$c" ] || exit 0
+            [ -n "$(col "$LABEL")" ] || exit 0
+            l=$(echo "$LABELS" | jq -r 'if index("in review") then "in review"
+              elif index("in progress") then "in progress" elif index("ready") then "ready" else "" end')
+            c=$(col "$l"); [ -n "$c" ] || c=Backlog
             move "$ISSUE" "$c"
             exit
           fi
