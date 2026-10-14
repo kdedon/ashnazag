@@ -1,6 +1,6 @@
 /*
  * Portions Copyright (c) 2026 Kevin Dedon.
- * SPDX-License-Identifier: GPL-2.0
+ * SPDX-License-Identifier: MIT
  */
 /*
  * set.c - SET, the CP/M 3 attribute/label/stamping-mode utility, for the

@@ -83,6 +83,12 @@ if [ ! -f "$QW/libextra.a" ]; then
 	 ar rc ../libextra.a $(ar t "$SYS/usr/ccs/lib/libc.so" | grep -v '^libc.so.1$'))
 fi
 
+# objects do not track headers: a changed one rebuilds them all
+SUM=$(cat "$S"/*.h $([ "$OUT" = quake ] || echo "$GLW"/include/GL/*.h) | cksum)
+if [ "$(cat "$O/.headers" 2>/dev/null)" != "$SUM" ]; then
+	rm -f "$O"/*.o
+	echo "$SUM" > "$O/.headers"
+fi
 objs=
 [ "$OUT" = quake ] && VID="vid_fb in_fb" || VID=gl_vidlinuxglx
 for f in $CORE $VID; do

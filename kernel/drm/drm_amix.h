@@ -210,6 +210,22 @@ DRM(dsbind)(DRM_IOCTL_ARGS)
 	return 0;
 }
 
+extern proc_t *prfind();
+
+/* the lock is held by a context whose last taker has exited */
+int
+DRM(amix_deadholder)(drm_device_t *dev)
+{
+	unsigned int w = dev->lock.hw_lock->lock;
+	proc_t *p;
+
+	if (!_DRM_LOCK_IS_HELD(w) || _DRM_LOCKING_CONTEXT(w) == DRM_KERNEL_CONTEXT ||
+	    dev->lock.pid == 0)
+		return 0;
+	p = prfind(dev->lock.pid);
+	return p == 0 || p->p_stat == SZOMB;
+}
+
 /* lock waiters recheck whether their session is in front */
 void
 DRM(amix_front)(void)

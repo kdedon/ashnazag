@@ -22,6 +22,18 @@
 	.text
 	.globl	config_cachefix
 config_cachefix:
+	movel	&0x414d5842,0x1000	| 'AMXB': boot marks, see bootmark.s
+	movel	&0x414d5842,0x1ff000
+	moveq	&6,%d0
+	lea	0x1004,%a0
+	lea	0x1ff004,%a1
+1:	clrl	%a0@+
+	clrl	%a1@+
+	dbf	%d0,1b
+	movel	&1,0x1008
+	movel	&1,0x1ff008
+	movel	&1,0x1004
+	movel	&1,0x1ff004
 	movew	&0x0180,DMACON		| copper and bitplane DMA off
 	movew	&0x0f00,COLOR00		| red
 	movew	&0x7fff,INTENA
@@ -46,6 +58,10 @@ Lnot060:
 	jsr	amiga_bootmem
 	jsr	__amix_config_cachefix
 	addql	&8,%sp
+	movel	%a0,%sp@-
+	pea	3
+	jsr	bootmark
+	addql	&8,%sp
 	movew	0xdff004,%d0		| VPOSR: Alice is AGA, Agnus the A3000
 	andw	&0x0e00,%d0
 	bne	Laga
@@ -56,8 +72,17 @@ Laga:
 	.globl	pstart
 pstart:
 	movew	&0x0ff0,COLOR00		| yellow
+	clrl	%sp@-
+	pea	5
+	jsr	bootmark
+	addql	&8,%sp
 	jsr	__amix_pstart
 	movew	&0x00f0,COLOR00		| green
+	movel	%a0,%sp@-
+	pea	6
+	jsr	bootmark
+	addql	&8,%sp
+	clrb	bootmk_on
 	rts
 
 | AGA fetch mode, colour bank and colour offsets back to their reset

@@ -1,6 +1,6 @@
 /*
  * Portions Copyright (c) 2026 Kevin Dedon.
- * SPDX-License-Identifier: GPL-2.0
+ * SPDX-License-Identifier: MIT
  */
 /*
  * put.c - PUT.68K: console output into a file, on the RSX mechanism.

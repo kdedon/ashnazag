@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/ioctl.h>
@@ -342,14 +343,14 @@ deadlock(char *busid)
 }
 
 /*
- * A switch away waits while a client holds the lock; once it is free
- * the console comes to the front, and X's clients get no lock while
- * X is hidden.
+ * A switch away gives a client holding the lock a second, then goes
+ * ahead; X's clients get no lock while X is hidden.
  */
 static void
 switchaway(AMIXDRIPtr info)
 {
     int fb = open("/dev/fb0", O_RDWR), held, freed, hidden, back;
+    time_t t;
     drmContext ctx;
 
     if (fb < 0 || drmCreateContext(nscreen->fd, &ctx) < 0) {
@@ -357,7 +358,9 @@ switchaway(AMIXDRIPtr info)
 	return;
     }
     drmGetLock(nscreen->fd, ctx, 0);
+    t = time(0);
     held = ioctl(fb, FBIOSWITCH, 0) < 0 ? errno : 0;
+    t = time(0) - t;
     drmUnlock(nscreen->fd, ctx);
     freed = ioctl(fb, FBIOSWITCH, 0) < 0 ? errno : 0;
     hidden = !trylock(nscreen->fd, ctx, 2);
@@ -365,9 +368,9 @@ switchaway(AMIXDRIPtr info)
 	drmUnlock(nscreen->fd, ctx);
     sleep(2);
     back = ioctl(fb, FBIOSWITCH, info->session) < 0 ? errno : 0;
-    check("switch", held == EBUSY && freed == 0 && hidden != 0 && back == 0,
-	  "lock held: %s, free: %s, hidden lock: %s, back: %s",
-	  held ? strerror(held) : "switched", freed ? strerror(freed) : "switched",
+    check("switch", held == 0 && t <= 3 && freed == 0 && hidden != 0 && back == 0,
+	  "lock held: %s after %ld s, free: %s, hidden lock: %s, back: %s",
+	  held ? strerror(held) : "switched", (long)t, freed ? strerror(freed) : "switched",
 	  hidden ? "refused" : "granted", back ? strerror(back) : "ok");
     drmDestroyContext(nscreen->fd, ctx);
     close(fb);

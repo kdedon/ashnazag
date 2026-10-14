@@ -62,9 +62,9 @@ p2 = dis[i:dis.find('<p4int>:', i)]
 check('ncr96intr' in p2 and 'snintr' in p2 and '#1,%d0' in p2 and
       '%a0@(7680)' in p2, 'p2int: CB2 -> ncr96intr, CA1 + port A bit 0 -> snintr')
 check('sn_nslot' in p2, 'p2int counts other slot interrupts')
-pool, n = sym['sn_pool'], size.get('sn_pool', 0)
-check(n >= 4096 + 4096 + (8 + 32) * 1536 and pool + n < 0x40000000,
-      'sn_pool 0x%x, %d bytes, below 1 GB (DTT0: VA = PA, not cached)' % (pool, n))
+i = dis.find('<sn_start>:\n')
+check(i >= 0 and 'vr_contig' in dis[i:dis.find('rts', i)],
+      'sn_start takes the rings from vr_contig, below 1 GB (DTT0: VA = PA, not cached)')
 # the Mac pstart's DTT0: 0-1 GB, supervisor, cache-inhibited (CM = 11)
 import re
 i = dis.find('<pstart>:\n')

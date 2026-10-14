@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2026 Kevin Dedon.
- * SPDX-License-Identifier: GPL-2.0
+ * SPDX-License-Identifier: MIT
  */
 /*
  * xdosd.c - Coordinate a child process through queues, a delay, and an

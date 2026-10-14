@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2026 Kevin Dedon.
- * SPDX-License-Identifier: GPL-2.0
+ * SPDX-License-Identifier: MIT
  */
 /*
  * concwc.c -- CONCWC.68K, the claimant.  The CCP runs it after CONCW's

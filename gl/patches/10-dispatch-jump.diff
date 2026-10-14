@@ -1,0 +1,21 @@
+--- a/src/dispatch.c
++++ b/src/dispatch.c
+@@ -69,6 +69,18 @@
+    fprintf MESSAGE;				\
+    return (_glapi_Dispatch->FUNC) ARGS
+ 
++#elif defined(__m68k__)
++
++/* Jump to the table entry: the caller's arguments stay where they are. */
++#define DISPATCH(FUNC, ARGS, MESSAGE)					\
++   __asm__ __volatile__("mov.l _glapi_Dispatch,%%a0\n\t"		\
++			"mov.l %c0(%%a0),%%a0\n\t"			\
++			"jmp (%%a0)"					\
++			: : "i" ((long) &((struct _glapi_table *) 0)->FUNC) : "a0");
++
++#define RETURN_DISPATCH(FUNC, ARGS, MESSAGE) 	\
++   return (_glapi_Dispatch->FUNC) ARGS
++
+ #else
+ 
+ #define DISPATCH(FUNC, ARGS, MESSAGE)		\

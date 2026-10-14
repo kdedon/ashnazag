@@ -102,4 +102,4 @@ emulator results.
 
 ## Licence
 
-GPL-2.0 (see `LICENSE`). Files derived from other projects keep their own notices.
+MIT (see `LICENSE`). Third-party components keep their licences; see `THIRD_PARTY.md`. GPL code ships only as separate programs, patches or separately loaded modules, never linked into a kernel image.

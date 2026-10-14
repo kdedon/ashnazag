@@ -2,8 +2,9 @@
  * RAM disk, block (major 20) and raw (major RD_CMAJ) interfaces.
  *
  *	minor 0	root image: boot-record BI_RAMDISK, else the linked-in image
- *	minor 1	swap, carved from the top of the kernel's memory chunk
- *		when the RAM disk is root
+ *	minor 1	swap when the RAM disk is root: rdswap=MB carves that
+ *		much from the top of the kernel's memory chunk; without
+ *		it, memory is swap, slots with no store (see rd_memsize)
  *	minor 2	the host ROM, read only, set by rd_romdev()
  *
  * mac_rd_config() runs from config(): MMU off, BSS not yet cleared,
@@ -25,12 +26,6 @@
 #ifndef RD_CMAJ
 #define RD_CMAJ		42
 #endif
-#ifndef RD_SWAPKB
-#define RD_SWAPKB	2048
-#endif
-#ifndef RD_SWAPMAXKB
-#define RD_SWAPMAXKB	32768
-#endif
 #define RD_NUNIT	3
 #define RD_ROOT		0
 #define RD_SWAP		1
@@ -43,6 +38,7 @@
 #define RD_MINMEM	0x400000	/* memory left to VM above end */
 #define RD_MAXPA	0x40000000	/* identity-mapped limit */
 #define RD_MAGIC	0x52614D44	/* 'RaMD' */
+#define RD_MEMKEEP	0x200000	/* memory swap leaves at least this */
 
 #define BI_LAST		0x0000
 #define BI_RAMDISK	0x0006
@@ -57,6 +53,7 @@ struct rdunit {
 unsigned long rd_magic = 1;
 struct rdunit rd_unit[RD_NUNIT] = { { (caddr_t)1, 1 }, { (caddr_t)1, 1 }, { 0, 0 } };
 char rd_swapname[] = "/dev/swap";
+int rd_memsw = 1;		/* 1: memory swap, size not set yet */
 
 extern char rd_image[], rd_image_end[];
 extern char end[];
@@ -66,10 +63,11 @@ extern unsigned long MAINSTORE, VSIZOFMEM;
 extern dev_t rootdev, dumpdev;
 extern char rootfstype[];
 extern struct bootobj swapfile;
+extern int freemem, physmem, vr_shift;
 extern int cdevcnt;
 extern int nodev();
 extern paddr_t vtop();
-extern void mac_puts(), mac_puthex();
+extern void mac_puts(), mac_puthex(), vr_free();
 
 int ramopen(), ramclose(), ramread(), ramwrite();
 void ramstrategy();
@@ -81,6 +79,7 @@ rd_default()
 	rd_unit[RD_ROOT].nblk = (rd_image_end - rd_image) >> RD_BSHIFT;
 	rd_unit[RD_SWAP].base = 0;
 	rd_unit[RD_SWAP].nblk = 0;
+	rd_memsw = 0;
 	rd_magic = RD_MAGIC;
 }
 
@@ -198,6 +197,12 @@ int wantroot;
 		cp->d_write = ramwrite;
 	}
 
+	/* the linked-in image is root or memory */
+	if (!wantroot || rd_unit[RD_ROOT].base != rd_image) {
+		if (rd_unit[RD_ROOT].base == rd_image)
+			rd_unit[RD_ROOT].nblk = 0;
+		vr_free((unsigned long)rd_image, (unsigned long)rd_image_end);
+	}
 	rd_putkv("ramdisk: image ", (unsigned long)rd_unit[RD_ROOT].base);
 	rd_putkv(" blocks ", rd_unit[RD_ROOT].nblk);
 	if (!wantroot || rd_unit[RD_ROOT].nblk == 0) {
@@ -205,30 +210,22 @@ int wantroot;
 		return 0;
 	}
 
-	/*
-	 * swap: half the memory above RD_MINMEM, within RD_SWAPKB..RD_SWAPMAXKB,
-	 * else what is left (at least RD_ALIGN).  Anonymous memory must fit in
-	 * swap as well as in memory, so swap caps heaps and stacks; half keeps
-	 * the two limits about equal.  rdswap= overrides the size, e.g. to make
-	 * swap larger than free memory so that anonymous pages get paged out.
-	 */
-	lim = MAINSTORE + VSIZOFMEM;
-	sw = lim > kend + RD_MINMEM ? ((lim - kend - RD_MINMEM) / 2) & ~(RD_ALIGN - 1) : 0;
-	if (sw > RD_SWAPMAXKB * 1024)
-		sw = RD_SWAPMAXKB * 1024;
-	if (sw < RD_SWAPKB * 1024)
-		sw = RD_SWAPKB * 1024;
-	if ((arg = rd_swaparg()) > 0)
+	if ((arg = rd_swaparg()) > 0) {
+		lim = MAINSTORE + VSIZOFMEM;
 		sw = (unsigned long)arg << 20;
-	if (lim < kend + RD_MINMEM + sw)
-		sw = lim > kend + RD_MINMEM ?
-		    (lim - kend - RD_MINMEM) & ~(RD_ALIGN - 1) : 0;
-	if (sw >= RD_ALIGN) {
-		VSIZOFMEM -= sw;
-		rd_unit[RD_SWAP].base = (caddr_t)(MAINSTORE + VSIZOFMEM);
-		rd_unit[RD_SWAP].nblk = sw >> RD_BSHIFT;
-	} else
-		mac_puts(" (no memory for swap)");
+		if (lim < kend + RD_MINMEM + sw)
+			sw = lim > kend + RD_MINMEM ?
+			    (lim - kend - RD_MINMEM) & ~(RD_ALIGN - 1) : 0;
+		if (sw >= RD_ALIGN) {
+			VSIZOFMEM -= sw;
+			rd_unit[RD_SWAP].base = (caddr_t)(MAINSTORE + VSIZOFMEM);
+			rd_unit[RD_SWAP].nblk = sw >> RD_BSHIFT;
+		} else
+			mac_puts(" (no memory for swap)");
+	} else {
+		rd_memsw = 1;
+		rd_unit[RD_SWAP].nblk = 1;
+	}
 
 	rootdev = makedevice(RD_BMAJ, RD_ROOT);
 	dumpdev = makedevice(RD_BMAJ, RD_SWAP);
@@ -237,10 +234,34 @@ int wantroot;
 	swapfile.bo_offset = 0;
 	swapfile.bo_size = rd_unit[RD_SWAP].nblk;
 
-	rd_putkv(" swap ", (unsigned long)rd_unit[RD_SWAP].base);
-	rd_putkv(" blocks ", rd_unit[RD_SWAP].nblk);
+	if (rd_memsw)
+		mac_puts(" swap memory");
+	else {
+		rd_putkv(" swap ", (unsigned long)rd_unit[RD_SWAP].base);
+		rd_putkv(" blocks ", rd_unit[RD_SWAP].nblk);
+	}
 	mac_puts("\n");
 	return 1;
+}
+
+/*
+ * Memory as swap: anonymous pages need a swap slot each, so the swap
+ * unit offers one per free page, less RD_MEMKEEP or an eighth of
+ * memory for the kernel and the page cache.  Its pages cannot be
+ * written out.  Sized when root is opened, before swap is added.
+ */
+static void
+rd_memsize()
+{
+	unsigned long keep, n;
+
+	rd_memsw = 2;
+	keep = physmem / 8;
+	if (keep < RD_MEMKEEP >> vr_shift)
+		keep = RD_MEMKEEP >> vr_shift;
+	n = freemem > keep ? freemem - keep : 0;
+	rd_unit[RD_SWAP].nblk = n << (vr_shift - RD_BSHIFT);
+	swapfile.bo_size = rd_unit[RD_SWAP].nblk;
 }
 
 int
@@ -253,6 +274,8 @@ struct cred *cr;
 
 	if (rd_magic != RD_MAGIC)
 		rd_default();
+	if (m == RD_ROOT && rd_memsw == 1)
+		rd_memsize();
 	if (m >= RD_NUNIT || rd_unit[m].nblk == 0)
 		return ENXIO;
 	return 0;
@@ -305,7 +328,7 @@ register struct buf *bp;
 		return;
 	}
 	n = (up->nblk - bp->b_blkno) << RD_BSHIFT;
-	if ((n == 0 || m == RD_ROM) && (bp->b_flags & B_READ) == 0) {
+	if ((n == 0 || m == RD_ROM || up->base == 0) && (bp->b_flags & B_READ) == 0) {
 		bp->b_error = ENXIO;
 		bp->b_flags |= B_ERROR;
 		iodone(bp);
@@ -326,7 +349,9 @@ register struct buf *bp;
 			bp->b_flags |= B_ERROR;
 			break;
 		}
-		if (bp->b_flags & B_READ)
+		if (up->base == 0)
+			bzero((caddr_t)pa, cc);
+		else if (bp->b_flags & B_READ)
 			bcopy(disk, (caddr_t)pa, cc);
 		else
 			bcopy((caddr_t)pa, disk, cc);

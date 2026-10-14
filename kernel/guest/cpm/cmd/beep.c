@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2026 Kevin Dedon.
- * SPDX-License-Identifier: GPL-2.0
+ * SPDX-License-Identifier: MIT
  */
 /*
  * beep.c - Sound the console bell n times (default 1) through BDOS function

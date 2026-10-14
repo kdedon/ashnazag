@@ -91,7 +91,6 @@ struct dsbrun {
 	unsigned char	r_ctl;		/* smudge and line number */
 	unsigned char	r_skew;		/* FXSR, NFSR, skew */
 };
-#define DS_VPOOL	0x80000		/* ST-RAM kept for the screen */
 #endif
 
 struct dssess {

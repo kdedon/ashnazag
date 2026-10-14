@@ -1,0 +1,23 @@
+--- a/src/tnl/t_imm_api.c
++++ b/src/tnl/t_imm_api.c
+@@ -945,8 +945,18 @@
+    GLuint texunit = target - GL_TEXTURE0_ARB;			\
+    if (texunit < IM->MaxTextureUnits) {				\
+       GLuint count = IM->Count;					\
+-      fi_type *tc = (fi_type *)IM->Attrib[VERT_ATTRIB_TEX0 + texunit][count];\
+-      IM->Flag[count] |= VERT_BIT_TEX(texunit);			\
++      fi_type *tc;						\
++      /* constant offsets for the two units games use */	\
++      if (texunit == 0) {					\
++	 tc = (fi_type *)IM->Attrib[VERT_ATTRIB_TEX0][count];	\
++	 IM->Flag[count] |= VERT_BIT_TEX0;			\
++      } else if (texunit == 1) {				\
++	 tc = (fi_type *)IM->Attrib[VERT_ATTRIB_TEX1][count];	\
++	 IM->Flag[count] |= VERT_BIT_TEX1;			\
++      } else {							\
++	 tc = (fi_type *)IM->Attrib[VERT_ATTRIB_TEX0 + texunit][count];\
++	 IM->Flag[count] |= VERT_BIT_TEX(texunit);		\
++      }								\
+       tc[0].i = ((fi_type *)&(s))->i;				\
+       tc[1].i = ((fi_type *)&(t))->i;				\
+       tc[2].i = 0;						\

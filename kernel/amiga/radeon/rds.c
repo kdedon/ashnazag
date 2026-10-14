@@ -328,6 +328,8 @@ rd_endian()
 {
 	unsigned long v = rl(PCI_MIRROR);
 
+	if (v == 0xffffffff)
+		return -2;
 	if ((v & 0xffff) == 0x1002)
 		return 0;
 	if ((swab32(v) & 0xffff) != 0x1002)
@@ -473,7 +475,8 @@ rds_attach()
 	    b & OPCI_PROMETHEUS ? "Prometheus" : b & (OPCI_GREX1200 | OPCI_GREX4000) ? "G-REX" : "other",
 	    (int)opci_attr(d, OPCI_DEVICE), (int)opci_attr(d, OPCI_REVISION),
 	    (int)opci_attr(d, OPCI_SUBSYSVENDOR), (int)opci_attr(d, OPCI_SUBSYSID));
-	why = rd_endian() != 0 ? "registers unreadable" : rd_start(d);
+	e = rd_endian();
+	why = e == -2 ? "card not responding" : e != 0 ? "registers unreadable" : rd_start(d);
 	mem = rl(CONFIG_MEMSIZE) & 0x1ff00000;
 	aper = rl(CONFIG_APER);
 	if (why == 0 && (mem == 0 || aper == 0))

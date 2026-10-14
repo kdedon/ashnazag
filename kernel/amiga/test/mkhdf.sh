@@ -9,7 +9,7 @@
 # UNIX_Root ufs = c6d0s1, UNIX_Swap = c6d0s2) and outdir/boot/, the
 # AmigaDOS volume: S/Startup-Sequence runs unix_boot040 on the kernel.
 # A login runs on the serial port.  The root holds the amilib, opci, pci
-# ne, zz9000, voodoo3, tdfx, radeonds, radeon, floppy and v3bars modules (floppy loaded at boot, the first of zz9000, voodoo3 and radeonds found, order in /etc/default/display), modadmin, lspci and pci.ids, fltool, tcpcat, drmtest, radeontest, /dev/pci, /dev/ne0, /dev/dri/card0 (tdfx) and card1 (radeon), registered at
+# ne, zz9000, voodoo3, tdfx, radeonds, radeon, floppy and v3bars modules (floppy loaded at boot, the first of zz9000, voodoo3 and radeonds found, order in /etc/default/display), modadmin, lspci and pci.ids, fltool, tcpcat, drmtest, drmkill, radeontest, /dev/pci, /dev/ne0, /dev/dri/card0 (tdfx) and card1 (radeon), registered at
 # run level 2; ne0 comes up as 10.0.2.15 (Amiberry's user-mode network).
 # AMIX_TAPE: tape segments (default media/amix-tape).  UNIXBOOT: the
 # unix_boot040 executable.  OPENPCI: openpci's unpacked archive (Libs/
@@ -21,8 +21,8 @@
 # kernel's .elf), whose packages are installed instead.  AMIGAENV:
 # mkamiga.sh's outdir, for Kickstart, the floppies and SYS:.  X11PKG:
 # x11/package.sh's pkg directory; X and the tape's clients are installed.
-# GLBIN: gl/build.sh's bin directory; its dritest, glxgears, miptest and swaptest go to
-# /usr/x11r6/bin (with X11PKG).
+# GLBIN: gl/build.sh's bin directory; its dritest, glprobe, glxgears, miptest
+# and swaptest go to /usr/x11r6/bin (with X11PKG).
 # QUAKE: gl/quake/build.sh's quake, installed as /usr/games/quake; with
 # QUAKEPAK (the user's id1/pak0.pak) the game data goes to /usr/games/id1.
 # GLQUAKE: its glquake (GL=yes), installed as /usr/games/glquake.
@@ -112,6 +112,7 @@ $CC -I"$K/guest/include" -o "$S/bin/fltool" "$A/floppy/fltool.c"
 $CC -o "$S/bin/kread" "$A/test/kread.c"
 $CC -I"$K/mac/display" -I"$K/drm" -o "$S/bin/drmtest" "$A/test/drmtest.c"
 $CC -I"$K/mac/display" -I"$K/drm" -o "$S/bin/radeontest" "$A/test/radeontest.c"
+$CC -I"$K/mac/display" -I"$K/drm" -o "$S/bin/drmkill" "$A/test/drmkill.c"
 # libc.so is an archive: the shared part and the static rest
 SYS=$AMIX_SYSROOT
 rm -rf "$S/libc"; mkdir -p "$S/libc"
@@ -177,7 +178,7 @@ if [ -n "$X11PKG" ]; then
 a tape/13
 a tape/14
 `grep -v '^f /etc/inittab ' "$XP/x11.manifest" | sed -e "s, x11pkg/, $XP/,"`"
-	for p in dritest glxgears miptest swaptest; do
+	for p in dritest glprobe glxgears miptest swaptest; do
 		[ -n "$GLBIN" ] && [ -f "$GLBIN/$p" ] || continue
 		m68k-elf-strip -o "$S/bin/$p" "$GLBIN/$p"
 		ENV="$ENV
@@ -211,6 +212,7 @@ f /usr/bin/tcpcat 555 2 2 bin/tcpcat
 f /usr/bin/kread 555 2 2 bin/kread
 f /usr/bin/drmtest 555 2 2 bin/drmtest
 f /usr/bin/radeontest 555 2 2 bin/radeontest
+f /usr/bin/drmkill 555 2 2 bin/drmkill
 f /etc/rc2.d/S05dlm 744 0 3 S05dlm
 f /etc/default/display 644 0 3 display
 f /etc/inet/network-config 444 0 3 network-config
@@ -247,6 +249,16 @@ $PY "$DR/ufscheck.py" "$S/root.img" -l > "$S/root.lst" || { tail -20 "$S/root.ls
 mkdir -p "$S/amigaboot/S"
 cp "$UNIXBOOT" "$S/amigaboot/unix_boot040"
 cp "$KERNEL" "$S/amigaboot/unix"
+cat > "$S/amigaboot/amxmarks.rexx" <<'REXX'
+/* the kernel's boot marks in chip RAM, after a reset: rx amxmarks.rexx */
+DO i = 1 TO 2
+	a = WORD('00001000 001FF000', i)
+	d = C2X(IMPORT(X2C(a), 28))
+	SAY a SUBSTR(d, 1, 8) 'n' X2D(SUBSTR(d, 9, 8)) 'mark' SUBSTR(d, 17, 8),
+	    'prev' SUBSTR(d, 25, 8) 'arg' SUBSTR(d, 33, 8),
+	    'mem' X2D(SUBSTR(d, 41, 8)) SUBSTR(d, 49, 8)
+END
+REXX
 rm -rf "$O/boot"
 BOOTPART=
 V=DH0

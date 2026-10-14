@@ -1,9 +1,73 @@
 # Local changes to https://github.com/asokero/amix-040-060-port at 54fba4d
 diff --git a/src/hat040.s b/src/hat040.s
-index 62ba9e4..c8f80a3 100644
+index 62ba9e4..9cc55a8 100644
 --- a/src/hat040.s
 +++ b/src/hat040.s
-@@ -672,6 +672,16 @@ Lcm_nc:
+@@ -481,10 +481,15 @@ Lw_st:
+ 	moveal	%d0,%a0
+ 	addqb	&1,%a0@(7)
+ Lw_nolock:
+-	tstl	%a2
+-	beq	Lw_nopp
+-	movel	%a2@(32),%a4@(256)
+-	movel	%a4,%a2@(32)
++	movel	%a2,%d0
++	bnew	Lw_link
++	bsrw	Lpp_dev
++	tstl	%d0
++	beqw	Lw_nopp
++Lw_link:
++	moveal	%d0,%a0
++	movel	%a0@(32),%a4@(256)
++	movel	%a4,%a0@(32)
+ Lw_nopp:
+ 	moveal	%fp@(8),%a0
+ 	movel	%a0@(12),%d0
+@@ -605,16 +610,39 @@ Lrp_wr:
+ 	orl	%d0,%d3
+ 	movel	%d3,%a4@		| *leaf = (newpfn<<12) | status
+ | (3) register the NEW page (a2) in its p_mapping list (mirror Lw_nopp).
+-	tstl	%a2
+-	beq	Lrp_flush
+-	movel	%a2@(32),%a4@(256)	| leaf->next = new_pp->p_mapping
+-	movel	%a4,%a2@(32)		| new_pp->p_mapping = &leaf
++	movel	%a2,%d0
++	bnew	Lrp_link
++	bsrw	Lpp_dev
++	tstl	%d0
++	beqw	Lrp_flush
++Lrp_link:
++	moveal	%d0,%a0
++	movel	%a0@(32),%a4@(256)	| leaf->next = new_pp->p_mapping
++	movel	%a4,%a0@(32)		| new_pp->p_mapping = &leaf
+ Lrp_flush:
+ 	pea	1
+ 	movel	%d2,%sp@-
+ 	jsr	flushmmu		| flushmmu(va, 1)
+ 	bra	Lepi
+ 
++| A device load has no pp, yet unloads take any pfn in [pages_base, pages_end)
++| as managed and look for the leaf on its page structure's list.  d0 = that
++| page structure for pfn fp@(20), else 0.
++Lpp_dev:
++	movel	%fp@(20),%d0
++	cmpl	pages_base,%d0
++	bcsw	Lpd_none
++	cmpl	pages_end,%d0
++	bccw	Lpd_none
++	subl	pages_base,%d0
++	moveq	&60,%d1
++	mulsl	%d1,%d0
++	addl	pages,%d0
++	rts
++Lpd_none:
++	moveq	&0,%d0
++	rts
++
+ | --- Lcm_sel: CM-bit class selector (caches campaign B1, 2026-07-20; spec =
+ | docs/contracts/CM-PTE-WRITER-MATRIX.md "Required cache-class selector").
+ | Shared by all three complete leaf constructors (Lpfnok / Lwleaf / Lreplace).
+@@ -672,6 +700,16 @@ Lcm_nc:
  | bit-for-bit what it was before this change.
  Lcm_dev:
  	movel	%fp@(20),%d0		| pfn being mapped
@@ -20,7 +84,7 @@ index 62ba9e4..c8f80a3 100644
  	cmpl	hat_cm_fb+0,%d0
  	bcs	Lcm_d1			| pfn < lo0 -> not in slot 0
  	cmpl	hat_cm_fb+4,%d0
-@@ -691,6 +701,8 @@ Lcm_fb:
+@@ -691,6 +729,8 @@ Lcm_fb:
  	addql	&1,cmf_fb_n
  	movel	%a4,cmf_fb_leaf
  	rts
@@ -29,7 +93,7 @@ index 62ba9e4..c8f80a3 100644
  
  | ===========================================================================
  | hat_cm_fb_add(lo_pfn, hi_pfn) -- register one half-open framebuffer PFN
-@@ -726,13 +738,14 @@ Lcm_fb:
+@@ -726,13 +766,14 @@ Lcm_fb:
  hat_cm_fb_add:
  	linkw	%fp,&0
  	moveml	%d2-%d3/%a2,%sp@-
@@ -46,7 +110,7 @@ index 62ba9e4..c8f80a3 100644
  Lfa_loop:
  	movel	%a2@(0),%d0
  	orl	%a2@(4),%d0
-@@ -758,6 +771,16 @@ Lfa_out:
+@@ -758,6 +799,16 @@ Lfa_out:
  	unlk	%fp
  	rts
  
@@ -63,7 +127,7 @@ index 62ba9e4..c8f80a3 100644
  | ===========================================================================
  | hat_unlock (orig 0xb5d1e, GLOBAL T) -- 040 port.
  | Decrements the lock count on the page-table page holding va's leaf PTE, and
-@@ -860,7 +883,7 @@ Lhu_done:
+@@ -860,7 +911,7 @@ Lhu_done:
  | THIS port: the 040 leaf PTE address is ALREADY in p_mapping (hat_pteload set pp->p_mapping=&PTE),
  | so just clrl each PTE (UDT->0 invalid) directly -- no tree walk -- then cpusha+pflusha so the HW
  | walker reloads the invalid descriptor and the next access faults & re-maps.  CONSERVATIVE: does
@@ -72,7 +136,7 @@ index 62ba9e4..c8f80a3 100644
  | philosophy as hat_free040) -- correctness (no stale resident PTE on a freed page) comes first.
  |
  | 2026-07-18 ISSUE-10 PRODUCER FIX: harvest each PTE's HW U/M bits into pp->p_ref/p_mod BEFORE
-@@ -898,6 +921,32 @@ Lpu_loop:
+@@ -898,6 +949,32 @@ Lpu_loop:
  	bfextu	%a0@{&3:&1},%d1
  	orl	%d1,%d0
  	bfins	%d0,%a2@{&5:&1}		| pp->p_mod |= PTE M
@@ -105,7 +169,7 @@ index 62ba9e4..c8f80a3 100644
  	clrl	%a3@			| *pte = 0 -> 040 leaf descriptor INVALID (UDT=0)
  	movel	%d3,%d2			| advance to next mapping
  	braw	Lpu_loop
-@@ -2060,6 +2109,13 @@ hat_cm_fb:
+@@ -2060,6 +2137,13 @@ hat_cm_fb:
  	.balign 4
  hat_cm_ram:
  	.long	0x00000020		| B2: CM=01 copyback for managed RAM (default since 2026-07-30)

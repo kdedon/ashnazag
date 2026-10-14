@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2026 Kevin Dedon.
- * SPDX-License-Identifier: GPL-2.0
+ * SPDX-License-Identifier: MIT
  */
 /*
  * putrsx.c - PUT.RSX: console output copied into a file.  Functions 2,

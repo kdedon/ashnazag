@@ -254,6 +254,9 @@ unsigned long aperture;
 	unsigned long n = 0x200000, keep0;
 
 	keep0 = *p0;
+	*p0 = 0x5a5aa5a5;
+	if (*p0 != 0x5a5aa5a5)
+		return 0;
 	while (n < aperture) {
 		p = (volatile unsigned long *)(v3_fb + n);
 		*p0 = 0x5a5aa5a5;
@@ -304,6 +307,11 @@ v3ds_attach()
 	wl(LFBMEMCFG, 0x1fff);
 	wl(MISCINIT0, rl(MISCINIT0) & ~MI0_SWIZ(3));
 	v3_vram = v3_sizevram(opci_attr(d, OPCI_BARSIZE(1)));
+	if (v3_vram == 0) {
+		printf("voodoo3: card not responding at %x\n", (int)plat_vtop((unsigned long)v3_fb));
+		opci_release(d);
+		return ENXIO;
+	}
 	/* a 32-bit screen and a page: Picasso96 keeps bytes between two 16-bit ones */
 	frame = (((unsigned long)v3ds_width * v3ds_height * 4 + 4095) & ~4095UL) + 4096;
 	if (frame > v3_vram) {

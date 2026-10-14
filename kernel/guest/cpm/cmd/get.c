@@ -1,6 +1,6 @@
 /*
  * Portions Copyright (c) 2026 Kevin Dedon.
- * SPDX-License-Identifier: GPL-2.0
+ * SPDX-License-Identifier: MIT
  */
 /*
  * get.c - GET.68K: console input from a file, on the RSX mechanism.

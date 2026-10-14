@@ -388,6 +388,7 @@ extern int		DRM(open_helper)(dev_t kdev, int flags, int fmt,
 			    DRM_STRUCTPROC *p, drm_device_t *dev);
 extern drm_file_t	*DRM(find_file_by_minor)(drm_device_t *dev, int minor);
 extern int		DRM(tsleep)(caddr_t chan, int timo);
+extern int		DRM(amix_deadholder)(drm_device_t *dev);
 extern void		*DRM(amix_malloc)(unsigned long size);
 extern void		DRM(amix_mfree)(void *pt);
 extern void		*DRM(alloc_pages)(unsigned long size);

@@ -1,0 +1,178 @@
+diff -u a/src/gl_mesh.c b/src/gl_mesh.c
+--- a/src/gl_mesh.c
++++ b/src/gl_mesh.c
+@@ -342,6 +342,30 @@
+ 	}
+ 
+ 
++#ifdef AMIX
++	{
++		// strips first, then fans, so each mode is one run of arrays
++		static int	cmd2[8192], order2[8192];
++		int			*c, k, n, o, v, fan;
++
++		n = o = 0;
++		for (fan = 0 ; fan < 2 ; fan++)
++			for (c = commands, v = 0 ; *c ; c += 1 + 2 * k, v += k)
++			{
++				k = *c < 0 ? -*c : *c;
++				if ((*c < 0) != fan)
++					continue;
++				memcpy (cmd2 + n, c, (1 + 2 * k) * 4);
++				n += 1 + 2 * k;
++				memcpy (order2 + o, vertexorder + v, k * 4);
++				o += k;
++			}
++		cmd2[n] = 0;
++		memcpy (commands, cmd2, (n + 1) * 4);
++		memcpy (vertexorder, order2, o * 4);
++	}
++#endif
++
+ 	// save the data out
+ 
+ 	paliashdr->poseverts = numorder;
+@@ -356,5 +380,32 @@
+ 	for (i=0 ; i<paliashdr->numposes ; i++)
+ 		for (j=0 ; j<numorder ; j++)
+ 			*verts++ = poseverts[i][vertexorder[j]];
++#ifdef AMIX
++	{
++		// nstrips, nfans, first[], count[], then s/t per vertex
++		int		*a, *c, k, np = 0, nf = 0, n = 0;
++		float	*st;
++
++		for (c = cmds ; *c ; c += 1 + 2 * k, np++)
++		{
++			k = *c < 0 ? -*c : *c;
++			nf += *c < 0;
++		}
++		a = Hunk_Alloc ((2 + 2 * np + 2 * numorder) * 4);
++		paliashdr->arrays = (byte *)a - (byte *)paliashdr;
++		a[0] = np - nf;
++		a[1] = nf;
++		st = (float *)(a + 2 + 2 * np);
++		for (c = cmds, j = 0 ; *c ; c += 1 + 2 * k, j++)
++		{
++			k = *c < 0 ? -*c : *c;
++			a[2 + j] = n;
++			a[2 + np + j] = k;
++			n += k;
++			memcpy (st, c + 1, 2 * k * 4);
++			st += 2 * k;
++		}
++	}
++#endif
+ }
+ 
+diff -u a/src/gl_model.h b/src/gl_model.h
+--- a/src/gl_model.h
++++ b/src/gl_model.h
+@@ -310,6 +310,9 @@
+ 	int					poseverts;
+ 	int					posedata;	// numposes*poseverts trivert_t
+ 	int					commands;	// gl command list with embedded s/t
++#ifdef AMIX
++	int					arrays;		// strips, fans, first[], count[], s/t
++#endif
+ 	int					gl_texturenum[MAX_SKINS][4];
+ 	int					texels[MAX_SKINS];	// only for player skins
+ 	maliasframedesc_t	frames[1];	// variable sized
+diff -u a/src/gl_rmain.c b/src/gl_rmain.c
+--- a/src/gl_rmain.c
++++ b/src/gl_rmain.c
+@@ -289,16 +289,16 @@
+ #ifdef AMIX
+ #define MAX_ARRAY_VERTS	2048
+ 
+-/* Strips, then fans, each mode one draw over vertices copied in order */
++/* Strips, then fans, their vertices in that order: positions and light
++ * converted per frame, s/t kept from load */
+ static void GL_DrawAliasFrameArrays (aliashdr_t *paliashdr, int posenum)
+ {
+-	static float	xyz[MAX_ARRAY_VERTS][3], st[MAX_ARRAY_VERTS][2];
++	static float	xyz[MAX_ARRAY_VERTS][3];
+ 	static unsigned	rgba[MAX_ARRAY_VERTS];
+-	static GLint	first[MAX_ARRAY_VERTS];
+-	static GLsizei	count[MAX_ARRAY_VERTS];
++	int		*a = (int *)((byte *)paliashdr + paliashdr->arrays);
++	int		np = a[0] + a[1], k;
+ 	trivertx_t	*verts, *v;
+-	int		*order, c, k, n, np, fan;
+-	float		*p, *t, scale = shadelight * 255;
++	float		*p, scale = shadelight * 255;
+ 	unsigned	*col, l;
+ 	union { float f; unsigned u; } r;
+ 
+@@ -307,55 +307,30 @@
+ 
+ 	glVertexPointer (3, GL_FLOAT, 0, xyz);
+ 	glColorPointer (4, GL_UNSIGNED_BYTE, 0, rgba);
+-	glTexCoordPointer (2, GL_FLOAT, 0, st);
++	glTexCoordPointer (2, GL_FLOAT, 0, a + 2 + 2 * np);
+ 	glEnableClientState (GL_VERTEX_ARRAY);
+ 	glEnableClientState (GL_COLOR_ARRAY);
+ 	glEnableClientState (GL_TEXTURE_COORD_ARRAY);
+ 
+-	n = 0;
+ 	p = xyz[0];
+-	t = st[0];
+ 	col = rgba;
+-	for (fan = 0 ; fan < 2 ; fan++)
++	for (v = verts, k = paliashdr->poseverts ; k ; k--, v++)
+ 	{
+-		np = 0;
+-		v = verts;
+-		order = (int *)((byte *)paliashdr + paliashdr->commands);
+-		while ((c = *order++))
+-		{
+-			k = c < 0 ? -c : c;
+-			if ((c < 0) != fan)
+-			{
+-				order += 2 * k;
+-				v += k;
+-				continue;
+-			}
+-			first[np] = n;
+-			count[np++] = k;
+-			n += k;
+-			do
+-			{
+-				t[0] = ((float *)order)[0];
+-				t[1] = ((float *)order)[1];
+-				order += 2;
+-				t += 2;
+-				// adding 2^23 rounds to an integer in the low mantissa bits
+-				r.f = shadedots[v->lightnormalindex] * scale + 8388608.0f;
+-				l = r.u & 0x7fffff;
+-				if (l > 255)
+-					l = 255;
+-				*col++ = l << 24 | l << 16 | l << 8 | 255;	// RGBA bytes
+-				p[0] = v->v[0];
+-				p[1] = v->v[1];
+-				p[2] = v->v[2];
+-				p += 3;
+-				v++;
+-			} while (--k);
+-		}
+-		if (np)
+-			glMultiDrawArraysEXT (fan ? GL_TRIANGLE_FAN : GL_TRIANGLE_STRIP,
+-				first, count, np);
++		// adding 2^23 rounds to an integer in the low mantissa bits
++		r.f = shadedots[v->lightnormalindex] * scale + 8388608.0f;
++		l = r.u & 0x7fffff;
++		if (l > 255)
++			l = 255;
++		*col++ = l << 24 | l << 16 | l << 8 | 255;	// RGBA bytes
++		p[0] = v->v[0];
++		p[1] = v->v[1];
++		p[2] = v->v[2];
++		p += 3;
+ 	}
++	if (a[0])
++		glMultiDrawArraysEXT (GL_TRIANGLE_STRIP, a + 2, a + 2 + np, a[0]);
++	if (a[1])
++		glMultiDrawArraysEXT (GL_TRIANGLE_FAN, a + 2 + a[0], a + 2 + np + a[0], a[1]);
+ 
+ 	glDisableClientState (GL_VERTEX_ARRAY);
+ 	glDisableClientState (GL_COLOR_ARRAY);

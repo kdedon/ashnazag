@@ -1,0 +1,257 @@
+--- a/src/gl_model.h
++++ b/src/gl_model.h
+@@ -138,6 +138,7 @@
+ 
+ 	glpoly_t	*polys;				// multiple if warped
+ 	struct	msurface_s	*texturechain;
++	struct	msurface_s	*lightmapchain;
+ 
+ 	mtexinfo_t	*texinfo;
+ 	
+--- a/src/glquake.h
++++ b/src/glquake.h
+@@ -246,6 +246,10 @@
+ extern lpSelTexFUNC qglSelectTextureSGIS;
+ 
+ extern qboolean gl_mtexable;
++#ifdef AMIX
++extern qboolean gl_mdarrays;
++void glMultiDrawArraysEXT (GLenum, GLint *, GLsizei *, GLsizei);
++#endif
+ 
+ void GL_DisableMultitexture(void);
+ void GL_EnableMultitexture(void);
+--- a/src/gl_vidlinuxglx.c
++++ b/src/gl_vidlinuxglx.c
+@@ -126,6 +126,9 @@
+ qboolean is8bit = false;
+ qboolean isPermedia = false;
+ qboolean gl_mtexable = false;
++#ifdef AMIX
++qboolean gl_mdarrays = false;
++#endif
+ 
+ /*-----------------------------------------------------------------------*/
+ void D_BeginDirectRect (int x, int y, byte *pbitmap, int width, int height)
+@@ -627,6 +630,10 @@
+ //	Con_Printf ("%s %s\n", gl_renderer, gl_version);
+ 
+ 	CheckMultiTextureExtensions ();
++#ifdef AMIX
++	gl_mdarrays = strstr(gl_extensions, "GL_EXT_multi_draw_arrays") &&
++		!COM_CheckParm("-noarrays");
++#endif
+ 
+ 	glClearColor (1,0,0,0);
+ 	glCullFace(GL_FRONT);
+--- a/src/gl_rsurf.c
++++ b/src/gl_rsurf.c
+@@ -1018,6 +1018,92 @@
+ 
+ #endif
+ 
++#ifdef AMIX
++#define MAX_ARRAY_VERTS	256
++
++/* A texture chain's lightmapped polygons, one draw per lightmap */
++static void R_DrawChainArrays (texture_t *t)
++{
++	static float		vb[MAX_ARRAY_VERTS][VERTEXSIZE];
++	static GLint		first[MAX_ARRAY_VERTS];
++	static GLsizei		count[MAX_ARRAY_VERTS];
++	static msurface_t	*lmchain[MAX_LIGHTMAPS];
++	msurface_t	*s;
++	glpoly_t	*p;
++	glRect_t	*r;
++	int			i, n, np;
++
++	for (s = t->texturechain ; s ; s = s->texturechain)
++	{
++		if (s->flags & (SURF_DRAWSKY|SURF_DRAWTURB|SURF_UNDERWATER) ||
++			s->polys->numverts > MAX_ARRAY_VERTS)
++		{
++			R_DrawSequentialPoly (s);
++			continue;
++		}
++		R_RenderDynamicLightmaps (s);
++		s->lightmapchain = lmchain[s->lightmaptexturenum];
++		lmchain[s->lightmaptexturenum] = s;
++	}
++
++	glVertexPointer (3, GL_FLOAT, VERTEXSIZE*sizeof(float), &vb[0][0]);
++	glEnableClientState (GL_VERTEX_ARRAY);
++	glClientActiveTextureARB (GL_TEXTURE1_ARB);
++	glTexCoordPointer (2, GL_FLOAT, VERTEXSIZE*sizeof(float), &vb[0][5]);
++	glEnableClientState (GL_TEXTURE_COORD_ARRAY);
++	glClientActiveTextureARB (GL_TEXTURE0_ARB);
++	glTexCoordPointer (2, GL_FLOAT, VERTEXSIZE*sizeof(float), &vb[0][3]);
++	glEnableClientState (GL_TEXTURE_COORD_ARRAY);
++
++	for (i=0 ; i<MAX_LIGHTMAPS ; i++)
++	{
++		if (!lmchain[i])
++			continue;
++		GL_SelectTexture(TEXTURE0_SGIS);
++		GL_Bind (R_TextureAnimation (t)->gl_texturenum);
++		glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
++		GL_EnableMultitexture();
++		GL_Bind (lightmap_textures + i);
++		if (lightmap_modified[i])
++		{
++			lightmap_modified[i] = false;
++			r = &lightmap_rectchange[i];
++			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, r->t,
++				BLOCK_WIDTH, r->h, gl_lightmap_format, GL_UNSIGNED_BYTE,
++				lightmaps+(i* BLOCK_HEIGHT + r->t) *BLOCK_WIDTH*lightmap_bytes);
++			r->l = BLOCK_WIDTH;
++			r->t = BLOCK_HEIGHT;
++			r->h = 0;
++			r->w = 0;
++		}
++		glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_BLEND);
++
++		n = np = 0;
++		for (s = lmchain[i] ; s ; s = s->lightmapchain)
++		{
++			p = s->polys;
++			if (n + p->numverts > MAX_ARRAY_VERTS)
++			{
++				glMultiDrawArraysEXT (GL_POLYGON, first, count, np);
++				n = np = 0;
++			}
++			memcpy (vb[n], p->verts, p->numverts * sizeof(vb[0]));
++			first[np] = n;
++			count[np++] = p->numverts;
++			n += p->numverts;
++		}
++		glMultiDrawArraysEXT (GL_POLYGON, first, count, np);
++		lmchain[i] = NULL;
++	}
++
++	glDisableClientState (GL_VERTEX_ARRAY);
++	glClientActiveTextureARB (GL_TEXTURE1_ARB);
++	glDisableClientState (GL_TEXTURE_COORD_ARRAY);
++	glClientActiveTextureARB (GL_TEXTURE0_ARB);
++	glDisableClientState (GL_TEXTURE_COORD_ARRAY);
++}
++#endif
++
+ /*
+ ================
+ DrawTextureChains
+@@ -1035,6 +1121,11 @@
+ 			t = cl.worldmodel->textures[i];
+ 			if (!t)
+ 				continue;
++#ifdef AMIX
++			if (gl_mdarrays && gl_mtexable)
++				R_DrawChainArrays (t);
++			else
++#endif
+ 			for (s = t->texturechain ; s ; s=s->texturechain)
+ 				R_DrawSequentialPoly (s);
+ 			t->texturechain = NULL;
+--- a/src/gl_rmain.c
++++ b/src/gl_rmain.c
+@@ -286,6 +286,87 @@
+ GL_DrawAliasFrame
+ =============
+ */
++#ifdef AMIX
++#define MAX_ARRAY_VERTS	2048
++
++/* Strips, then fans, each mode one draw over vertices copied in order */
++static void GL_DrawAliasFrameArrays (aliashdr_t *paliashdr, int posenum)
++{
++	static float	xyz[MAX_ARRAY_VERTS][3], st[MAX_ARRAY_VERTS][2];
++	static unsigned	rgba[MAX_ARRAY_VERTS];
++	static GLint	first[MAX_ARRAY_VERTS];
++	static GLsizei	count[MAX_ARRAY_VERTS];
++	trivertx_t	*verts, *v;
++	int		*order, c, k, n, np, fan;
++	float		*p, *t, scale = shadelight * 255;
++	unsigned	*col, l;
++	union { float f; unsigned u; } r;
++
++	verts = (trivertx_t *)((byte *)paliashdr + paliashdr->posedata);
++	verts += posenum * paliashdr->poseverts;
++
++	glVertexPointer (3, GL_FLOAT, 0, xyz);
++	glColorPointer (4, GL_UNSIGNED_BYTE, 0, rgba);
++	glTexCoordPointer (2, GL_FLOAT, 0, st);
++	glEnableClientState (GL_VERTEX_ARRAY);
++	glEnableClientState (GL_COLOR_ARRAY);
++	glEnableClientState (GL_TEXTURE_COORD_ARRAY);
++
++	n = 0;
++	p = xyz[0];
++	t = st[0];
++	col = rgba;
++	for (fan = 0 ; fan < 2 ; fan++)
++	{
++		np = 0;
++		v = verts;
++		order = (int *)((byte *)paliashdr + paliashdr->commands);
++		while ((c = *order++))
++		{
++			k = c < 0 ? -c : c;
++			if ((c < 0) != fan)
++			{
++				order += 2 * k;
++				v += k;
++				continue;
++			}
++			first[np] = n;
++			count[np++] = k;
++			n += k;
++			do
++			{
++				t[0] = ((float *)order)[0];
++				t[1] = ((float *)order)[1];
++				order += 2;
++				t += 2;
++				// adding 2^23 rounds to an integer in the low mantissa bits
++				r.f = shadedots[v->lightnormalindex] * scale + 8388608.0f;
++				l = r.u & 0x7fffff;
++				if (l > 255)
++					l = 255;
++				*col++ = l << 24 | l << 16 | l << 8 | 255;	// RGBA bytes
++				p[0] = v->v[0];
++				p[1] = v->v[1];
++				p[2] = v->v[2];
++				p += 3;
++				v++;
++			} while (--k);
++		}
++		if (np)
++			glMultiDrawArraysEXT (fan ? GL_TRIANGLE_FAN : GL_TRIANGLE_STRIP,
++				first, count, np);
++	}
++
++	glDisableClientState (GL_VERTEX_ARRAY);
++	glDisableClientState (GL_COLOR_ARRAY);
++	glDisableClientState (GL_TEXTURE_COORD_ARRAY);
++	// the colour immediate mode would have left current
++	v = verts + paliashdr->poseverts - 1;
++	scale = shadedots[v->lightnormalindex] * shadelight;
++	glColor3f (scale, scale, scale);
++}
++#endif
++
+ void GL_DrawAliasFrame (aliashdr_t *paliashdr, int posenum)
+ {
+ 	float	s, t;
+@@ -301,6 +382,13 @@
+ 
+ lastposenum = posenum;
+ 
++#ifdef AMIX
++	if (gl_mdarrays && paliashdr->poseverts <= MAX_ARRAY_VERTS) {
++		GL_DrawAliasFrameArrays (paliashdr, posenum);
++		return;
++	}
++#endif
++
+ 	verts = (trivertx_t *)((byte *)paliashdr + paliashdr->posedata);
+ 	verts += posenum * paliashdr->poseverts;
+ 	order = (int *)((byte *)paliashdr + paliashdr->commands);

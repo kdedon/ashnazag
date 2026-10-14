@@ -38,6 +38,7 @@ if [ ! -d "$M" ]; then
 		[ -f "$p" ] || continue
 		echo "== patch $(basename "$p")"
 		patch -s -p1 -d "$M" < "$p"
+		basename "$p" >> "$M/.applied"
 	done
 	# the compiler driver searches the system headers first, and AMIX has
 	# a macros.h of its own
@@ -46,12 +47,27 @@ if [ ! -d "$M" ]; then
 			sed -i 's,^#include "macros.h",#include "../macros.h",' "$f"
 	done
 fi
-# patches added since the tree was made
+# patches added since the tree was made; a tree without the list
+# records the patches that reverse cleanly
+if [ ! -f "$M/.applied" ]; then
+	for p in "$D"/patches/*.diff; do
+		patch -s -p1 -R --dry-run -d "$M" < "$p" > /dev/null 2>&1 &&
+			basename "$p" >> "$M/.applied"
+	done
+	touch "$M/.applied"
+fi
 for p in "$D"/patches/*.diff; do
-	patch -s -p1 -R --dry-run -d "$M" < "$p" > /dev/null 2>&1 && continue
+	grep -qx "$(basename "$p")" "$M/.applied" && continue
 	echo "== patch $(basename "$p")"
 	patch -s -p1 -d "$M" < "$p"
+	basename "$p" >> "$M/.applied"
 done
+# a patch may change a header: then every object is stale
+SUM=$(cat "$D"/patches/*.diff | cksum)
+if [ "$(cat "$GLW/obj/.patches" 2>/dev/null)" != "$SUM" ]; then
+	rm -f "$GLW"/obj/*.o
+	echo "$SUM" > "$GLW/obj/.patches"
+fi
 
 S=$M/src
 CORE="api_arrayelt api_loopback api_noop api_validate accum attrib blend
@@ -240,6 +256,10 @@ xlink miptest "$GLW/obj/miptest.o"
 # per-frame overhead
 $N "$CC" $CFLAGS -I"$GLW/include" -I"$XINC" -c "$D/src/swaptest.c" -o "$GLW/obj/swaptest.o"
 xlink swaptest "$GLW/obj/swaptest.o"
+
+# lightmap texture environments and mip level choice, read back
+$N "$CC" $CFLAGS -I"$GLW/include" -I"$XINC" -c "$D/src/glprobe.c" -o "$GLW/obj/glprobe.o"
+xlink glprobe "$GLW/obj/glprobe.o"
 
 DEMOS=$AUX/ref/mesa/dist/MesaDemos-5.0.2.tar.gz
 [ -f "$DEMOS" ] || exit 0

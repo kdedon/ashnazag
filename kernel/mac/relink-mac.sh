@@ -32,9 +32,9 @@ mkdir -p "$W"
 [ -f "$BASE" ] || { echo "[FAIL] no base image: $BASE"; exit 1; }
 
 if m68k-linux-gnu-nm "$BASE" | grep -q ' [DdBb] kptr040$'; then
-	MODE=port; ADAPT=baseport
+	MODE=port; ADAPT=baseport VRDEF="-DPGSHIFT=12 -DVR_UP"
 else
-	MODE=stock; ADAPT=basestock
+	MODE=stock; ADAPT=basestock VRDEF="-DPGSHIFT=11"
 fi
 echo "[*] base $BASE ($MODE)"
 
@@ -52,8 +52,9 @@ for s in macentry macintr pstartmac $ADAPT; do
 	m68k-cbm-sysv4-gcc -m68040 $DIAGAS -c "$MAC/$s.s" -o "$W/$s.o"
 done
 m68k-cbm-sysv4-gcc -m68040 -c "$MAC/boot/auxentry.s" -o "$W/auxentry.o"
-m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS $AMIX_DIAG_CFLAGS -m68040 -c "$MAC/macconf.c" -o "$W/macconf.o"
-OBJS="$W/macentry.o $W/auxentry.o $W/macconf.o $W/macintr.o $W/pstartmac.o $W/$ADAPT.o"
+m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS $AMIX_DIAG_CFLAGS $VRDEF -m68040 -c "$MAC/macconf.c" -o "$W/macconf.o"
+m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS $VRDEF -m68040 -c "$MAC/vmrgn/vmrgn.c" -o "$W/vmrgn.o"
+OBJS="$W/macentry.o $W/auxentry.o $W/macconf.o $W/vmrgn.o $W/macintr.o $W/pstartmac.o $W/$ADAPT.o"
 
 echo "[*] drivers: SCC tty, 53C96 SCSI, RAM disk, frame-buffer console, ADB, SONIC, RTC, display, sound"
 sh "$MAC/scc/build.sh" "$W/scc"
@@ -99,9 +100,9 @@ echo "[*] uiomove: kernel writes through segkmap mark the pages modified"
 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68040 -c "$MAC/s5dir/uiomod.c" -o "$W/uiomod.o"
 OBJS="$OBJS $W/uiomod.o"
 
-# Nothing in macconf.o may live in .bss: config() runs before BSS is cleared.
-if m68k-linux-gnu-nm "$W/macconf.o" | grep -q ' [bBC] '; then
-	echo "[FAIL] macconf.o has BSS/common symbols"; exit 1
+# Nothing in macconf.o or vmrgn.o may live in .bss: config() runs before BSS is cleared.
+if m68k-linux-gnu-nm "$W/macconf.o" "$W/vmrgn.o" | grep -q ' [bBC] '; then
+	echo "[FAIL] macconf.o or vmrgn.o has BSS/common symbols"; exit 1
 fi
 
 # Amiga platform entry points replaced for the Mac.
@@ -112,12 +113,13 @@ ramopen ramclose ramstrategy ramprint ramsize
 config_orig
 dmainit
 ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig
-clkset stime mdboot $VTOP $PTALLOC"
+clkset stime mdboot memialloc $VTOP $PTALLOC"
 # Amiga data replaced: the console streamtab named by cdevsw[0] and oncons(),
 # the device switches and io_start[].
 OVRD="coinfo cdevsw bdevsw io_start execsw fmodsw"
 # Stock bodies kept under __amix_<name>: the wrappers and dlm_init call them.
-ALIAS="sendsig:T valid_usr_range:T fsig:T execsw:D stime:T fmodsw:D"
+ALIAS="sendsig:T valid_usr_range:T fsig:T execsw:D stime:T fmodsw:D memialloc:T"
+[ $MODE = port ] && OVR="$OVR sysseginit" ALIAS="$ALIAS sysseginit:T"
 [ -n "$PTALLOC" ] && ALIAS="$ALIAS hat_ptalloc:T" GLOB=freemem_wait
 
 echo "[*] FPU probe: null or idle frame, boot option nofpu"
@@ -165,6 +167,10 @@ for a in $ALIAS; do
 	if [ "$t" = T ]; then sec=.text kind=function; else sec=.data kind=object; fi
 	WEAK="$WEAK --add-symbol __amix_$s=$sec:0x$off,$kind,global"
 done
+# kvm_init is local; vr_setup() patches its page-array sizing
+off=$(m68k-linux-gnu-nm "$BASE" | awk '$3=="kvm_init" && $2=="t"{print $1}')
+[ -n "$off" ] || { echo "[FAIL] no kvm_init"; exit 1; }
+WEAK="$WEAK --add-symbol __amix_kvm_init=.text:0x$off,function,global"
 m68k-linux-gnu-objcopy $WEAK "$BASE" "$W/base.weak"
 python3 "$MAC/patch_s5pages.py" "$W/base.weak"
 [ $MODE = stock ] || python3 "$MAC/vtop/patch_vtop.py" "$W/base.weak"

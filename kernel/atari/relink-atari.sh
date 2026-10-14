@@ -37,7 +37,8 @@ echo "[*] Atari platform objects"
 for s in ataboot ataentry ataintr; do
 	$CC -c "$A/$s.s" -o "$W/$s.o"
 done
-for c in "$A/ataconf.c" "$A/ikbd.c" "$A/atadevsw.c" "$K/mac/video/fbcons.c" "$K/mac/video/fbfont.c"; do
+for c in "$A/ataconf.c" "$A/ikbd.c" "$A/atadevsw.c" "$K/mac/video/fbcons.c" "$K/mac/video/fbfont.c" \
+	"$K/mac/vmrgn/vmrgn.c"; do
 	o="$W/$(basename "$c" .c).o"
 	$CC $CFLAGS -c "$c" -o "$o" 2> "$o.warn" || { cat "$o.warn"; exit 1; }
 	[ -s "$o.warn" ] && { cat "$o.warn"; echo "[FAIL] $c: warnings"; exit 1; }
@@ -113,7 +114,7 @@ echo "[*] loadable modules and guest processes"
 sh "$K/dlm/build.sh" -k "$W/dlm"
 sh "$K/guest/build.sh" -k "$BASE" "$W/guest"
 
-OBJS="$W/dlm/dlm.o $W/guest/guest.o $W/ataentry.o $W/ataintr.o $W/ataconf.o $W/ikbd.o $W/fbcons.o $W/fbfont.o
+OBJS="$W/dlm/dlm.o $W/guest/guest.o $W/ataentry.o $W/ataintr.o $W/ataconf.o $W/vmrgn.o $W/ikbd.o $W/fbcons.o $W/fbfont.o
 $W/atadevsw.o $W/atacons.o $W/ds.o $W/atads.o $W/ataide.o $W/ahdi.o $W/atartc.o $W/atafsflush.o $W/rd.o $RDB/rdimage.o
 $W/fpe030.o $FPEOBJS $W/fpe-obj/fpe_glue.o $W/fpe040.o"
 
@@ -122,12 +123,12 @@ p1int p2int p3int p4int p5int p6int parinit qlintr slpoll autocon delayus
 ramopen ramclose ramstrategy ramprint ramsize backtrace fpu_setup inituname
 sdopen sdqueue sdhardwarename sdpartition sdvalid sdblkno sddevsize
 prhasfp fpuinit fpu_save fpu_restore setregs clkset
-dmainit ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig mdboot fsflush"
+dmainit ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig mdboot fsflush memialloc"
 # Amiga data replaced: the console streamtab, the device switches and the
 # exec and STREAMS module switches.
 OVRD="coinfo cdevsw bdevsw execsw fmodsw"
 # Stock bodies kept under __amix_<name> for the wrappers.
-ALIAS="fpu_setup:T inituname:T sendsig:T valid_usr_range:T fsig:T execsw:D fmodsw:D"
+ALIAS="fpu_setup:T inituname:T sendsig:T valid_usr_range:T fsig:T execsw:D fmodsw:D memialloc:T"
 # Stock bodies the emulator chains to, as <name>_fpe_orig.
 FPEORIG="fpuinit fpu_save fpu_restore setregs"
 
@@ -150,6 +151,10 @@ for a in $ALIAS; do
 	if [ "$t" = T ]; then sec=.text kind=function; else sec=.data kind=object; fi
 	WEAK="$WEAK --add-symbol __amix_$s=$sec:0x$off,$kind,global"
 done
+# kvm_init is local; vr_setup() patches its page-array sizing
+off=$(m68k-linux-gnu-nm "$BASE" | awk '$3=="kvm_init" && $2=="t"{print $1}')
+[ -n "$off" ] || { echo "[FAIL] no kvm_init"; exit 1; }
+WEAK="$WEAK --add-symbol __amix_kvm_init=.text:0x$off,function,global"
 for t in c b; do
 	want=$(m68k-linux-gnu-nm "$BASE" | awk -v s=shadow${t}sw '$3==s{print $1}')
 	have=$(m68k-linux-gnu-nm -S "$W/atadevsw.o" | awk -v s=${t}devsw '$4==s{print $2}')

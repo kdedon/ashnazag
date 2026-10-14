@@ -673,10 +673,10 @@ Slowest target: 030/25 MHz; reference 040/25 MHz.
 |---|---|---|
 | user ROMs (Mac, Kickstart, TOS), AmigaOS 3.2, TOS installs, A/UX, P96, NVDI | proprietary | user-supplied only; never bundled, never modified on disk |
 | in-memory ROM adaptation | patch lists hold offsets, expected bytes and our replacement code, keyed by hash; no ROM content | shipped with the launcher |
-| our kernel modules, launchers, headers | ours; headers MIT/BSD | yes |
-| our Amiga resident modules, `guestfs-handler`, P96 board driver, TOS cartridge image | ours: permissive (MIT/BSD) proposed so users and other projects can combine them freely; written from public manuals and SDK headers, no EmuTOS/AROS code (keeps them licence-clean) | yes, separate images |
+| our kernel modules, launchers, headers | ours: MIT (module tag "MIT"); third-party notices in `THIRD_PARTY.md` | yes |
+| our Amiga resident modules, `guestfs-handler`, P96 board driver, TOS cartridge image | ours: MIT, so users and other projects can combine them freely; written from public manuals and SDK headers, no EmuTOS/AROS code (keeps them licence-clean) | yes, separate images |
 | P96 board-driver interface headers | P96 SDK terms *(check before shipping the driver source)* | — |
-| EmuTOS, AROS container builds | GPL-2.0+, APL 1.1; separate images, source provided; never combined with each other | yes |
+| EmuTOS, AROS container builds | GPL-2.0+, APL 1.1; separate images, source provided; never combined with each other. GPL code ships only as separate programs or separately loaded modules, never linked into a kernel image | yes |
 | AMIX/ASV kernel objects | proprietary, local | unchanged |
 
 ## 15. Staged plan

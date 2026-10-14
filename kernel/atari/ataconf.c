@@ -24,9 +24,17 @@
 #define MACH_ATARI	2
 #define MAXCHUNK	4
 #define BISIZE		1024
-#define POOLSIZE	0x80000		/* ST-RAM kept from the VM: screen, DMA */
-#define SNDBUF		0x10000		/* below it, the DMA sound's ring */
+#define POOLSIZE	0x80000		/* ST-RAM kept from the VM for the screen */
+#define TTPOOL		0x26000		/* TT: 1280x960x1, 320x480x8 */
+#define MONOPOOL	0x8000		/* monochrome monitor: 640x400x1 */
+#define SNDBUF		0x10000		/* sound ring below the pool when ST-RAM is not VM */
 #define FASTRAM		0x01000000
+#define ST_LO		0x2000		/* ST-RAM below it: vectors, supervisor-only */
+#ifdef ATA060
+#define PGSHIFT		12
+#else
+#define PGSHIFT		11
+#endif
 #define ATA_MAXRAM	0x8000000	/* the 040's kvsegmap: 512 segments of 256 KB; kept on the 030 */
 #ifdef ATA060
 #define BI_ATARI_OSBASE	0x8f00		/* ours: physical start of the TOS image */
@@ -90,6 +98,10 @@
 extern char end[], stext[];
 extern unsigned long boot_arg0, boot_arg1;
 extern unsigned long MAINSTORE, VSIZOFMEM, chipmem;
+extern unsigned long vr_hi[];
+extern int vr_n, vr_low;
+extern void vr_init();
+extern int vr_add(), vr_setup();
 extern int kernel_load_address;
 extern unsigned long M68Kvec[];
 extern void ata_clkint(), ata_aciaint(), ata_sndint(), ata_mfpstray(), ata_fline();
@@ -120,7 +132,8 @@ int ata_ttmono = 1;			/* the TT's console is in TT high */
 unsigned long ata_chunk[MAXCHUNK][2] = { { 1, 1 } };
 int ata_nchunk = 1;
 unsigned long ata_pool = 1;		/* ST-RAM pool base */
-unsigned long ata_sndbuf = 1;		/* the sound ring, SNDBUF bytes of ST-RAM; 1 none */
+unsigned long ata_poolsz = 1;		/* its size: the monitor's largest mode */
+unsigned long ata_sndbuf = 1;		/* the sound ring in ST-RAM, set on first open; 1 none */
 unsigned long ata_screen = 1;
 unsigned long ata_nf = 1;		/* debug channel id, 0 off */
 int ata_nfwant = 1;
@@ -587,9 +600,9 @@ ata_video()
 			top = ata_chunk[i][1];
 	if (top < 2 * POOLSIZE)
 		return;
-	ata_pool = top - POOLSIZE;
+	ata_poolsz = ata_tt ? TTPOOL : MONTYPE >> 6 == MON_MONO ? MONOPOOL : POOLSIZE;
+	ata_pool = top - ata_poolsz;
 	ata_screen = ata_pool;
-	ata_sndbuf = ata_pool - SNDBUF;
 #ifdef ATA_SV
 	if (ata_svidel())
 		return;
@@ -946,12 +959,8 @@ unsigned long arg0, arg1;
 	}
 	if (VSIZOFMEM == 0)
 		ata_halt("config: no memory chunk holds the kernel");
-	if (MAINSTORE == 0 && VSIZOFMEM == ata_pool + POOLSIZE)
-		VSIZOFMEM = ata_sndbuf;
-	/* VM in FastRAM: ST-RAM is device memory */
-	for (i = 0; i < ata_nchunk; i++)
-		if (MAINSTORE && ata_chunk[i][0] == 0)
-			chipmem = ata_chunk[i][1];
+	if (MAINSTORE == 0 && VSIZOFMEM == ata_pool + ata_poolsz)
+		VSIZOFMEM = ata_pool;
 	if (MAINSTORE + VSIZOFMEM > ATA_MAXRAM) {
 		VSIZOFMEM = ATA_MAXRAM - MAINSTORE;
 		ata_puts("config: memory limited to 128 MB\n");
@@ -963,6 +972,24 @@ unsigned long arg0, arg1;
 	if (ata_osbase < MAINSTORE + VSIZOFMEM && ata_osbase + 0x100000 > MAINSTORE)
 		ata_osbase = 0;
 #endif
+	/* VM in FastRAM: ST-RAM below the DMA pool joins it */
+	vr_init(PGSHIFT);
+	for (i = 0; i < ata_nchunk; i++)
+		if (MAINSTORE && ata_chunk[i][0] == 0) {
+			k = ata_pool & 1 ? ata_chunk[i][1] : ata_pool;
+#ifdef ATA060
+			if (ata_osbase > ST_LO && ata_osbase < k)
+				k = ata_osbase;
+#endif
+			chipmem = ata_chunk[i][1];
+			if (vr_add(0UL, ST_LO, k))
+				chipmem -= k;
+		}
+	if (!vr_setup())
+		ata_puts("config: ST-RAM left out of the VM\n");
+	if (MAINSTORE && !vr_low && !(ata_pool & 1))
+		ata_sndbuf = ata_pool - SNDBUF;
+	k = (unsigned long)end;
 	if (ata_rootarg >= 0) {
 		(void)ata_rd_config(0);
 		rootdev = DD_BMAJ << 18 | ata_rootarg;
@@ -975,6 +1002,8 @@ unsigned long arg0, arg1;
 	putkv(" end ", k);
 	putkv(" pool ", ata_pool);
 	putkv(" chipmem ", chipmem);
+	if (vr_n)
+		putkv(" ST VM ", vr_hi[0] << PGSHIFT);
 #ifdef ATA060
 	putkv(" TOS ", ata_osbase);
 	putkv(" cm ", hat_cm_ram);

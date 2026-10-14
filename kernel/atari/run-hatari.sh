@@ -15,6 +15,7 @@
 #     -l FILE       Hatari log (default: next to the screenshot, .log)
 #     -k ELF        boot this kernel directly (Linux/m68k boot record)
 #     -a ARGS       kernel command line for -k
+#     -R IMAGE      root image for -k, in place of the linked-in one
 #     -K SCRIPT     drive the keyboard with hatari-keys.py (waits on the
 #                   console copy: give -a nfcons)
 #
@@ -28,14 +29,14 @@ if [ -z "$HATARI" ]; then
 	sh "$AUX/kernel/atari/build-hatari.sh" > /dev/null	# rebuilds after a patch changes
 fi
 MACH=falcon CPU=030 ST=14 TT=0 DISK= BUS=ide ROM= FRAMES=1500 OUT=./hatari-shot.png TMO=300 LOG=
-KERNEL= KARGS= KEYS=
-while getopts m:c:s:t:d:b:r:f:o:T:l:k:a:K: o; do
+KERNEL= KARGS= KEYS= RD=
+while getopts m:c:s:t:d:b:r:f:o:T:l:k:a:K:R: o; do
 	case $o in
 	m) MACH=$OPTARG ;; c) CPU=$OPTARG ;; s) ST=$OPTARG ;; t) TT=$OPTARG ;; d) DISK=$OPTARG ;;
 	b) BUS=$OPTARG ;; r) ROM=$OPTARG ;; f) FRAMES=$OPTARG ;; o) OUT=$OPTARG ;;
 	T) TMO=$OPTARG ;; l) LOG=$OPTARG ;; k) KERNEL=$OPTARG ;; a) KARGS=$OPTARG ;;
-	K) KEYS=$OPTARG ;;
-	*) sed -n '2,21p' "$0"; exit 2 ;;
+	K) KEYS=$OPTARG ;; R) RD=$OPTARG ;;
+	*) sed -n '2,22p' "$0"; exit 2 ;;
 	esac
 done
 shift $((OPTIND - 1))
@@ -77,8 +78,9 @@ fi
 if [ -n "$KERNEL" ]; then
 	case $KERNEL in /*) ;; *) KERNEL=$PWD/$KERNEL ;; esac
 	mkdir -p "$RUN/.config/hatari"
-	printf '[LILO]\nArgs =\nKernel = %s\nRamdisk = \nSymbols = \nKernelToFastRam = FALSE\nRamdiskToFastRam = FALSE\nHaltOnReboot = TRUE\n' \
-		"$KERNEL" > "$RUN/.config/hatari/hatari.cfg"
+	case $RD in /*|'') ;; *) RD=$PWD/$RD ;; esac
+	printf '[LILO]\nArgs =\nKernel = %s\nRamdisk = %s\nSymbols = \nKernelToFastRam = FALSE\nRamdiskToFastRam = %s\nHaltOnReboot = TRUE\n' \
+		"$KERNEL" "$RD" "$([ "$TT" -gt 0 ] && echo TRUE || echo FALSE)" > "$RUN/.config/hatari/hatari.cfg"
 	set -- --natfeats yes --lilo "${KARGS:- }" "$@"
 fi
 

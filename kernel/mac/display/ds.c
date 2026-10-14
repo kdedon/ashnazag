@@ -56,7 +56,7 @@ extern void ata_sput(), ata_sirq();
 extern int ata_vnative(), ata_brun(), ata_nvmode(), ata_vmfind();
 extern void ata_vminfo(), ata_vmset();
 extern unsigned long ata_vbytes();
-extern unsigned long ata_pool;
+extern unsigned long ata_pool, ata_poolsz;
 extern int ata_tt;
 static void ds_sndsave(), ds_sndload();
 static struct dsvid ds_vcons;		/* the mode under a Videl session */
@@ -1429,9 +1429,9 @@ ds_init()
 #endif
 #ifdef DS_ATARI
 	/* the console's screen opens the pool, which ends at the top of ST-RAM */
-	if (ds_disp.d_page >= ata_pool && ds_disp.d_page - ata_pool < DS_VPOOL &&
-	    ata_pool + DS_VPOOL - ds_disp.d_page > fi->fi_size)
-		ds_disp.d_vsize = ata_pool + DS_VPOOL - ds_disp.d_page;
+	if (ds_disp.d_page >= ata_pool && ds_disp.d_page - ata_pool < ata_poolsz &&
+	    ata_pool + ata_poolsz - ds_disp.d_page > fi->fi_size)
+		ds_disp.d_vsize = ata_pool + ata_poolsz - ds_disp.d_page;
 #endif
 	end = ds_disp.d_dafb ? DAFB_REG : (ds_disp.d_page & 0xFF000000) + 0x01000000;
 #ifdef ATA_SV

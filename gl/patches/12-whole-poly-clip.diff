@@ -1,0 +1,108 @@
+--- a/src/mtypes.h
++++ b/src/mtypes.h
+@@ -172,6 +172,8 @@
+  * in array_cache and tnl modules).
+  */
+ #define MAX_CLIPPED_VERTICES ((2 * (6 + MAX_CLIP_PLANES))+1)
++#define MAX_CLIPPED_POLY (32)
++#define MAX_CLIPPED_POLY_VERTICES (MAX_CLIPPED_POLY + MAX_CLIPPED_VERTICES)
+ 
+ 
+ /* Data structure for color tables */
+--- a/src/tnl/t_vb_cliptmp.h
++++ b/src/tnl/t_vb_cliptmp.h
+@@ -210,6 +210,55 @@
+ 
+ /* Clip a quad against the viewport and user clip planes.
+  */
++/* A convex polygon, start..count-1, clipped whole; start provokes. */
++static INLINE void
++TAG(clip_polygon)( GLcontext *ctx, GLuint start, GLuint count, GLubyte mask )
++{
++   TNLcontext *tnl = TNL_CONTEXT(ctx);
++   struct vertex_buffer *VB = &tnl->vb;
++   interp_func interp = tnl->Driver.Render.Interp;
++   GLfloat (*coord)[4] = VB->ClipPtr->data;
++   GLuint vlist[2][MAX_CLIPPED_POLY_VERTICES];
++   GLuint *inlist = vlist[0], *outlist = vlist[1];
++   GLuint p;
++   GLubyte *clipmask = VB->ClipMask;
++   GLuint n = count - start;
++
++   for (p = 0; p < n; p++)
++      inlist[p] = start + p;
++
++   VB->LastClipped = VB->FirstClipped;
++
++   if (mask & 0x3f) {
++      POLY_CLIP( CLIP_RIGHT_BIT,  -1,  0,  0, 1 );
++      POLY_CLIP( CLIP_LEFT_BIT,    1,  0,  0, 1 );
++      POLY_CLIP( CLIP_TOP_BIT,     0, -1,  0, 1 );
++      POLY_CLIP( CLIP_BOTTOM_BIT,  0,  1,  0, 1 );
++      POLY_CLIP( CLIP_FAR_BIT,     0,  0, -1, 1 );
++      POLY_CLIP( CLIP_NEAR_BIT,    0,  0,  1, 1 );
++   }
++
++   if (mask & CLIP_USER_BIT) {
++      for (p=0;p<MAX_CLIP_PLANES;p++) {
++	 if (ctx->Transform.ClipPlanesEnabled & (1 << p)) {
++            const GLfloat a = ctx->Transform._ClipUserPlane[p][0];
++            const GLfloat b = ctx->Transform._ClipUserPlane[p][1];
++            const GLfloat c = ctx->Transform._ClipUserPlane[p][2];
++            const GLfloat d = ctx->Transform._ClipUserPlane[p][3];
++	    POLY_CLIP( CLIP_USER_BIT, a, b, c, d );
++	 }
++      }
++   }
++
++   if (ctx->_TriangleCaps & DD_FLATSHADE) {
++      if (start != inlist[0])
++	 tnl->Driver.Render.CopyPV( ctx, inlist[0], start );
++   }
++
++   tnl->Driver.Render.ClippedPolygon( ctx, inlist, n );
++}
++
++
+ static INLINE void
+ TAG(clip_quad)( GLcontext *ctx, GLuint v0, GLuint v1, GLuint v2, GLuint v3,
+                 GLubyte mask )
+--- a/src/tnl/t_vb_render.c
++++ b/src/tnl/t_vb_render.c
+@@ -140,20 +140,31 @@
+    (void) (LineFunc && TriangleFunc && QuadFunc);		\
+    (void) elt; (void) mask; (void) sz; (void) stipple;
+ 
+-/* A primitive with no clipped vertex goes whole to the driver. */
++/* A primitive with no clipped vertex goes whole to the driver; so does a
++ * clipped polygon, after clipping.
++ */
+ static GLboolean unclipped( GLcontext *ctx, GLenum prim, GLuint start,
+ 			    GLuint count, GLuint flags )
+ {
+    TNLcontext *tnl = TNL_CONTEXT(ctx);
+    const GLubyte *mask = tnl->vb.ClipMask;
++   GLubyte ormask = 0, andmask = 0xff;
+    GLuint i;
+ 
+    if (!tnl->Driver.Render.UnclippedTab)
+       return GL_FALSE;
+-   for (i = start; i < count; i++)
+-      if (mask[i])
+-	 return GL_FALSE;
+-   tnl->Driver.Render.UnclippedTab[prim]( ctx, start, count, flags );
++   for (i = start; i < count; i++) {
++      ormask |= mask[i];
++      andmask &= mask[i];
++   }
++   if (!ormask) {
++      tnl->Driver.Render.UnclippedTab[prim]( ctx, start, count, flags );
++      return GL_TRUE;
++   }
++   if (prim != GL_POLYGON || count - start > MAX_CLIPPED_POLY)
++      return GL_FALSE;
++   if (!(andmask & 0x3f))
++      clip_polygon_4( ctx, start, count, ormask );
+    return GL_TRUE;
+ }
+ 

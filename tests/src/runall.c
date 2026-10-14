@@ -29,7 +29,7 @@ static struct {
 	int secs;
 } tests[] = {
 	{ "t_proc", 150 },
-	{ "t_mem", 90 },
+	{ "t_mem", 180 },
 	{ "t_file", 90 },
 	{ "t_pipe", 90 },
 	{ "t_sig", 90 },

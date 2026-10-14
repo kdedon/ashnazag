@@ -56,11 +56,12 @@ static void tdfx_amix_layout(drm_device_t *dev);
 
 /*
  * A client killed while it held the lock may have left half a packet in
- * the command fifo, and the next one would wait for the card forever:
- * start the fifo afresh.
+ * the command fifo, and the card would read the next client's words as
+ * its rest: finish it, then start the fifo afresh.
  */
 #define HAVE_DRIVER_RELEASE	1
-#define DRIVER_RELEASE()	tdfx_amix_layout(dev)
+#define DRIVER_RELEASE()	tdfx_amix_recover(dev)
+static void tdfx_amix_recover(drm_device_t *dev);
 #endif
 
 #define DRIVER_AUTHOR		"VA Linux Systems Inc."
@@ -189,6 +190,32 @@ tdfx_amix_layout(drm_device_t *dev)
 	sp->textureSize = back - tex;
 	sp->deviceID = id;
 	DRM_SAREA_SYNC();
+}
+
+/*
+ * Packets never cross the fifo's end, so zeros from the last word
+ * written up to it complete any packet and then read as no-ops.
+ */
+static void
+tdfx_amix_recover(drm_device_t *dev)
+{
+	struct drm_amixcard *c = &DRM(card);
+	tdfx_sarea_t *sp;
+	unsigned long a, end;
+
+	if (dev->lock.hw_lock == NULL)
+		return;
+	sp = (tdfx_sarea_t *)((char *)dev->lock.hw_lock + sizeof(drm_sarea_t));
+	end = sp->fifoOffset + sp->fifoSize;
+	if (sp->fifoSize != 0 && end <= c->c_fbsize) {
+		DRIVER_IDLE(dev);
+		a = DRM_READ32(c->c_reg + TDFX_FIFO(0x2c)) +
+		    4 * (DRM_READ32(c->c_reg + TDFX_FIFO(0x44)) & 0xffff);
+		if (a >= sp->fifoOffset && a < end)
+			for (; a < end; a += 4)
+				*(volatile u32 *)(c->c_fb + a) = 0;
+	}
+	tdfx_amix_layout(dev);
 }
 #else
 #include "drm_sysctl.h"

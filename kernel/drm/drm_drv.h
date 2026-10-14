@@ -1193,10 +1193,25 @@ int DRM(lock)( DRM_IOCTL_ARGS )
                         }
 
                                 /* Contention */
+#ifdef __AMIX__
+			/* a holder whose file lives on in another process */
+			if ( DRM(amix_deadholder)(dev) ) {
+#if HAVE_DRIVER_RELEASE
+				DRIVER_RELEASE();
+#endif
+				DRM(lock_free)(dev, &dev->lock.hw_lock->lock,
+				    _DRM_LOCKING_CONTEXT(dev->lock.hw_lock->lock));
+				continue;
+			}
+			ret = DRM(tsleep)((caddr_t)&dev->lock.lock_queue, HZ);
+			if (ret == EBUSY)
+				ret = 0;
+#else
 			ret = tsleep((void *)&dev->lock.lock_queue,
 					PZERO|PCATCH,
 					"drmlk2",
 					0);
+#endif
 			if (ret)
 				break;
                 }

@@ -69,7 +69,7 @@ lcall(lvo, r)
 }
 
 static int opci_start();
-static void opci_list();
+static void opci_list(), opci_fixbars();
 
 static int
 opci_isr(oi)
@@ -420,9 +420,61 @@ opci_init(dir)
 	e = opci_start(buf, len);
 	amx_unlock();
 	amx_freefile(buf, len);		/* the hunks are copied out */
-	if (e == 0)
+	if (e == 0) {
+		opci_fixbars();
 		opci_list();
+	}
 	return e;
+}
+
+/*
+ * The library places BARs inside each window's ConfigDev address, our
+ * kernel mapping of the window.  The bridge decodes physical addresses:
+ * reprogram each BAR that lies in a mapped board with its physical
+ * address.  The library's records keep the kernel address, which is what
+ * drivers dereference.
+ */
+static void
+opci_fixbar(d, reg, mask)
+	struct opci_dev *d;
+	int reg;
+	unsigned long mask;
+{
+	unsigned long v = opci_cfgread(d, reg, 4), pa;
+
+	if ((v & mask) == 0 || (pa = am_boardpa((char *)(v & mask))) == ~0UL ||
+	    pa == (v & mask))
+		return;
+	opci_cfgwrite(d, reg, 4, pa | (v & ~mask));
+}
+
+static void
+opci_fixbars()
+{
+	struct opci_dev *d = 0;
+	unsigned long cmd, v;
+	int reg, nbar, rom;
+
+	while ((d = opci_find(d, OPCI_ANY, OPCI_ANY)) != 0) {
+		if ((opci_cfgread(d, 0x0e, 1) & 0x7f) == 1) {
+			nbar = 2;
+			rom = 0x38;
+		} else {
+			nbar = 6;
+			rom = 0x30;
+		}
+		cmd = opci_cfgread(d, OPCI_CFG_COMMAND, 2);
+		opci_cfgwrite(d, OPCI_CFG_COMMAND, 2,
+		    cmd & ~(OPCI_CMD_IO | OPCI_CMD_MEMORY));
+		for (reg = OPCI_CFG_BAR0; reg < OPCI_CFG_BAR0 + 4 * nbar; reg += 4) {
+			v = opci_cfgread(d, reg, 4);
+			opci_fixbar(d, reg, v & 1 ? ~3UL : ~15UL);
+			if ((v & 7) == 4)		/* 64-bit: skip the high half */
+				reg += 4;
+		}
+		opci_fixbar(d, rom, ~0x7ffUL);
+		opci_cfgwrite(d, OPCI_CFG_COMMAND, 2, cmd);
+	}
 }
 
 static int

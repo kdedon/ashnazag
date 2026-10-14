@@ -7,7 +7,7 @@
  * by address, the copy of whoever runs is in place and the others' are
  * in their save buffers, swapped as processes switch:
  *
- *	block --- shreg (live: P) --- P's shadow (save: stale)
+ *	block --- shreg (live: P) --- P's shadow (no save)
  *	                          \-- C's shadow (save: C's copy)
  */
 #include "xamint.h"
@@ -38,7 +38,26 @@ shadow_of(struct kp *k, struct shreg *r)
 	return 0;
 }
 
-/* k's copies in place before it runs */
+/* exchange n bytes at a and b */
+static void
+memswap(char *a, char *b, long n)
+{
+	long t, *la = (long *)a, *lb = (long *)b;
+	char c;
+
+	for (; n >= 4; n -= 4) {
+		t = *la;
+		*la++ = *lb;
+		*lb++ = t;
+	}
+	for (a = (char *)la, b = (char *)lb; n > 0; n--) {
+		c = *a;
+		*a++ = *b;
+		*b++ = c;
+	}
+}
+
+/* k's copies in place before it runs; the live copy takes k's buffer */
 void
 fork_swapin(struct kp *k)
 {
@@ -49,9 +68,14 @@ fork_swapin(struct kp *k)
 		r = s->r;
 		if (r->live == k)
 			continue;
-		if (r->live && (o = shadow_of(r->live, r)) != 0)
-			memcpy(o->save, r->addr, r->len);
-		memcpy(r->addr, s->save, r->len);
+		if (r->live && (o = shadow_of(r->live, r)) != 0) {
+			memswap(r->addr, s->save, r->len);
+			o->save = s->save;
+		} else {
+			memcpy(r->addr, s->save, r->len);
+			kfree_any(s->save);
+		}
+		s->save = 0;
 		r->live = k;
 	}
 }
@@ -133,15 +157,12 @@ share_mem(struct kp *p, struct kp *c)
 		if (!s) {
 			r = kmalloc_o(sizeof *r, 0);
 			s = kmalloc_o(sizeof *s, 0);
-			if (s)
-				s->save = kmalloc_o(len, 0);
-			if (!r || !s || !s->save) {
-				if (s && s->save)
-					kfree_any(s->save);
+			if (!r || !s) {
 				kfree_any(s);
 				kfree_any(r);
 				return ENOMEM;
 			}
+			s->save = 0;
 			r->addr = (char *)a;
 			r->len = len;
 			r->live = p;

@@ -1,0 +1,102 @@
+--- a/src/dd.h
++++ b/src/dd.h
+@@ -584,6 +584,11 @@
+    void (*UnlockArraysEXT)( GLcontext *ctx );
+    /* Called by glLockArraysEXT() and glUnlockArraysEXT(), respectively.
+     */
++
++   void (*MultiDrawArrays)( GLenum mode, GLint *first, GLsizei *count,
++			    GLsizei primcount );
++   /* glMultiDrawArraysEXT(), if better than a glDrawArrays() loop.
++    */
+ };
+ 
+ 
+--- a/src/varray.c
++++ b/src/varray.c
+@@ -808,6 +808,11 @@
+ 
+    ASSERT_OUTSIDE_BEGIN_END_AND_FLUSH(ctx);
+ 
++   if (ctx->Driver.MultiDrawArrays) {
++      ctx->Driver.MultiDrawArrays(mode, first, count, primcount);
++      return;
++   }
++
+    for (i = 0; i < primcount; i++) {
+       if (count[i] > 0) {
+          (ctx->Exec->DrawArrays)(mode, first[i], count[i]);
+--- a/src/tnl/t_array_api.c
++++ b/src/tnl/t_array_api.c
+@@ -250,6 +250,60 @@
+ /**
+  * Called via the GL API dispatcher.
+  */
++/* Adjacent primitives, e.g. first {0,4,9} count {4,5,3}, share one
++ * vertex buffer and one pipeline run.
++ */
++void
++_tnl_MultiDrawArrays( GLenum mode, GLint *first, GLsizei *count,
++		      GLsizei primcount )
++{
++   GET_CURRENT_CONTEXT(ctx);
++   TNLcontext *tnl = TNL_CONTEXT(ctx);
++   struct vertex_buffer *VB = &tnl->vb;
++   const GLint max = ctx->Const.MaxArrayLockSize;
++   GLint i, j, k, start, end, last;
++
++   for (i = 0; i < primcount; i = j) {
++      j = i + 1;
++      if (count[i] <= 0)
++	 continue;
++      if (ctx->CompileFlag || ctx->Array.LockCount || count[i] > max) {
++	 _tnl_DrawArrays( mode, first[i], count[i] );
++	 continue;
++      }
++      start = first[i];
++      end = start + count[i];
++      last = i;
++      for ( ; j < primcount; j++) {
++	 if (count[j] <= 0)
++	    continue;
++	 if (first[j] != end || end + count[j] - start > max)
++	    break;
++	 end += count[j];
++	 last = j;
++      }
++
++      if (!_mesa_validate_DrawArrays( ctx, mode, start, end - start ))
++	 return;
++      if (tnl->pipeline.build_state_changes)
++	 _tnl_validate_pipeline( ctx );
++      FLUSH_CURRENT( ctx, 0 );
++
++      _tnl_vb_bind_arrays( ctx, start, end );
++      VB->FirstPrimitive = 0;
++      for (k = i; k <= last; k++) {
++	 if (count[k] > 0) {
++	    VB->Primitive[first[k] - start] = mode | PRIM_BEGIN | PRIM_END;
++	    VB->PrimitiveLength[first[k] - start] = count[k];
++	 }
++      }
++      VB->Primitive[first[last] - start] |= PRIM_LAST;
++      tnl->pipeline.run_input_changes |= ctx->Array._Enabled;
++      tnl->Driver.RunPipeline( ctx );
++      tnl->pipeline.run_input_changes |= ctx->Array._Enabled;
++   }
++}
++
+ void
+ _tnl_DrawRangeElements(GLenum mode,
+ 		       GLuint start, GLuint end,
+--- a/src/tnl/tnl.h
++++ b/src/tnl/tnl.h
+@@ -74,4 +74,8 @@
+ extern void
+ _tnl_isolate_materials( GLcontext *ctx, GLboolean flag );
+ 
++extern void
++_tnl_MultiDrawArrays( GLenum mode, GLint *first, GLsizei *count,
++		      GLsizei primcount );
++
+ #endif

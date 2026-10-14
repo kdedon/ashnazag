@@ -1,6 +1,6 @@
 /*
  * Portions Copyright (c) 2026 Kevin Dedon.
- * SPDX-License-Identifier: GPL-2.0
+ * SPDX-License-Identifier: MIT
  */
 /*
  * type.c - TYPE, the CP/M 3 text file lister, for the C900.

@@ -1,0 +1,37 @@
+--- a/src/tnl/t_vb_render.c
++++ b/src/tnl/t_vb_render.c
+@@ -161,6 +161,23 @@
+       tnl->Driver.Render.UnclippedTab[prim]( ctx, start, count, flags );
+       return GL_TRUE;
+    }
++   if (prim == GL_TRIANGLES) {
++      /* runs of unclipped triangles go whole */
++      GLuint j = start, k;
++      while (j + 2 < count) {
++	 for (k = j; k + 2 < count && !(mask[k] | mask[k+1] | mask[k+2]); k += 3)
++	    ;
++	 if (k > j)
++	    tnl->Driver.Render.UnclippedTab[prim]( ctx, j, k, flags );
++	 if (k + 2 < count)
++	    tnl->Driver.Render.PrimitiveNotify( ctx, GL_TRIANGLES );
++	 for (j = k; j + 2 < count && (ormask = mask[j] | mask[j+1] | mask[j+2]);
++	      j += 3)
++	    if (!(mask[j] & mask[j+1] & mask[j+2] & 0x3f))
++	       clip_tri_4( ctx, j, j + 1, j + 2, ormask );
++      }
++      return GL_TRUE;
++   }
+    if (prim != GL_POLYGON || count - start > MAX_CLIPPED_POLY)
+       return GL_FALSE;
+    if (!(andmask & 0x3f))
+--- a/src/tnl/t_vb_rendertmp.h
++++ b/src/tnl/t_vb_rendertmp.h
+@@ -172,7 +172,7 @@
+ 	 RESET_STIPPLE;
+ 	 RENDER_TRI( ELT(j-2), ELT(j-1), ELT(j) );
+       }
+-   } else {
++   } else if (!UNCLIPPED(GL_TRIANGLES, start, count, flags)) {
+       for (j=start+2; j<count; j+=3) {
+ 	 RENDER_TRI( ELT(j-2), ELT(j-1), ELT(j) );
+       }

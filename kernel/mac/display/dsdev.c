@@ -27,6 +27,7 @@
 extern struct fbpmode fbp_mode[];
 extern int fbp_nmode, fbp_cur;
 extern int getf();
+extern void delay();
 extern struct streamtab coinfo;
 
 static struct pollhead ds_noph;
@@ -343,6 +344,7 @@ int *rvalp;
 {
 	register struct dsfbh *h = ds_fbhandle(dev);
 	register struct dssess *s, *t;
+	int n, e;
 	struct fbstate st;
 	struct fbinfo fi;
 	unsigned long v;
@@ -386,7 +388,10 @@ int *rvalp;
 			return EINVAL;
 		if (!ds_mayfront(cr))
 			return EPERM;
-		return ds_switch(t);
+		/* a client holding the card's lock gets its second to let go */
+		for (n = 0; (e = ds_switch(t)) == EBUSY && n < 20; n++)
+			delay(HZ / 10);
+		return e;
 	case FBIOGSTATE:
 		st.st_session = s ? s->s_id : -1;
 		st.st_front = ds_front->s_id;

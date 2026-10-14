@@ -4,7 +4,8 @@
 # RTL8029 on PCI.  Serial goes to TCP port SERPORT (default 1235).
 # MACHINE: a3000 (default; the disk is SCSI unit 6) or a4000 (AGA; the
 # disk is the IDE master).  BRIDGE: prometheus (default) or mediator
-# (a Mediator 4000 Mk II).
+# (a Mediator 4000 Mk II; MEDWIN=512 for its 512 MB window).  Z3MAP:
+# Zorro III placement (default uae; real puts boards from 0x40000000).
 #
 #   sh winuae.sh hdfdir [seconds]
 #
@@ -76,7 +77,7 @@ a3000mem_size=16
 mbresmem_size=32
 fastmem_size=0
 z3mem_size=0
-z3mapping=uae
+z3mapping=${Z3MAP:-uae}
 $(if [ "$MACHINE" = a4000 ]; then
 	printf '%s\n' "hardfile2=rw,DH1:$(win "$H/amix.hdf"),0,0,0,512,0,,ide0_mainboard"
 else
@@ -89,7 +90,7 @@ sound_output=none
 gfx_api=directdraw
 ${BRIDGE}_rom_file=:ENABLED
 EOF
-[ "$BRIDGE" != mediator ] || echo "mediator_rom_options=subtype=4000mkii" >> "$C"
+[ "$BRIDGE" != mediator ] || echo "mediator_rom_options=subtype=4000mkii$([ "$MEDWIN" != 512 ] || echo ,winsize)" >> "$C"
 for c in $CARDS; do
 	echo "${c}_rom_file=:ENABLED" >> "$C"
 done

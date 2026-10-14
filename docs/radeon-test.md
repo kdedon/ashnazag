@@ -14,7 +14,8 @@ Radeon (part B).
 - **Disk:** the disk at **SCSI ID 0** on the CyberStorm's SCSI, 512 MB or more.
   Its contents will be erased. On a ZuluSCSI, put `amix.hdf` on the SD card as
   the ID 0 image (e.g. `HD00_512.hda`) and keep your own ID 0 image aside. A
-  CD-ROM at ID 1 can stay. The disk starts Unix by itself.
+  CD-ROM at ID 1 can stay. The disk starts Unix by itself. Unix finds its root
+  only at ID 0.
 - **PCI bridge:** a Mediator for the A4000. Tell us which one exactly (the model and
   revision printed on the board, e.g. 4000Di MK-III or 4000D), its jumper settings
   and how it is powered.
@@ -64,8 +65,34 @@ enough space" error a ZZ9000 can show after several display restarts.
    | blue | starting the console |
    | text | console up; the stages above passed |
 
-   Unix loads at 0x07000000, so it needs the full 16 MB of motherboard fast
-   RAM. The console's `Total Unix memory` line should read about 80 MB.
+   Unix loads at 0x08000000, the start of the CyberStorm's RAM, and adds the
+   motherboard's fast RAM below it when AmigaOS lists it; it needs none. With
+   16 MB on the motherboard and 64 MB on the card, the console's `Total Unix
+   memory` line reads about 80 MB.
+
+   **If it stops on red or yellow**, reset (Ctrl-Amiga-Amiga) and boot AmigaOS
+   from your own disk, or from the Early Startup menu. Unix leaves its progress
+   in chip RAM at 0x1000 and again at 0x1FF000. Read it in a Shell:
+
+   ```
+   RexxMast
+   rx AmigaBoot:amxmarks.rexx
+   ```
+
+   It prints one line per copy, e.g.
+   `00001000 414D5842 n 37 mark 00000015 prev 00000013 arg 00104000 mem 15 00000000`.
+   A line starting `414D5842` ("AMXB") is valid; photo or copy both lines.
+   `mark` is the last step reached:
+
+   | mark | step |
+   |---|---|
+   | 1, 2, 3, 4 | entry, memory list, memory sized, boards quiet (red) |
+   | 5, 41 ('A') to 48 ('H') | memory map: start, tables, MMU on (43 twice), caches on (44), mlsetup (45-48) (yellow) |
+   | 11 to 22, 30 | steps inside the memory map; 30 is clearing memory, `arg` the address reached |
+   | 6 | memory map done (green) |
+
+   To check the method first: after a normal boot to `login:`, reset and read
+   the marks; `mark 00000006` means they survive a reset on your machine.
 
 3. **Log in** as `root` (no password). A list of commands appears. Photo it.
 
@@ -78,7 +105,10 @@ A1. **Card check.** Type `drmtest`. Photo the output; the last line should be
 A2. **X and 3D.** Type `startx`. In the window that opens, type `glxgears -info`.
     Photo the gears and the text. Wait 15 seconds and photo the frames per second.
     Ctrl-C. Then `LIBGL_FORCE_XMESA=1 glxgears` (software), wait 15 seconds, photo
-    the numbers, Ctrl-C. Leave X: click the background, choose Exit.
+    the numbers, Ctrl-C. Then `glprobe` and photo its lines (two photos if they
+    scroll). A real Voodoo3 should show `lm lum = 150 90 30` and
+    `mip bias 0 q 1: 0 1 2 3 4 5 6`; send the photo whatever it shows. Leave X:
+    click the background, choose Exit.
 A3. **Amiga environment.** Type `startmig`. Workbench comes up inside Unix (this
     can take a few minutes). Open a Shell there and type `w3dtest`. Photo the
     picture and the text. Ctrl-Alt-0 goes back to the Unix console; Ctrl-C there

@@ -51,14 +51,14 @@
 #define R_ATTEN		0x3A
 #define GPIP		(*(VOL unsigned char *)0xFFFFFA01UL)
 
-#define RING		0x10000		/* = SNDBUF in the platform code */
+#define RING		0x10000
 #define BLOCK		0x1000		/* one DMA frame of the chain */
 #define BOUNCE		1024		/* write() moves this much per step */
 #define TICKUS		10000
 #define PRI		((PZERO + 1) | PCATCH)
 #define USED(a, b)	(((b) - (a)) & (RING - 1))	/* bytes from a to b */
 
-extern unsigned long ata_sndbuf, ata_mch;
+extern unsigned long ata_sndbuf, ata_pool, ata_mch, vr_contig();
 extern void ata_sirq();
 extern int uiomove(), copyin(), copyout(), timeout(), drv_usectohz();
 extern void untimeout(), pollwakeup(), drv_usecwait(), bzero(), bcopy();
@@ -463,8 +463,6 @@ struct cred *cr;
 	case 1: case 2: snd.falcon = 0; break;
 	default: return ENXIO;
 	}
-	if (ata_sndbuf & 1)
-		return ENOMEM;
 	x = DS_SPL(DS_HI);
 	if (snd.open) {
 		DS_SPLX(x);
@@ -472,6 +470,13 @@ struct cred *cr;
 	}
 	snd.open = 1;
 	DS_SPLX(x);
+	/* the ring: ST-RAM taken from the VM on first use */
+	if ((ata_sndbuf & 1) &&
+	    (ata_pool & 1 || (ata_sndbuf = vr_contig(RING, ata_pool)) == 0)) {
+		ata_sndbuf = 1;
+		snd.open = 0;
+		return ENOMEM;
+	}
 	snd.ring = (caddr_t)ata_sndbuf;
 	snd.playing = snd.chained = 0;
 	bzero(snd.ring, RING);

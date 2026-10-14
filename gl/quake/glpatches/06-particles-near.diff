@@ -1,0 +1,23 @@
+--- a/src/r_part.c
++++ b/src/r_part.c
+@@ -713,6 +713,10 @@
+ 		// hack a scale up to keep particles from disapearing
+ 		scale = (p->org[0] - r_origin[0])*vpn[0] + (p->org[1] - r_origin[1])*vpn[1]
+ 			+ (p->org[2] - r_origin[2])*vpn[2];
++#ifdef AMIX
++		// all of it lies at this depth: nothing to draw before the near plane
++		if (scale >= 4) {
++#endif
+ 		if (scale < 20)
+ 			scale = 1;
+ 		else
+@@ -724,6 +728,9 @@
+ 		glVertex3f (p->org[0] + up[0]*scale, p->org[1] + up[1]*scale, p->org[2] + up[2]*scale);
+ 		glTexCoord2f (0,1);
+ 		glVertex3f (p->org[0] + right[0]*scale, p->org[1] + right[1]*scale, p->org[2] + right[2]*scale);
++#ifdef AMIX
++		}
++#endif
+ #else
+ 		D_DrawParticle (p);
+ #endif

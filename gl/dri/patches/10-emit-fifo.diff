@@ -1,0 +1,274 @@
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_context.h
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_context.h
+@@ -922,6 +922,7 @@
+    
+    GLuint SetupIndex;
+    GLuint SetupNewInputs;
++   void *EmitFifo;		/* writes this buffer's vertices to the fifo */
+    GLuint RenderIndex;
+    GLuint RenderWanted;
+    GLuint Fallback;
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tris.c
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tris.c
+@@ -558,6 +558,24 @@
+  * there is no clipping.
+  */
+ 
++#if defined(__AMIX__) && defined(__m68k__)
++extern void grDrawEmit( FxU32 mode, FxI32 count,
++			FxU32 *(*emit)(void *, FxU32 *, FxI32, FxI32),
++			void *arg );
++
++#define EMIT_FIFO( mode )						\
++   if (fxMesa->EmitFifo) {						\
++      struct tdfx_emit_arg a;						\
++      a.ctx = ctx;							\
++      a.start = start;							\
++      grDrawEmit( mode, count - start,				\
++		  (FxU32 *(*)(void *, FxU32 *, FxI32, FxI32))fxMesa->EmitFifo, &a ); \
++      return;								\
++   }
++#else
++#define EMIT_FIFO( mode )
++#endif
++
+ static void tdfx_render_vb_points( GLcontext *ctx,
+ 				      GLuint start,
+ 				      GLuint count,
+@@ -717,6 +735,8 @@
+    else
+       mode = GR_TRIANGLE_STRIP;
+ 
++   EMIT_FIFO( mode );
++
+    fxMesa->Glide.grDrawVertexArrayContiguous( mode, count-start,
+                                               fxVB, 1<<shift);
+ }
+@@ -732,6 +752,8 @@
+    char *fxVB = fxMesa->verts + (start << shift);
+    (void) flags;
+ 
++   EMIT_FIFO( GR_TRIANGLE_FAN );
++
+    fxMesa->Glide.grDrawVertexArrayContiguous( GR_TRIANGLE_FAN, count-start,
+                                               fxVB, 1<<shift );
+ }
+@@ -780,7 +802,8 @@
+    GLuint shift = fxMesa->vertex_stride_shift;
+    char *fxVB = fxMesa->verts + (start << shift);
+    (void) flags;
+-   
++
++   EMIT_FIFO( GR_POLYGON );
+    fxMesa->Glide.grDrawVertexArrayContiguous( GR_POLYGON, count-start,
+                                               fxVB, 1<<shift);
+ }
+@@ -1181,6 +1204,7 @@
+ {
+    tdfxContextPtr fxMesa = TDFX_CONTEXT(ctx);
+ 
++   fxMesa->EmitFifo = NULL;
+    if (fxMesa->RenderIndex & TDFX_FALLBACK_BIT)
+       _swrast_flush( ctx );
+ 
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_vb.c
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_vb.c
+@@ -258,6 +258,168 @@
+ }
+ 
+ 
++#if defined(__AMIX__) && defined(__m68k__)
++/* Unclipped strips, fans and polygons skip the vertex buffer: their
++ * vertices go straight into the fifo, which takes each word with its
++ * halves swapped.
++ */
++extern FxI32 grEmitParams( const int **list );
++
++static __inline__ GLuint fifo_f( GLfloat f )
++{
++   GLuint u;
++   __asm__("fmove%.s %1,%0\n\tswap %0" : "=d" (u) : "f" (f));
++   return u;
++}
++
++static __inline__ GLuint fifo_u( GLuint u )
++{
++   __asm__("swap %0" : "=d" (u) : "0" (u));
++   return u;
++}
++
++static __inline__ FxU32 *fifo_emit( struct tdfx_emit_arg *a, FxU32 *fifo,
++				    GLuint i, GLint n, int rgba, int tex1 )
++{
++   tdfxContextPtr fxMesa = TDFX_CONTEXT(a->ctx);
++   struct vertex_buffer *VB = &TNL_CONTEXT(a->ctx)->vb;
++   const GLfloat *s = fxMesa->hw_viewport;
++   const GLfloat sx = s[0], sy = s[5], sz = s[10];
++   const GLfloat tx = s[12], ty = s[13], tz = s[14];
++   const GLfloat u0 = fxMesa->sScale0, v0 = fxMesa->tScale0;
++   const GLfloat u1 = fxMesa->sScale1, v1 = fxMesa->tScale1;
++   const GLuint ps = VB->NdcPtr->stride, t0s = VB->TexCoordPtr[0]->stride;
++   const GLuint t1s = tex1 ? VB->TexCoordPtr[1]->stride : 0;
++   const GLuint cs = rgba ? VB->ColorPtr[0]->StrideB : 0;
++   const GLubyte *p = (GLubyte *)VB->NdcPtr->data + i * ps;
++   const GLubyte *t0 = (GLubyte *)VB->TexCoordPtr[0]->data + i * t0s;
++   const GLubyte *t1 = tex1 ? (GLubyte *)VB->TexCoordPtr[1]->data + i * t1s : 0;
++   const GLubyte *c = rgba ? (GLubyte *)VB->ColorPtr[0]->Ptr + i * cs : 0;
++   volatile GLuint *f = (volatile GLuint *)fifo;
++
++   for ( ; n > 0; n--) {
++      const GLfloat *v = (const GLfloat *)p;
++      const GLfloat w = v[3];
++      f[0] = fifo_f(sx * v[0] + tx);
++      f[1] = fifo_f(sy * v[1] + ty);
++      if (rgba) {
++	 union { GLuint ui; GLubyte ub[4]; } col;
++	 if (rgba == 2) {
++	    const GLfloat *fc = (const GLfloat *)c;
++	    UNCLAMPED_FLOAT_TO_UBYTE(col.ub[TDFX_CB], fc[2]);
++	    UNCLAMPED_FLOAT_TO_UBYTE(col.ub[TDFX_CG], fc[1]);
++	    UNCLAMPED_FLOAT_TO_UBYTE(col.ub[TDFX_CR], fc[0]);
++	    UNCLAMPED_FLOAT_TO_UBYTE(col.ub[TDFX_CA], fc[3]);
++	 } else {
++	    col.ub[TDFX_CB] = c[2];
++	    col.ub[TDFX_CG] = c[1];
++	    col.ub[TDFX_CR] = c[0];
++	    col.ub[TDFX_CA] = c[3];
++	 }
++	 f[2] = fifo_u(col.ui);
++	 f++;
++	 c += cs;
++      }
++      f[2] = fifo_f(sz * v[2] + tz);
++      f[3] = fifo_u(((const GLuint *)v)[3]);
++      f[4] = fifo_f(((const GLfloat *)t0)[0] * u0 * w);
++      f[5] = fifo_f(((const GLfloat *)t0)[1] * v0 * w);
++      if (tex1) {
++	 f[6] = fifo_f(((const GLfloat *)t1)[0] * u1 * w);
++	 f[7] = fifo_f(((const GLfloat *)t1)[1] * v1 * w);
++	 f += 2;
++	 t1 += t1s;
++      }
++      f += 6;
++      p += ps;
++      t0 += t0s;
++   }
++   return (FxU32 *)f;
++}
++
++static FxU32 *emit_fifo_t0( void *a, FxU32 *f, FxI32 first, FxI32 n )
++{
++   return fifo_emit(a, f, ((struct tdfx_emit_arg *)a)->start + first, n, 0, 0);
++}
++
++static FxU32 *emit_fifo_gt0( void *a, FxU32 *f, FxI32 first, FxI32 n )
++{
++   return fifo_emit(a, f, ((struct tdfx_emit_arg *)a)->start + first, n, 1, 0);
++}
++
++static FxU32 *emit_fifo_fgt0( void *a, FxU32 *f, FxI32 first, FxI32 n )
++{
++   return fifo_emit(a, f, ((struct tdfx_emit_arg *)a)->start + first, n, 2, 0);
++}
++
++static FxU32 *emit_fifo_fgt0t1( void *a, FxU32 *f, FxI32 first, FxI32 n )
++{
++   return fifo_emit(a, f, ((struct tdfx_emit_arg *)a)->start + first, n, 2, 1);
++}
++
++static FxU32 *emit_fifo_t0t1( void *a, FxU32 *f, FxI32 first, FxI32 n )
++{
++   return fifo_emit(a, f, ((struct tdfx_emit_arg *)a)->start + first, n, 0, 1);
++}
++
++static FxU32 *emit_fifo_gt0t1( void *a, FxU32 *f, FxI32 first, FxI32 n )
++{
++   return fifo_emit(a, f, ((struct tdfx_emit_arg *)a)->start + first, n, 1, 1);
++}
++
++/* The fifo emitter for this buffer, or NULL. */
++static void *choose_emit_fifo( GLcontext *ctx )
++{
++   tdfxContextPtr fxMesa = TDFX_CONTEXT(ctx);
++   TNLcontext *tnl = TNL_CONTEXT(ctx);
++   struct vertex_buffer *VB = &tnl->vb;
++   const GLuint wgt0 = TDFX_XYZ_BIT|TDFX_RGBA_BIT|TDFX_W_BIT|TDFX_TEX0_BIT;
++   GLuint i, flags = 0, tex1;
++   const int *l;
++   GLint n, k;
++
++   if (VB->ClipOrMask || VB->Elts || !tnl->Driver.Render.UnclippedTab ||
++       tnl->Driver.Render.PrimTabVerts != tnl->Driver.Render.UnclippedTab)
++      return NULL;
++   if (fxMesa->SetupIndex == wgt0)
++      tex1 = 0;
++   else if (fxMesa->SetupIndex == (wgt0|TDFX_TEX1_BIT))
++      tex1 = 1;
++   else
++      return NULL;
++   for (i = VB->FirstPrimitive; !(flags & PRIM_LAST);
++	i += VB->PrimitiveLength[i]) {
++      flags = VB->Primitive[i];
++      switch (flags & PRIM_MODE_MASK) {
++      case GL_TRIANGLE_STRIP:
++      case GL_TRIANGLE_FAN:
++      case GL_POLYGON:
++      case GL_POLYGON+1:
++	 break;
++      default:
++	 return NULL;
++      }
++   }
++   n = grEmitParams(&l);
++   k = n > 0 && l[0] == TDFX_ARGB_OFFSET;
++   if (n != k + 4 + 2 * tex1 || l[k] != TDFX_Z_OFFSET ||
++       l[k + 1] != TDFX_Q_OFFSET || l[k + 2] != TDFX_ST0_OFFSET ||
++       l[k + 3] != TDFX_ST0_OFFSET + 4)
++      return NULL;
++   if (tex1 && (l[k + 4] != TDFX_ST1_OFFSET || l[k + 5] != TDFX_ST1_OFFSET + 4))
++      return NULL;
++   if (k && VB->ColorPtr[0]->Type != GL_UNSIGNED_BYTE) {
++      /* float colours convert as they go */
++      if (VB->ColorPtr[0]->Type == GL_FLOAT && VB->ColorPtr[0]->Size == 4)
++	 return tex1 ? (void *)emit_fifo_fgt0t1 : (void *)emit_fifo_fgt0;
++      import_float_colors( ctx );
++   }
++   if (tex1)
++      return k ? (void *)emit_fifo_gt0t1 : (void *)emit_fifo_t0t1;
++   return k ? (void *)emit_fifo_gt0 : (void *)emit_fifo_t0;
++}
++#endif
++
+ void tdfxBuildVertices( GLcontext *ctx, GLuint start, GLuint count,
+ 			GLuint newinputs )
+ {
+@@ -265,6 +427,14 @@
+    char *v = (fxMesa->verts + (start<<fxMesa->vertex_stride_shift));
+    GLuint stride = 1<<fxMesa->vertex_stride_shift;
+ 
++#if defined(__AMIX__) && defined(__m68k__)
++   fxMesa->EmitFifo = choose_emit_fifo( ctx );
++   if (fxMesa->EmitFifo) {
++      /* the buffer stays stale */
++      fxMesa->SetupNewInputs |= VERT_BIT_CLIP;
++      return;
++   }
++#endif
+    newinputs |= fxMesa->SetupNewInputs;
+    fxMesa->SetupNewInputs = 0;
+ 
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_vb.h
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_vb.h
+@@ -62,6 +62,12 @@
+ 
+ extern void tdfxChooseVertexState( GLcontext *ctx );
+ 
++/* What the fifo emitter is handed: vertices first.. are start+first.. */
++struct tdfx_emit_arg {
++   GLcontext *ctx;
++   GLuint start;
++};
++
+ extern void tdfxBuildVertices( GLcontext *ctx, GLuint start, GLuint count,
+                                GLuint newinputs );
+ 

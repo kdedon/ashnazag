@@ -132,8 +132,9 @@ struct streamtab sninfo = {
 	&sn_rinit, &sn_winit, NULL, NULL,
 };
 
+extern unsigned long vr_contig();
+
 struct sn_softc sn_sc;
-unsigned char sn_pool[SN_POOLALLOC];	/* chip-visible: descriptors, buffers */
 struct sn_str sn_str[SN_NSTR];
 struct ifstats sn_ifstats;
 enum BOARD_STATE sn_bstate;
@@ -265,6 +266,7 @@ static int
 sn_start()
 {
 	unsigned char ea[6];
+	unsigned long pool;
 	char *how;
 	int s;
 
@@ -287,7 +289,12 @@ sn_start()
 		sn_up = -1;
 		return 0;
 	}
-	if (sn_attach(&sn_sc, sn_pool) < 0) {
+	/* chip-visible descriptors and buffers, taken from the VM */
+	if ((pool = vr_contig(SN_POOLALLOC, 0x40000000UL)) == 0) {
+		printf("sn0: no memory for the rings\n");
+		return 0;
+	}
+	if (sn_attach(&sn_sc, (unsigned char *)pool) < 0) {
 		sn_up = -1;
 		return 0;
 	}

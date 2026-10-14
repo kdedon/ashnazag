@@ -1,0 +1,11 @@
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tris.c
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tris.c
+@@ -897,7 +897,7 @@
+    tdfxContextPtr fxMesa = TDFX_CONTEXT( ctx );
+    GLubyte *vertptr = (GLubyte *)fxMesa->verts;			
+    const GLuint vertshift = fxMesa->vertex_stride_shift;       	
+-   void *v[MAX_CLIPPED_VERTICES];
++   void *v[MAX_CLIPPED_POLY_VERTICES];
+    int i;
+ 
+    /* one fan: a vertex per triangle instead of three */

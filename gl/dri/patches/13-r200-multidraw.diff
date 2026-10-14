@@ -1,0 +1,46 @@
+diff -ruN a/xc/lib/GL/mesa/src/drv/r200/r200_context.c b/xc/lib/GL/mesa/src/drv/r200/r200_context.c
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_context.c
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_context.c
+@@ -174,6 +174,8 @@
+    _mesa_enable_extension( ctx, "GL_EXT_texture_env_dot3" );
+    _mesa_enable_extension( ctx, "GL_EXT_texture_filter_anisotropic" );
+    _mesa_enable_extension( ctx, "GL_EXT_texture_lod_bias" );
++   _mesa_enable_extension( ctx, "GL_EXT_multi_draw_arrays" );
++   ctx->Driver.MultiDrawArrays = r200MultiDrawArrays;
+    _mesa_enable_extension( ctx, "GL_EXT_secondary_color" );
+    _mesa_enable_extension( ctx, "GL_EXT_blend_subtract" );
+    _mesa_enable_extension( ctx, "GL_EXT_blend_minmax" );
+diff -ruN a/xc/lib/GL/mesa/src/drv/r200/r200_vtxfmt.c b/xc/lib/GL/mesa/src/drv/r200/r200_vtxfmt.c
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_vtxfmt.c
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_vtxfmt.c
+@@ -371,6 +371,18 @@
+ }
+ 
+ 
++/* Arrays leave the immediate-mode path, as glDrawArrays does. */
++void r200MultiDrawArrays( GLenum mode, GLint *first, GLsizei *count,
++			  GLsizei primcount )
++{
++   GET_CURRENT_CONTEXT(ctx);
++
++   if (R200_CONTEXT(ctx)->vb.installed)
++      VFMT_FALLBACK_OUTSIDE_BEGIN_END( __FUNCTION__ );
++   _tnl_MultiDrawArrays( mode, first, count, primcount );
++}
++
++
+ static void VFMT_FALLBACK( const char *caller )
+ {
+    GLcontext *ctx = vb.context;
+diff -ruN a/xc/lib/GL/mesa/src/drv/r200/r200_vtxfmt.h b/xc/lib/GL/mesa/src/drv/r200/r200_vtxfmt.h
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_vtxfmt.h
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_vtxfmt.h
+@@ -52,6 +52,8 @@
+ 
+ extern void r200VtxfmtMakeCurrent( GLcontext *ctx );
+ extern void r200VtxfmtUnbindContext( GLcontext *ctx );
++extern void r200MultiDrawArrays( GLenum mode, GLint *first, GLsizei *count,
++				 GLsizei primcount );
+ 
+ extern void r200_copy_to_current( GLcontext *ctx );
+ 

@@ -1,0 +1,129 @@
+--- a/fxcmd.h
++++ b/fxcmd.h
+@@ -1021,6 +1021,34 @@
+   GR_INC_SIZE(sizeof(FxFloat)); \
+ } while(0)
+ 
++/* A vertex's parameters after x and y, the n offsets of tsuDataList,
++ * without walking the list.
++ */
++#define TRI_SETF_PARAMS(__v, __n) \
++do { \
++  const int *__e = gc->tsuDataList + (__n); \
++  switch (__n) { \
++  default: { \
++    int __k; \
++    for (__k = 0; __k < (__n) - 12; __k++) \
++      TRI_SETF(FARRAY(__v, gc->tsuDataList[__k])); \
++  } \
++  case 12: TRI_SETF(FARRAY(__v, __e[-12])); \
++  case 11: TRI_SETF(FARRAY(__v, __e[-11])); \
++  case 10: TRI_SETF(FARRAY(__v, __e[-10])); \
++  case 9: TRI_SETF(FARRAY(__v, __e[-9])); \
++  case 8: TRI_SETF(FARRAY(__v, __e[-8])); \
++  case 7: TRI_SETF(FARRAY(__v, __e[-7])); \
++  case 6: TRI_SETF(FARRAY(__v, __e[-6])); \
++  case 5: TRI_SETF(FARRAY(__v, __e[-5])); \
++  case 4: TRI_SETF(FARRAY(__v, __e[-4])); \
++  case 3: TRI_SETF(FARRAY(__v, __e[-3])); \
++  case 2: TRI_SETF(FARRAY(__v, __e[-2])); \
++  case 1: TRI_SETF(FARRAY(__v, __e[-1])); \
++  case 0: break; \
++  } \
++} while(0)
++
+ #define TRI_SET(__val) \
+ do { \
+   SET_DUMP(__val); \
+--- a/gstrip.c
++++ b/gstrip.c
+@@ -150,6 +150,7 @@
+   */
+   FxU32 vSize;
+   FxI32 stride = mode;
++  FxI32 nParams;
+ 
+   GR_BEGIN_NOFIFOCHECK(FN_NAME, 90);
+ 
+@@ -161,6 +162,7 @@
+   vSize = gc->state.vData.vSize;
+   if (stride == 0)
+     stride = gc->state.vData.vStride;
++  nParams = (gc->curVertexSize >> 2) - 2;
+ 
+   /* Draw the first (or possibly only) set.  This is necessary because
+      the packet is 3_BDDDDDD, and in the next set, the packet is
+@@ -181,8 +183,6 @@
+       ** After the loop complete, the vNum data are written back to memory.
+       */
+       for (k = 0; k < vcount; k++) {
+-        FxI32 i;
+-        FxU32 dataElem;
+         float *vPtr;
+         
+         vPtr = pointers;
+@@ -191,14 +191,8 @@
+         (float *)pointers += stride;
+         
+         TRI_SETF(FARRAY(vPtr, 0));
+-        dataElem = 0;
+         TRI_SETF(FARRAY(vPtr, 4));
+-        i = gc->tsuDataList[dataElem];
+-        while (i != GR_DLIST_END) {
+-          TRI_SETF(FARRAY(vPtr, i));
+-          dataElem++;
+-          i = gc->tsuDataList[dataElem];
+-        }
++        TRI_SETF_PARAMS(vPtr, nParams);
+       }
+       TRI_END;
+       GR_CHECK_SIZE();
+--- a/gxdraw.c
++++ b/gxdraw.c
+@@ -301,42 +301,22 @@
+ 
+   /* Send triangle parameters */
+   {
+-    FxU32
+-      dataElem,
+-      i;
++    const FxI32 nParams = (gc->curVertexSize >> 2) - 2;
+ 
+     GR_SET_EXPECTED_SIZE(gc->curTriSize, 1);
+     TRI_STRIP_BEGIN(kSetupStrip, 3, gc->curVertexSize, SSTCP_PKT3_BDDBDD);
+     {
+       TRI_SETF(FARRAY(a, 0));
+       TRI_SETF(FARRAY(a, sizeof(float)));
+-      dataElem = 0;
+-      i = gc->tsuDataList[dataElem];
+-      while (i != GR_DLIST_END) {
+-        TRI_SETF(FARRAY(a, i));
+-        dataElem++;
+-        i = gc->tsuDataList[dataElem];
+-      }
++      TRI_SETF_PARAMS(a, nParams);
+ 
+       TRI_SETF(FARRAY(b, 0));
+       TRI_SETF(FARRAY(b, sizeof(float)));
+-      dataElem = 0;
+-      i = gc->tsuDataList[dataElem];
+-      while (i != GR_DLIST_END) {
+-        TRI_SETF(FARRAY(b, i));
+-        dataElem++;
+-        i = gc->tsuDataList[dataElem];
+-      }
++      TRI_SETF_PARAMS(b, nParams);
+ 
+       TRI_SETF(FARRAY(c, 0));
+       TRI_SETF(FARRAY(c, sizeof(float)));
+-      dataElem = 0;
+-      i = gc->tsuDataList[dataElem];
+-      while (i != GR_DLIST_END) {
+-        TRI_SETF(FARRAY(c, i));
+-        dataElem++;
+-        i = gc->tsuDataList[dataElem];
+-      }
++      TRI_SETF_PARAMS(c, nParams);
+       TRI_END;
+       GR_CHECK_SIZE();
+     }

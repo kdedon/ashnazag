@@ -11,7 +11,8 @@
 #
 # IMAGE defaults to kernel/build/atari/disk/falcon-disk.img; it is copied.
 # TOSROM: the TOS 4.04 image or its zip (default: tos404*.zip in the
-# repo root).  Skips (exit 0) without the ROM or Hatari.
+# repo root).  Skips (exit 0) without the ROM or Hatari.  HOPTS: more
+# run-hatari.sh options, e.g. "-c 060 -t 32" for a CT60 with 32 MB FastRAM.
 # STAGES: any of vga rgb mod tos tosint tosloop x xtos xdm xdmboots mac6 xaaes (mod, tos and tosloop need an
 # image made with TESTS=modadmin MODS=<mod.d>, tos also takes TOSENV=1; x one made with X11=<pkg>)
 # (default "vga rgb").  x: startx in 256 colours, typing into xterm, the
@@ -70,7 +71,7 @@ run() {		# stage monitor
 		"${KERNEL:-$AUX/kernel/build/unix-atari030.elf}" "root=c?d0s1 nfcons" > /dev/null
 	# tosloop writes its own
 	[ ! -f "$T/falcon-$1-keys.txt" ] || sed "s|OUT/|$OUT/$1-|g" "$T/falcon-$1-keys.txt" > "$OUT/$1-keys.txt"
-	WAIT=${WAIT:-600} sh "$A/run-hatari.sh" -r "$ROM" -d "$OUT/disk.img" -f 400000 -T ${3:-1500} \
+	WAIT=${WAIT:-600} sh "$A/run-hatari.sh" $HOPTS -r "$ROM" -d "$OUT/disk.img" -f 400000 -T ${3:-1500} \
 		-o "$OUT/$1-final.png" -l "$OUT/$1.log" -K "$OUT/$1-keys.txt" -- \
 		--natfeats yes --monitor "$2" > "$OUT/$1-run.txt" 2>&1 || true
 	if grep -q 'key script' "$OUT/$1-run.txt"; then echo "[FAIL] $1: key script"; fail=1; fi

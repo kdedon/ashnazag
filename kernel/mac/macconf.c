@@ -61,6 +61,8 @@ extern char end[], edata[], etext[];
 extern char stext[];
 extern unsigned long boot_arg0, boot_arg1;
 extern unsigned long MAINSTORE, VSIZOFMEM, chipmem;
+extern void vr_init();
+extern int vr_add(), vr_setup();
 extern int kernel_load_address;
 extern int clock_int(), addupc_clk();
 
@@ -541,6 +543,14 @@ unsigned long arg0, arg1;
 		VSIZOFMEM = MAC_MAXRAM - MAINSTORE;
 		mac_puts("config: memory limited to 128 MB\n");
 	}
+	vr_init(PGSHIFT);
+	for (i = 0; i < mac_nchunk; i++)
+		if (mac_chunk[i][0] != MAINSTORE && mac_chunk[i][0] < MAC_MAXRAM)
+			(void)vr_add(mac_chunk[i][0], mac_chunk[i][0],
+			    mac_chunk[i][0] + mac_chunk[i][1] > MAC_MAXRAM ?
+			    MAC_MAXRAM : mac_chunk[i][0] + mac_chunk[i][1]);
+	if (!vr_setup())
+		mac_puts("config: memory below the kernel left out of the VM\n");
 	mac_root();
 	putkv("config: MAINSTORE ", MAINSTORE);
 	putkv(" VSIZOFMEM ", VSIZOFMEM);

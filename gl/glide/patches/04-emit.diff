@@ -1,0 +1,59 @@
+--- a/gstrip.c
++++ b/gstrip.c
+@@ -235,6 +235,56 @@
+ 
+ #undef FN_NAME
+ } /* _grDrawVertexList */
++
++/* Offsets in the vertex of the parameters after x and y, in fifo order;
++ * their count, or -1 outside window coordinates.
++ */
++FxI32
++grEmitParams(const int **list)
++{
++  GR_DCL_GC;
++
++  GR_FLUSH_STATE();
++  if (gc->state.grCoordinateSpaceArgs.coordinate_space_mode != GR_WINDOW_COORDS)
++    return -1;
++  *list = gc->tsuDataList;
++  return (gc->curVertexSize >> 2) - 2;
++}
++
++/* A strip, fan or polygon of count vertices that emit() writes straight
++ * into the fifo, each as x, y and the grEmitParams() list:
++ * emit(arg, fifo, first, n) stores vertices first..first+n-1 and returns
++ * the next fifo word.
++ */
++void
++grDrawEmit(FxU32 mode, FxI32 count,
++           FxU32 *(*emit)(void *, FxU32 *, FxI32, FxI32), void *arg)
++{
++#define FN_NAME "grDrawEmit"
++  FxU32 vSize, type, pktype;
++  FxI32 first = 0;
++
++  GR_BEGIN_NOFIFOCHECK(FN_NAME, 90);
++  GR_FLUSH_STATE();
++  vSize = gc->state.vData.vSize;
++  type = mode == GR_TRIANGLE_STRIP || mode == GR_TRIANGLE_STRIP_CONTINUE ?
++    kSetupStrip : kSetupFan;
++  pktype = mode == GR_TRIANGLE_STRIP_CONTINUE ?
++    SSTCP_PKT3_DDDDDD : SSTCP_PKT3_BDDDDD;
++  while (count > 0) {
++    FxI32 vcount = count >= 15 ? 15 : count;
++    GR_SET_EXPECTED_SIZE(vcount * vSize, 1);
++    TRI_STRIP_BEGIN(type, vcount, vSize, pktype);
++    tPackPtr = (*emit)(arg, tPackPtr, first, vcount);
++    GR_INC_SIZE(vcount * vSize);
++    TRI_END;
++    GR_CHECK_SIZE();
++    first += vcount;
++    count -= 15;
++    pktype = SSTCP_PKT3_DDDDDD;
++  }
++#undef FN_NAME
++}
+ #endif
+ 
+ #endif

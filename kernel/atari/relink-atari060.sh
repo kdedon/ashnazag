@@ -61,7 +61,7 @@ $CC -c "$MAC/devtab/cfgorig.s" -o "$W/cfgorig.o"
 for c in "$A/ikbd.c" "$A/atadevsw.c" "$MAC/video/fbfont.c"; do
 	cc_nobss "$c" "" nobss
 done
-for c in "$A/ataconf.c" "$MAC/video/fbcons.c"; do
+for c in "$A/ataconf.c" "$MAC/video/fbcons.c" "$MAC/vmrgn/vmrgn.c"; do
 	cc_nobss "$c" "$SOFTMUL" nobss
 done
 cc_nobss "$A/atacons.c"
@@ -95,7 +95,7 @@ sh "$K/dlm/build.sh" -k "$W/dlm"
 sh "$K/guest/build.sh" -k "$BASE" "$W/guest"
 
 OBJS="$W/dlm/dlm.o $W/guest/guest.o $W/ataentry.o $W/ataintr.o $W/pstartata.o $W/ata060math.o $W/cfgorig.o
-$W/ataconf.o $W/ikbd.o $W/fbcons.o $W/fbfont.o $W/atadevsw.o $W/atacons.o $W/ds.o
+$W/ataconf.o $W/vmrgn.o $W/ikbd.o $W/fbcons.o $W/fbfont.o $W/atadevsw.o $W/atacons.o $W/ds.o
 $W/atads.o $W/ataide.o $W/ahdi.o $W/atartc.o $W/rd.o $RDB/rdimage.o
 $W/uiomod.o $W/vtop.o $W/ptalloc.o"
 
@@ -104,10 +104,10 @@ hw_clkstart clkreld p1int p2int p3int p4int p5int p6int parinit qlintr slpoll
 autocon delayus ramopen ramclose ramstrategy ramprint ramsize backtrace inituname
 sdopen sdqueue sdhardwarename sdpartition sdvalid sdblkno sddevsize
 clkset dmainit ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig mdboot
-vtop hat_ptalloc uiomove unt_latch page_free segu_get swapinub"
+vtop hat_ptalloc uiomove unt_latch page_free segu_get swapinub memialloc"
 OVRD="coinfo cdevsw bdevsw execsw fmodsw"
 ALIAS="inituname:T sendsig:T valid_usr_range:T fsig:T execsw:D fmodsw:D
-hat_ptalloc:T uiomove:T unt_latch:T page_free:T segu_get:T swapinub:T"
+hat_ptalloc:T uiomove:T unt_latch:T page_free:T segu_get:T swapinub:T memialloc:T"
 
 echo "[*] weakening the Amiga platform entry points"
 WEAK="--globalize-symbol freemem_wait"
@@ -128,6 +128,10 @@ for a in $ALIAS; do
 	if [ "$t" = T ]; then sec=.text kind=function; else sec=.data kind=object; fi
 	WEAK="$WEAK --add-symbol __amix_$s=$sec:0x$off,$kind,global"
 done
+# kvm_init is local; vr_setup() patches its page-array sizing
+off=$(m68k-linux-gnu-nm "$BASE" | awk '$3=="kvm_init" && $2=="t"{print $1}')
+[ -n "$off" ] || { echo "[FAIL] no kvm_init"; exit 1; }
+WEAK="$WEAK --add-symbol __amix_kvm_init=.text:0x$off,function,global"
 for t in c b; do
 	want=$(m68k-linux-gnu-nm "$BASE" | awk -v s=shadow${t}sw '$3==s{print $1}')
 	have=$(m68k-linux-gnu-nm -S "$W/atadevsw.o" | awk -v s=${t}devsw '$4==s{print $2}')

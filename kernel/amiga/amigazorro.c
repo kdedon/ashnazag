@@ -24,6 +24,11 @@ extern unsigned long VSIZOFMEM;
 
 #define INTENA	(*(volatile unsigned short *)0xDFF09A)
 
+/* boot marks in chip RAM, two copies */
+#define MK(o, v)	(((volatile unsigned long *)0x1000)[(o) / 4] = \
+			((volatile unsigned long *)0x1FF000)[(o) / 4] = (v))
+extern void bootmark();
+
 static void (*zint2)(), (*zint6)();
 static void (*int2_last)();
 
@@ -37,12 +42,19 @@ int kind;
 char *bi;
 {
 	char *m;
+	int i;
 
+	bootmark(2, kind);
 	if (kind != 3)
 		return;
-	for (m = bi + NAUTO * CDSIZE; m < bi + NAUTO * CDSIZE + 16 * 32; m += 32)
-		if (L(m + 24) && !(W(m + 14) & 2))		/* not MEMF_CHIP */
+	for (i = 0, m = bi + NAUTO * CDSIZE; i < 16; i++, m += 32) {
+		if (L(m + 24) == 0)
+			continue;
+		MK(20, i);
+		MK(24, L(m + 20));
+		if (!(W(m + 14) & 2))				/* not MEMF_CHIP */
 			L(m + 20) &= ~0xFFF;
+	}
 }
 
 /*
@@ -74,6 +86,7 @@ amiga_quiesce()
 	}
 	if (autocon(0x089E0021, 0, &a, &n))			/* Mediator 4000 */
 		((volatile unsigned char *)a)[4] = 0;		/* INTA-D enables */
+	bootmark(4, VSIZOFMEM);
 }
 
 int

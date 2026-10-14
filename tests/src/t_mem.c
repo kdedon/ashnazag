@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <sys/resource.h>
 #include "t.h"
 
 #define PG	4096
@@ -459,13 +460,43 @@ test_highshared()
 	t_check("mprotect_top_band_b", st == 0, "status 0x%x", st);
 }
 
+/* Anonymous memory up to most of free memory, past the default data limit */
+static void
+test_big()
+{
+	char *p;
+	long fm, n, i, bad;
+	struct rlimit rl;
+
+	rl.rlim_cur = rl.rlim_max = RLIM_INFINITY;
+	setrlimit(RLIMIT_DATA, &rl);
+	setrlimit(RLIMIT_VMEM, &rl);
+	fm = t_kmem("freemem");
+	if (fm <= 0) {
+		t_skip("big_heap", "no freemem");
+	} else {
+		n = fm * 3 / 4;
+		p = malloc(n * PG);
+		if (p == 0) {
+			t_fail("big_heap", "malloc %ld pages of %ld free: %s", n, fm, T_ERR);
+		} else {
+			for (i = 0; i < n; i++)
+				p[i * PG] = (char)i, p[i * PG + PG - 1] = (char)~i;
+			for (bad = i = 0; i < n; i++)
+				bad += p[i * PG] != (char)i || p[i * PG + PG - 1] != (char)~i;
+			t_check("big_heap", bad == 0, "%ld pages of %ld free, %ld bad", n, fm, bad);
+			free(p);
+		}
+	}
+}
+
 int
 main()
 {
 	pid_t pid;
 	int st;
 
-	t_init("mem", 80);
+	t_init("mem", 180);
 	/*
 	 * Heap tests in a child: malloc keeps the heap, and every later fork
 	 * would reserve its copy against swap.
@@ -478,6 +509,15 @@ main()
 	}
 	if (pid == -1 || t_waitchild(pid, &st, 60) != pid || !WIFEXITED(st))
 		t_fail("heap", "child: %s", pid == -1 ? T_ERR : "died or hung");
+	else if (WEXITSTATUS(st) != 0)
+		t_nfail++;
+	pid = fork();
+	if (pid == 0) {
+		test_big();
+		_exit(t_nfail != 0);
+	}
+	if (pid == -1 || t_waitchild(pid, &st, 120) != pid || !WIFEXITED(st))
+		t_fail("big", "child: %s", pid == -1 ? T_ERR : "died or hung");
 	else if (WEXITSTATUS(st) != 0)
 		t_nfail++;
 	test_cow();

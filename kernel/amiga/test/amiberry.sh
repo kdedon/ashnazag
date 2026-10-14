@@ -10,7 +10,8 @@
 # MACHINE: a3000 (default; the disk is SCSI unit 6) or a4000 (AGA; the
 # disk is the IDE master).  CSPPC: the CyberStorm PPC's flash image; the
 # card replaces the CPU and its RAM, the disk is unit CSPPCID (default 0)
-# on its SCSI; CSPPCMB its RAM (default 128).  CDROM: an ISO image as a CD-ROM on that SCSI, unit 1.
+# on its SCSI; CSPPCMB its RAM (default 128).  MBMEM: motherboard fast
+# RAM in MB (default 16).  CDROM: an ISO image as a CD-ROM on that SCSI, unit 1.
 # STATE: config, home and IPC socket
 # directory (default hdfdir/run).  CARDS: Amiberry board names on the
 # PCI bus (default "ne2000_pci es1370 fm801").  GFX: a graphics card
@@ -53,7 +54,7 @@ cpu_24bit_addressing=false
 cpu_speed=max
 cachesize=0
 chipmem_size=4
-a3000mem_size=16
+a3000mem_size=${MBMEM:-16}
 $(if [ -n "$CSPPC" ]; then
 	echo cpuboard_type=CyberStormPPC; echo "cpuboard_rom_file=$CSPPC"; echo cpuboardmem1_size=${CSPPCMB:-128}
 else

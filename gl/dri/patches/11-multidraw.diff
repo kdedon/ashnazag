@@ -1,0 +1,11 @@
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_context.c
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_context.c
+@@ -76,6 +76,8 @@
+    _mesa_enable_extension( ctx, "GL_EXT_paletted_texture" );
+    _mesa_enable_extension( ctx, "GL_EXT_shared_texture_palette" );
+    _mesa_enable_extension( ctx, "GL_EXT_texture_lod_bias" );
++   _mesa_enable_extension( ctx, "GL_EXT_multi_draw_arrays" );
++   ctx->Driver.MultiDrawArrays = _tnl_MultiDrawArrays;
+ 
+    if ( fxMesa->haveTwoTMUs ) {
+       _mesa_enable_extension( ctx, "GL_EXT_texture_env_add" );

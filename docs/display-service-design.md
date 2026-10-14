@@ -262,6 +262,7 @@ Fonts, `rgb.txt` and XKB data come from the port's install or amigaux packages. 
 - X11R6.3: X Consortium licence (MIT-style). XFree86 3.3.6 parts used (`afb`, `ilbm`, `iplan2p*`, xkb data): MIT/X11-style. Apple `macII`: permissive notice (keep the copyright line where code is adapted). The AMIX port: MIT (`LICENSE`), imported files keep their notices.
 - The Commodore `server/ddx/amix` on the AMIX tape is proprietary and not copied. The port carries its own forward-ported version with its notices; we change only our new files and the `rtg` table.
 - New files (`rtg/fb`, `amixEv.c`, `amixMacKeyMap.c`, the `rtg` table): MIT. Offer them upstream as pull requests to `isoriano1968/x11r6.3-amix`: first the `rtg` table (no behaviour change for ZZ9000), then `rtg/fb` + event input + `-kb`-free keymaps. Propose a combined server target (backends chosen at run time) instead of one binary per card.
+- The repository is MIT. GPL code (none here) would ship only as a separately loaded module or separate program, never linked into a kernel image. Third-party notices: `THIRD_PARTY.md`.
 
 ## 4. A/UX Mac environment on the service
 
