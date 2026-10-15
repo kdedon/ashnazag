@@ -50,5 +50,6 @@ These are separate programs, patches or separately loaded modules and keep their
 | XaAES, TeraDesk, FreeMiNT | fetched at build, source shipped with the binaries | GPL |
 | EmuTOS | fetched, separate image, patched in memory only | GPL-2.0-or-later |
 | manx, atari-sysv-sp1 (slaapliedje) | fetched at build | GPL-2.0 |
+| Previous register models for the interrupt, timer, system control and clock-chip registers (`kernel/guest/mod/nextguest/nextdev.c`) | separately loaded module `nextguest`; the file is GPL-2.0-or-later, the rest of the module and the host program are ours (MIT) | GPL-2.0-or-later |
 
 Files that are ours inside these projects' patches follow the patched project's licence.

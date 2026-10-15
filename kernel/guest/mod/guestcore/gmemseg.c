@@ -1,5 +1,6 @@
 #include "kinc.h"
 #include "sys/mman.h"
+#include "sys/vnode.h"
 #include "vm/seg.h"
 #include "vm/as.h"
 #include "vm/hat.h"
@@ -12,6 +13,8 @@ extern int segdev_create(), as_map(), as_unmap();
 extern void map_addr(), flushmmu(), hat_unlock();
 extern struct seg *as_segat();
 extern page_t *page_numtookpp();
+extern struct vnode *specfind();
+extern void vn_rele();
 
 struct gm_map {
 	struct seg *seg;
@@ -22,6 +25,25 @@ struct gm_map {
 };
 static struct gm_map *gm_maps;
 static struct seg_ops gm_ops, *gm_devops;
+
+/*
+ * segdev_create holds the device vnode once per lookup it makes, but
+ * segdev_free releases it once.  The surplus is measured on the first
+ * mapping and dropped on every create, so remapping cannot wrap the
+ * 16-bit hold count and free the vnode under live segments.
+ */
+static int gm_surplus = -1;
+
+static void
+gm_unhold(seg)
+struct seg *seg;
+{
+	struct vnode *vp = ((struct segdev_data *)seg->s_data)->vp;
+	int i;
+
+	for (i = 0; i < gm_surplus && vp->v_count > 1; i++)
+		vn_rele(vp);
+}
 
 struct gm_args {
 	struct segdev_crargs dev;
@@ -140,9 +162,10 @@ struct seg *seg, *nseg;
 	m = gm_alloc(nseg, old->ram);
 	if (!m)
 		return ENOMEM;
-	if ((e = (*gm_devops->dup)(seg, nseg)) == 0)
+	if ((e = (*gm_devops->dup)(seg, nseg)) == 0) {
+		gm_unhold(nseg);
 		gm_add(m, nseg, old->ram);
-	else
+	} else
 		gm_drop(m);
 	return e;
 }
@@ -271,14 +294,24 @@ struct seg *seg;
 struct gm_args *args;
 {
 	struct gm_map *m = gm_alloc(seg, args->ram);
-	int e;
+	struct vnode *vp = 0;
+	int e, holds = 0;
 
 	if (!m)
 		return ENOMEM;
-	if ((e = segdev_create(seg, (caddr_t)&args->dev)) != 0) {
+	if (gm_surplus < 0 && (vp = specfind(args->dev.dev, VCHR)) != 0)
+		holds = vp->v_count;
+	e = segdev_create(seg, (caddr_t)&args->dev);
+	if (vp) {
+		if (!e && ((struct segdev_data *)seg->s_data)->vp == vp)
+			gm_surplus = vp->v_count - holds - 1;
+		vn_rele(vp);
+	}
+	if (e) {
 		gm_drop(m);
 		return e;
 	}
+	gm_unhold(seg);
 	if (!gm_devops) {
 		gm_devops = seg->s_ops;
 		gm_ops = *gm_devops;

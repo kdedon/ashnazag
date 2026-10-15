@@ -1,29 +1,28 @@
 # NeXT environment
 
-Design for `startnext`: the user's NeXT ROM and an installed NeXTSTEP run natively on a
-68040/060 host, unmodified. Status: design only.
+Design for `startnext`: the user's installed NeXTSTEP / OPENSTEP runs natively on a
+68040/060 host, unmodified. No SCSI, ethernet, DMA or desktop-bus chip is modelled:
+those devices reach Mach through our own drivers that call host services. Status:
+reader (`tools/nextcd.py`), kernel load and entry (`native -k`) done; the chip models are retired below.
 
 ## Shape
 
 ```
- startnext (native launcher, user's rights): ROM file, RAM size, env dir, SCSI map
-   |
- guest process: NeXT ROM, Mach kernel, apps, all native 68k in user mode
-   |  privileged insns, page faults           |  accesses to 0x02000000 I/O pages
-   v                                          v
- guestcore: virtual S mode, vIPL,          nextguest DLM: the board's register model
- shadow 040 MMU (S and U spaces)             KMS        -> display service kbd/mouse, sndout
-                                             VRAM pages -> converted display surface
-                                             ESP + DMA  -> host files (CD, disks)
-                                             enet + DMA -> station -> nextnet (user daemon):
-                                                           bootp, tftp, NFS2, mount,
-                                                           NetInfo, NAT to host sockets
-                                             RTC/NVRAM  -> wall clock, env's nvram file
+ startnext (native launcher, user's rights): env dir, RAM size, optional ROM
+   |  acts as the boot program: loads mach_kernel and our drivers, as A/UX's launch does
+ guest process: Mach kernel, our drivers, apps, all native 68k in user mode
+   |  privileged insns, page faults        |  host call: store to the doorbell
+   v                                       v
+ guestcore: virtual S mode, vIPL,        nextguest DLM: CPU-side board only
+ shadow 040 MMU (S and U spaces)           interrupt status/mask, timer, SCR1/2, RTC/NVRAM,
+                                           VRAM pages -> converted display surface
+                                         startnext (host side): the host-call broker
+                                           files, input, sound; network later
 ```
 
-Same split as Voyage 200 (`tiplatform`) and the Amiga (`amigaguest`): guestcore runs the
-CPU side, a platform DLM answers the hardware through trapped register pages
-(guest-container-design §5), host services do display, input, sound, files.
+Same split as the Amiga environment: guestcore runs the CPU side; devices are guest-side
+drivers over a mailbox page plus a doorbell write (as `hostfswire.h`), served by a
+broker with the user's rights.
 
 ## 1. Mach under guestcore
 
@@ -43,7 +42,7 @@ libraries sit where kernel RAM is), so one host space cannot hold both. Missing:
 | Invalidation | `pflush`/`pflusha`, URP/SRP/TC writes drop shadow entries, as an ATC would |
 | U and M bits | set in the guest descriptor at fill; pages map read-only until the first write, which sets M. Mach's pmap reads M |
 | Space switch | on vS change (exception into guest, `rte` to user) swap Gs/Gu: root reload + ATC flush. May need a small static hook to swap `p_as`; prefer guestcore |
-| MMU off | TC.E=0: identity map of the board (ROM, RAM, VRAM; I/O trapped). The ROM runs here |
+| MMU off | TC.E=0: identity map of the board. The kernel entry runs here |
 | `movec` | add URP, SRP, TC, ITT0/1, DTT0/1, MMUSR as live state; `ptest` fills MMUSR from a table walk |
 | Interrupts | vector mode: levels 1-7 from the interrupt status/mask registers, autovectored through vVBR |
 | FPU | 040 host: unimplemented-FP traps go to the guest's own handlers. 060 host: host FPSP/ISP for 060-only gaps, the rest reflected |
@@ -52,103 +51,189 @@ What traps, and cost (a gate round trip is a few µs on a 25 MHz 040; measure):
 
 - every privileged instruction; `spl` (moves to and from SR) runs thousands of times a second;
 - `moves` in copyin/copyout, per element;
-- shadow fills, first writes (M bit), every I/O register access;
+- shadow fills, first writes (M bit), every remaining I/O register access;
 - each guest syscall or trap: host gate, reflect, Gs switch, `rte` back, Gu switch.
 
 Mitigations, all generic (no hooks keyed to an OS build): hot-site trap-and-patch from
 guest-container §5 for `move SR` sites; a `moves` run-ahead that emulates the copy loop
 in one trap; a shadow cache keyed by URP so task switches keep their mappings.
 
-## 2. Hardware and host services
+## 2. Board and devices
 
-Target model: NeXTstation Turbo. Guest-physical map (all quadrant 0 except slots):
+Target model: NeXTstation Turbo. Guest-physical map (all quadrant 0):
 
 | Range | Part | Host side |
 |---|---|---|
-| 0x00000000, 0x01000000 | ROM 128 KB (alias) | user's file, read-only pages |
-| 0x02000000-0x0201FFFF, 0x02100000 alias | I/O | trapped pages, model in `nextguest` |
-| 0x02200000 | TMC memory controller | model (sizes RAM) |
+| 0x00000000, 0x01000000 | ROM 128 KB (alias), if used | user's file, read-only pages |
+| 0x02000000-0x0201FFFF | system registers | trapped pages, model in `nextguest` |
 | 0x04000000 | RAM, up to 128 MB | guest RAM object |
 | 0x0C000000 | VRAM | surface pages |
-| 0xF0000000- | NextBus slots | absent |
+| host-call page | mailbox + doorbell | broker |
 
-| Device | Model | Host service |
+Board state that stays (the kernel reads it directly; CPU-side, not a device):
+
+| Part | Host side |
+|---|---|
+| Interrupt status/mask, levels 1-7 | vIPL |
+| Hardclock timer, event counter | high-resolution timer service |
+| SCR1 (machine id), SCR2 | model |
+| MCCS1850 clock and NVRAM (SCR2 bit-bang) | wall clock; `~/NeXT/<env>/nvram` |
+| VRAM | write-protect tracking, 2 bpp to 8-bit CLUT or 4444 to host 16/32, ≤50 Hz |
+
+Retired from `nextguest` (`nextdev.c`): the KMS keyboard/mouse unit (`kmrecv`,
+`kmaccess`, `kmsreset`, `kmscommand`, `nx_km`); the desktop-bus controller (`adb*`,
+including its command register and timeout); the ESP SCSI chip (`espint`, `espcmd`,
+`espb`) and `diskint`; the DMA channels (`dmax`, `rdw`, `wrl`, the channel CSRs); the
+burst-map chip (`bmap*`, its ethernet link report); the TMC memory controller (`tmc*`;
+`startnext` hands the kernel the memory map); `census`. Kept there: `nx_us`, `nx_level`,
+`nx_setint/clrint`, `rtc*`, the SCR/interrupt part of `rdb/wrb`, `nx_reset`. Absent
+devices read as not present. No other register is added.
+
+Devices as guest drivers (host call = request in the mailbox, doorbell store, reply):
+
+| Device | Driver | Host service |
 |---|---|---|
-| Video | mono 1120x832, 2 bpp, 0 = white, 280 bytes/row; colour 16 bpp RGBA4444 | converted surface (write-protect tracking, ≤50 Hz): 2 bpp to 8-bit CLUT, 4444 to host 16/32 |
-| Keyboard, mouse | KMS at 0x0200E000, level 3; turbo's ADB controller reports no devices | display service `/dev/kbd`, `/dev/mouse` codes to NeXT codes |
-| Sound | sound-out DMA, 44.1 kHz 16-bit stereo, via KMS | sndout; sound-in silent |
-| SCSI | NCR53C90A + SCSI DMA channel | targets are host files: CD images read-only, disk images rw |
-| Ethernet | AT&T 7213 (turbo) + rx/tx DMA | station raw-frame stream (as `otbridge`) to `nextnet` |
-| Clock, NVRAM | MCCS1850 behind SCR2 bit-bang | wall clock; NVRAM in `~/NeXT/<env>/nvram` |
-| Timers | hardclock, event counter | high-resolution timer service |
-| System regs | SCR1 (machine id), SCR2, interrupt status/mask | model |
-| DMA | channel CSRs, next/limit | DMA done by the module into guest RAM |
-| DSP 56001, printer, floppy, SCC | | absent first; floppy and serial later |
+| Storage | `HostDisk` block driver | host file (disk file option) |
+| Root and other filesystems | host filesystem (§3), vnode operations | the environment folder `~/NeXT/<env>` |
+| Network (later) | `en0` driver, one host call per frame | host sockets; never used for files |
+| Display | `HostFB` frame buffer driver over VRAM pages | display service surface |
+| Keyboard, mouse | `HostEvent` event source | display service `/dev/kbd`, `/dev/mouse` |
+| Sound | `HostSound` | sndout |
+| Console | `HostCon` kernel console | log file or display |
 
-NeXTdimension (i860) and the non-turbo MO drive are out of scope.
+NeXTdimension, DSP, printer, floppy and the non-turbo MO drive are out of scope.
 
-## 3. Files
+## 3. Drivers in Mach
 
-Like the Mac environment, the guest works on host files directly: the root is a host
-folder, `~/NeXT/<env>`, served over NFS. The ROM netboots (`bootp`, `tftp` of the guest's
-own boot files), Mach mounts `/` from `nextnet`, a per-session user daemon with the
-user's rights. NeXT owners, modes, device nodes and links live in the sidecars of
-guest-container §4.4. `~` and `/` of the host appear under `/Net`.
+How the drivers get in. NeXTSTEP boots as: boot program loads `mach_kernel` and the
+boot-time driver bundles (`/private/Drivers/<arch>/*.config`) into memory, then starts
+the kernel, which initialises them before the root mounts. This is how a driver
+reaches the kernel before any disk exists. So:
 
-The ROM, Mach and NetInfo do this unmodified: diskless NeXT clients are standard.
-`nextnet` also NATs other traffic to host sockets. Any NFS or RPC code taken from
-elsewhere stays in this separate program.
+- `startnext` is the boot program. It loads the user's `mach_kernel` from
+  `~/NeXT/<env>/`, the boot-time drivers, and the boot arguments the kernel expects
+  (memory map, root device, console). The user's kernel is not modified.
+- Drivers are DriverKit drivers (the OPENSTEP 4.2 and NeXTSTEP 3.3 driver model) in
+  `.config` bundles, kept in the environment folder with the rest. `HostCon`
+  (and `HostDisk`) load at boot, ahead of the root. Later drivers load
+  through the normal kernel loader.
+- Host call: a store to the doorbell page after filling the mailbox. No trap vector or
+  instruction is used, so nothing depends on the kernel's own trap use.
+- Fallbacks if the boot program cannot be replaced: `startnext` loads the ROM's own
+  boot path, or links the driver set into a copy of the kernel with the user's tools
+  (cctools `ld` on the Developer CD, run in the guest).
 
-Install: `makenext` boots the user's CD image with a temporary SCSI disk file, runs
-the stock installer, copies the result into the folder with a host-side NeXT UFS
-reader and deletes the image. A user's existing NeXT disk dump copies the same way.
-Disk images as SCSI targets stay an option, never the default.
+Root. The root is the user's folder `~/NeXT/<env>`, served by our own host filesystem
+inside the kernel; there is no NFS, bootp, ethernet or daemon, since a file server over
+packets is emulation one layer up. `startnext` loads the kernel's Mach-O, finds the
+filesystem switch by symbol name, installs the host filesystem's vfs and vnode operations
+as the operations of a free switch entry in the loaded copy (the kernel file is never
+modified), and replaces the kernel's root-device setup with a store of that entry's name
+as the root type, so the kernel mounts it as `/` with no device probe. Each operation (lookup, getattr, setattr, read, write, readdir, create, remove,
+rename, mkdir, rmdir, symlink, readlink, link, fsync, inactive, statfs) is one host call
+on the folder, as the Amiga handler's one-request-per-operation design
+(`hostfswire.h`) at the vnode level. Files stay host files; NeXT owners, modes and device
+nodes live in the `~/NeXT/<env>.meta` sidecar that `makenext` writes, and the host
+appends what the guest changes. `HostDisk` over a host disk file holding a NeXT UFS stays
+an option, not the default; it also gives local `/private` and swap.
 
-## 4. First model and ROM
+The kernel stays as the user installed it. Throughput is bounded by the mailbox
+(8 KB per read or write), not by an emulated chip. `~` and `/` of the host appear under
+`/Net` only when the network feature exists.
 
-NeXTstation Turbo, ROM Rev 3.3 v74, mono first, colour next:
+## 4. Install
 
-- turbo boards have no memory-write-function aliases (0x10000000 RAM, 0x0C-0x0F VRAM on
-  non-turbo mono), which would trap on every window-server pixel write;
-- no MO controller, no NBIC, one VRAM layout;
-- 040 as on the host.
+`makenext` copies the user's OPENSTEP 4.2 User CD into `~/NeXT/<env>` without
+running the installer. The CD (`Openstep-4.2-Intel-User.iso`, 2048-byte sectors) is
+multi-architecture. It carries a NeXT disk label (`dlV3`, at byte 8192; it names
+`mach_kernel` as the boot file) and a 4.3BSD-style UFS (big-endian, 8 KB blocks, 2 KB
+fragments, magic 0x011954, first filesystem at byte 163840). Its root lists `mach_kernel`,
+`NextCD`, `NextLibrary`, `NextApps`, `NextAdmin`, `NextDeveloper`, `private` and `usr`.
 
-Rev 2.5 v66 (non-turbo) follows with MWF pages trapped. Rev 1.2 (68030) needs a 030
-table walker; later. NeXTdimension and drive firmware ROMs are unused.
+Steps, all on the host:
 
-## 5. Media
+1. Read the label and UFS (a small reader in the user-space tools; no mount).
+2. Copy the tree, keeping the m68k slice of fat binaries only if the user asks to save
+   space; map owners, modes and device nodes to sidecars.
+3. Unpack the CD's package archives the installer would, and apply what its
+   post-install scripts do to files (NetInfo data, `hostconfig`, device nodes). Scripts
+   that need the target's own tools wait for first boot, run by the guest.
+4. Add our driver bundles and the boot arguments file.
+
+Open: whether the CD's tree is already the installed layout or needs package
+unpacking is checked first by the reader. A NeXTSTEP 3.3 CD or an existing disk dump
+copies the same way (disk dump: its UFS is read directly).
+
+## 5. Toolchain
+
+Building NeXT drivers needs a NeXT compiler, but NeXTSTEP cannot run before the first
+driver. No ready cross compiler exists:
+
+- FSF GCC 2.x had an `m68k-next-nextstep3` target; it emits assembler for the NeXT
+  `as` and needs Mach-O tools (cctools: `as`, `ld`, `libtool`), which FSF binutils
+  lack. Apple's cctools sources have Linux ports but the m68k backends left in
+  later releases.
+- The Developer CD (`Openstep-4.2-Intel-Developer.iso`, in `OPENSTEP 4.2
+  Enterprise.7z`, read with the same reader) supplies the kernel and DriverKit
+  headers and the m68k slices of `cc`, `as`, `ld`; these run only on NeXTSTEP.
+
+Path:
+
+1. Bootstrap driver, host-built: write `HostCon` (+ `HostDisk`) freestanding
+   (K&R C, no libc), compile with our m68k gcc against the headers from the Developer
+   CD, and convert the ELF object to a Mach-O relocatable with a small `elf2macho`
+   (in the style of `coff2elf`). The driver calls a handful of kernel entry points
+   (`printf`, `kalloc`, device registration, interrupt hookup), resolved against the
+   user's `mach_kernel` symbols by `startnext` at load.
+2. With the root up, NeXTSTEP runs the Developer tools natively; later drivers
+   (`HostFB`, `HostEvent`, `HostSound`) build in the guest, and the bootstrap
+   driver is rebuilt there. Self-hosting afterwards.
+
+The ABI points to confirm against the headers: structure return, argument and
+return-register conventions, alignment, and the DriverKit class layout. DriverKit
+classes (Objective-C) need either the NeXT Objective-C runtime and compiler in the
+guest, or a C-level driver with the kernel's `devsw` entries; the bootstrap driver
+uses the C level.
+
+## 6. Media
 
 | Item | Source | Format |
 |---|---|---|
-| ROM | user (`NeXTROMS.zip`: 68040 turbo Rev 3.3 v74) | 128 KB raw |
-| NeXTSTEP 3.3 user CD (68k or multi-architecture) | user | raw 2048-byte-sector image: `.iso`, `.cdr`, `.toast`, `.img`; any copy |
-| OPENSTEP 4.2 user CD | user, optional | same |
-| Developer CD | user, optional | same |
+| Boot ROM | user, optional | 128 KB raw; not needed on the driver path |
+| NeXTSTEP 3.3 user CD (68k or multi-architecture) | user | raw 2048-byte-sector image: `.iso`, `.cdr`, `.toast`, `.img` |
+| OPENSTEP 4.2 User CD | user | same; the first install source |
+| OPENSTEP 4.2 Developer CD | user | same; headers and tools for drivers |
 | Installed NeXT disk dump | user, optional | raw image |
 
 No hashes are checked; the launcher only checks sizes and formats.
 
-## 6. Risks
+## 7. Risks
 
-1. Trap rate in the Mach kernel (`spl`, `moves`, syscalls) decides usability. Measure
-   first, then patch hot sites generically.
+1. Trap rate in the Mach kernel (`spl`, `moves`, syscalls) decides usability.
 2. Shadow MMU and the Gs/Gu switch touch the host HAT; a static hook may be needed.
-3. Screen size: 1120x832 is fixed. Hosts at 1152x870 fit; smaller ones pan. The
-   environment never sets host modes.
-4. Netboot root over NFS: speed and NetInfo setup; the DSP absent may upset sound apps.
-5. 060 hosts: FP and integer gaps under a guest that expects an 040.
-6. Licence: register facts come from public sources. Any code taken from a GPL
-   implementation stays in a separately loaded DLM or the `nextnet` program, listed in
-   THIRD_PARTY.md, never the static kernel.
+3. Boot arguments: the kernel's expectations from the boot program (memory map, root
+   from the network, console) are not documented; they are checked against the kernel
+   in the first milestone. If the kernel needs the ROM's globals, the ROM runs as a
+   library with absent-device answers.
+4. The first driver is written without NeXT's compiler: ABI and header mismatches
+   cost time until the guest builds its own.
+5. Host filesystem: operations the kernel's virtual memory uses for programs (page-in)
+   and the vnode layout are the kernel's own; checked against its symbols at load.
+6. Screen size: 1120x832 is fixed. Hosts at 1152x870 fit; smaller ones pan.
+7. 060 hosts: FP and integer gaps under a guest that expects an 040.
+8. Licence: register facts come from public sources. Code from the Previous emulator
+   stays in `nextguest`, listed in THIRD_PARTY.md.
 
-## 7. Milestones
+## 8. Milestones
 
-1. ROM monitor: Rev 3.3 boots with MMU off to its `NeXT>` prompt on the display
-   service; typing works. Needs I/O model (SCR1/2, TMC, interrupts, timers, RTC/NVRAM,
-   KMS, idle DMA/ESP/enet) and the 2 bpp surface. No shadow MMU.
-2. Mach from CD: ESP + DMA with the CD image as a target; ROM loads the boot program
-   and Mach; shadow MMU; installer screen.
-3. Installed system in `~/NeXT`: `makenext`, `nextnet` netboot root, login window,
-   Workspace.
-4. Sound, ethernet NAT, colour turbo, trap-cost work.
-5. Non-turbo (Rev 2.5), OPENSTEP 4.2.
+0. Reader: list and copy the CD's UFS tree on the host; check the boot-driver
+   directories and `mach_kernel` slices.
+1. Kernel and console (reached on the identity map: the kernel prints its version line,
+   memory and probe lines, "no suitable root", and returns to the monitor): `startnext` loads `mach_kernel` and `HostCon` (bootstrap, from
+   gcc + `elf2macho`); the kernel prints to the host console and stops at its
+   missing root. Needs interrupts, timer, SCR, RTC and the shadow MMU; no device chips.
+2. Root over host folders: the host filesystem mounts `/` from `~/NeXT/<env>`;
+   single-user shell on the console.
+3. Multi-user: `makenext` installs; login window and Workspace (`HostFB`, `HostEvent`).
+4. Sound, network (`en0` over host sockets), disk-file option, colour turbo, trap-cost work.
+5. Non-turbo, OPENSTEP-only layouts, NeXTSTEP 3.3.

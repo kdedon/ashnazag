@@ -80,3 +80,10 @@ and its system media as `media`, or give `-x PROGRAM -m MEDIA`; `-e NAME` uses a
 subdirectory.
 For the Voyage 200, `media` is your Flash dump (AMS 2.09 and 3.10 tested); it boots from
 reset to the AMS desktop, and the archive is kept in `flash.img` beside it. Cmd-Q quits.
+
+## NeXT
+
+`startnext` (status: kernel entry) loads the `mach_kernel` of your OPENSTEP 4.2 CD into
+`~/NeXT/NAME` (`tools/makenext.sh NAME` copies the CD there) and enters it natively. The kernel
+reaches its board probe and stops where it needs drivers and the MMU, which are not there
+yet. With a 128 KB turbo boot ROM named `media` in the folder it runs the ROM instead. Cmd-Q quits.

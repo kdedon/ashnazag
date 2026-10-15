@@ -69,7 +69,7 @@ for s in "$KDIR"/dlm/libmod/*.s; do
 done
 # the native-environment host library and adapters, for t_native* and t_v200
 NH=$KDIR/guest/nativehost
-NHI="-I$NH -I$KDIR/guest/voyage200 -I$KDIR/mac/sound -I$T/nativecall"
+NHI="-I$NH -I$KDIR/guest -I$KDIR/guest/voyage200 -I$KDIR/mac/sound -I$T/nativecall"
 for c in nativehost nativehost_platform nativehost_ui; do
 	cc "$NH/$c.c" "$O/$c.o" $XA -I"$NH" -I"$KDIR/mac/display"
 done
@@ -108,7 +108,7 @@ for s in ${ONLY:-"$T"/src/t_*.c "$T/src/runall.c"}; do
 	t_nativehost) extra="$O/nativehost.o $MODO" ;;
 	t_nhplat) extra=$O/nativehost_platform.o ;;
 	t_nativecall) extra="$O/nativecall.o $O/ncprobe.o $O/nativehost.o $MODO" ;;
-	t_v200) extra=$MODO ;;
+	t_v200|t_next) extra=$MODO ;;
 	t_radeon) cc "$KDIR/amiga/radeon/rdsinit.c" "$O/rdsinit.o"; extra=$O/rdsinit.o ;;
 	esac
 	link "$BIN/$n" "$O/$n.o" "$O/t.o" $extra

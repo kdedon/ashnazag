@@ -56,7 +56,7 @@ case "$1" in
 	! grep -qw ata_idcm "$O/exports" || KCC="$KCC -DATA060"
 	! grep -qw am_dsinit "$O/exports" || KCC="$KCC -DDS_AMIGA"
 	rm -rf "$O/mod.d"
-	for m in guestcore auxcore auxexec uinter tosguest amigaguest cpmguest tiplatform; do
+	for m in guestcore auxcore auxexec uinter tosguest amigaguest cpmguest tiplatform nextguest; do
 		d=$O/src/$m
 		rm -rf "$d"; mkdir -p "$d"
 		objs=

@@ -73,7 +73,8 @@ envroot(family, id, home, out, size)
 	    strcmp(family, "tos") == 0 ? "~/TOS" :
 	    strcmp(family, "cpm") == 0 ? "~/CPM" :
 	    strcmp(family, "lisa") == 0 ? "~/Lisa" :
-	    strcmp(family, "voyage200") == 0 ? "~/Voyage200" : "~/Amiga";
+	    strcmp(family, "voyage200") == 0 ? "~/Voyage200" :
+	    strcmp(family, "next") == 0 ? "~/NeXT" : "~/Amiga";
 
 	if (id == 0 || strcmp(id, "default") == 0)
 		return envpolicy(family, "LEGACY_ROOT",

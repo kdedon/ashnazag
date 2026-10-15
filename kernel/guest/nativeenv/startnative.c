@@ -52,7 +52,10 @@ main(int argc, char **argv)
         family = "lisa";
     else if (!strcmp(prog, "startvoyage200"))
         family = "voyage200";
-    else if (argc > 1 && (!strcmp(argv[1], "lisa") || !strcmp(argv[1], "voyage200")))
+    else if (!strcmp(prog, "startnext"))
+        family = "next";
+    else if (argc > 1 && (!strcmp(argv[1], "lisa") || !strcmp(argv[1], "voyage200") ||
+        !strcmp(argv[1], "next")))
         family = argv[i++];
     else
         goto usage;
@@ -86,6 +89,10 @@ main(int argc, char **argv)
         executable = bin;
     if (!media)
         media = image;
+    if (!strcmp(family, "next") && media == image && stat(image, &st) < 0) {
+        /* no ROM: boot the user's kernel from the environment */
+        sprintf(image, "%s/mach_kernel", root);
+    }
     if (root[0] != '/' || executable[0] != '/' || media[0] != '/') {
         fprintf(stderr, "%s: root, executable and media paths must be absolute\n", prog);
         return 2;
@@ -121,7 +128,7 @@ main(int argc, char **argv)
     return 127;
 usage:
     fprintf(stderr, "usage: %s %s[-q] [-e NAME] [-x /executable] [-m /media] [-- args...]\n",
-        prog, !strcmp(prog, "startlisa") || !strcmp(prog, "startvoyage200") ?
-        "" : "lisa|voyage200 ");
+        prog, !strcmp(prog, "startlisa") || !strcmp(prog, "startvoyage200") ||
+        !strcmp(prog, "startnext") ? "" : "lisa|voyage200|next ");
     return 2;
 }
