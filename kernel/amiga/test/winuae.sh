@@ -6,6 +6,9 @@
 # disk is the IDE master).  BRIDGE: prometheus (default) or mediator
 # (a Mediator 4000 Mk II; MEDWIN=512 for its 512 MB window).  Z3MAP:
 # Zorro III placement (default uae; real puts boards from 0x40000000).
+# CPUBOARD=csppc: a CyberStorm PPC with CSPPCMEM MB (default 128), 16 MB
+# on the motherboard, the disk on its SCSI and its flash from CSPPCROM
+# (default media/cyberstormppc.rom, copied, as the emulator writes it).
 #
 #   sh winuae.sh hdfdir [seconds]
 #
@@ -56,6 +59,11 @@ if [ -n "$VOODOO3" ]; then
 	[ -f "$VOODOO3" ] || { echo "[FAIL] VOODOO3: $VOODOO3 not found"; exit 1; }
 	cp "$VOODOO3" "$W/bin/voodoo3.rom"
 fi
+if [ "$CPUBOARD" = csppc ]; then
+	R=${CSPPCROM:-$AUX/media/cyberstormppc.rom}
+	[ -f "$R" ] || { echo "[FAIL] CSPPCROM: $R not found"; exit 1; }
+	cp "$R" "$W/run/csppc.rom"
+fi
 C=$W/run/amix.uae
 cat > "$C" <<EOF
 config_hardware=true
@@ -74,12 +82,20 @@ cpu_24bit_addressing=false
 cpu_speed=max
 cachesize=0
 chipmem_size=4
-a3000mem_size=16
-mbresmem_size=32
+$(if [ "$CPUBOARD" = csppc ]; then
+	echo cpuboard_type=CyberStormPPC
+	printf '%s\n' "cpuboard_rom_file=$(win "$W/run/csppc.rom")"
+	echo "cpuboardmem1_size=${CSPPCMEM:-128}"
+	echo a3000mem_size=0; echo mbresmem_size=16
+else
+	echo a3000mem_size=16; echo mbresmem_size=32
+fi)
 fastmem_size=0
 z3mem_size=0
 z3mapping=${Z3MAP:-uae}
-$(if [ "$MACHINE" = a4000 ]; then
+$(if [ "$CPUBOARD" = csppc ]; then
+	printf '%s\n' "hardfile2=rw,SD0:$(win "$H/amix.hdf"),0,0,0,512,-128,,scsi0_cpuboard"
+elif [ "$MACHINE" = a4000 ]; then
 	printf '%s\n' "hardfile2=rw,DH1:$(win "$H/amix.hdf"),0,0,0,512,0,,ide0_mainboard"
 else
 	printf '%s\n' "filesystem2=rw,DH0:AmigaBoot:$(win "$H/boot"),5"

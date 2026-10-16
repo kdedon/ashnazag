@@ -4,6 +4,9 @@
 
 #include "sys/types.h"
 #include "amilib.h"
+#include "sys/param.h"
+#include "sys/immu.h"
+#include "vm/page.h"
 
 #define NAUTO	16
 #define CDSIZE	68			/* struct ConfigDev */
@@ -141,42 +144,84 @@ struct amx_zboard *zb;
 
 /*
  * Zorro III space from 1 GB to 2 GB shows at 2 GB to 3 GB through
- * supervisor page tables of its own: per 32 MB root entry a pointer table
- * and its 128 page tables, filled as boards are mapped.
+ * supervisor page tables of its own, filled as boards are mapped.  The
+ * tables live in whole pages below 1 GB, written through the one to one
+ * mapping, so a big board window takes no kernel virtual space.
  */
 #define IOWIN		0x40000000
 #define PTRSZ		512
 #define PGTSZ		256
 
-static char *winblk[32];
+static unsigned long *winptr[32];	/* pointer tables, kernel addresses after */
+static char *tblfree;
+static int tblleft;
+
+/* n zeroed bytes aligned to align, and their physical address */
+static char *
+tblalloc(n, align, pap)
+int n, align;
+unsigned long *pap;
+{
+	int skip = -(int)tblfree & (align - 1);
+	page_t *pp;
+	char *p;
+
+	if (tblleft < skip + n) {
+		if ((pp = page_get(4096, P_CANWAIT)) == 0)
+			return 0;
+		if (page_pptonum(pp) >= IOWIN >> 12) {
+			if (--pp->p_keepcnt == 0)
+				page_abort(pp);
+			if ((p = kmem_alloc(n + align, 0)) == 0)
+				return 0;
+			p = (char *)((unsigned long)(p + align - 1) & ~(align - 1));
+			bzero(p, n);
+			*pap = vtop(p, 0);
+			return p;
+		}
+		availrmem--;
+		pages_pp_kernel++;
+		/* no line from its last owner may land on it later */
+		__asm__ __volatile__(".word 0xf478" : : : "memory");	/* cpusha dc */
+		tblfree = (char *)(page_pptonum(pp) << 12);
+		tblleft = 4096;
+		skip = 0;
+		bzero(tblfree, 4096);
+	}
+	p = tblfree + skip;
+	tblfree = p + n;
+	tblleft -= skip + n;
+	*pap = (unsigned long)p;
+	return p;
+}
 
 static int
 iowin(pa, size)
 unsigned long pa, size;
 {
-	unsigned long *root, *ptr, va, end;
-	char *b;
+	unsigned long *root, *ptr, *pgt, va, end, t;
 	int r, i;
 
 	__asm__ __volatile__(".word 0x4e7a,0x0807; mov.l %%d0,%0"	/* movec %srp,%d0 */
 	    : "=g" (root) : : "d0");
 	for (va = pa + IOWIN, end = va + size; va < end; va += 4096) {
 		r = va >> 25;
-		if ((b = winblk[r - 64]) == 0) {
-			b = (char *)kmem_alloc(2 * PTRSZ + 128 * PGTSZ, 0);
-			if (b == 0)
+		if ((ptr = winptr[r - 64]) == 0) {
+			ptr = (unsigned long *)tblalloc(2 * PTRSZ, PTRSZ, &t);
+			if (ptr == 0)
 				return -1;
-			b = (char *)((unsigned long)(b + PTRSZ - 1) & ~(PTRSZ - 1));
-			bzero(b, PTRSZ + 128 * PGTSZ);
-			ptr = (unsigned long *)b;
-			for (i = 0; i < 128; i++)
-				ptr[i] = vtop(b + PTRSZ + i * PGTSZ, 0) | 3;
-			winblk[r - 64] = b;
-			root[r] = vtop(b, 0) | 3;
+			winptr[r - 64] = ptr;
+			root[r] = t | 3;
 		}
-		ptr = (unsigned long *)(b + PTRSZ + (va >> 18 & 0x7F) * PGTSZ);
+		i = va >> 18 & 0x7F;
+		if ((pgt = (unsigned long *)ptr[128 + i]) == 0) {
+			if ((pgt = (unsigned long *)tblalloc(PGTSZ, PGTSZ, &t)) == 0)
+				return -1;
+			ptr[128 + i] = (unsigned long)pgt;
+			ptr[i] = t | 3;
+		}
 		/* supervisor, noncacheable serialized, used, modified, resident */
-		ptr[va >> 12 & 0x3F] = (va - IOWIN) | 0xD9;
+		pgt[va >> 12 & 0x3F] = (va - IOWIN) | 0xD9;
 	}
 	__asm__ __volatile__(".word 0xf478, 0xf518" : : : "memory");	/* cpusha dc; pflusha */
 	return 0;
