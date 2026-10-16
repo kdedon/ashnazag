@@ -5,7 +5,7 @@
  */
 #ifndef NEXT_HFSWIRE_H
 #define NEXT_HFSWIRE_H
-#define HF_BASE 0x08000000UL	/* the region mapped for these routines, outside the kernel's banks */
+#define HF_BASE 0x07fe0000UL	/* the region for these routines: past bank 0, where the kernel maps its own space one to one */
 #define HF_SIZE 0x00020000UL
 #define HF_CTX (HF_BASE + 0x4000UL)
 #define HF_STUB (HF_BASE + 0x6000UL)

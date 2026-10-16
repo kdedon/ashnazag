@@ -7,6 +7,7 @@
 #include "kinc.h"
 #include "sys/sysm68k.h"
 #include "sys/time.h"
+#include "guest_mem.h"
 #include "../../next/profile.h"
 
 #define	SR_S	0x2000
@@ -38,6 +39,8 @@ struct nx {
 	unsigned char	rtc_addr, rtc_val, rtc_data, rtc_ctl, rtc_stat;
 	unsigned long	rtc_time, rtc_alarm;
 	unsigned long	mmu[10];	/* movec control registers kept for the guest */
+	struct guest_ram *ram;
+	pid_t		rampid;
 	struct nx_info	st;
 };
 extern struct nx nx;

@@ -15,6 +15,8 @@ extern timestruc_t hrestime;
 
 #define	ZEROBITS	0xc22e7600UL
 #define	SCR1		0xf0004000UL
+#define	TMC_VROW	0x118UL		/* the turbo's video registers: row bytes (4 pixels each) */
+#define	TMC_VHIGH	0x340UL		/* and rows of the screen */
 #define	TMC_SCR1	0xffff4fcfUL	/* the id as the turbo's memory controller reports it */
 
 struct nx nx;
@@ -256,7 +258,7 @@ static int
 islong(w)
 	unsigned long w;
 {
-	return w == 0x7000 || w == 0x7800 || w == 0xc000 || w == 0xc800 || w == 0x1a000 || w == 0x1f000;
+	return w == 0x7000 || w == 0x7800 || w == 0xc000 || w == 0xc800 || w == 0x1a000 || w == 0x1f000 || w == 0x1f004;
 }
 
 static unsigned long
@@ -325,6 +327,11 @@ nx_read(a, sz, vp)
 	} else if ((a & 0xfffffffcUL) == 0x02200000UL && (a & 3) + sz <= 4) {
 		/* the turbo's mirror of the machine id */
 		v = TMC_SCR1 >> (32 - 8 * ((a & 3) + sz));
+		if (sz < 4)
+			v &= (1UL << 8 * sz) - 1;
+	} else if ((a & 0xfffffff8UL) == 0x02200088UL && (a & 3) + sz <= 4) {
+		/* the screen's size, which the kernel's console reads */
+		v = (a & 4 ? TMC_VHIGH : TMC_VROW) >> (32 - 8 * ((a & 3) + sz)) & 0xffffffffUL;
 		if (sz < 4)
 			v &= (1UL << 8 * sz) - 1;
 	}

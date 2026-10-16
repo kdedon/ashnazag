@@ -8,6 +8,7 @@
  * NAME.__special__ file holding "mode=M raw=HEX" (the first word of raw is
  * the device number).
  */
+#include <limits.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
@@ -425,7 +426,7 @@ hf_serve(b)
 				    (fl & HF_SET_TIMES) ? stm : b->mtime);
 				(void)m;
 			}
-			if ((fl & HF_SET_SIZE) && truncate(hostpath(rel, 0), (off_t)ss) < 0)
+			if ((fl & HF_SET_SIZE) && b->type != HF_VCHR && b->type != HF_VBLK && truncate(hostpath(rel, 0), (off_t)ss) < 0)
 				e = errmap(errno);
 		}
 		if (!e)
@@ -517,7 +518,18 @@ hf_serve(b)
 			break;
 		}
 		hp = hostpath(buf, 0);
-		if (op == HF_CREATE)
+		if (op == HF_CREATE && (b->flags == HF_VCHR || b->flags == HF_VBLK)) {
+			char sp[PATH_MAX + 32];
+			FILE *sf;
+
+			sprintf(sp, "%s%s", hp, SPECIAL);
+			n = (sf = fopen(sp, "w")) == 0 ? -1 : 0;
+			if (sf) {
+				fprintf(sf, "mode=%lo raw=%08lx\n", (b->flags == HF_VCHR ? S_IFCHR : S_IFBLK) | (b->mode & 07777),
+				    b->rdev & 0xffff);
+				fclose(sf);
+			}
+		} else if (op == HF_CREATE)
 			fd = open(hp, O_WRONLY | O_CREAT | O_EXCL, 0600), n = fd < 0 ? -1 : (close(fd), 0);
 		else if (op == HF_MKDIR)
 			n = mkdir(hp, 0700);
@@ -530,7 +542,8 @@ hf_serve(b)
 			break;
 		}
 		{
-			unsigned long mt = op == HF_MKDIR ? S_IFDIR : op == HF_SYMLINK ? S_IFLNK : S_IFREG;
+			unsigned long mt = op == HF_MKDIR ? S_IFDIR : op == HF_SYMLINK ? S_IFLNK :
+			    b->flags == HF_VCHR ? S_IFCHR : b->flags == HF_VBLK ? S_IFBLK : S_IFREG;
 
 			setmeta(buf, mt | (b->mode & 07777), b->uid, b->gid, time(0));
 		}

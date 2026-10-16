@@ -83,6 +83,8 @@ vsr_set(gp, r, v)
 		GR_USP(r) = gp->gp_vusp;
 		gp->gp_vusp = t;
 	}
+	if (gp->gp_mmu && ((v ^ gp->gp_vsr) & SR_S))
+		guest_mmu_space(gp, v);
 	if ((v & SR_IPL) < (gp->gp_vsr & SR_IPL))
 		gp->gp_flags |= GPF_IDROP;
 	gp->gp_vsr = (v & SR_VIRT) | (gp->gp_flags & GPF_SPIN ? SR_S : 0);
@@ -153,7 +155,7 @@ guest_reflect(gp, r, pc, fv, x, n, ipl)
 {
 	char f[64];
 	long h, sp;
-	int sr = vsr_get(gp, r), nsr;
+	int sr = vsr_get(gp, r), nsr, ov, bad;
 
 	if (n < 2 || n > sizeof f - 6)
 		return -1;
@@ -167,9 +169,19 @@ guest_reflect(gp, r, pc, fv, x, n, ipl)
 		nsr = (nsr & ~SR_IPL) | ipl << 8;
 	sp = (sr & SR_S) || (gp->gp_flags & GPF_SPIN) ? GR_USP(r) : gp->gp_vusp;
 	sp -= 6 + n;
-	if (copyin((caddr_t)(gp->gp_vvbr + (fv & 0xfff)), (caddr_t)&h, 4) ||
-	    copyout(f, (caddr_t)sp, 6 + n))
+	ov = gp->gp_vsr;
+	if (gp->gp_mmu) {
+		gp->gp_vsr |= SR_S;		/* the table and the stack are in the supervisor space */
+		guest_mmu_space(gp, SR_S);
+	}
+	bad = copyin((caddr_t)(gp->gp_vvbr + (fv & 0xfff)), (caddr_t)&h, 4) ||
+	    copyout(f, (caddr_t)sp, 6 + n);
+	gp->gp_vsr = ov;
+	if (bad) {
+		if (gp->gp_mmu)
+			guest_mmu_space(gp, sr);
 		return -1;
+	}
 	vsr_set(gp, r, nsr);
 	GR_USP(r) = sp;
 	GR_PC(r) = h;
@@ -217,6 +229,8 @@ struct pi {
 	char	*r;
 	long	pc;		/* of the instruction */
 	int	len;		/* bytes consumed */
+	unsigned long fa;	/* address of a data fault, with its SSW (0: none) */
+	int	fssw, fc;	/* the function code of the access */
 };
 
 static int
@@ -370,10 +384,18 @@ operand(pi, mode, reg, sz, vp, wr, src)
 			P16(b, *vp);
 		else
 			P8(b, *vp);
-		return copyout(b, (caddr_t)a, sz) ? -2 : 0;
+		if (copyout(b, (caddr_t)a, sz)) {
+			pi->fa = a;
+			pi->fssw = 0x8000 | (sz == 4 ? 0 : sz == 1 ? 0x20 : 0x40) | pi->fc;
+			return -2;
+		}
+		return 0;
 	}
-	if (copyin((caddr_t)a, b, sz))
+	if (copyin((caddr_t)a, b, sz)) {
+		pi->fa = a;
+		pi->fssw = 0x8100 | (sz == 4 ? 0 : sz == 1 ? 0x20 : 0x40) | pi->fc;
 		return -2;
+	}
 	*vp = sz == 4 ? (long)G32(b) : sz == 2 ? (long)G16(b) : (long)G8(b);
 	return 0;
 }
@@ -389,6 +411,8 @@ creg(gp, pi, c, vp, wr)
 	unsigned long *cp;
 	unsigned long zero = 0;
 
+	if (gp->gp_mmu && guest_mmu_creg(gp, c, vp, wr) == 0)
+		return 0;
 	switch (c) {
 	case 0x000: cp = &gp->gp_vsfc; break;
 	case 0x001: cp = &gp->gp_vdfc; break;
@@ -417,7 +441,7 @@ creg(gp, pi, c, vp, wr)
 	return 0;
 }
 
-/* rte: formats 0, 2, 3, 9, $A and $B; the new SR may switch stacks */
+/* rte: formats 0, 2, 3, 9, $A and $B, plus 4 and 7 under the shadow MMU; the new SR may switch stacks */
 static int
 vrte(gp, pi)
 	struct guest_proc *gp;
@@ -432,6 +456,8 @@ vrte(gp, pi)
 	switch (G16(b + 6) >> 12) {
 	case 0: n = 8; break;
 	case 2: case 3: n = 12; break;
+	case 4: if (!gp->gp_mmu) return -1; n = 16; break;
+	case 7: if (!gp->gp_mmu) return -1; n = 60; break;	/* access faults: rerun */
 	case 9: n = 20; break;
 	case 0xa: n = 32; break;		/* 68030 bus faults: rerun */
 	case 0xb: n = 92; break;
@@ -645,17 +671,30 @@ priv1(gp, pi)
 		return 0;
 	}
 	if ((op & 0xff00) == 0x0e00 && (op & 0xc0) != 0xc0) {	/* moves */
-		int sz = 1 << ((op >> 6) & 3);
+		int sz = 1 << ((op >> 6) & 3), fc, us;
 		long *rp;
 
 		if (iword(pi, &ext) || mode < 2)
 			return -1;
 		rp = ext & 0x8000 ? areg(pi, (ext >> 12) & 7) : &GR_D(r, (ext >> 12) & 7);
+		/* a user function code reaches the guest's user space, not the supervisor's */
+		fc = (ext & 0x800 ? gp->gp_vdfc : gp->gp_vsfc) & 7;
+		pi->fc = fc;
+		us = gp->gp_mmu && (gp->gp_vsr & SR_S) && (fc == 1 || fc == 2);
+		if (us) {
+			gp->gp_vsr &= ~SR_S;
+			guest_mmu_space(gp, 0);
+		}
 		if (ext & 0x800) {
 			v = *rp;
-			return operand(pi, mode, reg, sz, &v, 1, 0);
+			e = operand(pi, mode, reg, sz, &v, 1, 0);
+		} else
+			e = operand(pi, mode, reg, sz, &v, 0, 0);
+		if (us) {
+			gp->gp_vsr |= SR_S;
+			guest_mmu_space(gp, SR_S);
 		}
-		if ((e = operand(pi, mode, reg, sz, &v, 0, 0)) != 0)
+		if (e != 0 || ext & 0x800)
 			return e;
 		if (ext & 0x8000)
 			*rp = sz == 1 ? (char)v : sz == 2 ? (short)v : v;
@@ -668,7 +707,7 @@ priv1(gp, pi)
 		return 0;
 	}
 	if ((op & 0xff00) == 0xf500)			/* pflush, ptest */
-		return 0;
+		return gp->gp_mmu ? guest_mmu_insn(gp, (int)op, (unsigned long)*areg(pi, reg)) : 0;
 	if ((op & 0xff80) == 0xf300)			/* fsave, frestore */
 		return fpstate(pi, (int)op);
 	if ((op & 0xffc0) == 0xf000 && (gp->gp_flags & GPF_CPU030))	/* 68030 MMU */
@@ -694,6 +733,7 @@ guest_priv(gp, r, v)
 	pi.r = r;
 	pi.pc = GR_PC(r);
 	pi.len = 0;
+	pi.fssw = pi.fc = 0;
 	bcopy(r, save, sizeof save);
 	e = priv1(gp, &pi);
 	if (e == 0)
@@ -713,6 +753,17 @@ guest_priv(gp, r, v)
 			    (int)curproc->p_pid, (int)fuword((caddr_t)pi.pc), (int)pi.pc);
 		else
 			printf("NOTICE: further unemulated instructions not reported\n");
+	}
+	if (e == -2 && gp->gp_mmu && pi.fssw) {
+		/* a fault of the guest's own access: its handler maps the page and the instruction reruns */
+		char f[60];
+		int fl = guest_bframe(f, GR_SR(r) | gp->gp_vsr, pi.pc, pi.fa, pi.fssw, 0);
+
+		P16(f + 12, G16(f + 12) | 0x400);
+		if (guest_reflect(gp, r, pi.pc, (int)G16(f + 6), f + 8, fl - 6, -1) == 0) {
+			trapret();
+			return 0;
+		}
 	}
 	if (e == -2) {
 		psignal(curproc, SIGSEGV);
@@ -788,10 +839,19 @@ guest_fault(p, gp, n)
 		return 1;
 	fl = guest_bframe(f, GR_SR(r) | gp->gp_vsr, GR_PC(r), gp->gp_fea, gp->gp_fssw,
 	    (gp->gp_flags & GPF_CPU030) || !&g_cputype || g_cputype < 40);
-	usp = GR_USP(r) - fl;
-	if (copyin((caddr_t)(gp->gp_vvbr + 8), (caddr_t)&h, 4) || h == 0 || (h & 1) ||
-	    copyout(f, (caddr_t)usp, fl))
-		return 1;
+	if (gp->gp_mmu) {
+		/* a translation fault (ATC) in the guest's own mode, entered as an exception */
+		P16(f + 12, G16(f + 12) | 0x400 | (gp->gp_vsr & SR_S ? 4 : 0));
+		if (guest_reflect(gp, r, GR_PC(r), (int)G16(f + 6), f + 8, fl - 6, -1))
+			return 1;
+		usp = GR_USP(r);
+		h = GR_PC(r);
+	} else {
+		usp = GR_USP(r) - fl;
+		if (copyin((caddr_t)(gp->gp_vvbr + 8), (caddr_t)&h, 4) || h == 0 || (h & 1) ||
+		    copyout(f, (caddr_t)usp, fl))
+			return 1;
+	}
 	s = splhi_();
 	for (pp = &p->p_sigqueue; *pp && *pp != sq; pp = &(*pp)->sq_next)
 		;
@@ -812,7 +872,8 @@ guest_fault(p, gp, n)
 	GR_USP(r) = usp;
 	GR_PC(r) = h;
 	GR_SR(r) &= 0x00ff;
-	gp->gp_vsr &= SR_S | SR_IPL;
+	if (!gp->gp_mmu)
+		gp->gp_vsr &= SR_S | SR_IPL;
 	u.u_sigflag |= USTKCLEAR;
 	return 0;
 }
@@ -829,9 +890,22 @@ guest_unote(p)
 	char *r = (char *)u.u_ar0;
 	long h;
 
+	int bad, ov;
+
 	if (p != u.u_procp || !(gp->gp_flags & GPF_FAULT) || gp->gp_fpc != GR_PC(r) ||
-	    GR_VEC(r) != 2 || (GR_SR(r) & 0x2000) ||
-	    copyin((caddr_t)(gp->gp_vvbr + 8), (caddr_t)&h, 4) || h == 0 || (h & 1))
+	    GR_VEC(r) != 2 || (GR_SR(r) & 0x2000))
+		return 1;
+	/* the vector table is in the guest's supervisor space */
+	ov = gp->gp_vsr;
+	if (gp->gp_mmu) {
+		gp->gp_vsr |= SR_S;
+		guest_mmu_space(gp, SR_S);
+	}
+	bad = copyin((caddr_t)(gp->gp_vvbr + 8), (caddr_t)&h, 4) || h == 0 || (h & 1);
+	gp->gp_vsr = ov;
+	if (gp->gp_mmu)
+		guest_mmu_space(gp, ov);
+	if (bad)
 		return 1;
 	gp->gp_flags |= GPF_UNOTE;
 	guest_nunote++;

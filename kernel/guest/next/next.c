@@ -20,6 +20,7 @@
 #include <siginfo.h>
 #include <sys/time.h>
 #include <sys/ioctl.h>
+#include <sys/resource.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <signal.h>
@@ -203,7 +204,7 @@ conflicts()
 		if (ioctl(fd, PIOCMAP, maps) == 0) {
 			result = 0;
 			for (i = 0; i < n; i++)
-				if ((unsigned long)maps[i].pr_vaddr < NX_LIMIT) {
+				if ((unsigned long)maps[i].pr_vaddr < NX_PHYS + NX_LIMIT) {
 					errno = EBUSY;
 					result = -1;
 				}
@@ -235,46 +236,68 @@ defaults(nv)
 	nv[31] = sum;
 }
 
-/* the ROM at 0 and 0x01000000, RAM in bank 0, VRAM from its file */
+/*
+ * The ROM at 0 and 0x01000000, RAM in bank 0, VRAM from its file; each
+ * also at NX_PHYS above, where it stays when the guest's MMU takes the
+ * low addresses.
+ */
+static int
+twice(a, len, prot, flags, fd, off)
+	unsigned long a, len;
+	int prot, flags, fd;
+	off_t off;
+{
+	return mmap((void *)a, len, prot, flags | MAP_FIXED, fd, off) == (void *)-1 ||
+	    mmap((void *)(NX_PHYS + a), len, prot, flags | MAP_FIXED, fd, off) == (void *)-1 ? -1 : 0;
+}
+
 static int
 memory(root, rom)
 	char *root, *rom;
 {
 	char path[1100];
 	struct stat st;
+	struct rlimit rl;
+	unsigned long size;
 	int fd, zero;
 
 	if ((zero = open("/dev/zero", O_RDWR)) < 0)
 		return -1;
 	if (!rom) {
 		/* no ROM: its address range reads as zeros */
-		if (mmap((void *)NX_ROM, NX_ROM_SIZE, PROT_READ, MAP_PRIVATE | MAP_FIXED,
-		    zero, 0) == (void *)-1)
+		if (twice(NX_ROM, NX_ROM_SIZE, PROT_READ, MAP_PRIVATE, zero, (off_t)0) < 0)
 			return -1;
 	} else {
 		if ((fd = open(rom, O_RDONLY)) < 0 || fstat(fd, &st) < 0 || st.st_size != NX_ROM_SIZE) {
 			errno = fd < 0 ? errno : EINVAL;
 			return -1;
 		}
-		if (mmap((void *)NX_ROM, NX_ROM_SIZE, PROT_READ | PROT_EXEC, MAP_SHARED | MAP_FIXED,
-		    fd, 0) == (void *)-1 ||
-		    mmap((void *)NX_ROM2, NX_ROM_SIZE, PROT_READ | PROT_EXEC, MAP_SHARED | MAP_FIXED,
-		    fd, 0) == (void *)-1)
+		if (twice(NX_ROM, NX_ROM_SIZE, PROT_READ | PROT_EXEC, MAP_SHARED, fd, (off_t)0) < 0 ||
+		    twice(NX_ROM2, NX_ROM_SIZE, PROT_READ | PROT_EXEC, MAP_SHARED, fd, (off_t)0) < 0)
 			return -1;
 		close(fd);
 	}
-	for (ramsize = 0x2000000UL; ramsize >= 0x800000UL; ramsize >>= 1)
-		if (mmap((void *)NX_RAM, ramsize, PROT_READ | PROT_WRITE | PROT_EXEC,
-		    MAP_PRIVATE | MAP_FIXED, zero, 0) != (void *)-1)
+	/* every view of guest memory counts against the mapping limit */
+	if (getrlimit(RLIMIT_VMEM, &rl) == 0) {
+		rl.rlim_cur = rl.rlim_max;
+		setrlimit(RLIMIT_VMEM, &rl);
+	}
+	/* the host filesystem's region follows the RAM in the object */
+	for (ramsize = 0x2000000UL; ramsize >= 0x800000UL; ramsize >>= 1) {
+		size = ramsize + HF_SIZE;
+		if (ioctl(bridge, NX_RAMNEW, &size) == 0 &&
+		    twice(NX_RAM, ramsize, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_SHARED, bridge, (off_t)0) == 0)
 			break;
+		munmap((void *)NX_RAM, ramsize);
+		munmap((void *)(NX_PHYS + NX_RAM), ramsize);
+	}
 	if (ramsize < 0x800000UL)
 		return -1;
 	close(zero);
 	sprintf(path, "%s/vram", root);
 	if ((fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0600)) < 0 ||
 	    ftruncate(fd, (off_t)NX_VRAM_SIZE) < 0 ||
-	    mmap((void *)NX_VRAM, NX_VRAM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED,
-	    fd, 0) == (void *)-1)
+	    twice(NX_VRAM, NX_VRAM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, (off_t)0) < 0)
 		return -1;
 	close(fd);
 	return 0;
@@ -283,6 +306,8 @@ memory(root, rom)
 #define BE(p) ((unsigned long)(p)[0] << 24 | (p)[1] << 16 | (p)[2] << 8 | (p)[3])
 #define CPU_M68K 6
 #define ARGS (NX_RAM + 0x00400000UL)	/* boot frame; the kernel and its tables lie below */
+#define MG_FLAGS 369
+#define MGF_VERBOSE 8
 #define MAXBOOT 0x1000UL
 #define BANKTOP 0x2000UL	/* the kernel keeps its message ring just above a bank's end */
 
@@ -296,7 +321,7 @@ static struct ksym {
 	unsigned long addr;
 } ksyms[] = {
 	{ "_kalloc" }, { "_vm_info_init" }, { "_uiomove" }, { "_vfs_add" }, { "_vfs_unlock" },
-	{ "_bcopy" }, { "_active_u" }, { "_vfssw" }, { "_vfsNVFS" },
+	{ "_bcopy" }, { "_specvp" }, { "_active_u" }, { "_vfssw" }, { "_vfsNVFS" },
 	{ "_setconf" }, { "_rootfs" },
 };
 #define K_KALLOC 0
@@ -305,11 +330,12 @@ static struct ksym {
 #define K_VFSADD 3
 #define K_VFSUNLOCK 4
 #define K_BCOPY 5
-#define K_ACTIVEU 6
-#define K_VFSSW 7
-#define K_VFSEND 8
-#define K_SETCONF 9
-#define K_ROOTFS 10
+#define K_SPECVP 6
+#define K_ACTIVEU 7
+#define K_VFSSW 8
+#define K_VFSEND 9
+#define K_SETCONF 10
+#define K_ROOTFS 11
 
 /* the address of the named symbol in the slice at off, 0 if none */
 static unsigned long
@@ -403,6 +429,7 @@ bootframe()
 
 	memset((void *)ARGS, 0, MAXBOOT);
 	f[1] = ARGS + 0x200;		/* zeroed globals: no monitor services */
+	((unsigned char *)f[1])[MG_FLAGS] |= MGF_VERBOSE;	/* the kernel's console text shows on the screen */
 	f[4] = (unsigned long)b;
 	strcpy((char *)b, "hf");	/* no device probe answers to it: the root comes from the switch entry */
 	f[5] = (unsigned long)b + 16;	/* empty argument string */
@@ -414,6 +441,8 @@ bootframe()
 	((unsigned long *)(b + 32))[1] = NX_RAM + ramsize - BANKTOP;
 	return f;
 }
+
+static char altstack[16384];
 
 static void
 carrier(sig)
@@ -436,9 +465,11 @@ console()
 	unsigned char *ring;
 	unsigned long end;
 
-	if (!msgp || (ring = (unsigned char *)L(msgp)) == 0 ||
-	    (unsigned long)ring < NX_RAM || (unsigned long)ring + 12 + MSGSIZE > NX_RAM + ramsize ||
-	    L(ring) != MSGMAGIC)
+	if (!msgp || (ring = (unsigned char *)L(NX_PHYS + msgp)) == 0 ||
+	    (unsigned long)ring < NX_RAM || (unsigned long)ring + 12 + MSGSIZE > NX_RAM + ramsize)
+		return;
+	ring += NX_PHYS;
+	if (L(ring) != MSGMAGIC)
 		return;
 	end = L(ring + 4);
 	if (end > MSGSIZE)
@@ -453,10 +484,19 @@ console()
 }
 
 static void
-tick(sig)
+tick(sig, si, uc)
 	int sig;
+	siginfo_t *si;
+	ucontext_t *uc;
 {
+	static int n;
+	char line[60];
+
 	console();
+	if (getenv("NEXT_PC") && ++n % 100 == 0) {
+		sprintf(line, "next: pc %lx sp %lx\n", (unsigned long)uc->uc_mcontext.gregs[R_PC], (unsigned long)uc->uc_mcontext.gregs[R_SP]);
+		write(2, line, strlen(line));
+	}
 }
 
 /* the kernel went back to the monitor: its command line, then the end */
@@ -472,7 +512,10 @@ leave(sig)
 	if (ioctl(bridge, NX_INFO, &info) == 0) {
 		a = info.monexit & 0x7fffffffUL;
 		sprintf(line, "next: the kernel returned to the monitor: %.60s\n",
-		    a >= NX_RAM && a < NX_RAM + ramsize - 64 ? (char *)a : "");
+		    a >= NX_RAM && a < NX_RAM + ramsize - 64 ? (char *)(NX_PHYS + a) : "");
+		write(1, line, strlen(line));
+		sprintf(line, "next: privileged %lu, MMU fills %lu faults %lu switches %lu flushes %lu, ticks %lu\n",
+		    info.mmu[4], info.mmu[0], info.mmu[1], info.mmu[2], info.mmu[3], info.ticks);
 		write(1, line, strlen(line));
 	}
 	kill(machine, SIGTERM);
@@ -489,9 +532,13 @@ trap(sig, si, uc)
 	char line[80];
 
 	console();
-	sprintf(line, "next: signal %d pc %lx sp %lx\n", sig,
-	    (unsigned long)uc->uc_mcontext.gregs[R_PC],
-	    (unsigned long)uc->uc_mcontext.gregs[R_SP]);
+	/* a fault of the guest that could not be sent to its own handler */
+	if ((unsigned long)uc->uc_mcontext.gregs[R_PC] < NX_LIMIT)
+		sprintf(line, "next: double fault at %lx pc %lx sp %lx\n", (unsigned long)si->si_addr,
+		    (unsigned long)uc->uc_mcontext.gregs[R_PC], (unsigned long)uc->uc_mcontext.gregs[R_SP]);
+	else
+		sprintf(line, "next: signal %d addr %lx pc %lx sp %lx\n", sig, (unsigned long)si->si_addr,
+		    (unsigned long)uc->uc_mcontext.gregs[R_PC], (unsigned long)uc->uc_mcontext.gregs[R_SP]);
 	write(2, line, strlen(line));
 	_exit(1);
 }
@@ -504,7 +551,7 @@ trap(sig, si, uc)
  * probe and no network code.  The kernel file is not touched.
  */
 struct hctx {
-	long (*kalloc)(), (*vm_info_init)(), (*uiomove)(), (*vfs_add)(), (*vfs_unlock)(), (*bcopy)();
+	long (*kalloc)(), (*vm_info_init)(), (*uiomove)(), (*vfs_add)(), (*vfs_unlock)(), (*bcopy)(), (*specvp)();
 	unsigned long *active_u;
 	unsigned long doorbell;
 	unsigned long vfsops[8], vnodeops[36];
@@ -517,16 +564,13 @@ hostfs(folder)
 	struct hctx *c = (struct hctx *)HF_CTX;
 	unsigned long e, *sw;
 	unsigned short *stub;
-	int i, zero;
+	int i;
 
 	for (i = 0; i < sizeof ksyms / sizeof ksyms[0]; i++)
 		if (!ksyms[i].addr)
 			return -1;
-	if ((zero = open("/dev/zero", O_RDWR)) < 0 ||
-	    mmap((void *)HF_BASE, HF_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_FIXED,
-	    zero, 0) == (void *)-1)
+	if (twice(HF_BASE, HF_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_SHARED, bridge, (off_t)ramsize) < 0)
 		return -1;
-	close(zero);
 	if (HF_CODE - HF_BASE + hfs_blob_len > HF_SIZE || hf_open(folder) < 0)
 		return -1;
 	memcpy((void *)HF_CODE, hfs_blob, hfs_blob_len);
@@ -536,6 +580,7 @@ hostfs(folder)
 	c->vfs_add = (long (*)())ksyms[K_VFSADD].addr;
 	c->vfs_unlock = (long (*)())ksyms[K_VFSUNLOCK].addr;
 	c->bcopy = (long (*)())ksyms[K_BCOPY].addr;
+	c->specvp = (long (*)())ksyms[K_SPECVP].addr;
 	c->active_u = (unsigned long *)ksyms[K_ACTIVEU].addr;
 	c->doorbell = NX_DOORBELL + 4;
 	e = HF_CODE + hfs_entry;
@@ -571,8 +616,7 @@ static void
 hostcall(sig)
 	int sig;
 {
-	struct hf_box *b = (struct hf_box *)HF_BASE;
-
+	struct hf_box *b = (struct hf_box *)(NX_PHYS + HF_BASE);
 	char line[100];
 
 	if (b->state != HF_REQUEST)
@@ -583,7 +627,8 @@ hostcall(sig)
 		write(1, line, strlen(line));
 	}
 	if (getenv("NEXT_CENSUS")) {
-		sprintf(line, "next: hfs op %lu node %lu error %ld result %ld\n", b->op, b->node, b->error, b->result);
+		sprintf(line, "next: hfs op %lu node %lu error %ld result %ld %.40s\n", b->op, b->node, b->error, b->result,
+		    b->op == HF_LOOKUP ? b->name : "");
 		write(2, line, strlen(line));
 	}
 }
@@ -637,6 +682,7 @@ main(argc, argv)
 	char path[1100];
 	struct nx_enter ne;
 	struct sigaction sa;
+	stack_t ss;
 	struct stat st;
 	pid_t child;
 	int fd;
@@ -657,6 +703,10 @@ main(argc, argv)
 		return 1;
 	}
 	nh_display_init(&display);
+	if ((bridge = open("/dev/nextguest", O_RDWR)) < 0) {
+		perror("next: /dev/nextguest");
+		return 1;
+	}
 	if (conflicts() < 0 || memory(root, kernel ? 0 : media) < 0) {
 		perror("next: memory or ROM (128 KB)");
 		return 1;
@@ -676,11 +726,7 @@ main(argc, argv)
 	ne.ramsize = ramsize;
 	if (getenv("NEXT_CENSUS"))
 		fprintf(stderr, "next: RAM %lu MB\n", ramsize >> 20);
-	ne.flags = getenv("NEXT_CENSUS") ? NXF_CENSUS : 0;
-	if ((bridge = open("/dev/nextguest", O_RDWR)) < 0) {
-		perror("next: /dev/nextguest");
-		return 1;
-	}
+	ne.flags = (getenv("NEXT_CENSUS") ? NXF_CENSUS : 0) | NXF_HOST;
 	machine = getpid();
 	if ((child = fork()) < 0) {
 		perror("next: fork");
@@ -691,10 +737,16 @@ main(argc, argv)
 	memset(&sa, 0, sizeof sa);
 	sa.sa_handler = carrier;
 	sigaction(SIGUSR2, &sa, (struct sigaction *)0);
+	/* the handlers run on a stack of their own: the guest's is virtual */
+	ss.ss_sp = altstack;
+	ss.ss_size = sizeof altstack / 4;	/* this kernel counts it in longs */
+	ss.ss_flags = 0;
+	sigaltstack(&ss, (stack_t *)0);
+	sa.sa_flags = SA_ONSTACK;
 	sa.sa_handler = leave;
 	sigaction(SIGUSR1, &sa, (struct sigaction *)0);
 	sa.sa_handler = (void (*)())trap;
-	sa.sa_flags = SA_SIGINFO;
+	sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
 	sigaction(SIGBUS, &sa, (struct sigaction *)0);
 	sigaction(SIGSEGV, &sa, (struct sigaction *)0);
 	if (entry) {
@@ -703,15 +755,15 @@ main(argc, argv)
 		else {
 			fprintf(stderr, "next: root filesystem installed\n");
 			sa.sa_handler = hostcall;
-			sa.sa_flags = 0;
+			sa.sa_flags = SA_ONSTACK;
 			sigaction(SIGPWR, &sa, (struct sigaction *)0);
 		}
 	}
 	{
 		struct itimerval it;
 
-		sa.sa_handler = tick;
-		sa.sa_flags = 0;
+		sa.sa_handler = (void (*)())tick;
+		sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
 		sigaction(SIGALRM, &sa, (struct sigaction *)0);
 		it.it_interval.tv_sec = it.it_value.tv_sec = 0;
 		it.it_interval.tv_usec = it.it_value.tv_usec = 20000;

@@ -108,7 +108,7 @@ for s in ${ONLY:-"$T"/src/t_*.c "$T/src/runall.c"}; do
 	t_nativehost) extra="$O/nativehost.o $MODO" ;;
 	t_nhplat) extra=$O/nativehost_platform.o ;;
 	t_nativecall) extra="$O/nativecall.o $O/ncprobe.o $O/nativehost.o $MODO" ;;
-	t_v200|t_next) extra=$MODO ;;
+	t_v200|t_next|t_gmmu) extra=$MODO ;;
 	t_radeon) cc "$KDIR/amiga/radeon/rdsinit.c" "$O/rdsinit.o"; extra=$O/rdsinit.o ;;
 	esac
 	link "$BIN/$n" "$O/$n.o" "$O/t.o" $extra

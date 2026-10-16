@@ -11,7 +11,7 @@ desktop bus, ethernet) are not provided: those devices come as drivers over host
 Per environment (`~/NeXT/<env>`): `mach_kernel` or `media` (the ROM image, 128 KB), `nvram` keeps the
 clock chip's settings, `vram` is the screen. RAM is the largest of 32, 16 or 8 MB that
 free memory holds. Cmd-Q quits.
-`NEXT_CENSUS=1` prints each register's first access on stderr.
+`NEXT_CENSUS=1` prints each register's first access on stderr; `NEXT_PC=1` the guest's PC every 2 s.
 
 Tested with `GROUP=next sh tests/run-qemu.sh` (the ROM from `media/NeXTROMS.zip`).
 
@@ -50,7 +50,14 @@ fsync, inactive, then bmap, strategy and the rest. A vnode has the VM info point
 flag at +4, count at +6, operations at +28, vfs at +36, type at +40, rdev at +44, private
 data at +46. Directories are read as 1024-byte blocks of `ino, reclen, namlen, name`.
 
-Where it stops: after the device probe the kernel starts its threads on kernel stacks it
-allocated from its own virtual address space (around 0x10df3000, outside RAM); with the MMU
-off the first switch to one faults, before the root mount runs. The translation registers
-the kernel sets are recorded but not applied.
+The kernel's MMU runs on guestcore's shadow: RAM is one object mapped at its physical address and again
+at `NX_PHYS` above, where the host side reads it once the guest's translation takes the low addresses.
+The host filesystem region sits past bank 0, inside the range the kernel maps one to one.
+
+The host-call doorbell is a long store at `NX_DOORBELL + 4`; the launcher's signal handlers run on
+their own stack, since the guest's stack is virtual. `pagein` and `pageout` of the vnode operations
+are host reads and writes of one page.
+
+Where it stops: the root mounts from the host folder; the kernel then looks up `/etc/mach_init` and
+`/etc/init`, reads their attributes and gives up with ENOEXEC without reading the file or paging
+it in, and halts.

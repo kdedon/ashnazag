@@ -70,6 +70,7 @@ gc_free(p)
 	if (pf->gpf_exit)
 		(*pf->gpf_exit)(gp);
 	p->p_evpdp = 0;
+	guest_mmu_free(gp);
 	kmem_free((_VOID *)gp, gp->gp_size);
 	gc_nproc--;
 	mod_rele(pf->gpf_wrapper);

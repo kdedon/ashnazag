@@ -210,11 +210,21 @@ refl(gp, r, v)
 {
 	int n;
 
+	/* the host's own code; trap #0 there is a host system call */
+	if ((unsigned long)GR_PC(r) >= NX_LIMIT && ((nx.flags & NXF_HOST) || v == 32))
+		return 1;
 	switch (GR_FV(r) >> 12) {
 	case 0: n = 0; break;
 	case 2: case 3: n = 4; break;
 	case 4: n = 8; break;
 	default: return 1;
+	}
+	if (v >= 32 && !(gp->gp_vsr & 0x2000)) {
+		unsigned long *t = nx.st.utrap[nx.st.utraps++ % 16];
+
+		t[0] = v;
+		t[1] = GR_D(r, 0);
+		t[2] = GR_PC(r);
 	}
 	if (guest_reflect(gp, r, GR_PC(r), (GR_FV(r) & 0xf000) | (v << 2), r + 72, n + 2, -1) < 0)
 		psignal(curproc, SIGSEGV);
@@ -285,9 +295,9 @@ priv(gp, r, v)
 		cp = 0;
 		if (c == 2)
 			cp = &gp->gp_vcacr;
-		if (c >= 3 && c <= 7)
+		if (c >= 3 && c <= 7 && !gp->gp_mmu)
 			cp = &nx.mmu[c - 3];
-		if (c == 0x805 || c == 0x806 || c == 0x807)
+		if ((c == 0x805 || c == 0x806 || c == 0x807) && !gp->gp_mmu)
 			cp = &nx.mmu[c - 0x800];
 		if (c == 0x803 || c == 0x804)
 			cp = &nx.mmu[c - 0x7fb];
@@ -338,6 +348,9 @@ nx_exit(gp)
 	nx.state = 0;
 	nx.proc = 0;
 	nx.gp = 0;
+	if (nx.ram)
+		guest_ram_free(nx.ram);
+	nx.ram = 0;
 	sigdelset(&gp->gp_proc->p_sig, NX_SIG);
 	if (nx.sleeping)
 		wakeup((caddr_t)&nx.sleeping);
@@ -385,6 +398,8 @@ enter(arg)
 	nx.flags = ne.flags;
 	nx.nnote = nx.sleeping = 0;
 	nx_reset();
+	if (nx.ram && guest_mmu_init(gp, NX_PHYS, NX_LIMIT, 0UL, NX_LIMIT))
+		printf("NOTICE: next: no MMU shadow on this host\n");
 	nx.proc = curproc;
 	nx.gp = gp;
 	dlm_cacheflush();
@@ -392,6 +407,30 @@ enter(arg)
 	if ((nx.tid = ttimeout(tick, (caddr_t)0, 1L)) == -1)
 		nx.tid = 0;
 	return 0;
+}
+
+/* the RAM object, for the process that made it */
+static int
+mmap_device(dev, off, prot)
+	dev_t dev;
+	off_t off;
+	int prot;
+{
+	return off < 0 ? -1 : guest_ram_frame(nx.ram, (unsigned long)off);
+}
+
+static int
+segmap_device(dev, off, as, addrp, len, prot, maxprot, flags, cr)
+	dev_t dev;
+	off_t off;
+	struct as *as;
+	addr_t *addrp;
+	u_int len, prot, maxprot, flags;
+	struct cred *cr;
+{
+	if (!nx.ram || curproc->p_pid != nx.rampid)
+		return EACCES;
+	return guest_ram_map(nx.ram, dev, off, as, addrp, len, prot, maxprot, flags);
 }
 
 static int
@@ -413,6 +452,10 @@ close_device(dev, flags, kind, credentials)
 	struct cred *credentials;
 {
 	nx.opened = 0;
+	if (!nx.state && nx.ram) {
+		guest_ram_free(nx.ram);
+		nx.ram = 0;
+	}
 	return 0;
 }
 
@@ -424,14 +467,25 @@ ioctl_device(dev, command, argument, mode, credentials, result)
 	struct cred *credentials;
 	int *result;
 {
+	unsigned long size;
 	int s;
 
 	switch (command) {
 	case NX_ENTER:
 		return GUESTP(curproc) ? EBUSY : enter(argument);
+	case NX_RAMNEW:
+		if (nx.state || GUESTP(curproc))
+			return EBUSY;
+		if (nx.ram)
+			guest_ram_free(nx.ram);
+		nx.ram = 0;
+		nx.rampid = curproc->p_pid;
+		return copyin(argument, (caddr_t)&size, sizeof size) ? EFAULT :
+		    guest_ram_new(size, 0, 0UL, &nx.ram);
 	case NX_INFO:
 		if (nx.state != 1)
 			return ENXIO;
+		guest_mmu_stats(nx.gp, nx.st.mmu);
 		s = nx_splhi();
 		nx.st.level = nx_level();
 		nx.st.stat = nx.stat;
@@ -457,7 +511,7 @@ load()
 	profile.gpf_sendsig = nx_sendsig;
 	profile.gpf_intr = nx_intr;
 	for (v = 2; v < 48; v++) {
-		if ((v > 11 && v < 32) || v == 32)
+		if (v > 11 && v < 32)
 			continue;
 		d = &profile.gpf_disp[v];
 		d->gd_kind = GD_EMULATE;
@@ -478,7 +532,7 @@ unload()
 
 struct mod_drv_data nextguest_drvdata[] = {
 	{ { nodev, nodev, nodev, nodev, nodev, nodev, nodev, 0 }, 0, 0,
-	{ open_device, close_device, nodev, nodev, ioctl_device, nodev, nodev,
+	{ open_device, close_device, nodev, nodev, ioctl_device, mmap_device, segmap_device,
 		nodev, nodev, nodev, 0, 0, &device_flag }, NX_MAJOR, 1 }
 };
 MOD_DRV_WRAPPER(nextguest, load, unload, 0, "NeXT native services");

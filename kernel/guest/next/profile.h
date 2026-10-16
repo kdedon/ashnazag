@@ -13,13 +13,19 @@
 #define NX_VRAM_SIZE 0x40000UL
 #define NX_DOORBELL 0x0201f000UL	/* a long store is a host call: the kernel leaving for the monitor, d0 = command line */
 #define NX_LIMIT 0x20000000UL	/* local bus; above it nothing answers */
+#define NX_PHYS NX_LIMIT	/* physical address p is also at NX_PHYS + p, for the shadow MMU and the host side */
+#define NX_RAMNEW 0x4e580003	/* unsigned long: the RAM object (with the host filesystem region after it), mmap offsets from 0 */
 #define NXF_CENSUS 1		/* each register's first access on the console */
+#define NXF_HOST 2		/* code above the bus is the host's own: its faults stay signals */
 #define NX_NVRAM 64
 #define NX_NCENSUS 96
 struct nx_enter { unsigned long flags, ramsize; unsigned char nvram[NX_NVRAM]; };
 struct nx_census { unsigned long addr, pc, value; unsigned char size, write, pad[2]; };
 struct nx_info {
 	unsigned long ticks, ints, io, faults, nvseq, level, stat, mask, ncensus, lasta, lastpc, monexit;
+	unsigned long mmu[5];	/* MMU fills, faults, space switches, flushes; privileged instructions */
+	unsigned long utraps;	/* trap instructions from the guest's user mode */
+	unsigned long utrap[16][3];	/* the latest: vector, d0, pc */
 	unsigned char nvram[NX_NVRAM];
 	struct nx_census census[NX_NCENSUS];
 };

@@ -10,6 +10,7 @@
  */
 
 #include "next.h"
+#include "../../next/hfswire.h"
 
 /* ---- instruction decoding ---- */
 
@@ -168,7 +169,22 @@ nx_dev(a, wr)
 		return 0;
 	if (a >= NX_VRAM && a < NX_VRAM + NX_VRAM_SIZE)
 		return 0;
+	if (a >= HF_BASE && a < HF_BASE + HF_SIZE)
+		return 0;
 	return 1;
+}
+
+/* the guest physical address of a; one that does not translate is memory, so its fault reaches the guest */
+static unsigned long
+phys(a, wr)
+	unsigned long a;
+	int wr;
+{
+	unsigned long pa;
+
+	if (!nx.gp)
+		return a;
+	return guest_mmu_xlate(nx.gp, a, wr ? 2 : 1, &pa) ? NX_RAM : pa;
 }
 
 /* the memory is mirrored through its bank, as the memory sizing expects */
@@ -189,19 +205,21 @@ mget(x, a, sz, vp)
 	int sz;
 	unsigned long *vp;
 {
-	unsigned long v = 0;
+	unsigned long v = 0, pa;
 	unsigned char b[4];
 	int i;
 
-	a = alias(a);
-	if (!nx_dev(a, 0)) {
+	pa = phys(a, 0);
+	a = pa == a ? alias(a) : a;
+	pa = alias(pa);
+	if (!nx_dev(pa, 0)) {
 		if (copyin((caddr_t)a, (caddr_t)b, sz)) {
 			x->ba = a;
 			return -1;
 		}
 		for (i = 0; i < sz; i++)
 			v = v << 8 | b[i];
-	} else if (nx_read(a, sz, &v)) {
+	} else if (nx_read(pa, sz, &v)) {
 		x->ba = a;
 		return -1;
 	}
@@ -215,12 +233,14 @@ mput(x, a, sz, v)
 	unsigned long a, v;
 	int sz;
 {
+	unsigned long pa = phys(a, 1);
 	unsigned char b[4];
 	int i;
 
-	a = alias(a);
-	if (nx_dev(a, 1))
-		return nx_write(a, sz, v) ? (x->ba = a, -1) : 0;
+	a = pa == a ? alias(a) : a;
+	pa = alias(pa);
+	if (nx_dev(pa, 1))
+		return nx_write(pa, sz, v) ? (x->ba = a, -1) : 0;
 	for (i = sz - 1; i >= 0; i--, v >>= 8)
 		b[i] = v;
 	if (copyout((caddr_t)b, (caddr_t)a, sz)) {
@@ -811,11 +831,14 @@ nx_fault(gp, r, v)
 	struct ix x;
 	char save[64];
 
+	/* the host's own code, such as its signal handlers, keeps its signals */
+	if ((nx.flags & NXF_HOST) && (unsigned long)GR_PC(r) >= NX_LIMIT)
+		return 1;
 	fmt = GR_FV(r) >> 12;
 	if ((fmt != 7 && fmt != 4) || (e = guest_bfault(r, &fa, &ssw)) < 0)
 		return guest_fnote(gp, r, v);
 	wr = !(ssw & 0x100);
-	if (!nx_dev(fa, wr)) 
+	if (!nx_dev(phys(fa, wr), wr))
 		return guest_fnote(gp, r, v);
 	if (e)
 		return nx_badaccess(gp, r, fa, "fetch");

@@ -50,6 +50,7 @@ static struct {
 	{ "t_guestdlm", 90 },
 	{ "t_envram", 60 },
 	{ "t_gate", 150 },
+	{ "t_gmmu", 120 },
 	{ "t_aux", 300 },
 	{ "t_mac", 330 },
 	{ "t_mac76", 600 },

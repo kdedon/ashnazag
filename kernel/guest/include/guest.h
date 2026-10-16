@@ -77,6 +77,7 @@ struct guest_proc {
 	unsigned short		gp_fssw, gp_fpad;
 	/* the host's own code: its exceptions go to the stock handlers */
 	unsigned long		gp_hostlo, gp_hosthi;
+	struct guest_mmu	*gp_mmu;	/* 68040 MMU shadow, 0 = none */
 };
 
 /* gp_flags; the gates read the low 16 bits at offsets 14 and 15 */
@@ -186,5 +187,10 @@ extern void guest_trapret();		/* reschedule, deliverable signals */
 extern int guest_reflect();		/* (gp, regs, pc, fv, x, n, ipl) */
 extern int guest_rommap();		/* (dev, pa, size): the host's ROM in place */
 extern int guest_halt();		/* root's Shut Down from a session */
+extern int guest_mmu_init();		/* (gp, pbase, plimit, lo, hi): the guest may enable its MMU */
+extern int guest_mmu_xlate();		/* (gp, va, rw, &pa): its translation, -1 none */
+extern void guest_mmu_stats();		/* (gp, v[5]): fills, faults, space switches, flushes, privileged */
+extern void guest_mmu_free(), guest_mmu_space();
+extern int guest_mmu_creg(), guest_mmu_insn();
 
 #endif	/* _GUEST_H */

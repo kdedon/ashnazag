@@ -21,6 +21,7 @@ struct hctx {
 	long (*vfs_add)();
 	long (*vfs_unlock)();
 	long (*bcopy)();
+	long (*specvp)();
 	unsigned long *active_u;
 	unsigned long doorbell;
 	unsigned long vfsops[8], vnodeops[36];
@@ -96,12 +97,13 @@ getnode(id, vfsp, vpp)
 		if (n->id == id)
 			break;
 	if (!n) {
-		if ((n = C->freelist) != 0)
+		vi = 0;
+		if ((n = C->freelist) != 0) {
 			C->freelist = n->next;
-		else if ((n = (struct hnode *)C->kalloc(sizeof *n)) == 0)
+			vi = W32(n->vn, 0);
+		} else if ((n = (struct hnode *)C->kalloc(sizeof *n)) == 0)
 			return 12;
 		vp = n->vn;
-		vi = W32(vp, 0);
 		clear((unsigned char *)n, sizeof *n);
 		W32(vp, 0) = vi;
 		C->vm_info_init(vp);
@@ -176,10 +178,23 @@ child(dvp, nm, vpp)
 	unsigned char **vpp;
 {
 	long e;
+	unsigned char *vp, *sp;
+	unsigned long type, rdev;
 
 	if ((e = B->error) != 0)
 		return e;
-	return getnode(B->node2, W32(dvp, V_VFSP), vpp);
+	type = B->type;
+	rdev = B->rdev;
+	if ((e = getnode(B->node2, W32(dvp, V_VFSP), &vp)) != 0)
+		return e;
+	if (type == HF_VCHR || type == HF_VBLK) {
+		/* devices are the kernel's special vnodes; they hold the node */
+		sp = (unsigned char *)C->specvp(vp, rdev, type);
+		W16(vp, V_COUNT) = W16(vp, V_COUNT) - 1;
+		vp = sp;
+	}
+	*vpp = vp;
+	return 0;
 }
 
 /* the filesystem type's operations */
@@ -193,6 +208,7 @@ hf_mountroot(vfsp, vpp, name)
 	long e;
 
 	W32(vfsp, 4) = (unsigned long)C->vfsops;
+	W32(vfsp, 16) = HF_DATA;
 	W32(vfsp, 294) = 0;
 	C->vfsp = (unsigned long)vfsp;
 	if ((e = host(HF_ROOT)) != 0)
@@ -335,6 +351,44 @@ hf_rdwr(vp, uio, rw, ioflag)
 	return 0;
 }
 
+/* a page of the file into the page frame m names; the part past the end is zero */
+static long
+hf_pagein(vp, m, off)
+	unsigned char *vp, *m;
+	unsigned long off;
+{
+	struct hf_box *b = B;
+	unsigned char *pg = (unsigned char *)W32(m, 34);
+	long e, got, i;
+
+	b->node = NODE(vp);
+	b->offset = off;
+	b->length = HF_DATA;
+	if ((e = host(HF_READ)) != 0)
+		return e;
+	got = b->result < 0 ? 0 : b->result;
+	C->bcopy(b->data, pg, got);
+	for (i = got; i < HF_DATA; i++)
+		pg[i] = 0;
+	return 0;
+}
+
+static long
+hf_pageout(vp, pg, len, off)
+	unsigned char *vp, *pg;
+	unsigned long len, off;
+{
+	struct hf_box *b = B;
+
+	if (len > HF_DATA)
+		len = HF_DATA;
+	C->bcopy(pg, b->data, len);
+	b->node = NODE(vp);
+	b->offset = off;
+	b->length = len;
+	return host(HF_WRITE);
+}
+
 static long
 hf_readdir(vp, uio)
 	unsigned char *vp, *uio;
@@ -392,7 +446,9 @@ hf_create(dvp, nm, vap, excl, mode, vpp)
 	unsigned char *cr = cred();
 	long e;
 
-	if (W32(vap, 0) != HF_VREG)
+	unsigned long type = W32(vap, 0);
+
+	if (type != HF_VREG && type != HF_VCHR && type != HF_VBLK)
 		return 22;
 	b->node = NODE(dvp);
 	setname(b->name, nm);
@@ -400,7 +456,7 @@ hf_create(dvp, nm, vap, excl, mode, vpp)
 	b->uid = W16(cr, 2);
 	b->gid = W16(cr, 4);
 	e = host(HF_LOOKUP);
-	if (e == 0 && !excl) {
+	if (e == 0 && !excl && type == HF_VREG) {
 		if ((e = child(dvp, nm, vpp)) != 0)
 			return e;
 		if (W32(vap, 20) == 0) {
@@ -419,6 +475,8 @@ hf_create(dvp, nm, vap, excl, mode, vpp)
 	b->mode = W16(vap, 4) != 0xffff ? W16(vap, 4) & 07777 : mode & 07777;
 	b->uid = W16(cr, 2);
 	b->gid = W16(cr, 4);
+	b->flags = type;
+	b->rdev = W16(vap, 52);
 	host(HF_CREATE);
 	return child(dvp, nm, vpp);
 }
@@ -581,8 +639,8 @@ hf_init()
 	c->vnodeops[26] = (unsigned long)hf_inval;
 	c->vnodeops[27] = (unsigned long)hf_cmp;
 	c->vnodeops[28] = (unsigned long)hf_inval;	/* realvp */
-	c->vnodeops[29] = (unsigned long)hf_inval;
-	c->vnodeops[30] = (unsigned long)hf_inval;
+	c->vnodeops[29] = (unsigned long)hf_pagein;
+	c->vnodeops[30] = (unsigned long)hf_pageout;
 	c->vnodeops[31] = (unsigned long)hf_inval;
 	c->vnodeops[32] = (unsigned long)hf_zero;
 	return 0;

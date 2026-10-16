@@ -50,6 +50,7 @@ Ldecline:
 GP_FLAGS = 12
 GP_VSR = 20
 GP_VVBR = 28
+GP_MMU = 68
 P_EVPDP = 0xc8
 P_SIG = 0x9c
 P_HOLD = 0xa4
@@ -354,6 +355,13 @@ Lfpset:					| d0: the new SR
 	bnew	Lfpsi
 	tstl	runrun
 	bnew	Lfpsi
+	movew	%d0,%d1
+	eorw	%d6,%d1
+	btst	&13,%d1
+	beqw	Lfps0
+	tstl	%a1@(GP_MMU)
+	bnew	Lfpsi			| S changes under a shadow MMU: the C path switches spaces
+Lfps0:
 	movew	%d0,%d1
 	andiw	&0x0700,%d1
 	cmpw	%a1@(GP_VPEND),%d1
