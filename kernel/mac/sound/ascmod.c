@@ -10,7 +10,7 @@
 
 extern int snd_open(), snd_close(), snd_read(), snd_mmap(), snd_poll(), spec_segmap();
 extern void snd_intr();
-extern void (*volatile snd_intrfn)();
+extern void (*__volatile__ snd_intrfn)();
 static int asc_flag;
 
 struct mod_drv_data asc_drvdata[] = {

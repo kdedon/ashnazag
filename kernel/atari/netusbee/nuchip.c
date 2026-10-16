@@ -12,6 +12,12 @@
  */
 #include "nu.h"
 
+#ifdef NU_WORDS
+#define NU_DCRMODE	(DCR_LS | DCR_FT1 | 0x01)	/* WTS: 16-bit DMA transfers */
+#else
+#define NU_DCRMODE	(DCR_LS | DCR_FT1)
+#endif
+
 static void
 nu_page0()
 {
@@ -51,6 +57,17 @@ register unsigned char *buf;
 
 	if (n <= 0)
 		return;
+#ifdef NU_WORDS
+	nu_dma(a, n, CR_RREAD);
+	for (i = 0; i + 1 < n; i += 2) {
+		register unsigned short w = NU_RD16();
+		*buf++ = w >> 8;
+		*buf++ = w;
+	}
+	if (i < n)
+		*buf = NU_RD16() >> 8;
+	nu_dmadone();
+#else
 	nu_dma(a, n, CR_RREAD);
 	for (i = 0; i < n; i++) {
 		if ((i & 127) == 127)
@@ -58,6 +75,7 @@ register unsigned char *buf;
 		*buf++ = NU_RD(NU_DATA);
 	}
 	nu_dmadone();
+#endif
 }
 
 static void
@@ -69,6 +87,14 @@ register unsigned char *buf;
 
 	if (n <= 0)
 		return;
+#ifdef NU_WORDS
+	nu_dma(a, (n + 1) & ~1, CR_RWRITE);
+	for (i = 0; i + 1 < n; i += 2, buf += 2)
+		NU_WR16((buf[0] << 8) | buf[1]);
+	if (i < n)
+		NU_WR16(buf[0] << 8);
+	nu_dmadone();
+#else
 	nu_dma(a, n, CR_RWRITE);
 	for (i = 0; i < n; i++) {
 		if ((i & 127) == 127)
@@ -76,6 +102,7 @@ register unsigned char *buf;
 		NU_WR(NU_DATA, *buf++);
 	}
 	nu_dmadone();
+#endif
 }
 
 /* Ring read of n bytes at page p, offset off, wrapping at rxstop. */
@@ -142,7 +169,7 @@ register struct nu_softc *sc;
 {
 	unsigned char pr[32];
 	register int i, dbl;
-#ifndef NU_PCI
+#if !defined(NU_PCI) && !defined(NU_XSURF)
 	int m;
 #endif
 
@@ -150,7 +177,7 @@ register struct nu_softc *sc;
 		return -1;
 	if (nu_reset() < 0)
 		return -1;
-#ifndef NU_PCI
+#if !defined(NU_PCI) && !defined(NU_XSURF)
 	/* on PCI the device ID already said what it is */
 	if ((NU_RD(NU_CR) & 0x3f) != (CR_NODMA | CR_STP))
 		return -1;
@@ -170,7 +197,7 @@ register struct nu_softc *sc;
 #endif
 	sc->rtl = NU_RD(NU_ID0) == 'P' && (NU_RD(NU_ID1) == 'p' || NU_RD(NU_ID1) == 'C');
 
-	NU_WR(NU_DCR, DCR_LS | DCR_FT1);
+	NU_WR(NU_DCR, NU_DCRMODE);
 	NU_WR(NU_RCR, RCR_MON);
 	NU_WR(NU_TCR, TCR_LOOP);
 	NU_WR(NU_IMR, 0);
@@ -219,7 +246,7 @@ register struct nu_softc *sc;
 	if (nu_reset() < 0)
 		return -1;
 	NU_WR(NU_CR, CR_NODMA | CR_STP);
-	NU_WR(NU_DCR, DCR_LS | DCR_FT1);
+	NU_WR(NU_DCR, NU_DCRMODE);
 	NU_WR(NU_RBCR0, 0);
 	NU_WR(NU_RBCR1, 0);
 	NU_WR(NU_RCR, RCR_MON);

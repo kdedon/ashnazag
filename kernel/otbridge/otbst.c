@@ -82,7 +82,7 @@ otbst_identity(cmd, arg, cr)
 static struct vst_ops *
 stops()
 {
-	struct vst_ops **volatile p = &vst_ops;
+	struct vst_ops **__volatile__ p = &vst_ops;
 	return p ? *p : 0;
 }
 

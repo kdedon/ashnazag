@@ -27,7 +27,7 @@ extern void hat_memload(), hat_devload(), hat_unload(), seg_free();
 extern page_t *page_numtookpp();
 __asm__(".weak hat_cm_ram");
 extern long hat_cm_ram;
-static long *volatile gmu_hat4k = &hat_cm_ram;
+static long *__volatile__ gmu_hat4k = &hat_cm_ram;
 
 #define	HP	4096UL		/* host page, with the 4 KB HAT */
 #define	NLOAD	4096

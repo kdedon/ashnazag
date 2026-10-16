@@ -79,6 +79,22 @@ extern int delayus();
 #define NU_DELAY(n)	delayus(n)
 #define NU_YIELD()
 #define NU_CLKDUE()	0
+#elif defined(NU_XSURF)
+/*
+ * The X-Surf 100's AX88796 in Zorro space: the 8390 registers sit 4 bytes
+ * apart from board offset 0x800, the data port is 16 bits wide, the
+ * board's interrupt-pending word is at offset 0x40 (bits 0xAAAA).
+ */
+extern __volatile__ unsigned char *nu_io;
+#define NU_RD(r)	(nu_io[(r) << 2])
+#define NU_WR(r, v)	(nu_io[(r) << 2] = (v))
+#define NU_RD16()	(*(__volatile__ unsigned short *)(nu_io + (0x10 << 2)))
+#define NU_WR16(v)	(*(__volatile__ unsigned short *)(nu_io + (0x10 << 2)) = (v))
+#define NU_WORDS	1
+extern int delayus();
+#define NU_DELAY(n)	delayus(n)
+#define NU_YIELD()
+#define NU_CLKDUE()	0
 #else
 #define VOL		__volatile__
 #define NU_RD(r)	(*(VOL unsigned char *)(NU_RDBASE + ((r) << NU_REGSHIFT)))

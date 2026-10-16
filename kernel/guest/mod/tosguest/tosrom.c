@@ -18,7 +18,7 @@
 __asm__(".weak ata_romva");
 extern unsigned long ata_romva();
 /* read at run time: the compiler takes a declared function's address as nonzero */
-static unsigned long (*volatile romva)() = ata_romva;
+static unsigned long (*__volatile__ romva)() = ata_romva;
 
 static unsigned long romsize;	/* 0 not checked, 1 none, else the size */
 

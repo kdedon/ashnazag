@@ -25,6 +25,7 @@ AUX=$(cd "$K/.." && pwd)
 PORT="$K/amix-040-060-port"
 MAC="$K/mac"
 . "$AUX/toolchain/src/gcc-cross-amix/build/env.sh"
+sh "$K/tools/chk-volatile.sh" || exit 1
 PATH="$AUX/toolchain/linux/bin:$AUX/toolchain/bin:$PATH"
 export PATH
 
@@ -53,7 +54,7 @@ cc_nobss() {
 }
 
 echo "[*] Atari platform objects (040/060)"
-for s in ataboot ataentry ataintr pstartata ata060math; do
+for s in ataboot ataentry ataintr pstartata ata060math ata060isp; do
 	$AS -c "$A/$s.s" -o "$W/$s.o"
 done
 $CC -c "$MAC/devtab/cfgorig.s" -o "$W/cfgorig.o"
@@ -94,7 +95,7 @@ echo "[*] loadable modules and guest processes"
 sh "$K/dlm/build.sh" -k "$W/dlm"
 sh "$K/guest/build.sh" -k "$BASE" "$W/guest"
 
-OBJS="$W/dlm/dlm.o $W/guest/guest.o $W/ataentry.o $W/ataintr.o $W/pstartata.o $W/ata060math.o $W/cfgorig.o
+OBJS="$W/dlm/dlm.o $W/guest/guest.o $W/ataentry.o $W/ataintr.o $W/pstartata.o $W/ata060math.o $W/ata060isp.o $W/cfgorig.o
 $W/ataconf.o $W/vmrgn.o $W/ikbd.o $W/fbcons.o $W/fbfont.o $W/atadevsw.o $W/atacons.o $W/ds.o
 $W/atads.o $W/ataide.o $W/ahdi.o $W/atartc.o $W/rd.o $RDB/rdimage.o
 $W/uiomod.o $W/vtop.o $W/ptalloc.o"

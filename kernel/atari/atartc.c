@@ -11,8 +11,8 @@
 #include "sys/errno.h"
 #include "sys/uio.h"
 
-#define RTC_IDX		(*(volatile unsigned char *)0xFFFF8961)
-#define RTC_DATA	(*(volatile unsigned char *)0xFFFF8963)
+#define RTC_IDX		(*(__volatile__ unsigned char *)0xFFFF8961)
+#define RTC_DATA	(*(__volatile__ unsigned char *)0xFFFF8963)
 
 #define R_SEC	0
 #define R_MIN	2

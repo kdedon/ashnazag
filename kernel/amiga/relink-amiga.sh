@@ -5,6 +5,7 @@ K=$(cd "$A/.." && pwd)
 AUX=$(cd "$K/.." && pwd)
 PORT=$K/amix-040-060-port
 . "$AUX/toolchain/src/gcc-cross-amix/build/env.sh"
+sh "$K/tools/chk-volatile.sh" || exit 1
 PATH="$AUX/toolchain/linux/bin:$AUX/toolchain/bin:$PATH"
 export PATH
 BASE=${1:-$PORT/build/unix-040}
@@ -62,7 +63,8 @@ for f in dlm_core dlm_ld dlm_sym dlm_slot dlm_str dlmconf dlm_cache dlm_hooksw; 
  OBJS="$OBJS $W/dlm/$f.o"
 done
 nice -n19 m68k-cbm-sysv4-gcc -m68040 -c "$K/atari/ata060math.s" -o "$W/math.o"
-OBJS="$OBJS $W/math.o"
+nice -n19 m68k-cbm-sysv4-gcc -m68040 -c "$K/atari/ata060isp.s" -o "$W/isp.o"
+OBJS="$OBJS $W/math.o $W/isp.o"
 python3 "$K/atari/chk64.py" "$W/ds.o" "$W/amigads.o" "$W/math.o"
 m68k-cbm-sysv4-ld -r -o "$W/pass1" "$W/base.weak" $OBJS "$W/dlm/dlmksym.o"
 python3 "$K/guest/patch_vec.py" "$W/pass1" "$W/guest/gates.lst"
@@ -77,6 +79,8 @@ m68k-elf-ld -T "$A/amiga.ld" -o "$OUT.elf" "$OUT"
 python3 "$PORT/src/check_relink_relocs.py" "$OUT" > "$W/validator.log"
 tail -1 "$W/validator.log"
 python3 "$K/dlm/tools/chkdlm.py" "$OUT.elf"
+python3 "$K/atari/chk64.py" -k "$OUT.elf"
+python3 "$K/atari/chk64.py" -a "$W/vtop.o" "$W/ptalloc.o" "$W/devkvmap.o" "$W/cpu060.o" "$W/bootmark.o" "$W/ide040.o" "$W/math.o" "$W/isp.o"
 python3 "$K/mac/patch_s5pages.py" -c "$OUT.elf"
 python3 "$K/mac/vtop/patch_vtop.py" -c "$OUT.elf"
 python3 "$A/patch_tt.py" -c "$OUT.elf"

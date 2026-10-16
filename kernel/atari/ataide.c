@@ -26,8 +26,8 @@ extern void	delayus(), wakeup(), iodone();
 #endif
 
 /* Registers sit on odd bytes, 4 apart; the data register is 16 bits. */
-#define IDE_DATA	(*(volatile ushort *)0xFFF00000)
-#define IDE_REG(n)	(*(volatile uchar *)(0xFFF00001 + 4 * (n)))
+#define IDE_DATA	(*(__volatile__ ushort *)0xFFF00000)
+#define IDE_REG(n)	(*(__volatile__ uchar *)(0xFFF00001 + 4 * (n)))
 #define IDE_ERR		IDE_REG(1)
 #define IDE_NSECT	IDE_REG(2)
 #define IDE_LBA0	IDE_REG(3)
@@ -35,7 +35,7 @@ extern void	delayus(), wakeup(), iodone();
 #define IDE_LBA2	IDE_REG(5)
 #define IDE_SEL		IDE_REG(6)
 #define IDE_CMD		IDE_REG(7)	/* status on read */
-#define IDE_CTL		(*(volatile uchar *)0xFFF00039)	/* alt status on read */
+#define IDE_CTL		(*(__volatile__ uchar *)0xFFF00039)	/* alt status on read */
 
 #define ST_ERR		0x01
 #define ST_DRQ		0x08
@@ -88,7 +88,7 @@ extern struct bootobj	swapfile;
 
 static char	hwname[] = "Falcon IDE";
 
-struct sdhook *volatile	ata_sdscsi;
+struct sdhook *__volatile__	ata_sdscsi;
 
 /* Wait until BSY is clear; then until all of want are set, if any. */
 static int

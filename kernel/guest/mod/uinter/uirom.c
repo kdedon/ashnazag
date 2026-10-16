@@ -42,10 +42,10 @@ extern unsigned long mac_model;		/* a Mac host's Gestalt machine ID */
 extern unsigned long mac_romva();	/* a Mac host's ROM in kernel space */
 /* read at run time: the compiler takes a declared symbol's address as nonzero */
 extern dev_t rd_romdev();		/* the block device of a kernel ROM */
-static unsigned long (*volatile romva)() = mac_romva;
-static dev_t (*volatile romdev)() = rd_romdev;
-static long *volatile cpup = &ui_cputype;
-static unsigned long *volatile modelp = &mac_model;
+static unsigned long (*__volatile__ romva)() = mac_romva;
+static dev_t (*__volatile__ romdev)() = rd_romdev;
+static long *__volatile__ cpup = &ui_cputype;
+static unsigned long *__volatile__ modelp = &mac_model;
 
 char	uinter_rom[64] = "";		/* a ROM image file to use instead */
 #define	ROMFILE	"/etc/aux/rom"		/* the file without a usable host ROM */

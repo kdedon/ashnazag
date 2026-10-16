@@ -22,19 +22,42 @@ extern unsigned long VSIZOFMEM;
 
 #define MAXMEM	0x8000000		/* more and segu cannot be allocated */
 
-#define INTENA	(*(volatile unsigned short *)0xDFF09A)
+#define INTENA	(*(__volatile__ unsigned short *)0xDFF09A)
 
 /* boot marks in chip RAM, two copies */
-#define MK(o, v)	(((volatile unsigned long *)0x1000)[(o) / 4] = \
-			((volatile unsigned long *)0x1FF000)[(o) / 4] = (v))
+#define MK(o, v)	(((__volatile__ unsigned long *)0x1000)[(o) / 4] = \
+			((__volatile__ unsigned long *)0x1FF000)[(o) / 4] = (v))
 extern void bootmark();
 
 static void (*zint2)(), (*zint6)();
 static void (*int2_last)();
 
 /*
- * Before config(): fast regions start on a page, so a region ending where
- * the next begins (behind its 32-byte MemHeader) joins it.
+ * Memory a board added to exec's list (a PCI bridge's "pcidma memory",
+ * attribute $2000, or anything inside a board's space other than a
+ * memory board's) is the board's own, never RAM.
+ */
+static int
+boardmem(bi, m)
+char *bi, *m;
+{
+	char *cd;
+	unsigned long lo = L(m + 20), hi = L(m + 24);
+	int i;
+
+	if (W(m + 14) & 0x2000)
+		return 1;
+	for (i = 0, cd = bi; i < NAUTO; i++, cd += CDSIZE)
+		if (L(cd + 36) && !(cd[16] & 0x20) &&		/* not ERTF_MEMLIST */
+		    lo < L(cd + 32) + L(cd + 36) && hi > L(cd + 32))
+			return 1;
+	return 0;
+}
+
+/*
+ * Before config(): board memory leaves the list, and fast regions start on
+ * a page, so a region ending where the next begins (behind its 32-byte
+ * MemHeader) joins it.
  */
 void
 amiga_bootmem(kind, bi)
@@ -42,11 +65,18 @@ int kind;
 char *bi;
 {
 	char *m;
-	int i;
+	int i, j;
 
 	bootmark(2, kind);
 	if (kind != 3)
 		return;
+	for (i = 0, m = bi + NAUTO * CDSIZE; i < 16; i++, m += 32)
+		while (L(m + 24) && boardmem(bi, m)) {
+			for (j = 0; j < (15 - i) * 8; j++)
+				L(m + j * 4) = L(m + j * 4 + 32);
+			for (; j < (16 - i) * 8; j++)
+				L(m + j * 4) = 0;
+		}
 	for (i = 0, m = bi + NAUTO * CDSIZE; i < 16; i++, m += 32) {
 		if (L(m + 24) == 0)
 			continue;
@@ -65,27 +95,27 @@ char *bi;
 void
 amiga_quiesce()
 {
-	volatile unsigned char *b;
+	__volatile__ unsigned char *b;
 	char *a;
 	long n;
 
 	if (VSIZOFMEM > MAXMEM)
 		VSIZOFMEM = MAXMEM;
 	if (autocon(0x21400064, 0, &a, &n)) {			/* CyberStorm SCSI */
-		((volatile unsigned char *)0xF60000)[8] = 0x82;
-		b = (volatile unsigned char *)0xF40000;
+		((__volatile__ unsigned char *)0xF60000)[8] = 0x82;
+		b = (__volatile__ unsigned char *)0xF40000;
 		b[0x39 ^ 3] = 0;				/* DIEN */
 		b[0x40 ^ 3] = 0;				/* SIEN0 */
 		b[0x41 ^ 3] = 0;				/* SIEN1 */
 	}
 	if (autocon(0x12120064, 0, &a, &n)) {			/* X-Surf 100 */
-		b = (volatile unsigned char *)a + 0x800;	/* 8390, stride 4 */
+		b = (__volatile__ unsigned char *)a + 0x800;	/* 8390, stride 4 */
 		b[0] = 0x21;					/* stop, page 0 */
 		b[0x0F * 4] = 0;				/* IMR */
 		b[0x07 * 4] = 0xFF;				/* ISR */
 	}
 	if (autocon(0x089E0021, 0, &a, &n))			/* Mediator 4000 */
-		((volatile unsigned char *)a)[4] = 0;		/* INTA-D enables */
+		((__volatile__ unsigned char *)a)[4] = 0;		/* INTA-D enables */
 	bootmark(4, VSIZOFMEM);
 }
 

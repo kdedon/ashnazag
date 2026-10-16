@@ -57,13 +57,13 @@ extern int v3ds_altfb;
  */
 #define	MI0_SWIZ(n)	((unsigned long)(n) << 30)
 
-volatile unsigned char *v3_reg, *v3_fb;
+__volatile__ unsigned char *v3_reg, *v3_fb;
 unsigned long v3_physfb, v3_vram, v3_dsvram;
 int v3_swap;			/* register longs reach the card byte reversed */
 struct opci_dev *v3_dev;
 void (*v3_fronthook)();
 
-static volatile unsigned char *v3_io;
+static __volatile__ unsigned char *v3_io;
 static struct am_rtg v3_rtg;
 static unsigned long v3_vp;	/* vidProcCfg with the video processor on */
 static int v3_bits = 8, v3_shown;
@@ -80,14 +80,14 @@ wl(r, v)
 int r;
 unsigned long v;
 {
-	*(volatile unsigned long *)(v3_reg + r) = v3_swap ? swab32(v) : v;
+	*(__volatile__ unsigned long *)(v3_reg + r) = v3_swap ? swab32(v) : v;
 }
 
 static unsigned long
 rl(r)
 int r;
 {
-	unsigned long v = *(volatile unsigned long *)(v3_reg + r);
+	unsigned long v = *(__volatile__ unsigned long *)(v3_reg + r);
 
 	return v3_swap ? swab32(v) : v;
 }
@@ -250,7 +250,7 @@ static unsigned long
 v3_sizevram(aperture)
 unsigned long aperture;
 {
-	volatile unsigned long *p0 = (volatile unsigned long *)v3_fb, *p;
+	__volatile__ unsigned long *p0 = (__volatile__ unsigned long *)v3_fb, *p;
 	unsigned long n = 0x200000, keep0;
 
 	keep0 = *p0;
@@ -258,7 +258,7 @@ unsigned long aperture;
 	if (*p0 != 0x5a5aa5a5)
 		return 0;
 	while (n < aperture) {
-		p = (volatile unsigned long *)(v3_fb + n);
+		p = (__volatile__ unsigned long *)(v3_fb + n);
 		*p0 = 0x5a5aa5a5;
 		*p = 0x12345678;
 		if (*p != 0x12345678 || *p0 != 0x5a5aa5a5)
@@ -302,7 +302,7 @@ v3ds_attach()
 		return ENXIO;
 	}
 	/* an idle card's free FIFO count is in the low byte of status */
-	v3_swap = (*(volatile unsigned long *)(v3_reg + STATUS) & 0x1f) == 0;
+	v3_swap = (*(__volatile__ unsigned long *)(v3_reg + STATUS) & 0x1f) == 0;
 	/* tiled aperture at the top: the frame buffer window is linear */
 	wl(LFBMEMCFG, 0x1fff);
 	wl(MISCINIT0, rl(MISCINIT0) & ~MI0_SWIZ(3));

@@ -22,7 +22,7 @@
 #define ZZ9K_MAXBOARDS 1
 
 #define ZZ9K_REG(base, off) \
-    (*((volatile unsigned short *)((char *)(base) + (off))))
+    (*((__volatile__ unsigned short *)((char *)(base) + (off))))
 
 struct cred;
 
@@ -84,7 +84,7 @@ struct zz9k_font {
 extern struct zz9k_bootinfo bootinfo;
 extern struct zz9k_font *builtinfont[];
 asm(".weak builtinfont");	/* the AMIX console's fonts, when linked in */
-static struct zz9k_font **volatile zz9k_fonts = builtinfont;
+static struct zz9k_font **__volatile__ zz9k_fonts = builtinfont;
 
 struct zz9k_board {
     long base;

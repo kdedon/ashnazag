@@ -192,8 +192,8 @@ where(a, na)
 
 __asm__(".weak ds_bltgo");
 extern void ds_bltgo();
-static unsigned long *volatile machtype;
-static int *volatile atatt;
+static unsigned long *__volatile__ machtype;
+static int *__volatile__ atatt;
 
 /* the guest's blit, on the machine's blitter; without one it ends at once */
 static void
@@ -214,7 +214,7 @@ int
 tos_blit(arg)
 	caddr_t arg;
 {
-	static void (*volatile go)() = ds_bltgo;
+	static void (*__volatile__ go)() = ds_bltgo;
 	unsigned char b[0x40];
 
 	if (!go || !machtype || (atatt && *atatt) || !(tosc.t_flags & TEF_FALCON))
@@ -1623,7 +1623,7 @@ scc_wr(o, v)
 __asm__(".weak ata_machtype");
 extern unsigned long ata_machtype;
 /* read at run time: the compiler takes a declared object's address as nonzero */
-static unsigned long *volatile machtype = &ata_machtype;
+static unsigned long *__volatile__ machtype = &ata_machtype;
 
 static int
 falcon_rd(o)
@@ -1633,7 +1633,7 @@ falcon_rd(o)
 	int v, n;
 
 	if (o == 0xff8006) {		/* bits 5, 4 and 1: ST-RAM 512 KB << n, 5 = 14 MB */
-		v = machtype ? *(volatile unsigned char *)0xffff8006 : 0x80;
+		v = machtype ? *(__volatile__ unsigned char *)0xffff8006 : 0x80;
 		for (n = 0; n < 4 && 0x80000 << (n + 1) <= t->t_ramsize; n++)
 			;
 		if (t->t_ramsize >= 0xe00000)
@@ -1694,7 +1694,7 @@ falcon_wr(o, v)
 
 __asm__(".weak ata_tt");
 extern int ata_tt;
-static int *volatile atatt = &ata_tt;
+static int *__volatile__ atatt = &ata_tt;
 
 /*
  * A Falcon's NVRAM: the machine's own while its checksum holds, its boot
@@ -1706,7 +1706,7 @@ tos_nvinit(w, h, d)
 	int w, h, d;
 {
 	struct tosctr *t = &tosc;
-	volatile unsigned char *rtc = (volatile unsigned char *)0xffff8961;
+	__volatile__ unsigned char *rtc = (__volatile__ unsigned char *)0xffff8961;
 	int i, s, sum, m, mon, pal;
 
 	if (!machtype || (atatt && *atatt) || !(t->t_flags & TEF_FALCON))
@@ -1716,8 +1716,8 @@ tos_nvinit(w, h, d)
 		rtc[0] = i;
 		t->t_rtc[i] = rtc[2];
 	}
-	mon = *(volatile unsigned char *)0xffff8006 >> 6;
-	pal = *(volatile unsigned char *)0xffff820a & 2;
+	mon = *(__volatile__ unsigned char *)0xffff8006 >> 6;
+	pal = *(__volatile__ unsigned char *)0xffff820a & 2;
 	splx_(s);
 	for (sum = 0, i = 14; i < 62; i++)
 		sum += t->t_rtc[i];

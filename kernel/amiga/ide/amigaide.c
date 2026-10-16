@@ -12,7 +12,7 @@
 #include "sd.h"
 
 #define A3000SCSI	0x0202F003
-#define VPOSR		((volatile ushort *)0xDFF004)
+#define VPOSR		((__volatile__ ushort *)0xDFF004)
 
 extern bool a3091queue(), a2090queue(), a2091queue();
 extern int idepresent(), idequeue(), autocon();

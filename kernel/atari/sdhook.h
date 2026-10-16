@@ -10,4 +10,4 @@ struct sdhook {
 	void	(*queue)();	/* (cp) as sdqueue */
 };
 
-extern struct sdhook *volatile ata_sdscsi;
+extern struct sdhook *__volatile__ ata_sdscsi;

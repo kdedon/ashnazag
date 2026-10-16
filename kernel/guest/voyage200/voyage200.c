@@ -25,7 +25,7 @@
 #include "nativehost.h"
 #include "profile.h"
 
-#define L(a) (*(volatile unsigned long *)(a))
+#define L(a) (*(__volatile__ unsigned long *)(a))
 #define HOLD 3		/* clock ticks a key stays down at least */
 
 static struct nh_display display;

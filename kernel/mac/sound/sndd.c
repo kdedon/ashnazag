@@ -62,7 +62,7 @@ struct cl {
 
 static struct cl cl[NCL];
 static struct cl *cur;		/* the client being heard */
-static volatile unsigned char *asc;
+static __volatile__ unsigned char *asc;
 static int dfd = -1;		/* Atari: /dev/dmasnd */
 static struct dmafmt dfmt;
 static unsigned long orate = ASC_RATE;	/* output rate, 16.16 */
@@ -527,7 +527,7 @@ int bits;
 		orate = (unsigned long)dfmt.d_rate << 16;
 		frameus = 1000000 / dfmt.d_rate;
 	} else {
-		asc = (volatile unsigned char *)mmap((caddr_t)0, ASC_SIZE, PROT_READ | PROT_WRITE,
+		asc = (__volatile__ unsigned char *)mmap((caddr_t)0, ASC_SIZE, PROT_READ | PROT_WRITE,
 		    MAP_SHARED, *afdp, (off_t)0);
 		if ((caddr_t)asc == (caddr_t)-1) {
 			perror("sndd: mmap");

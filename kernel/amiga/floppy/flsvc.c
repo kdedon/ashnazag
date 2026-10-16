@@ -16,8 +16,8 @@
 #include "sys/inline.h"
 #include "flio.h"
 
-#define PRA (*(volatile unsigned char *)0xbfe001)	/* CIA-A */
-#define PRB (*(volatile unsigned char *)0xbfd100)	/* CIA-B */
+#define PRA (*(__volatile__ unsigned char *)0xbfe001)	/* CIA-A */
+#define PRB (*(__volatile__ unsigned char *)0xbfd100)	/* CIA-B */
 #define CHNG (1 << 2)		/* CIA-A pra: low after a disk change */
 #define STEP (1 << 0)		/* CIA-B prb, active low */
 #define DIREC (1 << 1)		/* CIA-B prb: high steps out */

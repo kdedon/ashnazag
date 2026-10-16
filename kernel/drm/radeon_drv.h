@@ -35,8 +35,8 @@
 #define DRM_DMA_SYNC()			((void)0)
 #endif
 /* the card writes it little-endian, into memory the CPU may cache */
-#define GET_RING_HEAD(ring)		(DRM_DMA_SYNC(), DRM_READ32( (volatile u32 *) (ring)->head ))
-#define SET_RING_HEAD(ring,val)		DRM_WRITE32( (volatile u32 *) (ring)->head , (val))
+#define GET_RING_HEAD(ring)		(DRM_DMA_SYNC(), DRM_READ32( (__volatile__ u32 *) (ring)->head ))
+#define SET_RING_HEAD(ring,val)		DRM_WRITE32( (__volatile__ u32 *) (ring)->head , (val))
 
 typedef struct drm_radeon_freelist {
    	unsigned int age;
@@ -51,7 +51,7 @@ typedef struct drm_radeon_ring_buffer {
 	int size;
 	int size_l2qw;
 
-	volatile u32 *head;
+	__volatile__ u32 *head;
 	u32 tail;
 	u32 tail_mask;
 	int space;
@@ -89,7 +89,7 @@ typedef struct drm_radeon_private {
    	drm_radeon_freelist_t *head;
    	drm_radeon_freelist_t *tail;
 	int last_buf;
-	volatile u32 *scratch;
+	__volatile__ u32 *scratch;
 	int writeback_works;
 
 	int usec_timeout;
@@ -696,11 +696,11 @@ extern int radeon_emit_irq(drm_device_t *dev);
 #define RADEON_BASE(reg)	((unsigned long)(dev_priv->mmio->handle))
 #define RADEON_ADDR(reg)	(RADEON_BASE( reg ) + reg)
 
-#define RADEON_READ(reg)	DRM_READ32(  (volatile u32 *) RADEON_ADDR(reg) )
-#define RADEON_WRITE(reg,val)	DRM_WRITE32( (volatile u32 *) RADEON_ADDR(reg), (val) )
+#define RADEON_READ(reg)	DRM_READ32(  (__volatile__ u32 *) RADEON_ADDR(reg) )
+#define RADEON_WRITE(reg,val)	DRM_WRITE32( (__volatile__ u32 *) RADEON_ADDR(reg), (val) )
 
-#define RADEON_READ8(reg)	DRM_READ8(  (volatile u8 *) RADEON_ADDR(reg) )
-#define RADEON_WRITE8(reg,val)	DRM_WRITE8( (volatile u8 *) RADEON_ADDR(reg), (val) )
+#define RADEON_READ8(reg)	DRM_READ8(  (__volatile__ u8 *) RADEON_ADDR(reg) )
+#define RADEON_WRITE8(reg,val)	DRM_WRITE8( (__volatile__ u8 *) RADEON_ADDR(reg), (val) )
 
 #define RADEON_WRITE_PLL( addr, val )					\
 do {									\

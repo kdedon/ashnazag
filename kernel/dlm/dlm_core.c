@@ -1133,7 +1133,7 @@ dlm_init()
 		printf("dlm: cpmguest registration failed\n");
 	{
 		extern void ds_modinit();
-		void (*volatile init)() = ds_modinit;
+		void (*__volatile__ init)() = ds_modinit;
 		__asm__(".weak ds_modinit");
 		if (init)
 			(*init)();

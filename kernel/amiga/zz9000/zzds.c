@@ -8,7 +8,7 @@
 #include "sys/amrtg.h"
 #include "zz9000.h"
 
-#define REG(off)	(*(volatile unsigned short *)(zzds_base + (off)))
+#define REG(off)	(*(__volatile__ unsigned short *)(zzds_base + (off)))
 
 extern int autocon(), printf();
 extern int zzds_mode, zzds_width, zzds_height;

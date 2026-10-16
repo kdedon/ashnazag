@@ -93,7 +93,7 @@ extern long rds_refkhz;
 #define	VCLK_ECP_CNTL	0x08
 #define	HTOTAL_CNTL	0x09
 
-volatile unsigned char *rd_reg, *rd_fb;
+__volatile__ unsigned char *rd_reg, *rd_fb;
 unsigned long rd_physfb, rd_fbsize, rd_vram, rd_dsvram, rd_aper;
 struct opci_dev *rd_dev;
 void (*rd_fronthook)();		/* (shown offset, bits, pitch) */
@@ -115,14 +115,14 @@ wl(r, v)
 int r;
 unsigned long v;
 {
-	*(volatile unsigned long *)(rd_reg + r) = swab32(v);
+	*(__volatile__ unsigned long *)(rd_reg + r) = swab32(v);
 }
 
 static unsigned long
 rl(r)
 int r;
 {
-	return swab32(*(volatile unsigned long *)(rd_reg + r));
+	return swab32(*(__volatile__ unsigned long *)(rd_reg + r));
 }
 
 static void
@@ -335,15 +335,15 @@ rd_endian()
 	if ((swab32(v) & 0xffff) != 0x1002)
 		return -1;
 	printf("radeon: registers byte-swapped, swapping off\n");
-	*(volatile unsigned long *)(rd_reg + SURFACE_CNTL) = 0;
-	*(volatile unsigned long *)(rd_reg + CONFIG_CNTL) &= ~0x3fL;
+	*(__volatile__ unsigned long *)(rd_reg + SURFACE_CNTL) = 0;
+	*(__volatile__ unsigned long *)(rd_reg + CONFIG_CNTL) &= ~0x3fL;
 	return (rl(PCI_MIRROR) & 0xffff) == 0x1002 ? 0 : -1;
 }
 
 /* copy the ROM image, at most len bytes; byte reads, so no bursts from it */
 static unsigned long
 rd_romcopy(rom, size, buf, len)
-volatile unsigned char *rom;
+__volatile__ unsigned char *rom;
 unsigned long size, len;
 unsigned char *buf;
 {
@@ -370,7 +370,7 @@ struct opci_dev *d;
 unsigned char *buf;
 unsigned long len;
 {
-	volatile unsigned char *rom = (unsigned char *)opci_attr(d, OPCI_ROMADDR);
+	__volatile__ unsigned char *rom = (unsigned char *)opci_attr(d, OPCI_ROMADDR);
 	unsigned long size = opci_attr(d, OPCI_ROMSIZE), cfg, n;
 	unsigned long seprom, viph, bus, crtc, crtc2, ext;
 

@@ -37,19 +37,19 @@ extern int tos_maprom();
 /* weak, absent on the Mac: read at run time, as the compiler takes a declared symbol's address as nonzero */
 __asm__(".weak ds_sndexit");
 extern void ds_sndexit();
-static void (*volatile sndexit_p)() = ds_sndexit;
+static void (*__volatile__ sndexit_p)() = ds_sndexit;
 __asm__(".weak ds_sndcb");
 extern void (*ds_sndcb)();
-static void (*volatile *volatile sndcb_p)() = &ds_sndcb;
+static void (*__volatile__ *__volatile__ sndcb_p)() = &ds_sndcb;
 __asm__(".weak ds_ramdetach");
 extern void ds_ramdetach();
-static void (*volatile ramdetach_p)() = ds_ramdetach;
+static void (*__volatile__ ramdetach_p)() = ds_ramdetach;
 __asm__(".weak ds_ramsize_hook");
 extern unsigned long (*ds_ramsize_hook)();
-static unsigned long (*volatile *volatile ramsize_p)() = &ds_ramsize_hook;
+static unsigned long (*__volatile__ *__volatile__ ramsize_p)() = &ds_ramsize_hook;
 __asm__(".weak ds_ramphys_hook");
 extern int (*ds_ramphys_hook)();
-static int (*volatile *volatile ramphys_p)() = &ds_ramphys_hook;
+static int (*__volatile__ *__volatile__ ramphys_p)() = &ds_ramphys_hook;
 /* the weak ones above are absent on the Mac; the compiler would take their addresses as nonzero */
 
 struct tosctr tosc;

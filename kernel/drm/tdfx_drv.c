@@ -213,7 +213,7 @@ tdfx_amix_recover(drm_device_t *dev)
 		    4 * (DRM_READ32(c->c_reg + TDFX_FIFO(0x44)) & 0xffff);
 		if (a >= sp->fifoOffset && a < end)
 			for (; a < end; a += 4)
-				*(volatile u32 *)(c->c_fb + a) = 0;
+				*(__volatile__ u32 *)(c->c_fb + a) = 0;
 	}
 	tdfx_amix_layout(dev);
 }

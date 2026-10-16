@@ -8,7 +8,7 @@ extern int amiga_maprom(), amiga_sock();
 __asm__(".weak cputype");
 extern long amiga_cpu __asm__("cputype");
 /* read at run time: the compiler takes a declared object's address as nonzero */
-static long *volatile amiga_cpup = &amiga_cpu;
+static long *__volatile__ amiga_cpup = &amiga_cpu;
 static struct guest_profile amiga_profile;
 static int amiga_nopen, amiga_devflag[1];
 /* entered guests, for the doorbell */

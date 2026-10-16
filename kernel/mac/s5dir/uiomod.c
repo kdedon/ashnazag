@@ -55,7 +55,7 @@ struct uio	*uiop;
 			continue;
 		pp = page_exists(smp->sm_vp, smp->sm_off + (va & MAXBOFFSET));
 		if (pp)
-			*(volatile u_char *)pp |= PGMOD;	/* one orib: atomic against interrupts */
+			*(__volatile__ u_char *)pp |= PGMOD;	/* one orib: atomic against interrupts */
 	}
 	return 0;
 }

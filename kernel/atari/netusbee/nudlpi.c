@@ -107,7 +107,24 @@ extern char *panicstr;
 extern int timeout(), untimeout();
 extern int bcmp(), printf();
 extern void bcopy(), bzero();
-#ifdef NU_PCI
+#ifdef NU_XSURF
+#define NU_TICK		HZ
+#define NU_WHERE	"on Zorro (X-Surf 100)"
+#define NU_RTL		"AX88796"
+extern int autocon(), am_lvo();
+extern char *plat_iomap();
+extern char *am_sysbase;
+extern void am_isr();
+static int nu_intr(), nu_zisr();
+__volatile__ unsigned char *nu_io;
+static __volatile__ unsigned short *nu_irqst;	/* board: interrupt pending bits */
+static int (*nu_isd[2])() = { nu_zisr, 0 };	/* am_isr's is_Data: the C server */
+static char nu_isnode[24];			/* exec Interrupt node */
+static int nu_hooked;
+#define NU_INTB_PORTS	3
+#define LVO_ADDINTSERVER	(-168)
+#define LVO_REMINTSERVER	(-174)
+#elif defined(NU_PCI)
 #define NU_TICK		HZ
 #define NU_WHERE	"on PCI"
 #define NU_RTL		"RTL8029"
@@ -207,7 +224,28 @@ nu_find()
 	if (nu_found)
 		return nu_found > 0;
 	nu_found = -1;
-#ifdef NU_PCI
+#ifdef NU_XSURF
+	{
+		unsigned long base, size;
+		char *va;
+
+		if (!autocon(0x12120064, 0, &base, &size)) {
+			printf("ne0: no X-Surf 100 (4626/100) on Zorro\n");
+			return 0;
+		}
+		if ((va = plat_iomap(base, size)) == 0) {
+			printf("ne0: X-Surf 100 at %x: cannot map\n", (unsigned)base);
+			return 0;
+		}
+		nu_io = (__volatile__ unsigned char *)va + 0x800;
+		nu_irqst = (__volatile__ unsigned short *)(va + 0x40);
+		if (nu_probe(&nu_sc) < 0) {
+			printf("ne0: probe failed: CR %x ISR %x ID %x %x\n",
+			    NU_RD(NU_CR), NU_RD(NU_ISR), NU_RD(NU_ID0), NU_RD(NU_ID1));
+			return 0;
+		}
+	}
+#elif defined(NU_PCI)
 	if ((nu_dev = opci_find((struct opci_dev *)0, 0x10ec, 0x8029)) == 0)
 		return 0;
 	if (opci_obtain(nu_dev) != 0) {
@@ -255,6 +293,27 @@ nu_start()
 		return 0;
 	}
 	nu_sc.rcr = RCR_AB;
+#ifdef NU_XSURF
+	if (!nu_hooked) {
+		unsigned long r[16];
+		int i;
+
+		for (i = 0; i < sizeof nu_isnode; i++)
+			nu_isnode[i] = 0;
+		nu_isnode[8] = 2;				/* LN_TYPE: NT_INTERRUPT */
+		*(char **)(nu_isnode + 10) = "ne";		/* LN_NAME */
+		*(char **)(nu_isnode + 14) = (char *)nu_isd;	/* IS_DATA */
+		*(void (**)())(nu_isnode + 18) = am_isr;	/* IS_CODE */
+		for (i = 0; i < 16; i++)
+			r[i] = 0;
+		r[0] = NU_INTB_PORTS;				/* d0 */
+		r[9] = (unsigned long)nu_isnode;		/* a1 */
+		(void)am_lvo(am_sysbase, LVO_ADDINTSERVER, r);
+		nu_hooked = 1;
+	}
+	nu_sc.imr = ISR_PRX | ISR_PTX | ISR_RXE | ISR_TXE | ISR_OVW | ISR_CNT;
+	nu_sc.crcprobe = 1;
+#endif
 #ifdef NU_PCI
 	if (nu_oi.oi_fn == 0) {
 		nu_oi.oi_fn = nu_intr;
@@ -303,7 +362,19 @@ nu_tick()
 		nu_tid = timeout(nu_tick, (caddr_t)0, NU_TICK);
 }
 
-#ifdef NU_PCI
+#ifdef NU_XSURF
+/* exec interrupt server on the PORTS chain: nonzero when the board asked */
+static int
+nu_zisr(d)
+	char *d;
+{
+	if (nu_irqst == 0 || (*nu_irqst & 0xaaaa) == 0)
+		return 0;
+	return nu_intr();
+}
+#endif
+
+#if defined(NU_PCI) || defined(NU_XSURF)
 /* level 2 or 6, shared: nonzero when the chip asked */
 static int
 nu_intr()
@@ -333,6 +404,19 @@ nu_unload()
 			break;
 		}
 	nu_splx(s);
+#ifdef NU_XSURF
+	if (nu_hooked) {
+		unsigned long r[16];
+		int i;
+
+		for (i = 0; i < 16; i++)
+			r[i] = 0;
+		r[0] = NU_INTB_PORTS;
+		r[9] = (unsigned long)nu_isnode;
+		(void)am_lvo(am_sysbase, LVO_REMINTSERVER, r);
+		nu_hooked = 0;
+	}
+#endif
 #ifdef NU_PCI
 	if (nu_oi.oi_fn)
 		opci_unintr(&nu_oi);

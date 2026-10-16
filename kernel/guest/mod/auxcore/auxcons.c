@@ -10,10 +10,10 @@ long aux_conopen, aux_conopenerr, aux_conioc, aux_concmd, aux_conlen, aux_conrep
 long aux_conbind, aux_conout, aux_conin, aux_conread, aux_connotify, aux_condetach;
 
 __asm__(".weak scc_conroute\n.weak scc_conunroute\n.weak scc_confeed\n.weak scc_conresume");
-static int (*volatile routefn)() = scc_conroute;
-static int (*volatile feedfn)() = scc_confeed;
-static void (*volatile unroutefn)() = scc_conunroute;
-static void (*volatile resumefn)() = scc_conresume;
+static int (*__volatile__ routefn)() = scc_conroute;
+static int (*__volatile__ feedfn)() = scc_confeed;
+static void (*__volatile__ unroutefn)() = scc_conunroute;
+static void (*__volatile__ resumefn)() = scc_conresume;
 
 struct acstate {
     queue_t *rq;

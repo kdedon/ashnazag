@@ -8,11 +8,11 @@
  * map; fifoSize 0 means no room for 3D.
  */
 typedef struct {
-	volatile int	fifoPtr;
-	volatile int	fifoRead;
-	volatile int	fifoOwner;
-	volatile int	ctxOwner;
-	volatile int	texOwner;
+	__volatile__ int	fifoPtr;
+	__volatile__ int	fifoRead;
+	__volatile__ int	fifoOwner;
+	__volatile__ int	ctxOwner;
+	__volatile__ int	texOwner;
 	int		fifoOffset, fifoSize;
 	int		backOffset, depthOffset;
 	int		textureOffset, textureSize;

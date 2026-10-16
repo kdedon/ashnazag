@@ -50,6 +50,8 @@ config_cachefix:
 	.word	0x4e7b,0x0002		| movec %d0,%cacr
 	moveq	&60,%d0
 	movel	%d0,cputype
+	movel	%a0@(244),ata_isp61_next
+	movel	&ata_isp61,%a0@(244)	| vector 61: supervisor 64-bit multiplies
 Lnot060:
 	movel	%d1,%sp
 	movel	%a1,%a0@(16)
@@ -88,9 +90,16 @@ pstart:
 | AGA fetch mode, colour bank and colour offsets back to their reset
 | values once the console's copper list has replaced AmigaOS's: that
 | list sets them, and the console's lists only know the ECS registers.
+| Beam timing goes back to the chip's own PAL or NTSC first, whatever
+| mode (productivity, multiscan) AmigaOS left.
 	.globl	screeninit
 screeninit:
 	movew	&0x000f,COLOR00		| blue
+	movew	&0x0020,%d0		| BEAMCON0 PAL
+	btst	&4,0xdff004		| VPOSR: NTSC Agnus or Alice
+	beq.s	1f
+	clrw	%d0
+1:	movew	%d0,0xdff1dc		| BEAMCON0
 	jsr	__amix_screeninit
 	movew	&0,0xdff1fc		| FMODE
 	movew	&0x0c00,0xdff106	| BPLCON3

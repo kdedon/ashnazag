@@ -9,7 +9,7 @@
 # UNIX_Root ufs = c6d0s1, UNIX_Swap = c6d0s2) and outdir/boot/, the
 # AmigaDOS volume: S/Startup-Sequence runs unix_boot040 on the kernel.
 # A login runs on the serial port.  The root holds the amilib, opci, pci
-# ne, zz9000, voodoo3, tdfx, radeonds, radeon, floppy and v3bars modules (floppy loaded at boot, the first of zz9000, voodoo3 and radeonds found, order in /etc/default/display), modadmin, lspci and pci.ids, fltool, tcpcat, drmtest, drmkill, radeontest, /dev/pci, /dev/ne0, /dev/dri/card0 (tdfx) and card1 (radeon), registered at
+# ne, xsurf, zz9000, voodoo3, tdfx, radeonds, radeon, floppy and v3bars modules (floppy loaded at boot, the first of zz9000, voodoo3 and radeonds found, order in /etc/default/display), modadmin, lspci and pci.ids, fltool, tcpcat, drmtest, drmkill, radeontest, /dev/pci, /dev/ne0, /dev/dri/card0 (tdfx) and card1 (radeon), registered at
 # run level 2; ne0 comes up as 10.0.2.15 (Amiberry's user-mode network).
 # AMIX_TAPE: tape segments (default media/amix-tape).  UNIXBOOT: the
 # unix_boot040 executable.  OPENPCI: openpci's unpacked archive (Libs/
@@ -78,7 +78,10 @@ grep -q "^/dev/dsk/${D}d0s1.*ufs" "$S/vfstab" || { echo "[FAIL] tape vfstab chan
 printf 'amiga\n' > "$S/nodename"
 cat > "$S/S05dlm" <<'DLM'
 /sbin/modadmin -r cdev pci 60 >/dev/null
-/sbin/modadmin -r sdev ne 61 >/dev/null
+if /sbin/modadmin -l xsurf 2>&1 | grep 'Invalid argument' >/dev/null
+then /sbin/modadmin -r sdev xsurf 61 >/dev/null && /sbin/modadmin -l xsurf >/dev/null
+else /sbin/modadmin -r sdev ne 61 >/dev/null
+fi
 /sbin/modadmin -r cdev zz9000 49 >/dev/null
 CARDS="zz9000 voodoo3 radeonds"
 [ -f /etc/default/display ] && . /etc/default/display
@@ -224,6 +227,7 @@ f /etc/conf/mod.d/amilib 644 0 3 mods/mod.d/amilib
 f /etc/conf/mod.d/opci 644 0 3 mods/mod.d/opci
 f /etc/conf/mod.d/pci 644 0 3 mods/mod.d/pci
 f /etc/conf/mod.d/ne 644 0 3 mods/mod.d/ne
+f /etc/conf/mod.d/xsurf 644 0 3 mods/mod.d/xsurf
 f /etc/conf/mod.d/zz9000 644 0 3 mods/mod.d/zz9000
 f /etc/conf/mod.d/voodoo3 644 0 3 mods/mod.d/voodoo3
 f /etc/conf/mod.d/tdfx 644 0 3 mods/mod.d/tdfx

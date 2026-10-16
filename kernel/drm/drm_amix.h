@@ -15,7 +15,7 @@ int DRM(pgshift) = 11;
 /* only the 68040 and 68060 HAT, whose page frames are 4 KB, has it */
 __asm__(".weak hat_cm_ram");
 extern long hat_cm_ram;
-static long *volatile DRM(hat4k) = &hat_cm_ram;
+static long *__volatile__ DRM(hat4k) = &hat_cm_ram;
 
 struct DRM(sleep) {
 	caddr_t	chan;

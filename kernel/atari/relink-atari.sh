@@ -21,6 +21,7 @@ K=$(cd "$A/.." && pwd)
 AUX=$(cd "$K/.." && pwd)
 PORT="$K/amix-040-060-port"
 . "$AUX/toolchain/src/gcc-cross-amix/build/env.sh"
+sh "$K/tools/chk-volatile.sh" || exit 1
 PATH="$AUX/toolchain/linux/bin:$AUX/toolchain/bin:$PATH"
 export PATH
 

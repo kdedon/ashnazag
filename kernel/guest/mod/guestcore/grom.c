@@ -22,11 +22,11 @@ extern int segdev_create(), as_map(), as_unmap(), valid_usr_range();
 /* only the 68040 HAT, whose page frames are 4 KB, has hat_cm_ram */
 __asm__(".weak hat_cm_ram");
 extern long hat_cm_ram;
-static long *volatile gr_hat4k = &hat_cm_ram;
+static long *__volatile__ gr_hat4k = &hat_cm_ram;
 /* the 68040 HAT caches a device frame only when it is registered */
 __asm__(".weak hat_cm_rom_add");
 extern int hat_cm_rom_add();
-static int (*volatile gr_romadd)() = hat_cm_rom_add;
+static int (*__volatile__ gr_romadd)() = hat_cm_rom_add;
 
 #define	GR_MAX	4
 

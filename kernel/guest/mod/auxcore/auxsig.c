@@ -230,7 +230,7 @@ aux_sysm68k(ap, a, rv, r)
 	switch (a[0]) {
 	case 0x6e:
         {
-            int (*volatile fn)()=aux_macpoll;
+            int (*__volatile__ fn)()=aux_macpoll;
             struct guest_proc *gp=GUESTP(u.u_procp);
             if(!fn || !gp || !ap->ap_mac) return EINVAL;
             return (*fn)(gp,r,(int)a[1]);

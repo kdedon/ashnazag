@@ -60,11 +60,11 @@
 #define DRM_MALLOC(size)	DRM(amix_malloc)(size)
 #define DRM_FREE(pt)		DRM(amix_mfree)(pt)
 #define DRM_VTOPHYS(addr)	vtophys(addr)
-#define DRM_READ8(addr)		(*(volatile unsigned char *)(addr))
-#define DRM_WRITE8(addr, val)	(*(volatile unsigned char *)(addr) = (val))
+#define DRM_READ8(addr)		(*(__volatile__ unsigned char *)(addr))
+#define DRM_WRITE8(addr, val)	(*(__volatile__ unsigned char *)(addr) = (val))
 /* the bridges pass PCI bytes address-invariant: a long is byte reversed */
-#define DRM_READ32(addr)	DRM(swab32)(*(volatile u32 *)(addr))
-#define DRM_WRITE32(addr, val)	(*(volatile u32 *)(addr) = DRM(swab32)(val))
+#define DRM_READ32(addr)	DRM(swab32)(*(__volatile__ u32 *)(addr))
+#define DRM_WRITE32(addr, val)	(*(__volatile__ u32 *)(addr) = DRM(swab32)(val))
 #define DRM_ERR(v)		v
 #define DRM_PRIV							\
 	drm_file_t *priv = DRM(find_file_by_minor)(dev, getminor(kdev)); \
@@ -190,10 +190,10 @@ DRM(splx)(int s)
 #define splx(s)			DRM(splx)(s)
 
 static __inline__ atomic_t
-test_and_set_bit(int b, volatile void *p)
+test_and_set_bit(int b, __volatile__ void *p)
 {
 	int s = DRM(splhi)();
-	volatile int *w = (volatile int *)p + (b >> 5);
+	__volatile__ int *w = (__volatile__ int *)p + (b >> 5);
 	unsigned int m = 1 << (b & 0x1f), r = *w & m;
 
 	*w |= m;
@@ -202,31 +202,31 @@ test_and_set_bit(int b, volatile void *p)
 }
 
 static __inline__ void
-clear_bit(int b, volatile void *p)
+clear_bit(int b, __volatile__ void *p)
 {
 	int s = DRM(splhi)();
 
-	((volatile int *)p)[b >> 5] &= ~(1 << (b & 0x1f));
+	((__volatile__ int *)p)[b >> 5] &= ~(1 << (b & 0x1f));
 	DRM(splx)(s);
 }
 
 static __inline__ void
-set_bit(int b, volatile void *p)
+set_bit(int b, __volatile__ void *p)
 {
 	int s = DRM(splhi)();
 
-	((volatile int *)p)[b >> 5] |= 1 << (b & 0x1f);
+	((__volatile__ int *)p)[b >> 5] |= 1 << (b & 0x1f);
 	DRM(splx)(s);
 }
 
 static __inline__ int
-test_bit(int b, volatile void *p)
+test_bit(int b, __volatile__ void *p)
 {
-	return ((volatile int *)p)[b >> 5] & (1 << (b & 0x1f));
+	return ((__volatile__ int *)p)[b >> 5] & (1 << (b & 0x1f));
 }
 
 static __inline__ int
-find_first_zero_bit(volatile void *p, int max)
+find_first_zero_bit(__volatile__ void *p, int max)
 {
 	int b;
 
@@ -266,7 +266,7 @@ DRM(dma_sync)(void)
 #define DRM_DMA_SYNC()		DRM(dma_sync)()
 
 static __inline__ unsigned int
-DRM(cmpxchg)(volatile unsigned int *p, unsigned int old, unsigned int new)
+DRM(cmpxchg)(__volatile__ unsigned int *p, unsigned int old, unsigned int new)
 {
 	int s = DRM(splhi)();
 	unsigned int prev;
@@ -279,13 +279,13 @@ DRM(cmpxchg)(volatile unsigned int *p, unsigned int old, unsigned int new)
 	DRM(splx)(s);
 	return prev;
 }
-#define cmpxchg(p, o, n)	DRM(cmpxchg)((volatile unsigned int *)(p), o, n)
+#define cmpxchg(p, o, n)	DRM(cmpxchg)((__volatile__ unsigned int *)(p), o, n)
 /* __ret: nonzero when *lock was not old */
 #define _DRM_CAS(lock, old, new, __ret) \
-	((__ret) = DRM(cmpxchg)((volatile unsigned int *)(lock), old, new) != (old))
+	((__ret) = DRM(cmpxchg)((__volatile__ unsigned int *)(lock), old, new) != (old))
 
 static __inline__ int
-atomic_cmpset_int(volatile unsigned int *p, unsigned int old, unsigned int new)
+atomic_cmpset_int(__volatile__ unsigned int *p, unsigned int old, unsigned int new)
 {
 	int s = DRM(splhi)(), r = *p == old;
 

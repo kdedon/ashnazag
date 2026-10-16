@@ -12,7 +12,7 @@ extern struct tune tune;
 extern void pagezero(), ppcopy(), dlm_cacheflush();
 __asm__(".weak hat_cm_ram");
 extern long hat_cm_ram;
-static long *volatile gm_hat4k = &hat_cm_ram;
+static long *__volatile__ gm_hat4k = &hat_cm_ram;
 
 
 static unsigned long

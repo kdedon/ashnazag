@@ -16,7 +16,7 @@ extern int tdfx_svr4ioctl(), tdfx_svr4mmap(), spec_segmap();
 extern int tdfx_amix_attach(), tdfx_amix_detach();
 extern void tdfx_amix_front();
 extern unsigned long plat_vtop();
-extern volatile unsigned char *v3_reg, *v3_fb;
+extern __volatile__ unsigned char *v3_reg, *v3_fb;
 extern unsigned long v3_physfb, v3_vram, v3_dsvram;
 extern int v3ds_width, v3ds_height;
 extern struct opci_dev *v3_dev;

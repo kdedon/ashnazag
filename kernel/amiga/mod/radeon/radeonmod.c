@@ -16,7 +16,7 @@ extern int radeon_svr4ioctl(), radeon_svr4mmap(), spec_segmap();
 extern int radeon_amix_attach(), radeon_amix_detach();
 extern void radeon_amix_retarget(), rds_tell();
 extern unsigned long plat_vtop();
-extern volatile unsigned char *rd_reg, *rd_fb;
+extern __volatile__ unsigned char *rd_reg, *rd_fb;
 extern unsigned long rd_physfb, rd_vram, rd_dsvram;
 extern int rds_width, rds_height;
 extern struct opci_dev *rd_dev;

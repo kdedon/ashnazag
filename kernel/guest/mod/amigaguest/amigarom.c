@@ -17,7 +17,7 @@
 __asm__(".weak amiga_romva");
 extern unsigned long amiga_romva();
 /* read at run time: the compiler takes a declared function's address as nonzero */
-static unsigned long (*volatile romva)() = amiga_romva;
+static unsigned long (*__volatile__ romva)() = amiga_romva;
 
 static int romstate;		/* 0 not checked, 1 usable, -1 not */
 

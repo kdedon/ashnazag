@@ -16,7 +16,8 @@
 # copied in as voodoo3.rom.  CARDS: WinUAE board names on the PCI bus
 # (default ne2000_pci; host port ECHOPORT, default 2308, reaches the
 # guest's echo service).  XDISPLAY (default :77): the virtual display,
-# started when not running and left up.  The console login is on the screen:
+# started when not running and left up.  UAEOPTS: extra config lines.
+# The console login is on the screen:
 #   python3 xtype.py :77 root      types a line
 #   ffmpeg -f x11grab -video_size 740x630 -i :77 -frames:v 1 s.png
 # Runs until killed, or for the given seconds.
@@ -98,6 +99,7 @@ case " $CARDS " in *" ne2000_pci "*)
 	printf 'ne2000_pci=slirp\nslirp_redir=tcp:%s:7:10.0.2.15\n' "${ECHOPORT:-2308}" >> "$C" ;;
 esac
 [ -z "$GFX" ] || printf 'gfxcard_type=%s\ngfxcard_size=16\n' "$GFX" >> "$C"
+[ -z "$UAEOPTS" ] || printf '%s\n' "$UAEOPTS" >> "$C"
 cd "$W/bin"
 set -- ${2:+timeout "$2"} nice -n 19 wine winuae64.exe -portable -log -f "$(win "$C")"
 exec "$@"

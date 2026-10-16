@@ -88,20 +88,20 @@ extern void printf();
 extern void dlm_cacheflush();
 
 /* through volatile pointers, so no compiler takes a weak symbol for set */
-static int (*volatile p_zorro)() = plat_zorro;
-static int (*volatile p_zintr)() = plat_zintr;
-static char *(*volatile p_iomap)() = plat_iomap;
-static void (*volatile p_iounmap)() = plat_iounmap;
-static void (*volatile p_zunintr)() = plat_zunintr;
-static unsigned long (*volatile p_vtop)() = plat_vtop;
-static unsigned long (*volatile p_pagesize)() = plat_pagesize;
-static int (*volatile p_winrange)() = plat_winrange;
-static int (*volatile p_remap)() = plat_remap;
-static int (*volatile p_faulthook)() = plat_faulthook;
-static void (*volatile p_unfaulthook)() = plat_unfaulthook;
-static void (*volatile p_delayus)() = delayus;
-static timestruc_t *volatile p_hrestime = &hrestime;
-static long *volatile p_cputype = (long *)&cputype;	/* the kernel defines it as a long */
+static int (*__volatile__ p_zorro)() = plat_zorro;
+static int (*__volatile__ p_zintr)() = plat_zintr;
+static char *(*__volatile__ p_iomap)() = plat_iomap;
+static void (*__volatile__ p_iounmap)() = plat_iounmap;
+static void (*__volatile__ p_zunintr)() = plat_zunintr;
+static unsigned long (*__volatile__ p_vtop)() = plat_vtop;
+static unsigned long (*__volatile__ p_pagesize)() = plat_pagesize;
+static int (*__volatile__ p_winrange)() = plat_winrange;
+static int (*__volatile__ p_remap)() = plat_remap;
+static int (*__volatile__ p_faulthook)() = plat_faulthook;
+static void (*__volatile__ p_unfaulthook)() = plat_unfaulthook;
+static void (*__volatile__ p_delayus)() = delayus;
+static timestruc_t *__volatile__ p_hrestime = &hrestime;
+static long *__volatile__ p_cputype = (long *)&cputype;	/* the kernel defines it as a long */
 
 extern long amilib_loops_us;		/* Space.c: busy loops per microsecond */
 
@@ -154,7 +154,7 @@ void
 amx_delayus(n)
 	long n;
 {
-	volatile long i;
+	__volatile__ long i;
 
 	if (p_delayus) {
 		(*p_delayus)((int)n);

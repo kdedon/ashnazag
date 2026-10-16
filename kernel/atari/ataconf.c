@@ -151,6 +151,7 @@ static unsigned long ata_svmode[3] = { 1 };	/* sv=: width, height, depth */
 extern long cputype;
 extern unsigned long hat_cm_ram;
 extern void ata_isp61();
+extern unsigned long ata_isp61_next;
 #endif
 
 void ata_puts();
@@ -901,6 +902,7 @@ ata_vectors()
 #ifndef ATA060
 	M68Kvec[11] = (unsigned long)ata_fline;
 #else
+	ata_isp61_next = M68Kvec[61];
 	M68Kvec[61] = (unsigned long)ata_isp61;
 #endif
 }

@@ -14,8 +14,8 @@
 #define NCRBASE		0xF40000
 #define P5BASE		0xF60000
 #endif
-#define NCR		((volatile uchar *)NCRBASE)
-#define P5REG(n)	(((volatile uchar *)P5BASE)[(n) * 8])
+#define NCR		((__volatile__ uchar *)NCRBASE)
+#define P5REG(n)	(((__volatile__ uchar *)P5BASE)[(n) * 8])
 #define P5RESET		0
 #define P5IRQ		1
 #define P5SET		0x80
@@ -25,7 +25,7 @@
 #ifndef R
 #define R(n)		(NCR[(n) ^ 3])
 #endif
-#define R32(n)		(*(volatile uint *)(NCR + (n)))
+#define R32(n)		(*(__volatile__ uint *)(NCR + (n)))
 
 #define SCNTL0		0x00
 #define SCNTL1		0x01
@@ -138,8 +138,8 @@ clear()
 
 	for (n = 0; n < 4 && (R(ISTAT) & (ISTAT_SIP | ISTAT_DIP)); n++) {
 		R(SIST0);
-		R(SIST1);
 		R(DSTAT);
+		R(SIST1);
 	}
 }
 

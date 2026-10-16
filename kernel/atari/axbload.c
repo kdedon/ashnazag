@@ -13,8 +13,8 @@
 #define CHUNK	64		/* sectors per DMAread */
 #define BIMAX	1024
 
-#define PHYSTOP	(*(volatile unsigned long *)0x42e)
-#define HZ200	(*(volatile unsigned long *)0x4ba)
+#define PHYSTOP	(*(__volatile__ unsigned long *)0x42e)
+#define HZ200	(*(__volatile__ unsigned long *)0x4ba)
 #define COOKIES	(*(unsigned long **)0x5a0)
 #define RAMTOP	(*(unsigned long *)0x5a4)
 #define RAMVALID (*(unsigned long *)0x5a8)

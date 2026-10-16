@@ -3,7 +3,7 @@
 #
 #   sh amiga/mods.sh kernel.elf outdir
 #
-# Out: outdir/mod.d/{amilib,opci,pci,ne,zz9000,voodoo3,tdfx,radeonds,radeon,floppy,v3bars}, built for that kernel's CPU; amilib is
+# Out: outdir/mod.d/{amilib,opci,pci,ne,xsurf,zz9000,voodoo3,tdfx,radeonds,radeon,floppy,v3bars}, built for that kernel's CPU; amilib is
 # checked against the kernel's exports (it must carry DLM: dlm_cacheflush),
 # opci against those and amilib's.  Install them in /etc/conf/mod.d;
 # /etc/conf/pci gets openpci.library (the openpci archive's
@@ -41,7 +41,7 @@ srcs() {
 	pci)	echo "$A/pci/pcidev.c" ;;
 	zz9000)	echo "$A/zz9000/zz9000.c $A/zz9000/zzds.c $A/mod/zz9000/zz9000mod.c" ;;
 	floppy)	echo "$A/floppy/flsvc.c" ;;
-	ne)	echo "$K/atari/netusbee/nuchip.c $K/atari/netusbee/nudlpi.c $A/mod/ne/nemod.c" ;;
+	ne|xsurf)	echo "$K/atari/netusbee/nuchip.c $K/atari/netusbee/nudlpi.c $A/mod/ne/nemod.c" ;;
 	voodoo3)	echo "$A/voodoo3/v3ds.c $A/mod/voodoo3/v3mod.c" ;;
 	tdfx)	echo "$K/drm/tdfx_drv.c $A/mod/tdfx/tdfxmod.c" ;;
 	radeonds)	echo "$A/radeon/rds.c $A/radeon/rdsinit.c $A/mod/radeonds/rdsmod.c" ;;
@@ -51,7 +51,7 @@ srcs() {
 	esac
 }
 rm -rf "$O/mod.d"
-for m in amilib opci pci ne zz9000 voodoo3 tdfx radeonds radeon floppy v3bars; do	# each after the module it depends on
+for m in amilib opci pci ne xsurf zz9000 voodoo3 tdfx radeonds radeon floppy v3bars; do	# each after the module it depends on
 	d=$O/src/$m
 	rm -rf "$d"; mkdir -p "$d"
 	objs=
@@ -59,6 +59,7 @@ for m in amilib opci pci ne zz9000 voodoo3 tdfx radeonds radeon floppy v3bars; d
 		o=$d/$(basename "$c" | sed 's/\.[cs]$//').o
 		cc=$CC
 		case $c in */zz9000/zz9000.c) cc=$(echo "$CC" | sed 's/ -Wall//') ;; esac	# upstream, as it is
+		[ $m != xsurf ] || cc=$(echo "$CC" | sed 's/ -DNU_PCI/ -DNU_XSURF/')
 		# ANSI templates, upstream warnings kept; __STDC__ 0 keeps the system headers' extensions
 		case $c in */drm/*) cc="$(echo "$CC" | sed 's/ -traditional//; s/ -Wall//') -D__STDC__=0 -DDS_AMIGA -I$K/mac/display" ;; esac
 		$cc -c "$c" -o "$o" 2> "$o.warn" || { cat "$o.warn"; exit 1; }
@@ -68,6 +69,7 @@ for m in amilib opci pci ne zz9000 voodoo3 tdfx radeonds radeon floppy v3bars; d
 		objs="$objs $o"
 	done
 	m68k-cbm-sysv4-ld -r -o "$d/Driver.o" $objs
+	python3 "$K/atari/chk64.py" -k "$d/Driver.o"
 	cp "$A/mod/$m/Master" "$d/"
 	[ ! -f "$A/mod/$m/Space.c" ] || cp "$A/mod/$m/Space.c" "$d/"
 	DLM_TOOLS=$O/tools sh "$DLM/tools/mkmod" -e "$O/exports" -o "$O" "$d"

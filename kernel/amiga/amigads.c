@@ -423,7 +423,7 @@ kbintr()
 {
 	unsigned char raw, code, adb;
 
-	raw = ~*(volatile unsigned char *)0xbfec01;	/* CIA-A serial data */
+	raw = ~*(__volatile__ unsigned char *)0xbfec01;	/* CIA-A serial data */
 	code = raw >> 1;
 	if (am_key && code < 0x68) {
 		adb = am_toadb[code];
