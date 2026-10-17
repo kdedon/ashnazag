@@ -324,6 +324,31 @@ struct gm_args *args;
 	return 0;
 }
 
+/*
+ * The frame a guest RAM object's writable mapping holds at a in as, or -1.
+ * Its frames never move, so loading one elsewhere needs no lock here.
+ */
+int
+guest_ram_at(as, a)
+struct as *as;
+addr_t a;
+{
+	struct seg *seg = as_segat(as, a);
+	struct gm_map *m;
+	unsigned long off;
+	u_int prot[1];
+
+	if (!seg || seg->s_ops != &gm_ops || !(m = gm_find(seg)) || m->ram->shift != 12)
+		return -1;
+	off = ((struct segdev_data *)seg->s_data)->offset + (a - seg->s_base);
+	prot[0] = 0;
+	(void)(*gm_devops->getprot)(seg, a, 0, prot);
+	if ((prot[0] & (PROT_READ | PROT_WRITE)) != (PROT_READ | PROT_WRITE) ||
+	    off >= m->ram->size || m->ram->dma[off >> 12])
+		return -1;
+	return guest_ram_frame(m->ram, off);
+}
+
 int
 guest_ram_map(ram, dev, off, as, addrp, len, prot, maxprot, flags)
 struct guest_ram *ram;

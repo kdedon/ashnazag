@@ -37,7 +37,7 @@ static struct { int class; char *name; } classes[] = {
 };
 
 static char *bridges[] = {
-	"Elbox Mediator 1200", "Elbox Mediator Z4", "Matay Prometheus",
+	"Elbox Mediator 1200", "Elbox Mediator PCI 4000", "Matay Prometheus",
 	"DCE G-REX 1200", "DCE G-REX 4000"
 };
 

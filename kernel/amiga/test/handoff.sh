@@ -83,8 +83,8 @@ run warp3d sh "$K/guest/amiga/warp3d/build.sh" "$W/w3dlib"
   echo ' Quake   /usr/games/quake        software; in X:  /usr/games/glquake'
   echo '         +timedemo demo1 prints frames per second'
   echo
-  echo ' Ctrl-Alt-0 shows the console, Ctrl-Alt-1 to -9 the sessions.'
-  echo ' X depth: DEPTH=16 or 32 in /etc/default/x.  modadmin -s lists modules.'
+  echo ' Ctrl + Left Alt + Left Amiga + 0 shows the console, 1 to 9 the sessions.'
+  echo ' X depth: 16 on a Voodoo3; DEPTH=8, 16 or 32 in /etc/default/x.  modadmin -s lists modules.'
   echo ' Shut down with  shutdown -y -g0 -i0'; } > "$W/motd"
 { echo "f /etc/motd 644 2 2 $W/motd"
   echo "f /amiga/sys/C/w3dtest 755 0 3 $W/w3d/w3dtest"

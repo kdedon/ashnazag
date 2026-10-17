@@ -4,14 +4,14 @@
  * AMS runs natively in user mode from its own reset vector, with the
  * supervisor state virtual (guestcore).  The CPU is a 68000 to it:
  * exceptions and interrupts push 6-byte frames through the vectors in
- * its RAM at 0, and rte pops them.  The register pages are emulated
- * (tifault.c decodes the access): the LCD base, the keyboard matrix
- * from TI_KEYS, the timers from the clock tick, Flash commands applied
- * to the Flash file through its writable alias.  TI_SIG carries the
- * interrupts, held while the guest's IPL masks them.
+ * its RAM at 0, and rte pops them.  The register pages are memory;
+ * the routines that need a live answer (key scan, idle halt, Flash
+ * program and erase) are patched by the host to jump to service stubs
+ * at TI_HOST, whose illegal instruction lands here.  TI_SIG carries the
+ * interrupts from the clock tick, held while the guest's IPL masks them.
  *
  *	tick --> pend --> TI_SIG --> 6-byte frame --> AMS handler --> rte
- *	TI_KEYS (display process) --> matrix --> $60001B reads
+ *	TI_KEYS (display process) --> tic.keys --> key scan service
  *
  * K&R C.
  */
@@ -21,33 +21,28 @@
 #include "vm/as.h"
 
 extern int nodev(), ttimeout(), untimeout(), as_setprot();
-extern void dlm_cacheflush();
+extern void dlm_cacheflush(), flushmmu();
+__asm__(".weak cputype");
+extern long ti_cputype __asm__("cputype");	/* 30, 40, 60; absent: 68030 */
+static long *__volatile__ cpup = &ti_cputype;
 extern int __amix_sendsig(), __amix_fsig();
 extern struct modwrapper tiplatform_wrapper;
-
-/* Flash modes */
-#define	FM_READ		0
-#define	FM_STATUS	1
-#define	FM_PROG		2
-#define	FM_ERASE	3
-#define	FM_ID		4
 
 static struct tictr {
 	int		state;		/* 0 free, 2 claimed, 1 running */
 	struct proc	*proc;
 	struct guest_proc *gp;
 	int		tid, sleeping, flags, opened, nnote, nexc;
-	unsigned char	io[2][32];	/* $600000, $700000, mirrored every 32 bytes */
+	unsigned long	scanout, modtab;
 	unsigned char	keys[10], on;
 	unsigned int	pend;		/* bit n: autovector n waits */
 	int		halt;		/* $600005 written: wake mask */
-	unsigned long	cmdblk;		/* Flash block answering status, 0 none */
-	int		fmode;
-	unsigned char	seen[2][32];	/* census: bit 0 read, bit 1 write */
+	unsigned long	walked;		/* tick of the last uncache() */
 	struct ti_info	st;
 } tic;
 static struct guest_profile profile;
 static int device_flag;
+static void uncache();
 
 static int
 splhi_()
@@ -236,13 +231,17 @@ ti_sendsig(gp, sig, sip, hdlr)
 }
 
 /* the guest sleeps until a request it waits for; then the trap tail */
-void
+static void
 ti_after(gp, r)
 	struct guest_proc *gp;
 	char *r;
 {
 	int s, mask = tic.halt;
 
+	if (tic.st.ticks - tic.walked >= HZ) {
+		tic.walked = tic.st.ticks;
+		uncache(curproc->p_as, TI_FLASH);
+	}
 	if (mask) {
 		tic.halt = 0;
 		s = splhi_();
@@ -258,192 +257,199 @@ ti_after(gp, r)
 	guest_trapret();
 }
 
-/* ---- registers ---- */
-
+/*
+ * AMS copies code into RAM and runs it (its Flash routines run at $5B02,
+ * built afresh for each command); a 68000 has no caches, so nothing
+ * flushes.  On a 68040/060 the copy would sit in the data cache while
+ * the instruction cache fetches memory or an older routine.  So RAM is
+ * cache-inhibited, serialized: every fetch sees the last store.  Flash
+ * stays cached; it changes only in fput(), which pushes the caches.
+ * A page refaulted after paging comes back cacheable, so the calculator's
+ * pages are walked again each second.
+ */
 static void
-census(bank, o, wr, v)
-	int bank, o, wr;
-	unsigned long v;
+uncache(as, hi)
+	struct as *as;
+	unsigned long hi;
 {
-	if (!(tic.flags & TIF_CENSUS) || (tic.seen[bank][o] & (1 << wr)))
+	long *cpu = cpup;
+	unsigned long *root, a, b, *leaf, va;
+	int n = 0;
+
+	if (!cpu || *cpu < 40 || !(root = *(unsigned long **)((char *)as + 20)))
 		return;
-	tic.seen[bank][o] |= 1 << wr;
-	printf("tiplatform: census %s %x pc %x value %x\n", wr ? "write" : "read",
-	    (int)(TI_IO + (bank << 20) + o), (int)GR_PC(u.u_ar0), (int)v);
-}
-
-static int
-iorb(a)
-	unsigned long a;
-{
-	int bank = (a >> 20) & 1, o = a & 0x1f, v = tic.io[bank][o], i, mask;
-
-	if (bank == 0 && o == 0x1b) {		/* columns of the rows selected low */
-		mask = tic.io[0][0x18] << 8 | tic.io[0][0x19];
-		v = 0xff;
-		for (i = 0; i < 10; i++)
-			if (!(mask & 1 << i))
-				v &= ~tic.keys[i];
-	} else if (bank == 0 && o == 0x1a)	/* bit 1 low: ON is down */
-		v = tic.on ? v & ~2 : v | 2;
-	else if (bank == 0 && o == 0)		/* the battery comparator: above every threshold */
-		v |= 4;
-	census(bank, o, 0, (unsigned long)v);
-	return v;
-}
-
-static void
-iowb(a, v)
-	unsigned long a;
-	int v;
-{
-	int bank = (a >> 20) & 1, o = a & 0x1f;
-
-	census(bank, o, 1, (unsigned long)v);
-	tic.io[bank][o] = v;
-	if (bank == 0 && o == 0x05)	/* off until one of autovectors 1-5, or ON */
-		tic.halt = (v & 0x1f) << 1 | 1 << 6;
-	if (bank == 0 && o == 0x11)
-		tic.st.lcd = (tic.io[0][0x10] << 8 | v) << 3;
-	if (bank == 0 && o == 0x1d)
-		tic.st.contrast = v & 0x1f;
-}
-
-/* ---- Flash: block erase and word program, status in bit 7 ---- */
-
-static void
-setprot(blk, prot)
-	unsigned long blk;
-	int prot;
-{
-	as_setprot(curproc->p_as, (caddr_t)blk, 0x10000, prot | PROT_USER);
-}
-
-/* 1: reads at a give the command state */
-int
-ti_cmdblock(a)
-	unsigned long a;
-{
-	return tic.cmdblk && (a & ~0xffffUL) == tic.cmdblk;
-}
-
-static void
-fmode(a, m)
-	unsigned long a;
-	int m;
-{
-	unsigned long blk = m == FM_READ ? 0 : a & ~0xffffUL;
-
-	if (blk != tic.cmdblk) {
-		if (tic.cmdblk)
-			setprot(tic.cmdblk, PROT_READ | PROT_EXEC);
-		if (blk)
-			setprot(blk, 0);
-		tic.cmdblk = blk;
+	for (va = 0; va < hi; va += 0x1000) {
+		if (!((a = root[va >> 25]) & 2) ||
+		    !((b = ((unsigned long *)(a & 0xfffffe00UL))[(va >> 18) & 0x7f]) & 2))
+			continue;
+		leaf = (unsigned long *)(b & 0xffffff00UL) + ((va >> 12) & 0x3f);
+		if ((*leaf & 1) && (*leaf & 0x60) != 0x40) {
+			*leaf = (*leaf & ~0x60UL) | 0x40;
+			flushmmu((addr_t)va, 1);
+			n++;
+		}
 	}
-	tic.fmode = m;
+	if (n)
+		dlm_cacheflush();	/* lines the pages had go to memory */
+}
+
+/* ---- services ---- */
+
+static int
+gword(a)
+	unsigned long a;
+{
+	unsigned char b[2];
+
+	return copyin((caddr_t)a, (caddr_t)b, 2) ? 0 : G16(b);
 }
 
 static int
-fput(a, v)
+pword(a, v)
 	unsigned long a;
 	int v;
+{
+	unsigned char b[2];
+
+	P16(b, v);
+	return copyout((caddr_t)b, (caddr_t)a, 2);
+}
+
+/*
+ * AMS's key scan: the one key down as row * 8 + column + 1 (ON $48,
+ * arrows $50 + their bits), row 0's modifiers in the high byte; 0 and
+ * d0.w clear for none or two keys.  Only modifiers: AMS's own table.
+ */
+static void
+scan(r)
+	char *r;
+{
+	int row, b, bits, code = 0, found = 0;
+
+	if (tic.on)
+		code = 0x48, found = 1;
+	else {
+		for (bits = 0, row = 0; row < 10; row++)
+			bits |= tic.keys[row];
+		if (!bits)
+			goto none;
+		for (row = 9; row > 0; row--) {
+			if (!(bits = tic.keys[row]))
+				continue;
+			if (found)
+				goto none;
+			for (b = 7; !(bits & 1 << b); b--)
+				;
+			if (bits & ~(1 << b))
+				goto none;
+			code = row * 8 + b + 1;
+			found = 1;
+		}
+	}
+	if ((bits = tic.keys[0]) != 0) {
+		if (bits >> 4) {
+			if (found)
+				goto none;
+			code = 0x50 + (bits >> 4);
+			found = 1;
+		}
+		code = found ? (bits & 15) << 8 | (code & 0xff) :
+		    gword(tic.modtab + 2 * (bits & 15));
+	}
+	pword(tic.scanout, code);
+	GR_D(r, 0) |= 0xffff;
+	return;
+none:
+	pword(tic.scanout, 0);
+	GR_D(r, 0) &= ~0xffffL;
+}
+
+/* a store: AMS's words land as written; a freed block is ones, AMS's empty */
+static void
+prog(r)
+	char *r;
+{
+	unsigned long src = GR_A(r, 2), dst = GR_A(r, 3), n = GR_D(r, 4) & 0xffff;
+
+	for (; n > 0; n--, src += 2, dst += 2)
+		if (dst >= TI_FLASH && dst < TI_FLASH + TI_FLASH_SIZE)
+			pword(TI_ALIAS + (dst - TI_FLASH), gword(src));
+	GR_A(r, 2) = src;
+	GR_A(r, 3) = dst;
+	GR_D(r, 4) &= ~0xffffL;
+	tic.st.flash++;
+	dlm_cacheflush();
+}
+
+static void
+sprog(r)
+	char *r;
+{
+	unsigned long a[3];
+
+	if (copyin((caddr_t)GR_USP(r) + 4, (caddr_t)a, sizeof a))
+		return;
+	if (a[1] < TI_FLASH || a[1] >= TI_FLASH + TI_FLASH_SIZE || a[2] > TI_FLASH_SIZE ||
+	    a[1] + a[2] > TI_FLASH + TI_FLASH_SIZE)
+		return;
+	for (; (long)a[2] > 0; a[2] -= 2, a[0] += 2, a[1] += 2)
+		pword(TI_ALIAS + (a[1] - TI_FLASH), gword(a[0]));
+	tic.st.flash++;
+	dlm_cacheflush();
+}
+
+static void
+eblock(a)
+	unsigned long a;
 {
 	static unsigned char ones[256];
-	unsigned char b[2], o[2];
-	unsigned long alias = TI_ALIAS + (a - TI_FLASH), i;
-	int c = v & 0xff;
+	unsigned long i;
 
+	if (!ones[0])
+		for (i = 0; i < sizeof ones; i++)
+			ones[i] = 0xff;
+	a = TI_ALIAS + ((a - TI_FLASH) & ~0xffffUL);
+	for (i = 0; i < 0x10000; i += sizeof ones)
+		(void)copyout((caddr_t)ones, (caddr_t)(a + i), sizeof ones);
 	tic.st.flash++;
-	switch (tic.fmode) {
-	case FM_PROG:
-		if (copyin((caddr_t)alias, (caddr_t)o, 2))
-			return -1;
-		b[0] = o[0] & v >> 8;
-		b[1] = o[1] & v;
-		if (copyout((caddr_t)b, (caddr_t)alias, 2))
-			return -1;
-		fmode(a, FM_STATUS);
-		dlm_cacheflush();
-		return 0;
-	case FM_ERASE:
-		if (c == 0xd0) {
-			if (!ones[0])
-				for (i = 0; i < sizeof ones; i++)
-					ones[i] = 0xff;
-			alias &= ~0xffffUL;
-			for (i = 0; i < 0x10000; i += sizeof ones)
-				if (copyout((caddr_t)ones, (caddr_t)(alias + i), sizeof ones))
-					return -1;
-			dlm_cacheflush();
-		}
-		fmode(a, FM_STATUS);
-		return 0;
-	}
-	switch (c) {
-	case 0xff: fmode(a, FM_READ); break;
-	case 0x50: case 0x70: fmode(a, FM_STATUS); break;
-	case 0x10: case 0x40: fmode(a, FM_PROG); break;
-	case 0x20: fmode(a, FM_ERASE); break;
-	case 0x90: fmode(a, FM_ID); break;
-	default: note("Flash command", (long)v, GR_PC(u.u_ar0));
-	}
-	return 0;
 }
 
-static unsigned long
-fget(a)
+static int
+inflash(a)
 	unsigned long a;
 {
-	if (tic.fmode == FM_ID)
-		return a & 2 ? 0x00d4 : 0x00b0;
-	return 0x8080;		/* ready, no errors */
+	return a >= TI_FLASH && a < TI_FLASH + TI_FLASH_SIZE;
 }
 
-/* the faulted access: 0 done, -1 a bus error */
-int
-ti_read(a, sz, vp)
-	unsigned long a, *vp;
-	int sz;
+static void
+erase(r)
+	char *r;
 {
-	unsigned long v = 0;
-	int i;
+	unsigned long a;
 
-	if (a >= TI_FLASH && a < TI_FLASH + TI_FLASH_SIZE) {
-		for (i = 0; i < sz; i += 2)
-			v = v << 16 | fget(a + i);
-		*vp = sz == 1 ? (a & 1 ? v & 0xff : v >> 8 & 0xff) : v;
-		return 0;
-	}
-	if (a >= TI_IO_END)		/* nothing there; AMS posts each key to $C00000 */
-		v = 0;
-	else
-		for (i = 0; i < sz; i++)
-			v = v << 8 | iorb(a + i);
-	tic.st.io++;
-	*vp = v;
-	return 0;
+	if (copyin((caddr_t)GR_USP(r) + 4, (caddr_t)&a, 4) || !inflash(a))
+		return;
+	eblock(a);
+	GR_D(r, 0) = (GR_D(r, 0) & ~0xffffL) | 0x8080;
+	dlm_cacheflush();
 }
 
-int
-ti_write(a, sz, v)
-	unsigned long a, v;
-	int sz;
+static void
+move(r)
+	char *r;
 {
-	int i;
+	static unsigned char b[256];
+	unsigned long src, dst = GR_A(r, 1) & ~0xffffUL, i;
 
-	if (a >= TI_FLASH && a < TI_FLASH + TI_FLASH_SIZE) {
-		if (sz == 1)
-			return fput(a & ~1UL, (int)(v << 8 | v));
-		for (i = 0; i < sz; i += 2)
-			if (fput(a + i, (int)(v >> 8 * (sz - 2 - i))))
-				return -1;
-		return 0;
-	}
-	tic.st.io++;
-	for (i = 0; i < sz && a < TI_IO_END; i++)
-		iowb(a + i, (int)(v >> 8 * (sz - 1 - i)) & 0xff);
-	return 0;
+	if (copyin((caddr_t)GR_USP(r) + 4, (caddr_t)&src, 4) || !inflash(src) || !inflash(dst))
+		return;
+	src &= ~0xffffUL;
+	eblock(dst);
+	for (i = 0; i < 0x10000; i += sizeof b)
+		if (copyin((caddr_t)(src + i), (caddr_t)b, sizeof b) == 0)
+			(void)copyout((caddr_t)b, (caddr_t)(TI_ALIAS + (dst - TI_FLASH) + i), sizeof b);
+	eblock(src);
+	dlm_cacheflush();
 }
 
 /* ---- dispositions ---- */
@@ -469,7 +475,7 @@ exc(gp, r, v)
 	return 0;
 }
 
-int
+static int
 ti_badaccess(gp, r, a, what)
 	struct guest_proc *gp;
 	char *r;
@@ -479,6 +485,77 @@ ti_badaccess(gp, r, a, what)
 	note(what, (long)a, GR_PC(r));
 	psignal(curproc, SIGBUS);
 	guest_trapret();
+	return 0;
+}
+
+/* a Flash store, or an access past Flash nothing is mapped at: AMS reached a routine nobody patched */
+static int
+hwfault(gp, r, v)
+	struct guest_proc *gp;
+	char *r;
+	int v;
+{
+	unsigned long fa;
+	int ssw;
+
+	if (guest_bfault(r, &fa, &ssw) < 0 || fa < TI_FLASH || TI_MAPPED(fa) ||
+	    (fa < TI_FLASH + TI_FLASH_SIZE && (ssw & 0x100)))
+		return 1;
+	tic.st.io++;
+	return ti_badaccess(gp, r, fa, "hardware access");
+}
+
+/* a stub at TI_HOST: the service, then its rts */
+static int
+service(gp, r, v)
+	struct guest_proc *gp;
+	char *r;
+	int v;
+{
+	unsigned long pc = GR_PC(r) - TI_HOST, buf;
+
+	if (pc >= TS_N * 8 || pc % 8)
+		return exc(gp, r, v);
+	switch ((int)pc / 8) {
+	case TS_SCAN:
+		scan(r);
+		break;
+	case TS_MODS:
+		GR_D(r, 0) = gword(tic.modtab + 2 * (tic.keys[0] & 15));
+		break;
+	case TS_ROWS:
+		if (copyin((caddr_t)GR_USP(r) + 4, (caddr_t)&buf, 4) == 0)
+			(void)copyout((caddr_t)tic.keys, (caddr_t)buf, 10);
+		GR_D(r, 0) |= 0xffff;
+		break;
+	case TS_HALT:		/* off until one of autovectors 1-5, or ON */
+		tic.halt = (GR_D(r, 0) & 0x1f) << 1 | 1 << 6;
+		break;
+	case TS_PROG:
+		prog(r);
+		break;
+	case TS_ERASE:
+		erase(r);
+		break;
+	case TS_WRITE:
+		sprog(r);
+		break;
+	case TS_MOVE:
+		move(r);
+		break;
+	case TS_DARK:
+	case TS_LIT:
+		tic.st.dark = (int)pc / 8 == TS_DARK;
+		break;
+	case TS_SIZE:
+		GR_D(r, 0) = TI_FLASH_SIZE;
+		GR_D(r, 1) = GR_A(r, 0) = TI_FLASH + TI_FLASH_SIZE;
+		break;
+	default:
+		return exc(gp, r, v);
+	}
+	GR_PC(r) += 2;
+	ti_after(gp, r);
 	return 0;
 }
 
@@ -595,16 +672,16 @@ enter(arg)
 	gp->gp_vsr = 0x2700;
 	gp->gp_vpend = 0;
 	gp->gp_vusp = gp->gp_vvbr = gp->gp_vcacr = 0;
-	bzero((caddr_t)&tic.io, sizeof tic.io);
-	bzero((caddr_t)&tic.seen, sizeof tic.seen);
 	bzero((caddr_t)&tic.st, sizeof tic.st);
-	tic.io[0][0x1a] = 0xff;
-	tic.st.lcd = 0x4c00;
-	tic.pend = tic.halt = tic.fmode = tic.nnote = tic.nexc = tic.sleeping = 0;
-	tic.cmdblk = 0;
+	tic.st.lcd = TI_LCD;
+	tic.pend = tic.halt = tic.nnote = tic.nexc = tic.sleeping = 0;
 	tic.flags = te.flags;
+	tic.scanout = te.scanout;
+	tic.modtab = te.modtab;
 	tic.proc = curproc;
 	tic.gp = gp;
+	tic.walked = 0;
+	uncache(curproc->p_as, TI_FLASH);
 	dlm_cacheflush();
 	tic.state = 1;
 	if ((tic.tid = ttimeout(tick, (caddr_t)0, 1L)) == -1)
@@ -674,6 +751,8 @@ ioctl_device(dev, command, argument, mode, credentials, result)
 	case TI_INFO:
 		if (tic.state != 1)
 			return ENXIO;
+		if (curproc != tic.proc)	/* the display process reads the LCD */
+			uncache(curproc->p_as, (tic.st.lcd + 3840 + 0xfff) & ~0xfffUL);
 		return copyout((caddr_t)&tic.st, argument, sizeof tic.st) ? EFAULT : 0;
 	}
 	return EINVAL;
@@ -699,7 +778,7 @@ load()
 		d = &profile.gpf_disp[v];
 		d->gd_kind = GD_EMULATE;
 		d->gd_flags = GDF_USER;
-		d->gd_fn = v == 2 ? ti_fault : v == 8 ? priv : exc;
+		d->gd_fn = v == 2 ? hwfault : v == 4 ? service : v == 8 ? priv : exc;
 	}
 	return guest_profile_add(&profile);
 }

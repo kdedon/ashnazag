@@ -1,18 +1,18 @@
 /*
  * nextguest.c -- /dev/nextguest and the NeXTstation Turbo profile.
  *
- * The boot ROM, or the user's kernel, runs natively in user mode from its own reset vector,
- * with the supervisor state virtual (guestcore).  The board's register
- * pages are not mapped: nextfault.c decodes each access and nextdev.c
- * answers it.  NX_SIG carries the interrupts, held while the guest's
- * IPL masks them.
+ * The user's kernel runs natively in user mode, with the supervisor state
+ * virtual (guestcore).  Its routines that drive the board's timer, clock
+ * chip and software interrupts call host services instead (nextdev.c).
+ * NX_SIG carries the interrupts, held while the guest's IPL masks them.
  *
- *	tick --> nx.stat --> NX_SIG --> frame --> handler --> rte
+ *	tick or host call --> nx.stat --> NX_SIG --> frame --> handler --> rte
  *
  * K&R C.
  */
 
 #include "next.h"
+#include "../../next/hfswire.h"
 #include "sys/mman.h"
 #include "vm/as.h"
 
@@ -66,44 +66,6 @@ nx_kick()
 		psignal(nx.proc, NX_SIG);
 }
 
-static void
-note(what, a, pc)
-	char *what;
-	long a, pc;
-{
-	nx.st.faults++;
-	if (nx.nnote++ < 10)
-		printf("NOTICE: NeXT %s %x pc %x\n", what, (int)a, (int)pc);
-}
-
-/*
- * The hardclock fires at most once per host tick, and the turbo's
- * video interrupt follows the tick.
- */
-static void
-tick(arg)
-	caddr_t arg;
-{
-	int s = nx_splhi();
-	unsigned long now;
-
-	nx.tid = 0;
-	if (nx.state != 1) {
-		nx_splx(s);
-		return;
-	}
-	nx.st.ticks++;
-	now = nx_us();
-	if (nx.hc_csr & 0x80 && nx.hc_latch && (long)(now - nx.hc_due) >= 0) {
-		nx_setint(INT_TIMER);
-		nx.hc_due = now + nx.hc_latch;
-	}
-	nx_kick();
-	nx_splx(s);
-	if ((nx.tid = ttimeout(tick, (caddr_t)0, 1L)) == -1)
-		nx.tid = 0;
-}
-
 /* a host signal handler runs on the alternate stack: not the guest's code */
 static int
 onstack(p)
@@ -153,6 +115,7 @@ nx_intr(gp, r)
 	nx_splx(s);
 	/* the frame goes to guest memory, which may fault */
 	if (l > vipl(gp) && tail(r)) {
+		nx_post(l);
 		if (guest_reflect(gp, r, GR_PC(r), (24 + l) << 2, (char *)0, 2, l) < 0)
 			psignal(curproc, SIGSEGV);
 		else {
@@ -211,7 +174,7 @@ refl(gp, r, v)
 	int n;
 
 	/* the host's own code; trap #0 there is a host system call */
-	if ((unsigned long)GR_PC(r) >= NX_LIMIT && ((nx.flags & NXF_HOST) || v == 32))
+	if ((unsigned long)GR_PC(r) >= NX_TOP && ((nx.flags & NXF_HOST) || v == 32))
 		return 1;
 	switch (GR_FV(r) >> 12) {
 	case 0: n = 0; break;
@@ -221,10 +184,18 @@ refl(gp, r, v)
 	}
 	if (v >= 32 && !(gp->gp_vsr & 0x2000)) {
 		unsigned long *t = nx.st.utrap[nx.st.utraps++ % 16];
+		long fp;
+		int i;
 
 		t[0] = v;
 		t[1] = GR_D(r, 0);
 		t[2] = GR_PC(r);
+		guest_mmu_creg(gp, 0x806, (long *)&t[3], 0);
+		t[4] = GR_D(r, 5);
+		fp = GR_A(r, 6);
+		for (i = 5; i < 8; i++)
+			if (copyin((caddr_t)fp + 4, (caddr_t)&t[i], 4) || copyin((caddr_t)fp, (caddr_t)&fp, 4))
+				t[i] = 0, fp = 0;
 	}
 	if (guest_reflect(gp, r, GR_PC(r), (GR_FV(r) & 0xf000) | (v << 2), r + 72, n + 2, -1) < 0)
 		psignal(curproc, SIGSEGV);
@@ -234,15 +205,21 @@ refl(gp, r, v)
 	return 0;
 }
 
-int
-nx_badaccess(gp, r, a, what)
+/* a host call from the kernel's patched routines; anything else illegal is the guest's */
+static int
+hcall(gp, r, v)
 	struct guest_proc *gp;
 	char *r;
-	unsigned long a;
-	char *what;
+	int v;
 {
-	note(what, (long)a, GR_PC(r));
-	psignal(curproc, SIGBUS);
+	int s;
+
+	if ((unsigned long)GR_PC(r) != HF_HCALL + 4 || !(gp->gp_vsr & SR_S) || nx_service(gp, r) < 0)
+		return refl(gp, r, v);
+	GR_PC(r) += 2;
+	s = nx_splhi();
+	gp->gp_vpend = nx_level() << 8;
+	nx_splx(s);
 	guest_trapret();
 	return 0;
 }
@@ -264,7 +241,10 @@ priv(gp, r, v)
 	op = G16(b);
 	if (op == 0x4e70) {			/* reset: the peripherals, not memory or the clock chip */
 		s = nx_splhi();
-		nx_clrint(~0UL);
+		nx.stat = nx.istat = 0;
+		if (nx.tid > 0)
+			untimeout(nx.tid);
+		nx.tid = 0;
 		nx_splx(s);
 		GR_PC(r) += 2;
 		guest_trapret();
@@ -375,6 +355,9 @@ enter(arg)
 
 	if (copyin(arg, (caddr_t)&ne, sizeof ne))
 		return EFAULT;
+	if (ne.width < 16 || ne.width > 4092 || ne.height < 16 || ne.height > 4095 ||
+	    ne.width / 4 * ne.height > NX_VRAM_SIZE)
+		return EINVAL;
 	s = nx_splhi();
 	if (nx.state) {
 		nx_splx(s);
@@ -396,16 +379,16 @@ enter(arg)
 	bzero((caddr_t)nx.mmu, sizeof nx.mmu);
 	nx.ramsize = ne.ramsize;
 	nx.flags = ne.flags;
-	nx.nnote = nx.sleeping = 0;
-	nx_reset();
-	if (nx.ram && guest_mmu_init(gp, NX_PHYS, NX_LIMIT, 0UL, NX_LIMIT))
+	nx.sleeping = 0;
+	nx.stat = nx.istat = 0;
+	nx.tid = 0;
+	nx_board(ne.width, ne.height);
+	if (nx.ram && guest_mmu_init(gp, NX_PHYS, NX_LIMIT, 0UL, NX_TOP))
 		printf("NOTICE: next: no MMU shadow on this host\n");
 	nx.proc = curproc;
 	nx.gp = gp;
 	dlm_cacheflush();
 	nx.state = 1;
-	if ((nx.tid = ttimeout(tick, (caddr_t)0, 1L)) == -1)
-		nx.tid = 0;
 	return 0;
 }
 
@@ -489,7 +472,6 @@ ioctl_device(dev, command, argument, mode, credentials, result)
 		s = nx_splhi();
 		nx.st.level = nx_level();
 		nx.st.stat = nx.stat;
-		nx.st.mask = nx.mask;
 		nx_splx(s);
 		return copyout((caddr_t)&nx.st, argument, sizeof nx.st) ? EFAULT : 0;
 	}
@@ -516,8 +498,12 @@ load()
 		d = &profile.gpf_disp[v];
 		d->gd_kind = GD_EMULATE;
 		d->gd_flags = GDF_USER;
-		d->gd_fn = v == 2 ? nx_fault : v == 8 ? priv : v == 11 ? fline : refl;
+		d->gd_fn = v == 2 ? nx_fault : v == 4 ? hcall : v == 8 ? priv : v == 11 ? fline : refl;
 	}
+	d = &profile.gpf_disp[55];
+	d->gd_kind = GD_EMULATE;
+	d->gd_flags = GDF_USER;
+	d->gd_fn = refl;
 	return guest_profile_add(&profile);
 }
 

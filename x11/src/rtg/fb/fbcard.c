@@ -117,6 +117,9 @@ char	 *name;
 
     if (!fbDepth)
 	fbDepth = fbDefaultDepth();
+    /* the 3dfx GL driver needs a 16-bit screen */
+    if (!fbDepth && strncmp(d->fi.fi_name, "Voodoo3", 7) == 0)
+	fbDepth = 16;
     /* modes count bits per pixel */
     if (fbDepth == 15)
 	fbDepth = 16;

@@ -25,6 +25,7 @@
 extern int as_map(), as_unmap(), as_fault();
 extern void hat_memload(), hat_devload(), hat_unload(), seg_free();
 extern page_t *page_numtookpp();
+extern int guest_ram_at();
 __asm__(".weak hat_cm_ram");
 extern long hat_cm_ram;
 static long *__volatile__ gmu_hat4k = &hat_cm_ram;
@@ -208,7 +209,9 @@ fill(seg, m, va, rw, reload)
 	if (pa >= m->plimit)
 		return FC_NOMAP;
 	h = m->pbase + (pa & ~(HP - 1));
-	if (as_fault(as, (addr_t)h, (u_int)HP, F_SOFTLOCK, S_WRITE)) {
+	if ((pf = guest_ram_at(as, (addr_t)h)) >= 0) {
+		hrw = S_OTHER;
+	} else if (as_fault(as, (addr_t)h, (u_int)HP, F_SOFTLOCK, S_WRITE)) {
 		hrw = S_READ;
 		if (as_fault(as, (addr_t)h, (u_int)HP, F_SOFTLOCK, S_READ))
 			return FC_NOMAP;
@@ -218,7 +221,7 @@ fill(seg, m, va, rw, reload)
 		}
 		mod = 0;
 	}
-	if ((pf = hostpfn(as, h)) < 0) {
+	if (hrw != S_OTHER && (pf = hostpfn(as, h)) < 0) {
 		(void)as_fault(as, (addr_t)h, (u_int)HP, F_SOFTUNLOCK, hrw);
 		return FC_NOMAP;
 	}
@@ -229,7 +232,8 @@ fill(seg, m, va, rw, reload)
 		hat_memload(seg, (addr_t)va, pp, prot, HAT_NOFLAGS);
 	else
 		hat_devload(seg, (addr_t)va, (u_int)pf, prot, HAT_NOFLAGS);
-	(void)as_fault(as, (addr_t)h, (u_int)HP, F_SOFTUNLOCK, hrw);
+	if (hrw != S_OTHER)
+		(void)as_fault(as, (addr_t)h, (u_int)HP, F_SOFTUNLOCK, hrw);
 	if (m->nload < NLOAD)
 		m->load[m->nload] = va;
 	if (m->nload <= NLOAD)
@@ -514,6 +518,23 @@ guest_mmu_insn(gp, op, a)
 		return 0;
 	}
 	return -1;
+}
+
+/* the guest frame of sz bytes at va in the user space, in one host page, or 0: not mapped for that access */
+caddr_t
+guest_mmu_user(gp, va, sz, wr)
+	struct guest_proc *gp;
+	unsigned long va;
+	int sz, wr;
+{
+	struct guest_mmu *m = gp->gp_mmu;
+	unsigned long pa;
+	int wp, mod, tt;
+
+	if (!m || !m->seg || ((va ^ (va + sz - 1)) & ~(HP - 1)) ||
+	    walk(m, va, wr ? S_WRITE : S_READ, 0, 1, &pa, &wp, &mod, &tt) || pa > m->plimit - sz)
+		return 0;
+	return (caddr_t)(m->pbase + pa);
 }
 
 /* guest physical address of va in the current space, for platform modules; -1: none */

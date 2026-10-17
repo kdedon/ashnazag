@@ -471,7 +471,7 @@ rds_attach()
 	}
 	b = opci_bus();
 	printf("radeon: bridge %s, card 1002:%x rev %x, subsystem %x:%x\n",
-	    b & OPCI_MEDIATOR1200 ? "Mediator 1200" : b & OPCI_MEDIATORZ4 ? "Mediator Z4" :
+	    b & OPCI_MEDIATOR1200 ? "Mediator 1200" : b & OPCI_MEDIATORZ4 ? "Mediator PCI 4000" :
 	    b & OPCI_PROMETHEUS ? "Prometheus" : b & (OPCI_GREX1200 | OPCI_GREX4000) ? "G-REX" : "other",
 	    (int)opci_attr(d, OPCI_DEVICE), (int)opci_attr(d, OPCI_REVISION),
 	    (int)opci_attr(d, OPCI_SUBSYSVENDOR), (int)opci_attr(d, OPCI_SUBSYSID));

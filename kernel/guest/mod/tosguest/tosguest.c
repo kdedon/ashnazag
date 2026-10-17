@@ -680,6 +680,8 @@ enter(arg, cr)
 	t->t_flags = te.te_flags;
 	t->t_st.ts_pid = curproc->p_pid;
 	tos_devinit(t);
+	if ((t->t_flags & TEF_MONO) && te.te_w >= 1280 && te.te_h >= 960)
+		t->t_vid[0x62] = 6;	/* TT high */
 	tos_nvinit((int)te.te_w, (int)te.te_h, (int)te.te_depth);
 	dlm_cacheflush();		/* the launcher's ROM and cartridge stores reach memory */
 	t->t_state = 1;

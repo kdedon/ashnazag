@@ -70,7 +70,7 @@ static long ramsize = 4L << 20;
 static int mono, stscreen, verbose, pass, romarg, ramarg, cfold;
 static int ramcontig;
 static int tfd;
-static struct fbinfo hfi;		/* -P: the host screen */
+static struct fbinfo hfi;		/* the host screen, for -P and 1-bit hosts */
 extern int fbpipe, vpass;
 
 extern void disp(), tossnd();
@@ -343,6 +343,11 @@ fbmap(fd)
 		/* fVDI draws on the ROM's screen, in whatever mode TOS set */
 		put32((unsigned long)p, 1);
 		return;
+	}
+	/* a 1-bit screen: TOS on a monochrome monitor */
+	if (ioctl(rf.fd, FBIOGINFO, &fi) == 0 && fi.fi_depth == 1) {
+		mono = 1;
+		hfi = fi;
 	}
 	if (!stscreen && ioctl(rf.fd, FBIOGINFO, &fi) == 0 &&
 	    (fi.fi_layout == FBL_PLANES ? fi.fi_depth <= 8 && fi.fi_planebytes % 8 == 0 &&

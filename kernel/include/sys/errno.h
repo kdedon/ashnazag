@@ -1,0 +1,64 @@
+/* System error numbers (SVR4). */
+#ifndef _SYS_ERRNO_H
+#define _SYS_ERRNO_H
+
+#define EPERM		1
+#define ENOENT		2
+#define ESRCH		3
+#define EINTR		4
+#define EIO		5
+#define ENXIO		6
+#define ENOEXEC		8
+#define EBADF		9
+#define ECHILD		10
+#define EAGAIN		11
+#define ENOMEM		12
+#define EACCES		13
+#define EFAULT		14
+#define EBUSY		16
+#define EEXIST		17
+#define EXDEV		18
+#define ENODEV		19
+#define ENOTDIR		20
+#define EISDIR		21
+#define EINVAL		22
+#define ENFILE		23
+#define ENOTTY		25
+#define EFBIG		27
+#define ENOSPC		28
+#define EROFS		30
+#define EPIPE		32
+#define ENOSR		63
+#define EPROTO		71
+#define ENAMETOOLONG	78
+#define EOVERFLOW	79
+#define ENOTUNIQ	80
+#define EBADFD		81
+#define ELIBACC		83
+#define ELIBBAD		84
+#define ELIBSCN		85
+#define ELIBMAX		86
+#define EILSEQ		88
+#define ELOOP		90
+#define ERESTART	91
+#define ENOTSOCK	95
+#define EDESTADDRREQ	96
+#define EMSGSIZE	97
+#define ENOPROTOOPT	99
+#define EPROTONOSUPPORT	120
+#define ESOCKTNOSUPPORT	121
+#define EOPNOTSUPP	122
+#define EAFNOSUPPORT	124
+#define EADDRINUSE	125
+#define EADDRNOTAVAIL	126
+#define ENETDOWN	127
+#define ENOBUFS		132
+#define EISCONN		133
+#define ENOTCONN	134
+#define ETIMEDOUT	145
+#define ECONNREFUSED	146
+#define EALREADY	149
+#define EINPROGRESS	150
+#define EWOULDBLOCK	EAGAIN
+
+#endif

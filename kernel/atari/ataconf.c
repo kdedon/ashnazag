@@ -1210,6 +1210,26 @@ sysdump()
 {
 }
 
+#ifdef ATA060
+/*
+ * A kernel access fault's address and FSLW before the panic.  The
+ * fault resolver may have put an 040-style SSW over the FSLW's top
+ * half; x60_last_fslw keeps the last one whole.
+ */
+int
+krnlflt(r)
+char *r;
+{
+	extern int __amix_krnlflt(), printf();
+	extern unsigned x60_last_fslw;
+
+	if (*(unsigned char *)(r + 70) >> 4 == 4)
+		printf("access fault at 0x%x, FSLW 0x%x (last 0x%x)\n",
+		    *(unsigned *)(r + 72), *(unsigned *)(r + 76), x60_last_fslw);
+	return __amix_krnlflt(r);
+}
+#endif
+
 void
 haltsys(how)
 int how;

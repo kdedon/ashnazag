@@ -31,6 +31,8 @@ export PATH
 
 BASE="${1:-$PORT/build/unix-040}"
 SVIDEL=${SVIDEL:-1}
+# move.w #$2400,sr sites: the base's and the page-table wait's
+SPL_SITES=426
 case $SVIDEL in
 1)	OUT="${2:-$K/build/unix-atari060}" W="$K/build/atari060" SV=-DATA_SV ;;
 0)	OUT="${2:-$K/build/unix-atari060-nosv}" W="$K/build/atari060-nosv" SV= ;;
@@ -105,10 +107,10 @@ hw_clkstart clkreld p1int p2int p3int p4int p5int p6int parinit qlintr slpoll
 autocon delayus ramopen ramclose ramstrategy ramprint ramsize backtrace inituname
 sdopen sdqueue sdhardwarename sdpartition sdvalid sdblkno sddevsize
 clkset dmainit ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig mdboot
-vtop hat_ptalloc uiomove unt_latch page_free segu_get swapinub memialloc"
+vtop hat_ptalloc uiomove unt_latch page_free segu_get swapinub memialloc krnlflt"
 OVRD="coinfo cdevsw bdevsw execsw fmodsw"
 ALIAS="inituname:T sendsig:T valid_usr_range:T fsig:T execsw:D fmodsw:D
-hat_ptalloc:T uiomove:T unt_latch:T page_free:T segu_get:T swapinub:T memialloc:T"
+hat_ptalloc:T uiomove:T unt_latch:T page_free:T segu_get:T swapinub:T memialloc:T krnlflt:T"
 
 echo "[*] weakening the Amiga platform entry points"
 WEAK="--globalize-symbol freemem_wait"
@@ -154,6 +156,7 @@ echo "[*] linking the Atari overrides over the base"
 m68k-cbm-sysv4-ld -r -o "$OUT" "$W/base.weak" $OBJS
 python3 "$MAC/patch_nread.py" "$OUT"
 python3 "$K/guest/patch_vec.py" "$OUT" "$W/guest/gates.lst"
+python3 "$A/patch_spl.py" -p "$OUT" $SPL_SITES
 
 btext=$(m68k-linux-gnu-size -A "$BASE" | awk '$1==".text"{print $2}')
 bad=0
@@ -197,6 +200,7 @@ link() {
 	python3 "$MAC/patch_s5pages.py" -c "$OUT.elf"
 	python3 "$MAC/vtop/patch_vtop.py" -c "$OUT.elf"
 	python3 "$MAC/patch_kvmpages.py" -c "$OUT.elf"
+	python3 "$A/patch_spl.py" -c "$OUT.elf" $SPL_SITES
 	"$W/dlm/mkksym" "$OUT.elf"
 }
 echo "[*] final link at 0x1000"
@@ -209,5 +213,5 @@ python3 "$A/mkreltab.py" -c "$OUT.elf"
 m68k-elf-readelf -h "$OUT.elf" | grep -E 'Type|Entry'
 m68k-elf-size "$OUT.elf"
 python3 "$A/chk64.py" -r "$OUT.elf"
-sh "$A/mods.sh" "$OUT.elf" "$W/mods"
+sh "$A/mods.sh" "$OUT.elf" "$W/mods" atari060
 echo "[OK] built $OUT and $OUT.elf"

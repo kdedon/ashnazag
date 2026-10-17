@@ -23,11 +23,12 @@ struct hctx {
 	long (*bcopy)();
 	long (*specvp)();
 	unsigned long *active_u;
-	unsigned long doorbell;
+	long (*hcall)();
 	unsigned long vfsops[8], vnodeops[36];
 	struct hnode *hash[64], *freelist;
 	unsigned long vfsp;
 	unsigned long rootnode;
+	unsigned char *spare;		/* free copy buffers, linked through their first long */
 };
 
 #define C ((struct hctx *)HF_CTX)
@@ -55,7 +56,7 @@ host(op)
 	b->magic = HF_MAGIC;
 	b->op = op;
 	b->state = HF_REQUEST;
-	*(volatile unsigned long *)C->doorbell = HF_BASE;
+	C->hcall(HC_HFS);
 	for (spin = 0; b->state != HF_REPLY && spin < 2000000000L; spin++)
 		;
 	b->state = HF_IDLE;
@@ -197,6 +198,8 @@ child(dvp, nm, vpp)
 	return 0;
 }
 
+static void hf_keys();
+
 /* the filesystem type's operations */
 static long
 hf_mountroot(vfsp, vpp, name)
@@ -220,8 +223,23 @@ hf_mountroot(vfsp, vpp, name)
 	if ((e = C->vfs_add(0, vfsp, 0)) != 0)
 		return e;
 	C->vfs_unlock(vfsp);
+	if (((struct hf_keys *)HF_KEYS)->input)
+		hf_keys();
 	*vpp = vp;
 	return 0;
+}
+
+/* hand typed characters to the console's input */
+static void
+hf_keys()
+{
+	struct hf_keys *k = (struct hf_keys *)HF_KEYS;
+
+	while (k->tail != k->head) {
+		k->input(k->buf[k->tail & 255]);
+		k->tail++;
+	}
+	k->timeout(hf_keys, 0, k->ticks);
 }
 
 static long
@@ -317,38 +335,70 @@ hf_lookup(dvp, nm, vpp)
 	return child(dvp, nm, vpp);
 }
 
+/*
+ * Copies to and from the caller go through a buffer of its own: a page
+ * fault there pages in through the mailbox and would overwrite it.
+ */
+static unsigned char *
+getbuf()
+{
+	unsigned char *p = C->spare;
+
+	if (p)
+		C->spare = (unsigned char *)W32(p, 0);
+	else
+		p = (unsigned char *)C->kalloc(HF_DATA);
+	return p;
+}
+
+static void
+putbuf(p)
+	unsigned char *p;
+{
+	W32(p, 0) = (unsigned long)C->spare;
+	C->spare = p;
+}
+
 static long
 hf_rdwr(vp, uio, rw, ioflag)
 	unsigned char *vp, *uio;
 	long rw, ioflag;
 {
 	struct hf_box *b = B;
-	long e, got, n;
+	unsigned char *buf;
+	unsigned long off;
+	long e = 0, got, n;
 
+	if ((buf = getbuf()) == 0)
+		return 12;
 	while (W32(uio, 18) > 0) {
 		n = W32(uio, 18) > HF_DATA ? HF_DATA : W32(uio, 18);
-		b->node = NODE(vp);
-		b->offset = W32(uio, 8);
-		b->length = n;
+		off = W32(uio, 8);
 		if (rw == 1) {
-			if ((e = C->uiomove(b->data, n, 1, uio)) != 0)
-				return e;
-			b->offset = b->offset;
+			if ((e = C->uiomove(buf, n, 1, uio)) != 0)
+				break;
+			C->bcopy(buf, b->data, n);
+			b->node = NODE(vp);
+			b->offset = off;
+			b->length = n;
 			if ((e = host(HF_WRITE)) != 0)
-				return e;
+				break;
 			continue;
 		}
+		b->node = NODE(vp);
+		b->offset = off;
+		b->length = n;
 		if ((e = host(HF_READ)) != 0)
-			return e;
+			break;
 		got = b->result;
 		if (got <= 0)
 			break;
-		if ((e = C->uiomove(b->data, got, 0, uio)) != 0)
-			return e;
-		if (got < n)
+		C->bcopy(b->data, buf, got);
+		if ((e = C->uiomove(buf, got, 0, uio)) != 0 || got < n)
 			break;
 	}
-	return 0;
+	putbuf(buf);
+	return e;
 }
 
 /* a page of the file into the page frame m names; the part past the end is zero */
@@ -448,7 +498,7 @@ hf_create(dvp, nm, vap, excl, mode, vpp)
 
 	unsigned long type = W32(vap, 0);
 
-	if (type != HF_VREG && type != HF_VCHR && type != HF_VBLK)
+	if (type != HF_VREG && type != HF_VCHR && type != HF_VBLK && type != HF_VSOCK)
 		return 22;
 	b->node = NODE(dvp);
 	setname(b->name, nm);
@@ -558,12 +608,19 @@ static long
 hf_readlink(vp, uio)
 	unsigned char *vp, *uio;
 {
-	long e;
+	unsigned char *buf;
+	long e, n;
 
 	B->node = NODE(vp);
 	if ((e = host(HF_READLINK)) != 0)
 		return e;
-	return C->uiomove(B->data, B->result, 0, uio);
+	if ((buf = getbuf()) == 0)
+		return 12;
+	n = B->result;
+	C->bcopy(B->data, buf, n);
+	e = C->uiomove(buf, n, 0, uio);
+	putbuf(buf);
+	return e;
 }
 
 static long

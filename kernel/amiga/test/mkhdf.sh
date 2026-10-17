@@ -103,7 +103,7 @@ cat > "$S/network-config" <<'NC'
 	/usr/sbin/route add default 10.0.2.2 1 >/dev/null
 NC
 
-sh "$A/mods.sh" "$KERNEL.elf" "$S/mods" > "$S/mods.log"
+sh "$A/mods.sh" "$KERNEL.elf" "$S/mods" amiga > "$S/mods.log"
 DLM=$K/dlm
 for f in modload moduload modpath modstat modadm getksym; do
 	m68k-cbm-sysv4-as -o "$S/bin/$f.o" "$DLM/libmod/$f.s"

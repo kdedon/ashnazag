@@ -1977,7 +1977,7 @@ tos_devinit(t)
 	ntrace = 0;
 	t->t_scu[9] = 1;		/* memory controller configured: warm boot */
 	t->t_vid[0x60] = t->t_flags & TEF_MONO ? 2 : 0;
-	t->t_vid[0x62] = t->t_flags & TEF_MONO ? 6 : 4;
+	t->t_vid[0x62] = t->t_flags & TEF_MONO ? 2 : 4;
 	t->t_rtc[11] = 0x06;		/* binary, 24-hour */
 	t->t_kctl = 0x96;
 }

@@ -17,27 +17,19 @@
 /* interrupt status bits */
 #define	INT_SOFT1	0x00000001
 #define	INT_SOFT2	0x00000002
-#define	INT_POWER	0x00000004
 #define	INT_TIMER	0x20000000
-#define	INT_NMI		0x80000000
 
-extern int nx_dev(), nx_read(), nx_write(), nx_badaccess(), nx_fault();
-extern void nx_after();
+extern int nx_dev(), nx_fault(), nx_service(), nx_census();
+extern void nx_board(), nx_post();
 
 struct nx {
 	int		state;		/* 0 free, 2 claimed, 1 running */
 	struct proc	*proc;
 	struct guest_proc *gp;
-	int		tid, sleeping, flags, opened, nnote;
+	int		tid, sleeping, flags, opened;
 	unsigned long	ramsize;
-	unsigned long	stat, mask;	/* interrupt status and mask */
-	unsigned char	scr2[4];
-	unsigned char	hc_csr;
-	unsigned long	hc_latch, hc_due, evoff, evlast;
-	/* clock chip behind the SCR2 bit lines */
-	int		rtc_phase;
-	unsigned char	rtc_addr, rtc_val, rtc_data, rtc_ctl, rtc_stat;
-	unsigned long	rtc_time, rtc_alarm;
+	unsigned long	stat;		/* interrupts asked for, INT_* */
+	unsigned long	istat;		/* delivered and not yet acknowledged, INT_TIMER */
 	unsigned long	mmu[10];	/* movec control registers kept for the guest */
 	struct guest_ram *ram;
 	pid_t		rampid;
@@ -45,5 +37,5 @@ struct nx {
 };
 extern struct nx nx;
 extern int nx_splhi(), nx_level();
-extern void nx_splx(), nx_kick(), nx_setint(), nx_clrint(), nx_reset();
+extern void nx_splx(), nx_kick();
 extern unsigned long nx_us();

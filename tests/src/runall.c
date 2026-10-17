@@ -76,8 +76,8 @@ static struct {
 	{ "t_nhplat", 30 },
 	{ "t_nativecall", 60 },
 	{ "t_natenv", 90 },
-	{ "t_v200", 400 },
-	{ "t_next", 300 },
+	{ "t_v200", 900 },
+	{ "t_next", 1500 },
 	{ "t_quake", 7200 },
 	{ "t_stable", 14400 },
 	{ 0, 0 }

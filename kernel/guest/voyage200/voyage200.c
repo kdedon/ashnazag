@@ -3,11 +3,13 @@
  *
  *	native [image]
  *
- * The environment's Flash is $NATIVEHOST_ROOT/flash.img, first copied
- * from the image (a 4 MB dump: boot code, AMS, archive).  RAM is
- * $NATIVEHOST_ROOT/ram, cleared at every start.  This process becomes
- * the calculator (tiplatform); a child shows the LCD and turns host
- * keys into the key matrix.  Cmd-Q quits.
+ * The image (a 4 MB dump: boot code, AMS, archive) is read only.  The
+ * calculator runs on a copy made at each start, with its hardware
+ * routines patched (patch.c) and its archive laid out from the files in
+ * $NATIVEHOST_ROOT/archive (archive.c).  RAM is $NATIVEHOST_ROOT/ram,
+ * cleared at every start.  This process becomes the calculator
+ * (tiplatform); a child shows the LCD, turns host keys into key rows
+ * and writes changed archive entries back to their files.  Cmd-Q quits.
  */
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -31,12 +33,15 @@
 static struct nh_display display;
 static int bridge = -1;
 static pid_t calculator;
+static char *root;
+extern void patch(), arc_load(), arc_save();
+extern int mprotect();
 
 /*
  * Host key (ADB code) to matrix position, row * 8 + column; the second
  * table for keys whose shifted symbol is a key of its own.
  */
-static unsigned char plain[128], shifted[128];
+static unsigned char plain[128], shifted[128], pair[128];
 static char *layout[] = {
 	"\x00\x4a", "\x01\x0a", "\x02\x12", "\x03\x1a", "\x04\x2a", "\x05\x22",
 	"\x06\x09", "\x07\x11", "\x08\x19", "\x09\x21", "\x0b\x29", "\x0c\x4b",
@@ -51,15 +56,21 @@ static char *layout[] = {
 	"\x4e\x48", "\x52\x4d", "\x53\x0d", "\x54\x0e", "\x55\x0f", "\x56\x15",
 	"\x57\x16", "\x58\x17", "\x59\x1d", "\x5b\x1e", "\x5c\x1f", "\x60\x3c",
 	"\x61\x2c", "\x62\x1c", "\x63\x14", "\x64\x0c", "\x65\x3e", "\x67\x3d",
-	"\x6d\x45", "\x75\x3d", "\x76\x4c", "\x78\x24", "\x7a\x34", "\x7b\x02",
+	"\x6d\x45", "\x6f\x7f", "\x75\x3d", "\x76\x4c", "\x78\x24", "\x7a\x34", "\x7b\x02",
 	"\x7c\x00", "\x7d\x01",
 	0
 };
 static char *shifts[] = {
 	"\x18\x44", "\x1c\x3f", "\x19\x25", "\x1d\x26", "\x16\x30", 0
 };
-#define KEY_ON 0x6f
+/* keys that press two: Home is HOME (diamond Q), Help CATALOG (2nd 2); End is OFF (2nd, then ON) */
+static char *pairs[] = {
+	"\x73\x4b\x01", "\x72\x0e\x00", 0
+};
+#define KEY_2ND 0x00
 #define KEY_SHIFT 0x02
+#define MX_ON 0x7f	/* ON is no matrix key */
+#define HK_END 0x77
 
 static void
 keymaps()
@@ -68,10 +79,26 @@ keymaps()
 
 	memset(plain, 0xff, sizeof plain);
 	memset(shifted, 0xff, sizeof shifted);
+	memset(pair, 0xff, sizeof pair);
 	for (i = 0; layout[i]; i++)
 		plain[(unsigned char)layout[i][0]] = layout[i][1];
 	for (i = 0; shifts[i]; i++)
 		shifted[(unsigned char)shifts[i][0]] = shifts[i][1];
+	for (i = 0; pairs[i]; i++) {
+		plain[(unsigned char)pairs[i][0]] = pairs[i][1] | 0x80;
+		pair[(unsigned char)pairs[i][0]] = pairs[i][2];
+	}
+}
+
+static void
+press(k, c)
+	struct ti_keys *k;
+	int c;
+{
+	if (c == MX_ON)
+		k->on = 1;
+	else
+		k->rows[c >> 3] |= 1 << (c & 7);
 }
 
 static long
@@ -113,15 +140,17 @@ present(lcd, shown)
 static int
 host()
 {
-	static unsigned char shown[3840];
+	static unsigned char shown[3840], dark[3840];
 	unsigned char down[128], code[128];
-	long since[128], t;
+	long since[128], t, offat = 0;
 	struct ti_keys k, sent;
 	struct ti_info info;
 	struct fbcmap colors;
 	unsigned short grey[256];
 	struct pollfd p;
 	struct inev ev;
+	unsigned long flash = 0;
+	long changed = 0;
 	int i, n, shift = 0, own, cmd = 0;
 
 	if (nh_display_open(&display, "/dev/fb0", "Voyage 200", 1) < 0 ||
@@ -161,7 +190,12 @@ host()
 				shift = ev.ie_value != 0;
 			if (cmd && ev.ie_code == 0x0c && ev.ie_value) {
 				kill(calculator, SIGTERM);
+				arc_save();
 				return 0;
+			}
+			if (ev.ie_value && ev.ie_code == HK_END) {
+				offat = t ? t : 1;
+				continue;
 			}
 			if (ev.ie_value) {
 				down[ev.ie_code] = 1;
@@ -180,20 +214,40 @@ host()
 				down[i] = 0;
 			if (!down[i])
 				continue;
-			if (i == KEY_ON)
-				k.on = 1;
-			else if (code[i] != 0xff && code[i] != KEY_SHIFT) {
-				k.rows[(code[i] & 0x7f) >> 3] |= 1 << (code[i] & 7);
+			if (code[i] != 0xff && code[i] != KEY_SHIFT) {
+				press(&k, code[i] & 0x7f);
+				if (pair[i] != 0xff)
+					press(&k, pair[i]);
 				own |= code[i] & 0x80;
 			}
 		}
+		/* OFF: 2nd, released, then ON; AMS takes ON with 2nd held as ON */
+		if (offat && t - offat < HOLD)
+			press(&k, KEY_2ND);
+		else if (offat && t - offat >= 2 * HOLD && t - offat < 3 * HOLD)
+			press(&k, MX_ON);
+		else if (offat && t - offat >= 3 * HOLD)
+			offat = 0;
 		if (shift && !own)
 			k.rows[0] |= 1 << KEY_SHIFT;
 		if (memcmp(&k, &sent, sizeof k) && ioctl(bridge, TI_KEYS, &k) == 0)
 			sent = k;
-		if (ioctl(bridge, TI_INFO, &info) == 0 && info.lcd + 3840 <= TI_RAM_SIZE)
+		if (ioctl(bridge, TI_INFO, &info) < 0)
+			continue;
+		if (info.dark)
+			present(dark, shown);	/* LCD off: nothing lit */
+		else if (info.lcd + 3840 <= TI_RAM_SIZE)
 			present((unsigned char *)info.lcd, shown);
+		if (info.flash != flash) {
+			flash = info.flash;
+			changed = t ? t : 1;
+		} else if (changed && t - changed >= 30) {
+			arc_save();
+			changed = 0;
+		}
 	}
+	if (changed)
+		arc_save();
 	nh_display_close(&display);
 	return 0;
 }
@@ -217,7 +271,8 @@ conflicts()
 			for (i = 0; i < n; i++) {
 				lo = (unsigned long)maps[i].pr_vaddr;
 				hi = lo + maps[i].pr_size;
-				if (lo < TI_IO_END || (lo < TI_ALIAS + TI_FLASH_SIZE && hi > TI_ALIAS)) {
+				if (lo < TI_HOST + TI_HOST_SIZE ||
+				    (lo < TI_ALIAS + TI_FLASH_SIZE && hi > TI_ALIAS)) {
 					errno = EBUSY;
 					result = -1;
 				}
@@ -255,15 +310,23 @@ copyfile(from, to)
 	return 0;
 }
 
-/* RAM at 0 and its mirrors; Flash read-only at TI_FLASH and writable at TI_ALIAS */
+/*
+ * RAM at 0 and its mirrors; the Flash copy read-only at TI_FLASH and
+ * writable at TI_ALIAS; the register pages (and the open bus AMS posts
+ * keys to) as memory with the constants AMS reads (battery comparator
+ * high, ON up, no key);
+ * the service stubs at TI_HOST.
+ */
+static unsigned long pages[] = { TI_IO, TI_IO + 0x100000, TI_OPEN, TI_HOST };
+
 static int
-memory(root)
-	char *root;
+memory(media)
+	char *media;
 {
 	char path[1100];
 	struct stat st;
 	unsigned long a;
-	int ram, flash;
+	int ram, flash = -1, zero, i;
 
 	sprintf(path, "%s/ram", root);
 	unlink(path);
@@ -275,8 +338,11 @@ memory(root)
 		    MAP_SHARED | MAP_FIXED, ram, 0) == (void *)-1)
 			return -1;
 	close(ram);
-	sprintf(path, "%s/flash.img", root);
-	if ((flash = open(path, O_RDWR)) < 0 || fstat(flash, &st) < 0 ||
+	for (a = 0; a < TI_FLASH; a += 0x1000)	/* each page present, so its cache mode is set at entry */
+		L(a) = 0;
+	sprintf(path, "%s/flash.run", root);
+	unlink(path);
+	if (copyfile(media, path) < 0 || (flash = open(path, O_RDWR)) < 0 || fstat(flash, &st) < 0 ||
 	    st.st_size != TI_FLASH_SIZE) {
 		errno = flash < 0 ? errno : EINVAL;
 		return -1;
@@ -287,7 +353,19 @@ memory(root)
 	    MAP_SHARED | MAP_FIXED, flash, 0) == (void *)-1)
 		return -1;
 	close(flash);
-	return 0;
+	unlink(path);
+	if ((zero = open("/dev/zero", O_RDWR)) < 0)
+		return -1;
+	for (i = 0; i < sizeof pages / sizeof pages[0]; i++)
+		if (mmap((void *)pages[i], 0x1000, PROT_READ | PROT_WRITE | (pages[i] == TI_HOST ? PROT_EXEC : 0),
+		    MAP_PRIVATE | MAP_FIXED, zero, 0) == (void *)-1)
+			return -1;
+	close(zero);
+	*(char *)TI_IO = 4;
+	*(char *)(TI_IO + 0x1a) = *(char *)(TI_IO + 0x1b) = 0xff;
+	for (i = 0; i < TS_N; i++)
+		L(TI_HOST + 8 * i) = 0x4afc4e75UL;	/* illegal; rts */
+	return mprotect((void *)TI_HOST, TI_HOST_SIZE, PROT_READ | PROT_EXEC);
 }
 
 static void
@@ -310,31 +388,35 @@ main(argc, argv)
 	int argc;
 	char **argv;
 {
-	char *media = getenv("NATIVEHOST_MEDIA"), *root = getenv("NATIVEHOST_ROOT");
-	char flash[1100];
+	char *media = getenv("NATIVEHOST_MEDIA");
 	struct ti_enter te;
 	struct sigaction sa;
-	struct stat st;
 	pid_t child;
 
 	if (argc > 1)
 		media = argv[1];
-	if (!root)
+	if (!(root = getenv("NATIVEHOST_ROOT")))
 		root = ".";
-	nh_display_init(&display);
-	sprintf(flash, "%s/flash.img", root);
-	if (stat(flash, &st) < 0 && (!media || copyfile(media, flash) < 0)) {
-		fprintf(stderr, "voyage200: no %s and no image to make it from\n", flash);
+	if (strlen(root) > 1000) {
+		fprintf(stderr, "voyage200: NATIVEHOST_ROOT too long\n");
 		return 1;
 	}
-	if (conflicts() < 0 || memory(root) < 0) {
+	nh_display_init(&display);
+	if (!media) {
+		fprintf(stderr, "voyage200: no image\n");
+		return 1;
+	}
+	if (conflicts() < 0 || memory(media) < 0) {
 		perror("voyage200: memory");
 		return 1;
 	}
 	if ((L(TI_FLASH + 4) & 0xffe00001UL) != TI_FLASH || L(TI_FLASH) > TI_RAM_SIZE) {
-		fprintf(stderr, "voyage200: %s has no reset vector\n", flash);
+		fprintf(stderr, "voyage200: %s has no reset vector\n", media);
 		return 1;
 	}
+	arc_load(root);
+	memset(&te, 0, sizeof te);
+	patch(&te);
 	if ((bridge = open("/dev/tiplatform", O_RDWR)) < 0) {
 		perror("voyage200: /dev/tiplatform");
 		return 1;

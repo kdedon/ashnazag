@@ -1,0 +1,17 @@
+Subject: [PATCH] target/m68k: packed decimal store with a dynamic k-factor
+
+fmove.p fpN,<ea>{Dn} has destination format 7, which ext_opsize did not
+know: translating it aborted QEMU.  Treat it as packed, which the 68040
+leaves to software through the unimplemented data type exception, as for
+the static k-factor form.
+
+--- a/target/m68k/translate.c
++++ b/target/m68k/translate.c
+@@ -661,6 +661,7 @@
+     case 4: return OS_WORD;
+     case 5: return OS_DOUBLE;
+     case 6: return OS_BYTE;
++    case 7: return OS_PACKED; /* fmove.p out with a dynamic k-factor */
+     default:
+         g_assert_not_reached();
+     }

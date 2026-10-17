@@ -19,7 +19,7 @@ MK=${MACKERNEL:-$K/build/unix-mac.elf}
 rm -rf "$O"
 mkdir -p "$O/root/etc/conf/mod.d"
 O=$(cd "$O" && pwd)
-sh "$K/mac/display/mods.sh" "$KERNEL" "$O/display"
+sh "$K/mac/display/mods.sh" "$KERNEL" "$O/display" amiga
 cp "$O/display/mod.d/dsuser" "$O/root/etc/conf/mod.d/"
 rm -rf "$O/display"
 cat > "$O/root.manifest.add" <<'MANIFEST'

@@ -3,7 +3,7 @@
 Design for `startnext`: the user's installed NeXTSTEP / OPENSTEP runs natively on a
 68040/060 host, unmodified. No SCSI, ethernet, DMA or desktop-bus chip is modelled:
 those devices reach Mach through our own drivers that call host services. Status:
-reader (`tools/nextcd.py`), kernel load and entry (`native -k`) done; the chip models are retired below.
+reader (`tools/nextcd.py`), kernel load and entry (`native -k`) done; no board register is modelled (§2).
 
 ## Shape
 
@@ -13,9 +13,9 @@ reader (`tools/nextcd.py`), kernel load and entry (`native -k`) done; the chip m
  guest process: Mach kernel, our drivers, apps, all native 68k in user mode
    |  privileged insns, page faults        |  host call: store to the doorbell
    v                                       v
- guestcore: virtual S mode, vIPL,        nextguest DLM: CPU-side board only
- shadow 040 MMU (S and U spaces)           interrupt status/mask, timer, SCR1/2, RTC/NVRAM,
-                                           VRAM pages -> converted display surface
+ guestcore: virtual S mode, vIPL,        nextguest DLM: host services for the kernel's
+ shadow 040 MMU (S and U spaces)           patched timer, clock, clock-chip and soft-interrupt
+                                           routines; interrupt requests; VRAM -> display surface
                                          startnext (host side): the host-call broker
                                            files, input, sound; network later
 ```
@@ -65,29 +65,38 @@ Target model: NeXTstation Turbo. Guest-physical map (all quadrant 0):
 | Range | Part | Host side |
 |---|---|---|
 | 0x00000000, 0x01000000 | ROM 128 KB (alias), if used | user's file, read-only pages |
-| 0x02000000-0x0201FFFF | system registers | trapped pages, model in `nextguest` |
+| 0x02000000-0x0201FFFF, 0x02200000, 0x03E00000 | system registers | the pages the kernel uses are memory holding the ids; device pages absent (bus error) |
 | 0x04000000 | RAM, up to 128 MB | guest RAM object |
 | 0x0C000000 | VRAM | surface pages |
 | host-call page | mailbox + doorbell | broker |
 
-Board state that stays (the kernel reads it directly; CPU-side, not a device):
+No register is modelled and no guest instruction is decoded. The I/O pages the kernel
+itself uses (interrupts, SCR1/2, keyboard unit, brightness, timer, event counter, the
+turbo's memory controller and cache) are memory: they hold the constants it reads (SCR1
+and the turbo's id, SCR2 at power-on, the screen's size: the host screen's) and take its writes with no
+effect. Device pages are absent. The kernel's routines that
+drive the board are patched in the loaded copy, found by symbol, to make host calls
+(`HF_HCALL`: `illegal` at a fixed address in the host-call region, service in d0, C
+arguments on the stack):
 
-| Part | Host side |
+| Kernel routine | Host service |
 |---|---|
-| Interrupt status/mask, levels 1-7 | vIPL |
-| Hardclock timer, event counter | high-resolution timer service |
-| SCR1 (machine id), SCR2 | model |
-| MCCS1850 clock and NVRAM (SCR2 bit-bang) | wall clock; `~/NeXT/<env>/nvram` |
-| VRAM | write-protect tracking, 2 bpp to 8-bit CLUT or 4444 to host 16/32, ≤50 Hz |
+| event counter read in `clock_value`, `kern_timestamp` | host µs (20 bits; the kernel extends it) |
+| `delay` | host wait |
+| `_set_timer` | next timer interrupt, one-shot: a host timeout at the requested delay |
+| timer handler (installed by `clock_timer_init`) | acknowledge, host µs |
+| status read in the level 6 dispatcher (`ipl6`) | pending interrupt status |
+| `callout_dispatch` setting SCR2 soft bits | software interrupt 1 or 2 request |
+| `rtc_get`, `rtc_set`, `startrtclock` | host time; setting and start ignored |
+| `nvram_check`, `nvram_set` | `~/NeXT/<env>/nvram` |
+| `rtc_power_down`, monitor trap | the machine ends |
+| `km_send`, `adb_initialize`, `mon_reset` | absent units: time out, return |
+| drivers `fc`, `sc`, `oc`, `np`, `sound`, `dsp`, `en` (probes, controller setup); `zsintsetup`, `enintsetup` | absent: the probes find nothing |
 
-Retired from `nextguest` (`nextdev.c`): the KMS keyboard/mouse unit (`kmrecv`,
-`kmaccess`, `kmsreset`, `kmscommand`, `nx_km`); the desktop-bus controller (`adb*`,
-including its command register and timeout); the ESP SCSI chip (`espint`, `espcmd`,
-`espb`) and `diskint`; the DMA channels (`dmax`, `rdw`, `wrl`, the channel CSRs); the
-burst-map chip (`bmap*`, its ethernet link report); the TMC memory controller (`tmc*`;
-`startnext` hands the kernel the memory map); `census`. Kept there: `nx_us`, `nx_level`,
-`nx_setint/clrint`, `rtc*`, the SCR/interrupt part of `rdb/wrb`, `nx_reset`. Absent
-devices read as not present. No other register is added.
+Interrupt requests are module state (timer, soft 1 and 2), delivered through vIPL; a
+taken timer interrupt stays in the dispatcher's status until the handler acknowledges it.
+An access to an address nothing backs is the guest's bus error, counted; `t_next` asserts
+none in steady state. VRAM: write-protect tracking, 2 bpp to 8-bit CLUT or 4444 to host 16/32, ≤50 Hz.
 
 Devices as guest drivers (host call = request in the mailbox, doorbell store, reply):
 
@@ -134,7 +143,8 @@ rename, mkdir, rmdir, symlink, readlink, link, fsync, inactive, statfs) is one h
 on the folder, as the Amiga handler's one-request-per-operation design
 (`hostfswire.h`) at the vnode level. Files stay host files; NeXT owners, modes and device
 nodes live in the `~/NeXT/<env>.meta` sidecar that `makenext` writes, and the host
-appends what the guest changes. `HostDisk` over a host disk file holding a NeXT UFS stays
+appends what the guest changes. Symlinks are the guest's: the host follows none, and a
+path through a host link (a directory the guest removed and made a link) fails. `HostDisk` over a host disk file holding a NeXT UFS stays
 an option, not the default; it also gives local `/private` and swap.
 
 The kernel stays as the user installed it. Throughput is bounded by the mailbox
@@ -219,10 +229,10 @@ No hashes are checked; the launcher only checks sizes and formats.
    cost time until the guest builds its own.
 5. Host filesystem: operations the kernel's virtual memory uses for programs (page-in)
    and the vnode layout are the kernel's own; checked against its symbols at load.
-6. Screen size: 1120x832 is fixed. Hosts at 1152x870 fit; smaller ones pan.
+6. Screen size: the host's, at least 832x624 (the kernel's console window; a smaller host shows the top left), up to 1 MB of 2-bit VRAM; the window server's own size table
+   still names 1120x832.
 7. 060 hosts: FP and integer gaps under a guest that expects an 040.
-8. Licence: register facts come from public sources. Code from the Previous emulator
-   stays in `nextguest`, listed in THIRD_PARTY.md.
+8. Licence: register facts come from public sources; no emulator code is used.
 
 ## 8. Milestones
 
@@ -231,7 +241,7 @@ No hashes are checked; the launcher only checks sizes and formats.
 1. Kernel and console (reached on the identity map: the kernel prints its version line,
    memory and probe lines, "no suitable root", and returns to the monitor): `startnext` loads `mach_kernel` and `HostCon` (bootstrap, from
    gcc + `elf2macho`); the kernel prints to the host console and stops at its
-   missing root. Needs interrupts, timer, SCR, RTC and the shadow MMU; no device chips.
+   missing root. Needs interrupts, the timer and clock as host calls, and the shadow MMU; no device chips.
 2. Root over host folders: the host filesystem mounts `/` from `~/NeXT/<env>`;
    single-user shell on the console.
 3. Multi-user: `makenext` installs; login window and Workspace (`HostFB`, `HostEvent`).

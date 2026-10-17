@@ -5,7 +5,7 @@
 #	static part for the relink: outdir/guest.o (shims, gate code,
 #	gates generated from base's vector table) and outdir/gates.lst
 #	for patch_vec.py
-#   sh kernel/guest/build.sh -m kernel.elf outdir
+#   sh kernel/guest/build.sh -m kernel.elf outdir [target]
 #	modules against that kernel: outdir/mod.d/{guestcore,auxcore,auxexec,uinter,...}
 #   sh kernel/guest/build.sh -t
 #	host checks: interface headers compile, table sanity
@@ -44,41 +44,7 @@ case "$1" in
 	echo "[OK] $O/guest.o"
 	;;
 -m)
-	KERNEL=$2; O=$3
-	mkdir -p "$O/tools" "$O/src"
-	HCC="$NICE ${HOSTCC:-cc} -std=gnu89 -O -w"
-	$HCC -DDLM_TOOL -I"$DLM" -I"$DLM/include" -o "$O/tools/mkksym" \
-		"$DLM/tools/mkksym.c" "$DLM/dlm_sym.c"
-	$HCC -o "$O/tools/modfix" "$DLM/tools/modfix.c"
-	"$O/tools/mkksym" -x "$KERNEL" > "$O/exports"
-	# the display service's Atari build: its interrupt level, page size
-	! grep -qw ds_vidput "$O/exports" || KCC="$KCC -DDS_ATARI"
-	! grep -qw ata_idcm "$O/exports" || KCC="$KCC -DATA060"
-	! grep -qw am_dsinit "$O/exports" || KCC="$KCC -DDS_AMIGA"
-	rm -rf "$O/mod.d"
-	for m in guestcore auxcore auxexec uinter tosguest amigaguest cpmguest tiplatform nextguest; do
-		d=$O/src/$m
-		rm -rf "$d"; mkdir -p "$d"
-		objs=
-		for c in "$G/mod/$m"/*.c; do
-			kcc "$c" "$d/$(basename "$c" .c).o"
-			objs="$objs $d/$(basename "$c" .c).o"
-		done
-		for s in "$G/mod/$m"/*.s; do
-			[ -f "$s" ] || continue
-			$NICE m68k-cbm-sysv4-gcc -m68040 -c "$s" -o "$d/$(basename "$s" .s).o"
-			objs="$objs $d/$(basename "$s" .s).o"
-		done
-		m68k-cbm-sysv4-ld -r -o "$d/Driver.o" $objs
-		cp "$G/mod/$m/Master" "$d/"
-		DLM_TOOLS=$O/tools sh "$DLM/tools/mkmod" -e "$O/exports" -o "$O" "$d"
-		[ "$m" != guestcore ] || python3 "$G/chkgatemod.py" "$O/mod.d/$m"
-	done
-	python3 "$G/chklonemod.py" "$KERNEL" "$O/mod.d/guestcore" "$O/mod.d/cpmguest" "$O/mod.d/tosguest"
-	if grep -qw ds_modinit "$O/exports"; then
-		sh "$K/mac/display/mods.sh" "$KERNEL" "$O/display"
-		cp "$O/display/mod.d/dsuser" "$O/mod.d/"
-	fi
+	sh "$K/mods.sh" TARGET="${4:-$(sh "$K/mods.sh" -t "$2")}" "$3" KERNEL="$2" guest display
 	;;
 -t)
 	O=$G/build/test

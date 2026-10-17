@@ -20,7 +20,7 @@ O=$(cd "$O" && pwd)
 CC="nice -n 19 $TC/bin/m68k-cbm-sysv4-gcc -O -Wall -Wno-comment -D__STDC__=0 -fno-builtin
 	-I$V -I$G/include -I$NH -I$AUX/kernel/mac/display -I$AUX/kernel/mac/sound"
 objs=
-for c in "$V"/voyage200.c "$NH"/nativehost.c; do
+for c in "$V"/voyage200.c "$V"/patch.c "$V"/archive.c "$NH"/nativehost.c; do
 	$CC -c "$c" -o "$O/obj/$(basename "$c" .c).o"
 	objs="$objs $O/obj/$(basename "$c" .c).o"
 done

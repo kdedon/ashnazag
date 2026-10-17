@@ -49,6 +49,7 @@ static char *opci_base;			/* the open library */
 static char *opci_lib;			/* its base from InitResident */
 static unsigned long opci_seg;
 static int opci_flags;
+static char *med_io;			/* Mediator 4000 I/O space, mapped */
 
 static void
 rclear(r)
@@ -69,7 +70,7 @@ lcall(lvo, r)
 }
 
 static int opci_start();
-static void opci_list(), opci_fixbars();
+static void opci_list(), opci_fixbars(), opci_mediator();
 
 static int
 opci_isr(oi)
@@ -181,6 +182,11 @@ opci_attr(dev, tag)
 {
 	unsigned long r[16], tags[3], v = 0;
 
+	if (tag >= OPCI_BARADDR(0) && tag <= OPCI_BARADDR(5) && med_io) {
+		v = opci_cfgread(dev, OPCI_CFG_BAR0 + 4 * (tag - OPCI_BARADDR(0)), 4);
+		if ((v & 1) && (v >> 16) == 0)
+			return (unsigned long)med_io + (v & 0xfffc);
+	}
 	tags[0] = tag;
 	tags[1] = (unsigned long)&v;
 	tags[2] = TAG_DONE;
@@ -422,6 +428,8 @@ opci_init(dir)
 	amx_freefile(buf, len);		/* the hunks are copied out */
 	if (e == 0) {
 		opci_fixbars();
+		if (opci_flags & OPCI_MEDIATORZ4)
+			opci_mediator();
 		opci_list();
 	}
 	return e;
@@ -474,6 +482,53 @@ opci_fixbars()
 		}
 		opci_fixbar(d, rom, ~0x7ffUL);
 		opci_cfgwrite(d, OPCI_CFG_COMMAND, 2, cmd);
+	}
+}
+
+/*
+ * The Mediator 4000 decodes PCI memory through a window set by one
+ * register on its config board, the top byte of the window board's
+ * physical address; the library sets it from the kernel mapping, which
+ * the BARs (fixed to physical above) do not match.  The library also
+ * leaves I/O BARs at their sizing value: give each a port, and map the
+ * I/O space at 0xC00000 into the config board.
+ */
+static void
+opci_mediator()
+{
+	struct amx_zboard zb;
+	unsigned long cfgpa = 0, winpa = 0, port = 0x6000, v, sz;
+	struct opci_dev *d = 0;
+	char *cfg;
+	int i, reg, nbar;
+
+	for (i = 0; amx_zorro(i, &zb) == 0; i++) {
+		if (zb.zb_manuf != 0x89e)
+			continue;
+		if (zb.zb_prod == 0x21)
+			cfgpa = zb.zb_pa;
+		else if (winpa == 0)
+			winpa = zb.zb_pa;
+	}
+	if (cfgpa == 0 || winpa == 0 || (cfg = amx_iomap(cfgpa, 0x1000)) == 0)
+		return;
+	*(__volatile__ unsigned char *)cfg = winpa >> 24;
+	if ((med_io = amx_iomap(cfgpa + 0xC00000, 0x10000)) == 0)
+		return;
+	while ((d = opci_find(d, OPCI_ANY, OPCI_ANY)) != 0) {
+		nbar = (opci_cfgread(d, 0x0e, 1) & 0x7f) == 1 ? 2 : 6;
+		for (i = 0; i < nbar; i++) {
+			reg = OPCI_CFG_BAR0 + 4 * i;
+			v = opci_cfgread(d, reg, 4);
+			if ((v & 1) == 0 || (v >> 16) != 0xffff)
+				continue;
+			sz = (~(v & ~3UL) + 1) & 0xffff;
+			if (sz == 0)
+				continue;
+			port = (port + sz - 1) & ~(sz - 1);
+			opci_cfgwrite(d, reg, 4, port | 1);
+			port += sz;
+		}
 	}
 }
 
@@ -558,6 +613,7 @@ opci_fini()
 	opci_base = opci_lib = 0;
 	opci_seg = 0;
 	opci_flags = 0;
+	med_io = 0;
 	am_fini();
 	amx_unlock();
 	return 0;

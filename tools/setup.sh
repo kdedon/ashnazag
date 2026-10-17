@@ -38,8 +38,6 @@ DL=$TC/dl
 J=${JOBS:-1}
 N="nice -n 19"
 
-GCA_URL=https://github.com/isoriano1968/gcc-cross-amix
-GCA_PIN=206bc9589dc8b0bae1cb2deb1c5bc7e5d3d8e190
 . "$AUX/kernel/port-tree.sh"
 IDE_URL=https://github.com/hmlio/amix-gayle-ide
 IDE_PIN=71480b065c6efbc1a6fc3e6c490a5f50d102f795
@@ -257,7 +255,7 @@ if ! "$L" -dumpversion 2>/dev/null | grep -qx $GCC_V; then
 fi
 
 G=$TC/src/gcc-cross-amix
-gitpin $GCA_URL $GCA_PIN "$G"
+sh "$TC/build-amix-cross.sh" -s
 GCA="PREFIX=$TC/amix AMIX_ROOT=$R"
 if [ ! -x "$TC/amix/bin/m68k-cbm-sysv4-gcc" ]; then
 	if [ -n "$CROSS" ]; then
@@ -266,8 +264,7 @@ if [ ! -x "$TC/amix/bin/m68k-cbm-sysv4-gcc" ]; then
 		cp -a "$(abs "$CROSS")" "$TC/amix"
 	else
 		step "AMIX cross toolchain (gcc 2.7.2.3, binutils 2.8.1)"
-		[ ! -d "$TC/amix" ] || chmod -R u+w "$TC/amix"
-		$N make -C "$G" all $GCA MAKE_JOBS="$J" > "$TC/amix-build.log" 2>&1 ||
+		JOBS=$J sh "$TC/build-amix-cross.sh" "$R" ||
 			die "gcc-cross-amix failed; see $TC/amix-build.log"
 	fi
 fi

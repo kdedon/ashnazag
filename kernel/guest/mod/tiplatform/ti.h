@@ -12,5 +12,3 @@
 #define	SR_IPL	0x0700
 #define	TI_SIG	17		/* SIGUSR2: carries the calculator's interrupts */
 
-extern int ti_read(), ti_write(), ti_cmdblock(), ti_badaccess(), ti_fault();
-extern void ti_after();

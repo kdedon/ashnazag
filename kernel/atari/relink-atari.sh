@@ -232,5 +232,5 @@ link
 python3 "$A/mkreltab.py" -c "$OUT.elf"
 m68k-elf-readelf -h "$OUT.elf" | grep -E 'Type|Entry'
 m68k-elf-size "$OUT.elf"
-sh "$A/mods.sh" "$OUT.elf" "$W/mods"
+sh "$A/mods.sh" "$OUT.elf" "$W/mods" atari030
 echo "[OK] built $OUT and $OUT.elf"

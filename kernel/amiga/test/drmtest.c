@@ -2,7 +2,9 @@
  * drmtest -- a display session in RGB565 drawn through the DRM:
  * version, bus id, session bind, maps, a context and the lock; a red
  * band written through the frame buffer map, then a green rectangle
- * filled by the card's 2D engine through the register map.
+ * filled by the card's 2D engine through the register map.  Prints the
+ * bus cost of the maps: frame buffer writes in KB/s, a register read in
+ * nanoseconds.
  *
  *   drmtest [seconds]     hold the picture that long (default 30)
  */
@@ -16,6 +18,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <signal.h>
+#include <sys/times.h>
 #include "dsio.h"
 #include "drm.h"
 
@@ -72,6 +75,33 @@ rl(r)
 int r;
 {
 	return sw(*(volatile unsigned long *)(reg + r));
+}
+
+/* KB/s writing the frame buffer, nanoseconds per register read */
+static void
+buscost(fb, n)
+volatile unsigned long *fb;
+unsigned long n;
+{
+	struct tms t;
+	clock_t t0, t1;
+	unsigned long i, kb = 0, reads = 0;
+	long hz = sysconf(_SC_CLK_TCK);
+
+	t0 = times(&t);
+	do {
+		for (i = 0; i < n; i++)
+			fb[i] = 0;
+		kb += n * 4 / 1024;
+	} while ((t1 = times(&t)) - t0 < hz);
+	printf("drmtest: frame buffer writes %lu KB/s\n", kb * hz / (t1 - t0));
+	t0 = times(&t);
+	do {
+		for (i = 0; i < 10000; i++)
+			(void)*(volatile unsigned long *)(reg + STATUS);
+		reads += 10000;
+	} while ((t1 = times(&t)) - t0 < hz);
+	printf("drmtest: register read %lu ns\n", (t1 - t0) * (1000000000UL / hz) / reads);
 }
 
 static void *
@@ -194,6 +224,7 @@ char **argv;
 		return 1;
 	}
 
+	buscost((volatile unsigned long *)fb, w * h / 2);
 	for (y = 0; y < h; y++)
 		for (x = 0; x < w; x++)
 			fb[y * w + x] = y < h / 4 ? 0xf800 : 0x0000;

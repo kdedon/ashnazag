@@ -88,4 +88,4 @@ python3 "$A/patch_gary.py" -c "$OUT.elf"
 python3 "$A/test/relksym.py" "$OUT"
 echo "[OK] $OUT is loader-relocatable; $OUT.elf is the zero-origin symbol view"
 python3 "$K/guest/chkguest.py" "$OUT.elf" "$W/guest/gates.lst"
-sh "$K/guest/build.sh" -m "$OUT.elf" "$W/guestmodules"
+sh "$K/guest/build.sh" -m "$OUT.elf" "$W/guestmodules" amiga

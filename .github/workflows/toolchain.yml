@@ -1,0 +1,45 @@
+name: AMIX cross toolchain
+on:
+  pull_request:
+    paths: ['toolchain/build-amix-cross.sh', 'toolchain/build-gcc295.sh', '.github/workflows/toolchain.yml']
+  push:
+    paths: ['toolchain/build-amix-cross.sh', 'toolchain/build-gcc295.sh', '.github/workflows/toolchain.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: toolchain-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  toolchain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: key
+        run: echo "rev=$(git log -1 --format=%H -- toolchain/build-amix-cross.sh toolchain/build-gcc295.sh)" >> "$GITHUB_OUTPUT"
+      # compile-only: no AMIX headers or libraries
+      - uses: actions/cache@v4
+        id: cache
+        with:
+          path: |
+            toolchain/amix
+            toolchain/amix-gcc295
+            toolchain/src/gcc-cross-amix/build/env.sh
+          key: amix-cross-${{ runner.os }}-${{ steps.key.outputs.rev }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: sudo apt-get update && sudo apt-get install -y autotools-dev bison flex m4
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: sh toolchain/build-amix-cross.sh || { tail -50 toolchain/amix-build.log; exit 1; }
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: sh toolchain/build-gcc295.sh
+      - name: Both compilers produce objects
+        run: |
+          printf 'struct s { char c; int i; };\nint f(p) struct s *p; { return p->i * 3; }\n' > t.c
+          for g in amix amix-gcc295; do
+            toolchain/$g/bin/m68k-cbm-sysv4-gcc -O -traditional -m68040 -c t.c -o t.o
+            toolchain/$g/bin/m68k-cbm-sysv4-objdump -d t.o | grep -q 'rts'
+          done

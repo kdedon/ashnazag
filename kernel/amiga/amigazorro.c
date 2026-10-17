@@ -58,6 +58,40 @@ char *bi, *m;
 }
 
 /*
+ * Banks the card sizes wrongly show their lower half again above it.  At
+ * each power-of-two offset in the region, a write at the offset that
+ * shows at the start means everything from there on is an alias: the
+ * region ends there.  Both words are put back.
+ */
+static void
+trimalias(m)
+char *m;
+{
+	__volatile__ unsigned long *a0, *a1;
+	unsigned long s0, s1, lo = L(m + 20), hi = L(m + 24), k;
+	int alias;
+
+	a0 = (__volatile__ unsigned long *)((lo + 0xFFF) & ~0xFFFUL);
+	for (k = 0x10000; (unsigned long)a0 + k + 4 <= hi; k <<= 1) {
+		a1 = (__volatile__ unsigned long *)((char *)a0 + k);
+		s0 = *a0;
+		s1 = *a1;
+		*a1 = 0xA5C3965A;
+		__asm__ __volatile__(".word 0xf4f8");		/* cpusha %bc */
+		*a0 = 0x5A3C69A5;
+		__asm__ __volatile__(".word 0xf4f8");
+		alias = *a1 == 0x5A3C69A5;
+		*a1 = s1;
+		*a0 = s0;
+		__asm__ __volatile__(".word 0xf4f8");
+		if (alias) {
+			L(m + 24) = hi = lo + k;
+			break;
+		}
+	}
+}
+
+/*
  * Before config(): board memory leaves the list, and fast regions start on
  * a page, so a region ending where the next begins (behind its 32-byte
  * MemHeader) joins it.
@@ -83,9 +117,11 @@ char *bi;
 	for (i = 0, m = bi + NAUTO * CDSIZE; i < 16; i++, m += 32) {
 		if (L(m + 24) == 0)
 			continue;
+		if (!(W(m + 14) & 2))				/* not MEMF_CHIP */
+			trimalias(m);
 		MK(20, i);
 		MK(24, L(m + 20));
-		if (!(W(m + 14) & 2))				/* not MEMF_CHIP */
+		if (!(W(m + 14) & 2))
 			L(m + 20) &= ~0xFFF;
 	}
 }
@@ -252,6 +288,8 @@ unsigned long
 plat_vtop(va)
 unsigned long va;
 {
+	if (va >= 0x80000000 && va < 0xC0000000)	/* Zorro III window */
+		return va - IOWIN;
 	return vtop(va, 0);
 }
 

@@ -7,6 +7,19 @@ happens, the photos and screenshots you send back tell us what to fix.
 Test the Voodoo3 first (part A); it is the better-tested driver. Then swap in the
 Radeon (part B).
 
+## What changed in this build
+
+- Mediator 4000: the window register is set from the memory board's physical
+  address; BARs stay inside it.
+- Zorro III window addresses translate to physical (`plat_vtop`).
+- Unassigned I/O BARs get a port; drivers see the I/O space at bridge + 0xC00000.
+- Unix sizes memory with an alias check: a mirrored upper half is trimmed.
+- The Zorro bridge is named Mediator PCI 4000.
+- X defaults to 16 bits on a Voodoo3.
+
+Please check: the Voodoo3 attaches with no patch (`drmtest`), X and GL work
+(A1, A2), and `top`/boot memory shows the alias trimmed on a cold start.
+
 ## What you need
 
 - **Amiga:** A4000 with a CyberStorm PPC or MK III (68060), 64 MB or more on
@@ -111,7 +124,7 @@ A2. **X and 3D.** Type `startx`. In the window that opens, type `glxgears -info`
     click the background, choose Exit.
 A3. **Amiga environment.** Type `startmig`. Workbench comes up inside Unix (this
     can take a few minutes). Open a Shell there and type `w3dtest`. Photo the
-    picture and the text. Ctrl-Alt-0 goes back to the Unix console; Ctrl-C there
+    picture and the text. Ctrl + Left Alt + Left Amiga + 0 goes back to the Unix console; Ctrl-C there
     stops it.
 A4. **Quake.** Type `/usr/games/quake +timedemo demo1` and photo the frames per
     second at the end. Then run `/usr/games/glquake +timedemo demo1` inside X

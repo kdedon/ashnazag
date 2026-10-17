@@ -1,0 +1,421 @@
+Subject: [PATCH] target/m68k: packed decimal loads and stores
+
+fmove.p raised the unimplemented data type exception without fetching the
+operand, while fsave wrote an idle frame and frestore ignored the frame,
+so no FP package could complete the move.  Convert packed operands in the
+FPU instead, as the 68881 and 68882 do: loads with all 17 digits and the
+three-digit exponent, stores with the static or dynamic k-factor (OPERR
+for k > 17), both exact and rounded once in the FPCR mode.
+
+--- a/target/m68k/fpu_helper.c
++++ b/target/m68k/fpu_helper.c
+@@ -747,3 +747,319 @@
+ {
+     res->d = floatx80_cosh(val->d, &env->fp_status);
+ }
++
++/*
++ * Packed decimal: sign, exponent sign, three (four on output) BCD exponent
++ * digits, then 17 BCD mantissa digits d0.d1..d16, in 12 bytes.  Converted
++ * exactly through big integers, then rounded once in the current mode.
++ */
++#define PK_WORDS 640
++
++typedef struct {
++    uint32_t w[PK_WORDS];
++    int n;
++} PkNum;
++
++static const uint64_t pk_pow10[20] = {
++    1ULL, 10ULL, 100ULL, 1000ULL, 10000ULL, 100000ULL, 1000000ULL,
++    10000000ULL, 100000000ULL, 1000000000ULL, 10000000000ULL,
++    100000000000ULL, 1000000000000ULL, 10000000000000ULL,
++    100000000000000ULL, 1000000000000000ULL, 10000000000000000ULL,
++    100000000000000000ULL, 1000000000000000000ULL, 10000000000000000000ULL
++};
++
++static void pk_set(PkNum *x, uint64_t v)
++{
++    x->w[0] = v;
++    x->w[1] = v >> 32;
++    x->n = x->w[1] ? 2 : x->w[0] ? 1 : 0;
++}
++
++static void pk_trim(PkNum *x)
++{
++    while (x->n && !x->w[x->n - 1]) {
++        x->n--;
++    }
++}
++
++static void pk_mul(PkNum *x, uint32_t m)
++{
++    uint64_t c = 0;
++    int i;
++
++    for (i = 0; i < x->n; i++) {
++        c += (uint64_t)x->w[i] * m;
++        x->w[i] = c;
++        c >>= 32;
++    }
++    if (c) {
++        x->w[x->n++] = c;
++    }
++}
++
++/* floor division; true if the remainder is not zero */
++static bool pk_div(PkNum *x, uint32_t d)
++{
++    uint64_t r = 0;
++    int i;
++
++    for (i = x->n - 1; i >= 0; i--) {
++        r = r << 32 | x->w[i];
++        x->w[i] = r / d;
++        r %= d;
++    }
++    pk_trim(x);
++    return r != 0;
++}
++
++static void pk_mul10(PkNum *x, int e)
++{
++    for (; e >= 9; e -= 9) {
++        pk_mul(x, 1000000000);
++    }
++    if (e) {
++        pk_mul(x, pk_pow10[e]);
++    }
++}
++
++static bool pk_div10(PkNum *x, int e)
++{
++    bool sticky = false;
++
++    for (; e >= 9; e -= 9) {
++        sticky |= pk_div(x, 1000000000);
++    }
++    if (e) {
++        sticky |= pk_div(x, pk_pow10[e]);
++    }
++    return sticky;
++}
++
++static void pk_shl(PkNum *x, int b)
++{
++    int q = b / 32, r = b % 32, i;
++
++    if (!x->n) {
++        return;
++    }
++    x->w[x->n + q] = 0;
++    for (i = x->n - 1; i >= 0; i--) {
++        x->w[i + q + 1] |= r ? x->w[i] >> (32 - r) : 0;
++        x->w[i + q] = x->w[i] << r;
++    }
++    for (i = 0; i < q; i++) {
++        x->w[i] = 0;
++    }
++    x->n += q + 1;
++    pk_trim(x);
++}
++
++static int pk_bit(const PkNum *x, int b)
++{
++    return b >= 0 && b / 32 < x->n && (x->w[b / 32] >> (b % 32) & 1);
++}
++
++/* 64 bits from bit b up */
++static uint64_t pk_bits(const PkNum *x, int b)
++{
++    uint64_t r = 0;
++    int i;
++
++    for (i = 63; i >= 0; i--) {
++        r = r << 1 | pk_bit(x, b + i);
++    }
++    return r;
++}
++
++/* any bit set below bit b */
++static bool pk_below(const PkNum *x, int b)
++{
++    int i;
++
++    for (i = 0; i < b && i / 32 < x->n; i++) {
++        if (pk_bit(x, i)) {
++            return true;
++        }
++    }
++    return false;
++}
++
++static bool pk_shr(PkNum *x, int b)
++{
++    bool sticky = pk_below(x, b);
++    int i, n = 0;
++
++    for (i = 0; i * 32 + b < x->n * 32; i++) {
++        x->w[i] = pk_bits(x, i * 32 + b);
++        n = i + 1;
++    }
++    x->n = n;
++    pk_trim(x);
++    return sticky;
++}
++
++static int pk_msb(const PkNum *x)
++{
++    return x->n ? 32 * (x->n - 1) + 31 - clz32(x->w[x->n - 1]) : -1;
++}
++
++static floatx80 pk_to_x(CPUM68KState *env, uint32_t w0, uint32_t w1,
++                        uint32_t w2)
++{
++    bool sign = w0 >> 31, sticky = false;
++    uint64_t frac = (uint64_t)w1 << 32 | w2, m = w0 & 15;
++    int i, e, sh = 0, msb;
++    PkNum x;
++
++    if ((w0 & 0x7fff0000) == 0x7fff0000) {
++        return frac ? packFloatx80(sign, 0x7fff, frac)
++                    : floatx80_default_inf(sign, &env->fp_status);
++    }
++    for (i = 60; i >= 0; i -= 4) {
++        m = m * 10 + (frac >> i & 15);
++    }
++    if (!m) {
++        return packFloatx80(sign, 0, 0);
++    }
++    e = (w0 >> 24 & 15) * 100 + (w0 >> 20 & 15) * 10 + (w0 >> 16 & 15);
++    e = (w0 & 0x40000000 ? -e : e) - 16;
++    pk_set(&x, m);
++    if (e >= 0) {
++        pk_mul10(&x, e);
++    } else {
++        /* enough fraction bits that the quotient keeps 66 */
++        sh = -e * 3322 / 1000 + 70;
++        pk_shl(&x, sh);
++        sticky = pk_div10(&x, -e);
++    }
++    msb = pk_msb(&x);
++    sticky |= pk_below(&x, msb - 127);
++    return roundAndPackFloatx80(floatx80_precision_x, sign, 16383 + msb - sh,
++                                pk_bits(&x, msb - 63),
++                                pk_bits(&x, msb - 127) | sticky,
++                                &env->fp_status);
++}
++
++/* k: digits (1..17), or with k <= 0, digits right of the point */
++static void x_to_pk(CPUM68KState *env, floatx80 a, int k, uint32_t *w)
++{
++    bool sign = a.high >> 15 & 1, sticky, half, up;
++    int exp = a.high & 0x7fff, e2, ilog, len = 1, s, i;
++    uint64_t sig = a.low, q = 0, q2 = 0;
++    PkNum x;
++
++    w[0] = (uint32_t)sign << 31;
++    w[1] = w[2] = 0;
++    k = sextract32(k, 0, 7);
++    if (k > 17) {
++        float_raise(float_flag_invalid, &env->fp_status);
++        k = 17;
++    }
++    if (exp == 0x7fff) {
++        w[0] |= 0x7fff0000;
++        if (sig << 1) {
++            w[1] = sig >> 32;
++            w[2] = sig;
++        }
++        return;
++    }
++    if (!sig) {
++        return;
++    }
++    e2 = (exp ? exp : 1) - 16383 - 63;
++    ilog = (e2 + 63 - clz64(sig)) * 78913 >> 18;   /* log10(2) */
++    for (i = 0; i < 8; i++) {
++        len = k > 0 ? k : ilog + 1 - k;
++        len = len < 1 ? 1 : len > 17 ? 17 : len;
++        s = ilog + 1 - len;
++        /* twice the value over 10^s, to keep the rounding bit */
++        pk_set(&x, sig);
++        sticky = false;
++        if (s < 0) {
++            pk_mul10(&x, -s);
++        }
++        if (e2 + 1 >= 0) {
++            pk_shl(&x, e2 + 1);
++        } else {
++            sticky = pk_shr(&x, -(e2 + 1));
++        }
++        if (s > 0) {
++            sticky |= pk_div10(&x, s);
++        }
++        if (pk_msb(&x) > 62) {
++            ilog++;
++            continue;
++        }
++        q2 = pk_bits(&x, 0);
++        q = q2 >> 1;
++        if (q >= pk_pow10[len]) {
++            ilog++;
++        } else if (q < pk_pow10[len - 1]) {
++            ilog--;
++        } else {
++            break;
++        }
++    }
++    half = q2 & 1;
++    switch (get_float_rounding_mode(&env->fp_status)) {
++    case float_round_to_zero:
++        up = false;
++        break;
++    case float_round_up:
++        up = !sign && (half || sticky);
++        break;
++    case float_round_down:
++        up = sign && (half || sticky);
++        break;
++    default:
++        up = half && (sticky || (q & 1));
++        break;
++    }
++    if (half || sticky) {
++        float_raise(float_flag_inexact, &env->fp_status);
++    }
++    q += up;
++    if (q == pk_pow10[len]) {
++        q = pk_pow10[len - 1];
++        ilog++;
++    }
++    q *= pk_pow10[17 - len];
++    w[0] |= q / pk_pow10[16];
++    for (i = 15; i >= 0; i--) {
++        w[i < 8 ? 2 : 1] |= (q / pk_pow10[i] % 10) << (i % 8 * 4);
++    }
++    if (ilog < 0) {
++        w[0] |= 0x40000000;
++        ilog = -ilog;
++    }
++    w[0] |= (ilog / 100 % 10) << 24 | (ilog / 10 % 10) << 20 |
++            (ilog % 10) << 16 | (ilog / 1000 % 10) << 12;
++}
++
++void HELPER(ldpk)(CPUM68KState *env, FPReg *res, uint32_t addr, uint32_t idx)
++{
++    uintptr_t ra = GETPC();
++    uint32_t w0 = cpu_ldl_be_mmuidx_ra(env, addr, idx, ra);
++    uint32_t w1 = cpu_ldl_be_mmuidx_ra(env, addr + 4, idx, ra);
++    uint32_t w2 = cpu_ldl_be_mmuidx_ra(env, addr + 8, idx, ra);
++
++    res->d = pk_to_x(env, w0, w1, w2);
++}
++
++void HELPER(impk)(CPUM68KState *env, FPReg *res, uint32_t w0, uint32_t w1,
++                  uint32_t w2)
++{
++    res->d = pk_to_x(env, w0, w1, w2);
++}
++
++void HELPER(stpk)(CPUM68KState *env, FPReg *val, uint32_t addr, uint32_t k,
++                  uint32_t idx)
++{
++    uintptr_t ra = GETPC();
++    uint32_t w[3];
++
++    x_to_pk(env, val->d, k, w);
++    cpu_stl_be_mmuidx_ra(env, addr, w[0], idx, ra);
++    cpu_stl_be_mmuidx_ra(env, addr + 4, w[1], idx, ra);
++    cpu_stl_be_mmuidx_ra(env, addr + 8, w[2], idx, ra);
++}
+--- a/target/m68k/helper.h
++++ b/target/m68k/helper.h
+@@ -24,6 +24,9 @@
+ DEF_HELPER_3(extf64, void, env, fp, f64)
+ DEF_HELPER_2(redf32, f32, env, fp)
+ DEF_HELPER_2(redf64, f64, env, fp)
++DEF_HELPER_4(ldpk, void, env, fp, i32, i32)
++DEF_HELPER_5(impk, void, env, fp, i32, i32, i32)
++DEF_HELPER_5(stpk, void, env, fp, i32, i32, i32)
+ DEF_HELPER_2(reds32, s32, env, fp)
+ 
+ DEF_HELPER_3(fsround, void, env, fp, fp)
+--- a/target/m68k/translate.c
++++ b/target/m68k/translate.c
+@@ -109,6 +109,7 @@
+     int done_mac;
+     int writeback_mask;
+     TCGv writeback[8];
++    TCGv kfactor; /* fmove.p out */
+     bool ss_active;
+ } DisasContext;
+ 
+@@ -959,11 +960,11 @@
+         tcg_gen_st_i64(t64, fp, offsetof(FPReg, l.lower));
+         break;
+     case OS_PACKED:
+-        /*
+-         * unimplemented data type on 68040/ColdFire
+-         * FIXME if needed for another FPU
+-         */
+-        gen_exception(s, s->base.pc_next, EXCP_FP_UNIMP);
++        if (m68k_feature(s->env, M68K_FEATURE_CF_FPU)) {
++            gen_exception(s, s->base.pc_next, EXCP_FP_UNIMP);
++            break;
++        }
++        gen_helper_ldpk(tcg_env, fp, addr, tcg_constant_i32(index));
+         break;
+     default:
+         g_assert_not_reached();
+@@ -1006,11 +1007,11 @@
+         tcg_gen_qemu_st_i64(t64, tmp, index, MO_TEUQ);
+         break;
+     case OS_PACKED:
+-        /*
+-         * unimplemented data type on 68040/ColdFire
+-         * FIXME if needed for another FPU
+-         */
+-        gen_exception(s, s->base.pc_next, EXCP_FP_UNIMP);
++        if (m68k_feature(s->env, M68K_FEATURE_CF_FPU)) {
++            gen_exception(s, s->base.pc_next, EXCP_FP_UNIMP);
++            break;
++        }
++        gen_helper_stpk(tcg_env, fp, addr, s->kfactor, tcg_constant_i32(index));
+         break;
+     default:
+         g_assert_not_reached();
+@@ -1138,11 +1139,17 @@
+                 tcg_gen_st_i64(t64, fp, offsetof(FPReg, l.lower));
+                 break;
+             case OS_PACKED:
+-                /*
+-                 * unimplemented data type on 68040/ColdFire
+-                 * FIXME if needed for another FPU
+-                 */
+-                gen_exception(s, s->base.pc_next, EXCP_FP_UNIMP);
++                if (m68k_feature(s->env, M68K_FEATURE_CF_FPU)) {
++                    gen_exception(s, s->base.pc_next, EXCP_FP_UNIMP);
++                    break;
++                }
++                {
++                    TCGv w0 = tcg_constant_i32(read_im32(env, s));
++                    TCGv w1 = tcg_constant_i32(read_im32(env, s));
++                    TCGv w2 = tcg_constant_i32(read_im32(env, s));
++
++                    gen_helper_impk(tcg_env, fp, w0, w1, w2);
++                }
+                 break;
+             default:
+                 g_assert_not_reached();
+@@ -4956,6 +4963,10 @@
+     case 3: /* fmove out */
+         cpu_src = gen_fp_ptr(REG(ext, 7));
+         opsize = ext_opsize(ext, 10);
++        if (opsize == OS_PACKED) {
++            s->kfactor = ext & 0x1000 ? cpu_dregs[REG(ext, 4)]
++                                      : tcg_constant_i32(ext & 0x7f);
++        }
+         if (gen_ea_fp(env, s, insn, opsize, cpu_src,
+                       EA_STORE, IS_USER(s)) == -1) {
+             gen_addr_fault(s);

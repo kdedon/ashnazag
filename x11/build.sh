@@ -4,7 +4,8 @@
 #   sh x11/build.sh [stage ...]
 #
 # Stages (default: all in order): tree, imake, makefiles, libs, server;
-# dri (refreshes the direct-rendering sources in an existing tree);
+# dri (refreshes our changed sources and the direct-rendering ones in an
+# existing tree);
 # clibs (client libraries) and clients (xdm, xchoose, xdmenv; after
 # clibs) on request.
 # Work tree: $X11W (default: images/work/x11-$PLATFORM, PLATFORM mac or atari), sources in
@@ -41,14 +42,24 @@ tree() {
 	mkdir -p "$XC/programs/Xserver/iplan2p8"
 	cp "$I"/*.[ch] "$XC/programs/Xserver/iplan2p8/"
 	{ echo '#define IPlanes 8'; cat "$I/Imakefile"; } > "$XC/programs/Xserver/iplan2p8/Imakefile"
-	# new files
-	(cd "$D/src" && tar cf - .) | (cd "$XC/programs/Xserver/hw/amix" && tar xpf -)
-	cp "$AUX/kernel/mac/display/dsio.h" "$XC/programs/Xserver/hw/amix/rtg/fb/dsio.h"
 	dri
+}
+
+# our sources, the changed ones again in an existing tree
+newsrc() {
+	H=$XC/programs/Xserver/hw/amix
+	(cd "$D/src" && find . -type f) | while read -r f; do
+		cmp -s "$D/src/$f" "$H/$f" && continue
+		mkdir -p "$(dirname "$H/$f")"
+		cp "$D/src/$f" "$H/$f"
+	done
+	cmp -s "$AUX/kernel/mac/display/dsio.h" "$H/rtg/fb/dsio.h" ||
+		cp "$AUX/kernel/mac/display/dsio.h" "$H/rtg/fb/dsio.h"
 }
 
 # XFree86 4.3's DRI extension, libdrm and GLX protocol headers beside amixdri.c
 dri() {
+	newsrc
 	newpatches
 	sh "$AUX/gl/dri/x43.sh" "$X11W/x43"
 	X=$X11W/x43/xc

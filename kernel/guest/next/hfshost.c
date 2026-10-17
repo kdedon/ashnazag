@@ -24,6 +24,10 @@
 
 #define NHASH 8192
 #define SPECIAL ".__special__"
+#define NX_IFSOCK 0140000
+#ifndef S_ISLNK
+#define S_ISLNK(m) (((m) & S_IFMT) == S_IFLNK)
+#endif
 
 struct ment {
 	char *path;
@@ -198,7 +202,12 @@ pathof(id)
 	return id > 0 && id < nids && ids[id] ? ids[id]->path : 0;
 }
 
-/* the host path of rel; with special, the NAME.__special__ file when NAME is absent */
+/*
+ * The host path of rel; with special, the NAME.__special__ file when NAME
+ * is absent.  0 (ELOOP) if a directory on the way is a host link: the
+ * guest follows its own links, so one here (a directory the guest removed
+ * and made a link while still using it) would lead outside the folder.
+ */
 static char *
 hostpath(rel, special)
 	char *rel;
@@ -206,12 +215,36 @@ hostpath(rel, special)
 {
 	static char p[2200];
 	struct stat st;
+	char *c;
 
 	sprintf(p, "%s/%.1000s", root, rel);
 	if (rel[0] == 0)
 		sprintf(p, "%s/.", root);
+	for (c = p + strlen(root) + 1; (c = strchr(c, '/')) != 0; *c++ = '/') {
+		*c = 0;
+		if (lstat(p, &st) == 0 && S_ISLNK(st.st_mode)) {
+			errno = ELOOP;
+			return 0;
+		}
+	}
 	if (special && lstat(p, &st) < 0 && errno == ENOENT)
 		strcat(p, SPECIAL);
+	return p;
+}
+
+/* hostpath for an operation that would follow a link in the last place too */
+static char *
+nolink(rel, special)
+	char *rel;
+	int special;
+{
+	struct stat st;
+	char *p = hostpath(rel, special);
+
+	if (p && lstat(p, &st) == 0 && S_ISLNK(st.st_mode)) {
+		errno = ELOOP;
+		return 0;
+	}
 	return p;
 }
 
@@ -231,6 +264,7 @@ errmap(e)
 	case ENOSPC: return 28;
 	case EROFS: return 30;
 	case ENAMETOOLONG: return 63;
+	case ELOOP: return 62;
 	case ENOTEMPTY: return 66;
 	}
 	return 5;
@@ -247,6 +281,7 @@ vtype(mode)
 	case S_IFCHR: return HF_VCHR;
 	case S_IFLNK: return HF_VLNK;
 	case S_IFIFO: return HF_VFIFO;
+	case NX_IFSOCK: return HF_VSOCK;
 	}
 	return HF_VREG;
 }
@@ -268,11 +303,10 @@ attrs(b, id)
 
 	if (!rel)
 		return 2;
-	hp = hostpath(rel, 1);
-	if (lstat(hp, &st) < 0)
+	if ((hp = hostpath(rel, 1)) == 0 || lstat(hp, &st) < 0)
 		return errmap(errno);
 	mode = st.st_mode;
-	if (strlen(hp) > strlen(SPECIAL) && strcmp(hp + strlen(hp) - strlen(SPECIAL), SPECIAL) == 0) {
+	if (S_ISREG(mode) && strlen(hp) > strlen(SPECIAL) && strcmp(hp + strlen(hp) - strlen(SPECIAL), SPECIAL) == 0) {
 		special = 1;
 		mode = S_IFCHR;
 		if ((f = fopen(hp, "r")) != 0) {
@@ -426,7 +460,7 @@ hf_serve(b)
 				    (fl & HF_SET_TIMES) ? stm : b->mtime);
 				(void)m;
 			}
-			if ((fl & HF_SET_SIZE) && b->type != HF_VCHR && b->type != HF_VBLK && truncate(hostpath(rel, 0), (off_t)ss) < 0)
+			if ((fl & HF_SET_SIZE) && b->type != HF_VCHR && b->type != HF_VBLK && ((hp = nolink(rel, 0)) == 0 || truncate(hp, (off_t)ss) < 0))
 				e = errmap(errno);
 		}
 		if (!e)
@@ -438,9 +472,7 @@ hf_serve(b)
 			e = 22;
 			break;
 		}
-		hp = hostpath(rel, 0);
-		fd = open(hp, op == HF_READ ? O_RDONLY : O_WRONLY);
-		if (fd < 0) {
+		if ((hp = nolink(rel, 0)) == 0 || (fd = open(hp, op == HF_READ ? O_RDONLY : O_WRONLY)) < 0) {
 			e = errmap(errno);
 			break;
 		}
@@ -464,7 +496,7 @@ hf_serve(b)
 			e = 2;
 			break;
 		}
-		if ((d = opendir(hostpath(rel, 0))) == 0) {
+		if ((hp = nolink(rel, 0)) == 0 || (d = opendir(hp)) == 0) {
 			e = errmap(errno);
 			break;
 		}
@@ -517,15 +549,21 @@ hf_serve(b)
 			e = 22;
 			break;
 		}
-		hp = hostpath(buf, 0);
-		if (op == HF_CREATE && (b->flags == HF_VCHR || b->flags == HF_VBLK)) {
+		if ((hp = hostpath(buf, 0)) == 0) {
+			e = errmap(errno);
+			break;
+		}
+		if (op == HF_CREATE && (b->flags == HF_VCHR || b->flags == HF_VBLK || b->flags == HF_VSOCK)) {
 			char sp[PATH_MAX + 32];
+			struct stat st;
 			FILE *sf;
 
 			sprintf(sp, "%s%s", hp, SPECIAL);
-			n = (sf = fopen(sp, "w")) == 0 ? -1 : 0;
+			sf = lstat(sp, &st) == 0 && S_ISLNK(st.st_mode) ? (errno = ELOOP, (FILE *)0) : fopen(sp, "w");
+			n = sf ? 0 : -1;
 			if (sf) {
-				fprintf(sf, "mode=%lo raw=%08lx\n", (b->flags == HF_VCHR ? S_IFCHR : S_IFBLK) | (b->mode & 07777),
+				fprintf(sf, "mode=%lo raw=%08lx\n", (b->flags == HF_VCHR ? S_IFCHR : b->flags == HF_VBLK ? S_IFBLK :
+				    NX_IFSOCK) | (b->mode & 07777),
 				    b->rdev & 0xffff);
 				fclose(sf);
 			}
@@ -543,7 +581,8 @@ hf_serve(b)
 		}
 		{
 			unsigned long mt = op == HF_MKDIR ? S_IFDIR : op == HF_SYMLINK ? S_IFLNK :
-			    b->flags == HF_VCHR ? S_IFCHR : b->flags == HF_VBLK ? S_IFBLK : S_IFREG;
+			    b->flags == HF_VCHR ? S_IFCHR : b->flags == HF_VBLK ? S_IFBLK : b->flags == HF_VSOCK ? NX_IFSOCK :
+			    S_IFREG;
 
 			setmeta(buf, mt | (b->mode & 07777), b->uid, b->gid, time(0));
 		}
@@ -559,7 +598,7 @@ hf_serve(b)
 			e = 2;
 			break;
 		}
-		n = readlink(hostpath(rel, 0), (char *)b->data, HF_DATA - 1);
+		n = (hp = hostpath(rel, 0)) == 0 ? -1 : readlink(hp, (char *)b->data, HF_DATA - 1);
 		if (n < 0)
 			e = errmap(errno);
 		else
@@ -572,7 +611,7 @@ hf_serve(b)
 			break;
 		}
 		hp = hostpath(buf, 1);
-		n = op == HF_REMOVE ? unlink(hp) : rmdir(hp);
+		n = !hp ? -1 : op == HF_REMOVE ? unlink(hp) : rmdir(hp);
 		if (n < 0)
 			e = errmap(errno);
 		break;
@@ -590,12 +629,17 @@ hf_serve(b)
 			e = 22;
 			break;
 		}
-		hp = hostpath(buf, 1);
+		/* the host's link() may follow a link it is given */
+		hp = op == HF_LINK ? nolink(buf, 1) : hostpath(buf, 1);
 		{
 			char dst[2200];
 
-			strcpy(dst, hostpath(buf2, 0));
-			n = op == HF_LINK ? link(hp, dst) : rename(hp, dst);
+			if (!hp)
+				n = -1;
+			else {
+				strcpy(dst, hp);
+				n = (hp = hostpath(buf2, 0)) == 0 ? -1 : op == HF_LINK ? link(dst, hp) : rename(dst, hp);
+			}
 		}
 		if (n < 0) {
 			e = errmap(errno);

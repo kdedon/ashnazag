@@ -223,6 +223,8 @@ machine(fd)
 	signal(SIGUSR2, SIG_IGN);
 	memset(&ne, 0, sizeof ne);
 	ne.ramsize = RAMSZ;
+	ne.width = 640;
+	ne.height = 480;
 	if (ioctl(dev, NX_ENTER, &ne) < 0)
 		return 6;
 	guest();

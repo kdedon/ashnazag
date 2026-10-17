@@ -32,17 +32,17 @@ Easy: LCD address/contrast (latch, point the display service at that RAM), keybo
 - AMS: TI's free OS upgrade files (.89u/.9xu). Header plus signed image; we strip the header and place the image at the Flash OS address ourselves. No signature check needed since we do not run the boot upgrade code.
 - Boot code: not in the upgrade file. Options: (a) the user's own dump (boot1/boot2, taken from their calculator) copied to the environment folder; (b) our own minimal stub: reset vector, supervisor setup, RAM clear, ports to the HW2 defaults, jump table for Flash and unit-ID calls, then jump to the AMS entry.
 - Feasibility: AMS from an upgrade file plus our stub is likely, not certain: it needs the stub's jump table to match every boot call AMS makes, and AMS reads certificate/ID data (stub with fixed values). Also needs a plausible Flash state: the upgrade's trailing "OS valid" markers and an empty archive area (erased bytes). Stage 1 answers this by census; if too many calls, fall back to (a) and document it as user-supplied.
-- Ship nothing: ROM image, upgrade files and dumps stay local in ~/TI89/<env>/ (per env: flash.img, ram if kept, boot.bin).
+- Ship nothing: ROM image, upgrade files and dumps stay local in ~/TI89/<env>/ (per env: dump, archive/, ram if kept, boot.bin).
 
 ## 4. Display, input, stages
 - Display: 1-bit buffer at the LCD address, fed to the display service as a monochrome window (160x100 or 240x128, integer scale, white-on-grey LCD palette). Update on a frame timer plus on address/contrast writes; no per-line timing.
 - Input: map host keys to the matrix: letters to the alpha keys, Shift = 2nd, Ctrl = diamond, Alt = alpha, F1-F5 to the softkeys, Esc = ON, Enter, Backspace = clear/backspace, cursor keys to the pad; mouse optional. On-screen keypad via the display service later. V200 qwerty maps 1:1.
-- Link: host file or socket via the existing guest services; idle first. Archive and Flash persist through flash.img.
+- Link: host file or socket via the existing guest services; idle first. Archived variables persist as host files, one per variable.
 - Stages and tests (QEMU q800 and Falcon Hatari only through the usual runners, later):
   0. Census: run AMS (upgrade plus a throwaway boot stub) under the guest framework with all I/O in logging mode; output: the register list and boot call list. Test: log has no fault and reaches the first key read.
   1. Boot stub plus register stubs; AMS reaches the HOME screen. Test: LCD buffer hash after 3 s matches the stored home-screen reference.
   2. Display service window and keyboard: type 2+3 Enter, read 5. Test: scripted keys, screen hash.
-  3. Flash model and archive: archive a variable, reset, find it again. Test: flash.img differs only in the expected sector.
+  3. Archive: archive a variable, reset, find it again. Test: its host file appears and reloads.
   4. Timers, power-down (STOP and ON wake), contrast, auto power-off. Test: idle 60 s then ON key wakes.
   5. Link to a host file; app and OS install from a file; second model (92+/V200 240x128). Test: send a program, run it.
 - Unknowns: boot call surface size, timing-sensitive Flash polls, HW1 versus HW2 behaviour in one AMS, protected-memory dependence, whether the archive garbage collector needs real erase timing.

@@ -1,25 +1,48 @@
 /*
- * nextdev.c -- the board's registers: system control, interrupt status
- * and mask, timers, the clock chip and NVRAM.  Registers of absent
- * devices read as zero and ignore writes.
+ * nextdev.c -- the board: constants in the I/O window, interrupt requests,
+ * and the host services the kernel's patched routines call.
  *
- * Licence: GPL-2.0-or-later.  Derived in part from the Previous
- * emulator's register models; see THIRD_PARTY.md.
+ * The I/O windows are memory; nothing acts on what the kernel writes there.
+ * Time, the timer, software interrupts, the clock chip and NVRAM reach the
+ * kernel through its own routines, patched by the host program to make
+ * host calls (HF_HCALL).
  *
  * K&R C.
  */
 
 #include "next.h"
+#include "../../next/hfswire.h"
 
 extern timestruc_t hrestime;
-
-#define	ZEROBITS	0xc22e7600UL
-#define	SCR1		0xf0004000UL
-#define	TMC_VROW	0x118UL		/* the turbo's video registers: row bytes (4 pixels each) */
-#define	TMC_VHIGH	0x340UL		/* and rows of the screen */
-#define	TMC_SCR1	0xffff4fcfUL	/* the id as the turbo's memory controller reports it */
+extern void drv_usecwait();
+extern int ttimeout(), untimeout();
+extern long drv_usectohz();
 
 struct nx nx;
+
+/* what the kernel reads from the board: the machine ids, SCR2 at power-on, the screen's size */
+static struct {
+	unsigned long a, v;
+} board[] = {
+	{ 0x0200c000UL, 0xf0004000UL },
+	{ 0x0200c800UL, 0xf0004000UL },
+	{ 0x0200d000UL, 0x00001080UL },
+	{ 0x02200000UL, 0xffff4fcfUL },
+	{ 0x02200088UL, 0 },		/* width / 4 */
+	{ 0x0220008cUL, 0 },		/* rows */
+};
+
+void
+nx_board(w, h)
+	unsigned long w, h;
+{
+	int i;
+
+	board[4].v = w / 4;
+	board[5].v = h;
+	for (i = 0; i < sizeof board / sizeof board[0]; i++)
+		(void)copyout((caddr_t)&board[i].v, (caddr_t)(NX_PHYS + board[i].a), 4);
+}
 
 unsigned long
 nx_us()
@@ -33,354 +56,177 @@ nx_us()
 int
 nx_level()
 {
-	unsigned long i = nx.stat & nx.mask;
-
-	if (!i)
-		return 0;
-	if (i & 0xc0000000UL || (i & INT_TIMER && nx.scr2[2] & 0x80))
-		return 7;
-	if (i & 0x3ffc0000UL)
+	if (nx.stat & INT_TIMER)
 		return 6;
-	if (i & 0x00038000UL)
-		return 5;
-	if (i & 0x00004000UL)
-		return 4;
-	if (i & 0x00003ffcUL)
-		return 3;
-	if (i & 2)
+	if (nx.stat & INT_SOFT2)
 		return 2;
-	return 1;
+	return nx.stat & INT_SOFT1 ? 1 : 0;
 }
 
+/*
+ * The request at level l goes to the guest.  Software interrupts are taken
+ * by it; the timer's stays in what the level 6 dispatcher's status read
+ * returns until the timer handler acknowledges it.  Guest context.
+ */
 void
-nx_setint(bits)
-	unsigned long bits;
+nx_post(l)
+	int l;
 {
-	nx.stat |= bits;
+	int s = nx_splhi();
+
+	if (l == 6)
+		nx.istat |= INT_TIMER;
+	nx.stat &= l == 6 ? ~INT_TIMER : l == 2 ? ~INT_SOFT2 : ~INT_SOFT1;
+	nx_splx(s);
 }
 
-void
-nx_clrint(bits)
-	unsigned long bits;
-{
-	nx.stat &= ~bits;
-}
-
+/* the timer the kernel set is due */
 static void
-census(a, sz, wr, v)
-	unsigned long a, v;
-	int sz, wr;
+nx_tick(arg)
+	caddr_t arg;
+{
+	int s = nx_splhi();
+
+	nx.tid = 0;
+	if (nx.state == 1) {
+		nx.st.ticks++;
+		nx.stat |= INT_TIMER;
+		nx_kick();
+	}
+	nx_splx(s);
+}
+
+/* a guest buffer of n bytes at a lies in the guest's space */
+static int
+inguest(a, n)
+	unsigned long a, n;
+{
+	return a < NX_TOP && n <= NX_TOP - a;
+}
+
+/* NVRAM's checksum: the first 15 words summed with end-around carry, complemented */
+static void
+nvsum(b)
+	unsigned char *b;
+{
+	unsigned long sum = 0;
+	int i;
+
+	for (i = 0; i < 30; i += 2) {
+		sum += b[i] << 8 | b[i + 1];
+		if (sum >= 0x10000)
+			sum -= 0xffff;
+	}
+	sum = 0xffff - sum;
+	b[30] = sum >> 8;
+	b[31] = sum;
+}
+
+/* one host service: 0 done, -1 not one */
+int
+nx_service(gp, r)
+	struct guest_proc *gp;
+	char *r;
+{
+	unsigned long a[3], us;
+	unsigned char b[32];
+	int svc = GR_D(r, 0), s;
+
+	if (svc <= 0 || svc >= HC_N)
+		return -1;
+	nx.st.hcalls[svc]++;
+	if (!inguest((unsigned long)GR_USP(r) + 4, (unsigned long)sizeof a) ||
+	    copyin((caddr_t)GR_USP(r) + 4, (caddr_t)a, sizeof a))
+		bzero((caddr_t)a, sizeof a);
+	switch (svc) {
+	case HC_HFS:
+		psignal(curproc, SIGPWR);
+		break;
+	case HC_MONITOR:
+	case HC_OFF:
+		nx.st.monexit = (svc == HC_MONITOR ? GR_D(r, 1) : 0) | 0x80000000UL;
+		psignal(curproc, SIGUSR1);
+		break;
+	case HC_US:
+		GR_D(r, 1) = nx_us() & 0xfffff;
+		break;
+	case HC_DELAY:
+		drv_usecwait(a[0] < 20000 ? a[0] : 20000);
+		break;
+	case HC_TIMER:
+		if (a[0])
+			break;
+		us = a[1] ? 65535 : a[2] / 1000;
+		us = us < 500 ? 500 : us > 65535 ? 65535 : us;
+		s = nx_splhi();
+		if (nx.tid > 0)
+			untimeout(nx.tid);
+		nx.stat &= ~INT_TIMER;
+		if ((nx.tid = ttimeout(nx_tick, (caddr_t)0, drv_usectohz(us))) == -1)
+			nx.tid = 0;
+		nx_splx(s);
+		break;
+	case HC_STAT:
+		GR_D(r, 0) = nx.istat;
+		return 0;
+	case HC_TACK:
+		s = nx_splhi();
+		nx.istat &= ~INT_TIMER;
+		nx_splx(s);
+		GR_D(r, 1) = nx_us() & 0xfffff;
+		break;
+	case HC_SOFT:
+		s = nx_splhi();
+		nx.stat |= GR_D(r, 1) >> 24 & (INT_SOFT1 | INT_SOFT2);
+		nx_kick();
+		nx_splx(s);
+		break;
+	case HC_TIME:
+		GR_D(r, 0) = hrestime.tv_sec;
+		GR_D(r, 1) = 0;
+		return 0;
+	case HC_NVGET:
+		if (inguest(a[0], (unsigned long)sizeof b))
+			(void)copyout((caddr_t)nx.st.nvram, (caddr_t)a[0], sizeof b);
+		break;
+	case HC_NVSET:
+		if (!inguest(a[0], (unsigned long)sizeof b) || copyin((caddr_t)a[0], (caddr_t)b, sizeof b))
+			break;
+		nvsum(b);
+		(void)copyout((caddr_t)b + 30, (caddr_t)a[0] + 30, 2);
+		if (bcmp((caddr_t)b, (caddr_t)nx.st.nvram, sizeof b)) {
+			bcopy((caddr_t)b, (caddr_t)nx.st.nvram, sizeof b);
+			nx.st.nvseq++;
+		}
+		break;
+	}
+	GR_D(r, 0) = 0;
+	return 0;
+}
+
+/* an access nothing backs, counted by address; 1 the first at a */
+int
+nx_census(a, wr)
+	unsigned long a;
+	int wr;
 {
 	struct nx_census *c;
 	int i;
 
 	nx.st.lasta = a;
 	nx.st.lastpc = GR_PC(u.u_ar0);
-	if (a < NX_IO || a >= 0x03000000UL)
-		a &= ~0xffffUL;
 	for (i = 0; i < nx.st.ncensus; i++)
-		if (nx.st.census[i].addr == a && nx.st.census[i].write == wr)
-			return;
+		if (nx.st.census[i].addr == a && nx.st.census[i].write == wr) {
+			nx.st.census[i].count++;
+			nx.st.census[i].lastpc = GR_PC(u.u_ar0);
+			return 0;
+		}
 	if (nx.st.ncensus >= NX_NCENSUS)
-		return;
+		return 0;
 	c = &nx.st.census[nx.st.ncensus++];
 	c->addr = a;
-	c->pc = GR_PC(u.u_ar0);
-	c->value = v;
-	c->size = sz;
+	c->pc = c->lastpc = GR_PC(u.u_ar0);
 	c->write = wr;
-}
-
-/* ---- clock chip, one bit at a time ---- */
-
-static unsigned char *
-rtcram(a)
-	int a;
-{
-	return &nx.st.nvram[(a & 0x40 ? 32 : 0) + (a & 0x1f)];
-}
-
-static unsigned long
-rtcstep(bit)
-	int bit;
-{
-	nx.rtc_phase++;
-	if (nx.rtc_phase <= 8)
-		nx.rtc_addr = nx.rtc_addr << 1 | (bit ? 1 : 0);
-	else {
-		if (nx.rtc_phase == 9 && !(nx.rtc_addr & 0x80)) {
-			if (nx.rtc_addr & 0x20) {
-				switch (nx.rtc_addr & 0x7f) {
-				case 0x20: nx.rtc_val = nx.rtc_time >> 24; break;
-				case 0x21: nx.rtc_val = nx.rtc_time >> 16; break;
-				case 0x22: nx.rtc_val = nx.rtc_time >> 8; break;
-				case 0x23: nx.rtc_val = nx.rtc_time; break;
-				case 0x24: nx.rtc_val = nx.rtc_alarm >> 24; break;
-				case 0x25: nx.rtc_val = nx.rtc_alarm >> 16; break;
-				case 0x26: nx.rtc_val = nx.rtc_alarm >> 8; break;
-				case 0x27: nx.rtc_val = nx.rtc_alarm; break;
-				case 0x30: nx.rtc_val = (nx.rtc_stat & 0x3f) | 0x80; break;
-				case 0x31: nx.rtc_val = nx.rtc_ctl & ~0x4d; break;
-				default: nx.rtc_val = 0;
-				}
-			} else
-				nx.rtc_val = *rtcram(nx.rtc_addr);
-		}
-		if (nx.rtc_addr & 0x80)
-			nx.rtc_val = nx.rtc_val << 1 | (bit ? 1 : 0);
-		else
-			bit = nx.rtc_val & (1 << (16 - nx.rtc_phase)) ? 1 : 0;
-		if (nx.rtc_phase == 16) {
-			if (nx.rtc_addr & 0x80) {
-				if (!(nx.rtc_addr & 0x20)) {
-					if (*rtcram(nx.rtc_addr) != nx.rtc_val) {
-						*rtcram(nx.rtc_addr) = nx.rtc_val;
-						nx.st.nvseq++;
-					}
-				} else
-					switch (nx.rtc_addr & 0x7f) {
-					case 0x20: nx.rtc_time = (nx.rtc_time & 0x00ffffffUL) | ((unsigned long)nx.rtc_val << 24); break;
-					case 0x21: nx.rtc_time = (nx.rtc_time & 0xff00ffffUL) | ((unsigned long)nx.rtc_val << 16); break;
-					case 0x22: nx.rtc_time = (nx.rtc_time & 0xffff00ffUL) | ((unsigned long)nx.rtc_val << 8); break;
-					case 0x23: nx.rtc_time = (nx.rtc_time & 0xffffff00UL) | nx.rtc_val; break;
-					case 0x31:
-						nx.rtc_ctl = nx.rtc_val;
-						if (nx.rtc_val & 4)
-							nx.rtc_stat &= ~0x10;
-						if (nx.rtc_val & 8)
-							nx.rtc_stat &= ~2;
-						if (nx.rtc_val & 1)
-							nx.rtc_stat &= ~1;
-						break;
-					}
-			}
-			nx.rtc_addr = nx.rtc_addr == 0x7f ? 0 : nx.rtc_addr == 0xff ? 0x80 : nx.rtc_addr + 1;
-			nx.rtc_phase -= 8;
-		}
-	}
-	return bit;
-}
-
-static void
-rtcreset()
-{
-	nx.rtc_phase = 0;
-	nx.rtc_addr = nx.rtc_val = 0;
-	nx.rtc_data = 0;
-}
-
-/* ---- byte registers ---- */
-
-static int
-rdb(o)
-	unsigned long o;
-{
-	unsigned long d;
-	int v;
-
-	switch (o >> 8) {
-	case 0xd0:
-		if ((o & 3) == 2)
-			return (nx.scr2[2] & ~4) | (nx.rtc_data ? 4 : 0);
-		return nx.scr2[o & 3];
-	case 0x160:
-		switch (o & 15) {
-		case 0: case 1:
-			d = nx.hc_latch;
-			if (nx.hc_csr & 0x80 && nx.hc_latch) {
-				d = nx_us() - nx.hc_due;
-				d = (long)d >= 0 ? 0 : -d;
-				if (d > nx.hc_latch)
-					d = nx.hc_latch;
-			}
-			return o & 1 ? d & 0xff : d >> 8 & 0xff;
-		case 4:
-			v = nx.hc_csr;
-			nx_clrint(INT_TIMER);
-			return v;
-		}
-		return 0;
-	}
-	return 0;
-}
-
-static void
-wrb(o, v)
-	unsigned long o;
-	int v;
-{
-	int ch;
-
-	v &= 0xff;
-	switch (o >> 8) {
-	case 0xd0:
-		ch = nx.scr2[o & 3] ^ v;
-		nx.scr2[o & 3] = v;
-		switch (o & 3) {
-		case 0:
-			if (ch & 1) {
-				if (v & 1) nx_setint(INT_SOFT1); else nx_clrint(INT_SOFT1);
-			}
-			if (ch & 2) {
-				if (v & 2) nx_setint(INT_SOFT2); else nx_clrint(INT_SOFT2);
-			}
-			break;
-		case 2:
-			if (v & 1) {
-				if (ch & 1) {
-					nx.rtc_time = nx.rtc_ctl & 0x80 ? nx_us() / 1000000UL : nx.rtc_time;
-					nx.rtc_phase = 0;
-				}
-				if (ch & 2 && !(v & 2))
-					nx.rtc_data = rtcstep(v & 4);
-			} else if (ch & 1)
-				rtcreset();
-			break;
-		}
-		return;
-	case 0x160:
-		switch (o & 15) {
-		case 0: nx.hc_latch = (nx.hc_latch & 0xff) | (v << 8); break;
-		case 1: nx.hc_latch = (nx.hc_latch & 0xff00) | v; break;
-		case 4:
-			ch = nx.hc_csr ^ v;
-			nx.hc_csr = v & ~0x40;
-			if (v & 0xc0 && (v & 0x40 || ch & 0x80))
-				nx.hc_due = nx_us() + nx.hc_latch;
-			nx_clrint(INT_TIMER);
-			break;
-		}
-		return;
-	}
-}
-
-static int
-islong(w)
-	unsigned long w;
-{
-	return w == 0x7000 || w == 0x7800 || w == 0xc000 || w == 0xc800 || w == 0x1a000 || w == 0x1f000 || w == 0x1f004;
-}
-
-static unsigned long
-rdw(w)
-	unsigned long w;
-{
-	unsigned long v;
-
-	switch (w) {
-	case 0x7000: return nx.stat;
-	case 0x7800: return nx.mask & ~ZEROBITS;
-	case 0xc000: case 0xc800: return SCR1;
-	case 0x1a000:
-		v = (nx_us() - nx.evoff) & 0xfffff;
-		if ((long)(v - nx.evlast) <= 0)
-			v = nx.evlast + 1;
-		nx.evlast = v;
-		return v & 0xfffff;
-	}
-	return 0;
-}
-
-static void
-wrl(w, v)
-	unsigned long w, v;
-{
-	switch (w) {
-	case 0x7800:
-		nx.mask = v | ZEROBITS;
-		return;
-	case 0x1a000:
-		nx.evoff = nx_us();
-		nx.evlast = 0;
-		return;
-	case 0x1f000:
-		nx.st.monexit = v | 0x80000000UL;
-		psignal(nx.proc, SIGUSR1);
-		return;
-	case 0x1f004:
-		psignal(nx.proc, SIGPWR);
-		return;
-	}
-}
-
-/* the register at a, sz bytes; 0 done */
-int
-nx_read(a, sz, vp)
-	unsigned long a, *vp;
-	int sz;
-{
-	unsigned long v = 0, w, o = a & 0x1ffff;
-	int i, s = nx_splhi();
-
-	nx.st.io++;
-	if ((a & 0xfffe0000UL) == NX_IO || (a & 0xfffe0000UL) == 0x02100000UL) {
-		w = o & ~3UL;
-		if (islong(w)) {
-			v = rdw(w);
-			if (sz == 2)
-				v = v >> (16 - 8 * (o & 2)) & 0xffff;
-			else if (sz == 1)
-				v = v >> (24 - 8 * (o & 3)) & 0xff;
-		} else
-			for (i = 0; i < sz; i++)
-				v = v << 8 | rdb(o + i);
-	} else if ((a & 0xfffffffcUL) == 0x02200000UL && (a & 3) + sz <= 4) {
-		/* the turbo's mirror of the machine id */
-		v = TMC_SCR1 >> (32 - 8 * ((a & 3) + sz));
-		if (sz < 4)
-			v &= (1UL << 8 * sz) - 1;
-	} else if ((a & 0xfffffff8UL) == 0x02200088UL && (a & 3) + sz <= 4) {
-		/* the screen's size, which the kernel's console reads */
-		v = (a & 4 ? TMC_VHIGH : TMC_VROW) >> (32 - 8 * ((a & 3) + sz)) & 0xffffffffUL;
-		if (sz < 4)
-			v &= (1UL << 8 * sz) - 1;
-	}
-	if (nx.flags & NXF_CENSUS)
-		census(a, sz, 0, v);
-	nx_splx(s);
-	*vp = v;
-	return 0;
-}
-
-int
-nx_write(a, sz, v)
-	unsigned long a, v;
-	int sz;
-{
-	unsigned long o = a & 0x1ffff;
-	int i, s = nx_splhi();
-
-	nx.st.io++;
-	if ((a & 0xfffe0000UL) == NX_IO || (a & 0xfffe0000UL) == 0x02100000UL) {
-		if (sz == 4 && islong(o & ~3UL) && !(o & 3))
-			wrl(o, v);
-		else
-			for (i = 0; i < sz; i++)
-				wrb(o + i, (int)(v >> 8 * (sz - 1 - i)) & 0xff);
-	}
-	if (nx.flags & NXF_CENSUS)
-		census(a, sz, 1, v);
-	nx_kick();
-	nx_splx(s);
-	return 0;
-}
-
-/* power-on state; NVRAM and the census stay */
-void
-nx_reset()
-{
-	nx.stat = 0;
-	nx.mask = ZEROBITS;
-	bzero((caddr_t)nx.scr2, sizeof nx.scr2);
-	nx.scr2[2] = 0x10;
-	nx.scr2[3] = 0x80;
-	nx.hc_csr = 0;
-	nx.hc_latch = 0;
-	nx.evoff = nx_us();
-	nx.evlast = 0;
-	rtcreset();
-	nx.rtc_ctl = 0x80;
-	nx.rtc_stat = 0;
-	nx.rtc_time = nx_us() / 1000000UL;
-	nx.rtc_alarm = 0;
+	c->count = 1;
+	return 1;
 }

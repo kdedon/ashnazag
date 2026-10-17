@@ -39,9 +39,12 @@ int hf_open();
 void hf_serve();
 
 #define L(a) (*(volatile unsigned long *)(a))
-#define WIDTH 1120
-#define HEIGHT 832
-#define ROWBYTES 280
+static unsigned long width, height, rowbytes;	/* the guest's screen: the host's, 2 bits per pixel */
+static unsigned long shownw, shownh;	/* the part of it the host screen shows */
+
+/* the kernel's console window, 100 columns by 48 rows framed, must fit */
+#define MIN_WIDTH 832
+#define MIN_HEIGHT 624
 static unsigned long ramsize;	/* the largest of 32, 16, 8 MB that free memory holds */
 
 static struct nh_display display;
@@ -56,37 +59,52 @@ scale(row, vram, line)
 	int row;
 	unsigned char *vram, *line;
 {
-	unsigned char *s = vram + row * ROWBYTES;
-	int x;
+	unsigned char *s = vram + row * rowbytes;
+	unsigned long x;
 
-	for (x = 0; x < WIDTH; x++)
+	for (x = 0; x < shownw; x++)
 		line[x] = 255 - 85 * (s[x >> 2] >> (6 - 2 * (x & 3)) & 3);
 }
 
-/* the changed rows of the 1120x832 screen, 2 bits to 8, centred or clipped */
+/* the changed rows of the screen, 2 bits to 8 */
 static void
 present(vram, shown)
 	unsigned char *vram, *shown;
 {
-	static unsigned char line[WIDTH];
+	static unsigned char line[4096];
 	unsigned char *fb = (unsigned char *)display.mapping + display.info.fi_offset;
-	unsigned int w = WIDTH, h = HEIGHT, x0 = 0, y0 = 0, y, rb = display.info.fi_rowbytes;
+	unsigned long y, rb = display.info.fi_rowbytes;
 
-	if (display.info.fi_width > WIDTH)
-		x0 = (display.info.fi_width - WIDTH) / 2;
-	else
-		w = display.info.fi_width;
-	if (display.info.fi_height > HEIGHT)
-		y0 = (display.info.fi_height - HEIGHT) / 2;
-	else
-		h = display.info.fi_height;
-	for (y = 0; y < h; y++) {
-		if (!memcmp(shown + y * ROWBYTES, vram + y * ROWBYTES, ROWBYTES))
+	for (y = 0; y < shownh; y++) {
+		if (!memcmp(shown + y * rowbytes, vram + y * rowbytes, rowbytes))
 			continue;
-		memcpy(shown + y * ROWBYTES, vram + y * ROWBYTES, ROWBYTES);
-		scale(y, vram, line);
-		memcpy(fb + (y0 + y) * rb + x0, line, w);
+		memcpy(shown + y * rowbytes, vram + y * rowbytes, rowbytes);
+		scale((int)y, vram, line);
+		memcpy(fb + y * rb, line, shownw);
 	}
+}
+
+/* the host screen's size, the guest's within its video memory */
+static int
+screen()
+{
+	struct fbinfo fi;
+	int fd = open("/dev/fb0", O_RDWR);
+
+	if (fd < 0 || ioctl(fd, FBIOGINFO, &fi) < 0) {
+		if (fd >= 0)
+			close(fd);
+		return -1;
+	}
+	close(fd);
+	width = (fi.fi_width > 4080 ? 4080 : fi.fi_width < MIN_WIDTH ? MIN_WIDTH : fi.fi_width) & ~15UL;
+	rowbytes = width / 4;
+	height = fi.fi_height > 4095 ? 4095 : fi.fi_height < MIN_HEIGHT ? MIN_HEIGHT : fi.fi_height;
+	if (height > NX_VRAM_SIZE / rowbytes)
+		height = NX_VRAM_SIZE / rowbytes;
+	shownw = width < fi.fi_width ? width : fi.fi_width;
+	shownh = height < fi.fi_height ? height : fi.fi_height;
+	return 0;
 }
 
 static void
@@ -125,17 +143,61 @@ census(info)
 	    info->ticks, info->ints, info->io, info->faults, info->level, info->stat, info->mask);
 }
 
+/*
+ * Host key codes (ADB, Amiga, Atari) to US ASCII for the console; 1 is
+ * Shift, 2 Control.
+ */
+static char *keymap[] = {
+	"asdfhgzxcv\\bqweryt123465=97-80]o"
+	"u[ip\015lj'k;\\,/nm.\011 `\177\015\033\002\000\001\000\000\000\000\000\000\000"
+	"\000.\000*\000+\000\000\000\000\000/\015\000-\000\000=01234567\00089\000\000\000"
+	"\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\177\000\000\000\000\000\001\000\002\000\000",
+	"`1234567890-=\\\0000qwertyuiop[]\000123"
+	"asdfghjkl;'\000\000456\\zxcvbnm,./\000.789"
+	" \177\011\015\015\033\177\000\000\000-\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000/*+\000"
+	"\001\001\000\002\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000",
+	"\000\0331234567890-=\177\011qwertyuiop[]\015\002as"
+	"dfghjkl;'`\001\\zxcvbnm,./\001\000\000 \000\000\000\000\000\000"
+	"\000\000\000\000\000\000\000\000\000\000-\000\000\000+\000\000\000\000\177\000\000\000\000\000\000\000\000\000\000\000\000"
+	"\000\000\000\000\000/*7894561230.\015\000\000\000\000\000\000\000\000\000\000\000\000\000",
+};
+
+/* a key going down: its character into the guest's console ring */
+static void
+typed(map, code, mods)
+	char *map;
+	int code, mods;
+{
+	static char *plain = "1234567890-=[]\\;',./`", *shifted = "!@#$%^&*()_+{}|:\"<>?~";
+	struct hf_keys *k = (struct hf_keys *)(NX_PHYS + HF_KEYS);
+	char *p;
+	int c;
+
+	if (code >= 128 || ((c = map[code]) < ' ' && c != '\r' && c != '\t' && c != 033))
+		return;
+	if (mods & 1 && c >= 'a' && c <= 'z')
+		c -= 32;
+	else if (mods & 1 && (p = strchr(plain, c)) != 0)
+		c = shifted[p - plain];
+	if (mods & 2 && (c & 0x5f) >= '@' && (c & 0x5f) <= '_')
+		c &= 0x1f;
+	if (k->head - k->tail < sizeof k->buf)
+		k->buf[k->head++ & 255] = c;
+}
+
 /* the child: the screen out, keys and mouse in, NVRAM kept, until the machine ends */
 static int
 host(root)
 	char *root;
 {
-	static unsigned char shown[HEIGHT * ROWBYTES];
+	static unsigned char shown[NX_VRAM_SIZE];
 	static struct nx_info info;
 	struct fbcmap colors;
 	unsigned short grey[256];
 	struct pollfd p;
 	struct inev ev;
+	struct evinfo ei;
+	char *map;
 	unsigned long seq = 0, shownc = 0;
 	unsigned char *vram = (unsigned char *)NX_VRAM;
 	int i, n, mods = 0, loops = 0, dump = getenv("NEXT_CENSUS") != 0;
@@ -153,6 +215,9 @@ host(root)
 	ioctl(display.framebuffer, FBIOPUTCMAP, &colors);
 	memset(display.mapping, 255, display.info.fi_size);
 	memset(shown, 0, sizeof shown);
+	if (ioctl(display.keyboard, EVIOCGINFO, &ei) < 0)
+		ei.ei_kset = EVK_ADB;
+	map = keymap[ei.ei_kset == EVK_AMIGA ? 1 : ei.ei_kset == EVK_IKBD ? 2 : 0];
 	while (getppid() == machine) {
 		p.fd = display.keyboard;
 		p.events = POLLIN;
@@ -162,11 +227,15 @@ host(root)
 			if (ev.ie_type == IE_DROP)
 				mods = 0;
 			else if (ev.ie_type == IE_KEY && ev.ie_code == KEY_COMMAND)
-				mods = ev.ie_value != 0;
-			else if (ev.ie_type == IE_KEY && ev.ie_code == 0x0c && mods && ev.ie_value) {
+				mods = ev.ie_value != 0 ? mods | 4 : mods & ~4;
+			else if (ev.ie_type == IE_KEY && ev.ie_code == 0x0c && mods & 4 && ev.ie_value) {
 				kill(machine, SIGTERM);
 				return 0;
-			}
+			} else if (ev.ie_type == IE_KEY && ev.ie_code < 128 &&
+			    (i = map[ev.ie_code]) > 0 && i < 3)
+				mods = ev.ie_value != 0 ? mods | i : mods & ~i;
+			else if (ev.ie_type == IE_KEY && ev.ie_value)
+				typed(map, ev.ie_code, mods);
 		}
 		if (n < 0 && errno != EAGAIN && errno != EINTR)
 			break;
@@ -204,7 +273,9 @@ conflicts()
 		if (ioctl(fd, PIOCMAP, maps) == 0) {
 			result = 0;
 			for (i = 0; i < n; i++)
-				if ((unsigned long)maps[i].pr_vaddr < NX_PHYS + NX_LIMIT) {
+				if ((unsigned long)maps[i].pr_vaddr < NX_TOP ||
+				    (unsigned long)maps[i].pr_vaddr + maps[i].pr_size > NX_PHYS &&
+				    (unsigned long)maps[i].pr_vaddr < NX_PHYS + NX_LIMIT) {
 					errno = EBUSY;
 					result = -1;
 				}
@@ -251,6 +322,10 @@ twice(a, len, prot, flags, fd, off)
 	    mmap((void *)(NX_PHYS + a), len, prot, flags | MAP_FIXED, fd, off) == (void *)-1 ? -1 : 0;
 }
 
+static struct {
+	unsigned long a, n;
+} windows[] = NX_WINDOWS;
+
 static int
 memory(root, rom)
 	char *root, *rom;
@@ -258,8 +333,8 @@ memory(root, rom)
 	char path[1100];
 	struct stat st;
 	struct rlimit rl;
-	unsigned long size;
-	int fd, zero;
+	unsigned long size, off;
+	int fd, zero, i;
 
 	if ((zero = open("/dev/zero", O_RDWR)) < 0)
 		return -1;
@@ -282,9 +357,9 @@ memory(root, rom)
 		rl.rlim_cur = rl.rlim_max;
 		setrlimit(RLIMIT_VMEM, &rl);
 	}
-	/* the host filesystem's region follows the RAM in the object */
+	/* the host filesystem's region and the I/O windows follow the RAM in the object */
 	for (ramsize = 0x2000000UL; ramsize >= 0x800000UL; ramsize >>= 1) {
-		size = ramsize + HF_SIZE;
+		size = ramsize + HF_SIZE + NX_WINSIZE;
 		if (ioctl(bridge, NX_RAMNEW, &size) == 0 &&
 		    twice(NX_RAM, ramsize, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_SHARED, bridge, (off_t)0) == 0)
 			break;
@@ -294,6 +369,11 @@ memory(root, rom)
 	if (ramsize < 0x800000UL)
 		return -1;
 	close(zero);
+	if (twice(HF_BASE, HF_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_SHARED, bridge, (off_t)ramsize) < 0)
+		return -1;
+	for (i = 0, off = ramsize + HF_SIZE; i < sizeof windows / sizeof windows[0]; off += windows[i++].n)
+		if (twice(windows[i].a, windows[i].n, PROT_READ | PROT_WRITE, MAP_SHARED, bridge, (off_t)off) < 0)
+			return -1;
 	sprintf(path, "%s/vram", root);
 	if ((fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0600)) < 0 ||
 	    ftruncate(fd, (off_t)NX_VRAM_SIZE) < 0 ||
@@ -312,6 +392,9 @@ memory(root, rom)
 #define BANKTOP 0x2000UL	/* the kernel keeps its message ring just above a bank's end */
 
 static unsigned long adbinit;	/* the desktop-bus driver's start routine */
+static unsigned long kmsend;	/* the keyboard unit's command sender */
+static unsigned long kmpaint;	/* the console's character painter */
+static unsigned long kminput, timeout, hz;	/* the console's input, the callout, its rate */
 static unsigned long msgp;		/* address of the kernel's pointer to its message ring */
 static unsigned long msgdone;
 
@@ -336,6 +419,41 @@ static struct ksym {
 #define K_VFSEND 9
 #define K_SETCONF 10
 #define K_ROOTFS 11
+
+/* the kernel's routines that drive the board, and the variables they use, found by name */
+static struct ksym bsyms[] = {
+	{ "_clock_value" }, { "_kern_timestamp" }, { "_delay" }, { "__set_timer" }, { "_callout_dispatch" },
+	{ "_clock_timer_init" }, { "_install_scanned_intr" }, { "_eventc_latch" }, { "_eventc_l" }, { "_timer_csr" },
+	{ "_intrstat" }, { "_scr2" }, { "_rtc_get" }, { "_rtc_set" }, { "_startrtclock" }, { "_nvram_check" },
+	{ "_nvram_set" }, { "_rtc_power_down" }, { "_mon_reset" }, { "_zsintsetup" }, { "_enintsetup" }, { "ipl6" },
+};
+/* drivers of devices this machine has none of: their probes find nothing */
+static struct ksym absent[] = {
+	{ "_fcdriver" }, { "_scdriver" }, { "_ocdriver" }, { "_npdriver" }, { "_sounddriver" }, { "_dspdriver" },
+	{ "_endriver" },
+};
+#define B_CLOCKVALUE 0
+#define B_TIMESTAMP 1
+#define B_DELAY 2
+#define B_SETTIMER 3
+#define B_CALLOUT 4
+#define B_TIMERINIT 5
+#define B_INSTALL 6
+#define B_LATCH 7
+#define B_EVL 8
+#define B_CSR 9
+#define B_INTRSTAT 10
+#define B_SCR2 11
+#define B_RTCGET 12
+#define B_RTCSET 13
+#define B_RTCSTART 14
+#define B_NVGET 15
+#define B_NVSET 16
+#define B_POWER 17
+#define B_MONRESET 18
+#define B_ZSSETUP 19
+#define B_ENSETUP 20
+#define B_IPL6 21
 
 /* the address of the named symbol in the slice at off, 0 if none */
 static unsigned long
@@ -403,9 +521,20 @@ loadkernel(path)
 			msgp = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16), BE(cmd + 20), "_pmsgbuf");
 			adbinit = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16), BE(cmd + 20),
 			    "_adb_initialize");
+			kmpaint = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16), BE(cmd + 20), "_kmpaint");
+			kmsend = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16), BE(cmd + 20), "_km_send");
+			kminput = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16), BE(cmd + 20), "_km_input");
+			timeout = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16), BE(cmd + 20), "_timeout");
+			hz = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16), BE(cmd + 20), "_hz");
 			for (n = 0; n < sizeof ksyms / sizeof ksyms[0]; n++)
 				ksyms[n].addr = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16),
 				    BE(cmd + 20), ksyms[n].name);
+			for (n = 0; n < sizeof bsyms / sizeof bsyms[0]; n++)
+				bsyms[n].addr = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16),
+				    BE(cmd + 20), bsyms[n].name);
+			for (n = 0; n < sizeof absent / sizeof absent[0]; n++)
+				absent[n].addr = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16),
+				    BE(cmd + 20), absent[n].name);
 		} else if (BE(cmd) == 5)
 			entry = BE(cmd + 12 + 4 * BE(cmd + 12));	/* the last word of the state: pc */
 		if (BE(cmd + 4) < 8)
@@ -419,11 +548,15 @@ loadkernel(path)
  * The boot program's call frame, as the kernel reads it from its entry
  * stack: [1] the monitor globals, [2] boot flags, [4] device name, [5]
  * argument string, [7] slot address base, [9] memory banks, [10] their
- * (start, end) list, [11] hardware address, [12] 64 bytes of boot data.
+ * (start, end) list, [11] hardware address, [12] the boot file's name
+ * (64 bytes), which a "$BOOTFILE" symbolic link stands for.
  */
 static unsigned long *
-bootframe()
+bootframe(kernel)
+	char *kernel;
 {
+	char *name = strrchr(kernel, '/') ? strrchr(kernel, '/') + 1 : kernel;
+
 	unsigned long *f = (unsigned long *)ARGS;
 	unsigned char *b = (unsigned char *)ARGS + 0x100;
 
@@ -437,6 +570,7 @@ bootframe()
 	f[10] = (unsigned long)b + 32;
 	f[11] = (unsigned long)b + 48;
 	f[12] = (unsigned long)b + 64;
+	strncpy((char *)b + 64, name, 63);
 	((unsigned long *)(b + 32))[0] = NX_RAM;
 	((unsigned long *)(b + 32))[1] = NX_RAM + ramsize - BANKTOP;
 	return f;
@@ -459,12 +593,30 @@ carrier(sig)
 #define MSGMAGIC 0x63061UL
 #define MSGSIZE 4084UL
 
+#define KMSTUB (HF_BASE + 0x6200UL)
+#define KMHEAD (HF_BASE + 0x6ffcUL)	/* the ring ends where the keys start */
+#define KMRING (KMHEAD + 4)
+#define KMSIZE 0x800UL
+static unsigned long kmdone;
+
 static void
 console()
 {
 	unsigned char *ring;
 	unsigned long end;
 
+	/* once the screen console runs, it has all the text */
+	if ((end = kmpaint ? L(NX_PHYS + KMHEAD) : 0) != 0 || kmdone) {
+		ring = (unsigned char *)(NX_PHYS + KMRING);
+		if (end < kmdone) {
+			write(1, ring + kmdone, KMSIZE - kmdone);
+			kmdone = 0;
+		}
+		if (end > kmdone)
+			write(1, ring + kmdone, end - kmdone);
+		kmdone = end;
+		return;
+	}
 	if (!msgp || (ring = (unsigned char *)L(NX_PHYS + msgp)) == 0 ||
 	    (unsigned long)ring < NX_RAM || (unsigned long)ring + 12 + MSGSIZE > NX_RAM + ramsize)
 		return;
@@ -533,13 +685,22 @@ trap(sig, si, uc)
 
 	console();
 	/* a fault of the guest that could not be sent to its own handler */
-	if ((unsigned long)uc->uc_mcontext.gregs[R_PC] < NX_LIMIT)
+	if ((unsigned long)uc->uc_mcontext.gregs[R_PC] < NX_TOP)
 		sprintf(line, "next: double fault at %lx pc %lx sp %lx\n", (unsigned long)si->si_addr,
 		    (unsigned long)uc->uc_mcontext.gregs[R_PC], (unsigned long)uc->uc_mcontext.gregs[R_SP]);
 	else
 		sprintf(line, "next: signal %d addr %lx pc %lx sp %lx\n", sig, (unsigned long)si->si_addr,
 		    (unsigned long)uc->uc_mcontext.gregs[R_PC], (unsigned long)uc->uc_mcontext.gregs[R_SP]);
 	write(2, line, strlen(line));
+	{
+		unsigned long *sp = (unsigned long *)(uc->uc_mcontext.gregs[R_SP] & ~3UL) - 8;
+		int i;
+
+		for (i = 0; i < 32 && (unsigned long)sp < NX_TOP; i += 4, sp += 4) {
+			sprintf(line, "next: stack %lx: %08lx %08lx %08lx %08lx\n", (unsigned long)sp, sp[0], sp[1], sp[2], sp[3]);
+			write(2, line, strlen(line));
+		}
+	}
 	_exit(1);
 }
 
@@ -553,7 +714,7 @@ trap(sig, si, uc)
 struct hctx {
 	long (*kalloc)(), (*vm_info_init)(), (*uiomove)(), (*vfs_add)(), (*vfs_unlock)(), (*bcopy)(), (*specvp)();
 	unsigned long *active_u;
-	unsigned long doorbell;
+	long (*hcall)();
 	unsigned long vfsops[8], vnodeops[36];
 };
 
@@ -562,6 +723,7 @@ hostfs(folder)
 	char *folder;
 {
 	struct hctx *c = (struct hctx *)HF_CTX;
+	struct hf_keys *k;
 	unsigned long e, *sw;
 	unsigned short *stub;
 	int i;
@@ -569,8 +731,6 @@ hostfs(folder)
 	for (i = 0; i < sizeof ksyms / sizeof ksyms[0]; i++)
 		if (!ksyms[i].addr)
 			return -1;
-	if (twice(HF_BASE, HF_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_SHARED, bridge, (off_t)ramsize) < 0)
-		return -1;
 	if (HF_CODE - HF_BASE + hfs_blob_len > HF_SIZE || hf_open(folder) < 0)
 		return -1;
 	memcpy((void *)HF_CODE, hfs_blob, hfs_blob_len);
@@ -582,7 +742,13 @@ hostfs(folder)
 	c->bcopy = (long (*)())ksyms[K_BCOPY].addr;
 	c->specvp = (long (*)())ksyms[K_SPECVP].addr;
 	c->active_u = (unsigned long *)ksyms[K_ACTIVEU].addr;
-	c->doorbell = NX_DOORBELL + 4;
+	c->hcall = (long (*)())HF_HCALL;
+	if (kminput && timeout && hz) {
+		k = (struct hf_keys *)HF_KEYS;
+		k->input = (long (*)())kminput;
+		k->timeout = (long (*)())timeout;
+		k->ticks = L(hz) / 20 ? L(hz) / 20 : 1;
+	}
 	e = HF_CODE + hfs_entry;
 	((long (*)())e)();
 	/*
@@ -611,6 +777,285 @@ hostfs(folder)
 	return -1;
 }
 
+/*
+ * Each character the console paints also goes to a ring the host reads:
+ * the painter's frame setup (link, movem) moves into a stub that stores
+ * the character first.  The head moves by compare-and-swap: a painter
+ * that interrupts another (key echo) must not reuse its slot.
+ */
+static void
+kmhook()
+{
+	unsigned short *k = (unsigned short *)kmpaint, *c = (unsigned short *)KMSTUB;
+	static unsigned short code[] = {
+		0x207c, 0, 0,			/* movea.l #KMHEAD,a0 */
+		0x227c, 0, 0,			/* movea.l #KMRING,a1 */
+		0x2010,				/* 1: move.l (a0),d0 */
+		0x13af, 0x0007, 0x0800,		/* move.b 7(sp),(a1,d0.l) */
+		0x2200,				/* move.l d0,d1 */
+		0x5281,				/* addq.l #1,d1 */
+		0x0281, 0, KMSIZE - 1,		/* andi.l #KMSIZE-1,d1 */
+		0x0ed0, 0x0040,			/* cas.l d0,d1,(a0) */
+		0x66e8,				/* bne.s 1b */
+	};
+	int n = sizeof code / sizeof code[0];
+
+	if (kmpaint < NX_RAM || kmpaint >= NX_RAM + ramsize || k[0] != 0x4e56 || k[2] != 0x48e7)
+		return;
+	L(KMHEAD) = 0;
+	memcpy(c, code, sizeof code);
+	c[1] = KMHEAD >> 16;
+	c[2] = (unsigned short)KMHEAD;
+	c[4] = KMRING >> 16;
+	c[5] = (unsigned short)KMRING;
+	memcpy(c + n, k, 8);
+	c[n + 4] = 0x4ef9;			/* jmp kmpaint + 8 */
+	c[n + 5] = (kmpaint + 8) >> 16;
+	c[n + 6] = (unsigned short)(kmpaint + 8);
+	k[0] = 0x4ef9;				/* jmp KMSTUB */
+	k[1] = KMSTUB >> 16;
+	k[2] = (unsigned short)KMSTUB;
+}
+
+/*
+ * The board's timer, event counter, clock chip and software interrupts
+ * are reached only through the kernel's own routines; in the loaded copy
+ * those become host calls.  Each is found by name and checked for the
+ * code it expects; one that does not match stays as it is.
+ *
+ *	routine entry:	moveq #service,d0; jmp HF_HCALL+4
+ *	inline access:	jsr HF_HSTUB+8*service (+ nops)
+ *	HF_HCALL:	move.l 4(sp),d0; illegal; rts
+ *	HF_HSTUB:	moveq #0,d0; rts (a probe that finds nothing)
+ *
+ * Devices the machine lacks (disks, floppy, printer, sound, ethernet, the
+ * serial and keyboard units) are absent: their drivers' probes and
+ * interrupt setup return at once, so nothing touches their registers.
+ */
+static int
+inkernel(a)
+	unsigned long a;
+{
+	return a >= NX_RAM && a < NX_RAM + ramsize;
+}
+
+/* the first n words w at or after p, within max words; 0 if none */
+static unsigned short *
+find(p, max, w, n)
+	unsigned short *p, *w;
+	int max, n;
+{
+	int i;
+
+	for (; max-- > 0; p++) {
+		for (i = 0; i < n && p[i] == w[i]; i++)
+			;
+		if (i == n)
+			return p;
+	}
+	return 0;
+}
+
+static void
+jsrstub(p, svc)
+	unsigned short *p;
+	int svc;
+{
+	unsigned long a = HF_HSTUB + 8 * svc;
+
+	p[0] = 0x4eb9;
+	p[1] = a >> 16;
+	p[2] = (unsigned short)a;
+}
+
+/* the routine at a, which starts with a frame link, is the host call svc; 0 for a plain return */
+static int
+hcentry(a, svc)
+	unsigned long a;
+	int svc;
+{
+	unsigned short *p = (unsigned short *)a;
+
+	if (!inkernel(a) || (p[0] != 0x4e56 && p[0] != 0x4856))
+		return -1;
+	if (!svc) {
+		p[0] = 0x4e75;
+		return 0;
+	}
+	p[0] = 0x7000 | svc;
+	p[1] = 0x4ef9;
+	p[2] = (HF_HCALL + 4) >> 16;
+	p[3] = (unsigned short)(HF_HCALL + 4);
+	return 0;
+}
+
+/*
+ * The event counter read in line: four byte loads through the pointers
+ * from the latch's to the 20-bit mask, then d0 and a0 loaded again.  It
+ * becomes a host call leaving the count in d1.
+ */
+static int
+counter(a)
+	unsigned long a;
+{
+	unsigned short at[3], mask[3], *s, *e;
+
+	at[0] = 0x2079;
+	at[1] = bsyms[B_LATCH].addr >> 16;
+	at[2] = (unsigned short)bsyms[B_LATCH].addr;
+	mask[0] = 0x0281;
+	mask[1] = 0x000f;
+	mask[2] = 0xffff;
+	if (!inkernel(a) || !(s = find((unsigned short *)a, 64, at, 3)) || !(e = find(s, 40, mask, 3)) ||
+	    e[3] != 0x2079 || e[6] != 0x2010)
+		return -1;
+	jsrstub(s, HC_US);
+	for (s += 3, e += 3; s < e; s++)
+		*s = 0x4e71;
+	return 0;
+}
+
+/*
+ * The timer's interrupt handler, which clock_timer_init installs (pea
+ * handler; pea level; bsr.l install_scanned_intr), acknowledges by reading
+ * the timer's register and reads the counter.  That becomes: clear the
+ * timer's bit in the status word, then the counter from the host.
+ */
+static int
+timerint()
+{
+	unsigned short *p = (unsigned short *)bsyms[B_TIMERINIT].addr, at[3], evl[4], *s, *e;
+	unsigned long h = 0;
+	int i;
+
+	if (!inkernel((unsigned long)p))
+		return -1;
+	for (i = 0; i < 200 && !h; i++)
+		if (p[i] == 0x4879 && p[i + 3] == 0x4878 && p[i + 5] == 0x61ff &&
+		    (unsigned long)(p + i + 6) + ((unsigned long)p[i + 6] << 16 | p[i + 7]) == bsyms[B_INSTALL].addr)
+			h = (unsigned long)p[i + 1] << 16 | p[i + 2];
+	at[0] = evl[0] = 0x2079;
+	at[1] = bsyms[B_CSR].addr >> 16;
+	at[2] = (unsigned short)bsyms[B_CSR].addr;
+	evl[1] = bsyms[B_EVL].addr >> 16;
+	evl[2] = (unsigned short)bsyms[B_EVL].addr;
+	evl[3] = 0x1010;
+	if (!inkernel(h) || !(s = find((unsigned short *)h, 16, at, 3)) || !(e = find(s, 40, evl, 4)) ||
+	    e - s < 6 || e[4] != 0x2079 || e[7] != 0x2010)
+		return -1;
+	jsrstub(s, HC_TACK);
+	for (s += 3, e += 4; s < e; s++)
+		*s = 0x4e71;
+	return 0;
+}
+
+/* the level 6 dispatcher reads the status word through _intrstat: that read becomes a host call */
+static int
+ipl6()
+{
+	unsigned short at[4], *s;
+	unsigned long a = bsyms[B_IPL6].addr;
+
+	at[0] = 0x2079;				/* movea.l _intrstat,a0; move.l (a0),d0 */
+	at[1] = bsyms[B_INTRSTAT].addr >> 16;
+	at[2] = (unsigned short)bsyms[B_INTRSTAT].addr;
+	at[3] = 0x2010;
+	if (!inkernel(a) || !bsyms[B_INTRSTAT].addr || !(s = find((unsigned short *)a, 64, at, 4)))
+		return -1;
+	jsrstub(s, HC_STAT);
+	s[3] = 0x4e71;
+	return 0;
+}
+
+/* callout_dispatch raises software interrupt 1 or 2 by setting SCR2 bit 24 or 25 (d1) */
+static int
+softint()
+{
+	unsigned short at[3], or[3], *s;
+	unsigned long a = bsyms[B_CALLOUT].addr;
+
+	at[0] = 0x2079;
+	at[1] = bsyms[B_SCR2].addr >> 16;
+	at[2] = (unsigned short)bsyms[B_SCR2].addr;
+	or[0] = 0x2010;				/* move.l (a0),d0; or.l d1,d0; move.l d0,(a0) */
+	or[1] = 0x8081;
+	or[2] = 0x2080;
+	if (!inkernel(a) || !(s = find((unsigned short *)a, 128, at, 3)) || !(s = find(s, 12, or, 3)))
+		return -1;
+	jsrstub(s, HC_SOFT);
+	return 0;
+}
+
+static int
+services()
+{
+	unsigned short *c = (unsigned short *)HF_HCALL;
+	char *bad[30];
+	int i, n = 0;
+
+	c[0] = 0x202f;				/* move.l 4(sp),d0 */
+	c[1] = 4;
+	c[2] = 0x4afc;				/* illegal */
+	c[3] = 0x4e75;				/* rts */
+	c = (unsigned short *)HF_HSTUB;
+	c[0] = 0x7000;				/* moveq #0,d0 */
+	c[1] = 0x4e75;				/* rts */
+	for (i = 1; i < HC_N; i++) {
+		c = (unsigned short *)(HF_HSTUB + 8 * i);
+		c[0] = 0x7000 | i;
+		c[1] = 0x4ef9;
+		c[2] = (HF_HCALL + 4) >> 16;
+		c[3] = (unsigned short)(HF_HCALL + 4);
+	}
+	if (counter(bsyms[B_CLOCKVALUE].addr) < 0)
+		bad[n++] = "clock_value";
+	if (counter(bsyms[B_TIMESTAMP].addr) < 0)
+		bad[n++] = "kern_timestamp";
+	if (timerint() < 0)
+		bad[n++] = "timer interrupt";
+	if (ipl6() < 0)
+		bad[n++] = "ipl6";
+	if (softint() < 0)
+		bad[n++] = "callout_dispatch";
+	if (hcentry(bsyms[B_DELAY].addr, HC_DELAY) < 0)
+		bad[n++] = "delay";
+	if (hcentry(bsyms[B_SETTIMER].addr, HC_TIMER) < 0)
+		bad[n++] = "_set_timer";
+	if (hcentry(bsyms[B_RTCGET].addr, HC_TIME) < 0)
+		bad[n++] = "rtc_get";
+	if (hcentry(bsyms[B_RTCSET].addr, 0) < 0)
+		bad[n++] = "rtc_set";
+	if (hcentry(bsyms[B_RTCSTART].addr, 0) < 0)
+		bad[n++] = "startrtclock";
+	if (hcentry(bsyms[B_NVGET].addr, HC_NVGET) < 0)
+		bad[n++] = "nvram_check";
+	if (hcentry(bsyms[B_NVSET].addr, HC_NVSET) < 0)
+		bad[n++] = "nvram_set";
+	if (hcentry(bsyms[B_POWER].addr, HC_OFF) < 0)
+		bad[n++] = "rtc_power_down";
+	if (hcentry(bsyms[B_MONRESET].addr, 0) < 0)
+		bad[n++] = "mon_reset";
+	if (hcentry(bsyms[B_ZSSETUP].addr, 0) < 0)
+		bad[n++] = "zsintsetup";
+	if (hcentry(bsyms[B_ENSETUP].addr, 0) < 0)
+		bad[n++] = "enintsetup";
+	/* a driver's probe and slave probe are its first two words, its controller setup the seventh */
+	for (i = 0; i < sizeof absent / sizeof absent[0]; i++)
+		if (inkernel(absent[i].addr) && inkernel(L(absent[i].addr))) {
+			L(absent[i].addr) = HF_HSTUB;
+			if (inkernel(L(absent[i].addr + 4)))
+				L(absent[i].addr + 4) = HF_HSTUB;
+			if (inkernel(L(absent[i].addr + 24)))
+				L(absent[i].addr + 24) = HF_HSTUB;
+		} else
+			bad[n++] = absent[i].name;
+	for (i = 0; i < n; i++)
+		fprintf(stderr, "next: not a host call: %s\n", bad[i]);
+	if (!n)
+		fprintf(stderr, "next: the board's routines are host calls\n");
+	return n ? -1 : 0;
+}
+
 /* a host call from the guest: the request in the mailbox */
 static void
 hostcall(sig)
@@ -628,7 +1073,8 @@ hostcall(sig)
 	}
 	if (getenv("NEXT_CENSUS")) {
 		sprintf(line, "next: hfs op %lu node %lu error %ld result %ld %.40s\n", b->op, b->node, b->error, b->result,
-		    b->op == HF_LOOKUP ? b->name : "");
+		    b->op == HF_LOOKUP || b->op == HF_CREATE || b->op == HF_REMOVE || b->op == HF_MKDIR || b->op == HF_RENAME ?
+		    b->name : "");
 		write(2, line, strlen(line));
 	}
 }
@@ -645,7 +1091,7 @@ reset()
 /*
  * The monitor's services as host calls.  The kernel takes the monitor's
  * trap 13 vector (back to the monitor, d0 = command line) from the vector table
- * it finds at entry; it points at a store to the doorbell.
+ * it finds at entry; it points at the host call that ends the machine.
  */
 #define VECTORS (ARGS + MAXBOOT)
 #define STUB (VECTORS + 0x400UL)
@@ -658,10 +1104,12 @@ monitor()
 
 	memset(v, 0, 1024);
 	v[45] = STUB;
-	c[0] = 0x23c0;				/* move.l d0,doorbell */
-	c[1] = NX_DOORBELL >> 16;
-	c[2] = NX_DOORBELL & 0xffff;
-	c[3] = 0x60fe;				/* bra . */
+	c[0] = 0x2200;				/* move.l d0,d1 */
+	c[1] = 0x7000 | HC_MONITOR;		/* moveq #HC_MONITOR,d0 */
+	c[2] = 0x4eb9;				/* jsr HF_HCALL+4 */
+	c[3] = (HF_HCALL + 4) >> 16;
+	c[4] = (unsigned short)(HF_HCALL + 4);
+	c[5] = 0x60fe;				/* bra . */
 }
 
 /* the kernel's entry: its stack is the boot frame */
@@ -724,16 +1172,15 @@ main(argc, argv)
 	} else
 		defaults(ne.nvram);
 	ne.ramsize = ramsize;
+	if (screen() < 0) {
+		perror("next: the host screen");
+		return 1;
+	}
+	ne.width = width;
+	ne.height = height;
 	if (getenv("NEXT_CENSUS"))
 		fprintf(stderr, "next: RAM %lu MB\n", ramsize >> 20);
 	ne.flags = (getenv("NEXT_CENSUS") ? NXF_CENSUS : 0) | NXF_HOST;
-	machine = getpid();
-	if ((child = fork()) < 0) {
-		perror("next: fork");
-		return 1;
-	}
-	if (child == 0)
-		_exit(host(root));
 	memset(&sa, 0, sizeof sa);
 	sa.sa_handler = carrier;
 	sigaction(SIGUSR2, &sa, (struct sigaction *)0);
@@ -754,11 +1201,21 @@ main(argc, argv)
 			fprintf(stderr, "next: host filesystem not installed\n");
 		else {
 			fprintf(stderr, "next: root filesystem installed\n");
+			kmhook();
 			sa.sa_handler = hostcall;
 			sa.sa_flags = SA_ONSTACK;
 			sigaction(SIGPWR, &sa, (struct sigaction *)0);
 		}
+		services();
 	}
+	/* the child shares the host filesystem's region for the keys */
+	machine = getpid();
+	if ((child = fork()) < 0) {
+		perror("next: fork");
+		return 1;
+	}
+	if (child == 0)
+		_exit(host(root));
 	{
 		struct itimerval it;
 
@@ -778,8 +1235,15 @@ main(argc, argv)
 		/* no desktop-bus controller: its driver would wait on it without end */
 		if (adbinit >= NX_RAM && adbinit < NX_RAM + ramsize)
 			*(unsigned short *)adbinit = 0x4e75;	/* rts */
+		/* nor a keyboard unit: its commands time out at once, not after 100000 polls */
+		if (kmsend >= NX_RAM && kmsend < NX_RAM + ramsize && *(unsigned short *)kmsend == 0x4856) {
+			((unsigned short *)kmsend)[0] = 0x203c;	/* move.l #0x40000000,d0 */
+			((unsigned short *)kmsend)[1] = 0x4000;
+			((unsigned short *)kmsend)[2] = 0;
+			((unsigned short *)kmsend)[3] = 0x4e75;	/* rts */
+		}
 		monitor();
-		enter(bootframe(), entry);
+		enter(bootframe(kernel), entry);
 	} else
 		reset();
 	return 1;

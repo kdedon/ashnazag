@@ -231,6 +231,7 @@ struct pi {
 	int	len;		/* bytes consumed */
 	unsigned long fa;	/* address of a data fault, with its SSW (0: none) */
 	int	fssw, fc;	/* the function code of the access */
+	struct guest_proc *ugp;	/* set: memory operands are in the guest's user space */
 };
 
 static int
@@ -345,6 +346,34 @@ eaddr(pi, mode, reg, sz, ap, immp)
 	return -1;
 }
 
+/*
+ * A moves access to the guest's user space from its supervisor: straight
+ * to the guest frame when the user tables map it, else through the user
+ * space loaded for the access.
+ */
+static int
+uaccess(pi, a, b, sz, wr)
+	struct pi *pi;
+	long a;
+	char *b;
+	int sz, wr;
+{
+	struct guest_proc *gp = pi->ugp;
+	caddr_t h = guest_mmu_user(gp, (unsigned long)a, sz, wr);
+	int e = -1;
+
+	if (h)
+		e = wr ? copyout(b, h, sz) : copyin(h, b, sz);
+	if (e) {
+		gp->gp_vsr &= ~SR_S;
+		guest_mmu_space(gp, 0);
+		e = wr ? copyout(b, (caddr_t)a, sz) : copyin((caddr_t)a, b, sz);
+		gp->gp_vsr |= SR_S;
+		guest_mmu_space(gp, SR_S);
+	}
+	return e;
+}
+
 /* read (wr 0) or write an operand of size sz; register forms included */
 static int
 operand(pi, mode, reg, sz, vp, wr, src)
@@ -384,14 +413,14 @@ operand(pi, mode, reg, sz, vp, wr, src)
 			P16(b, *vp);
 		else
 			P8(b, *vp);
-		if (copyout(b, (caddr_t)a, sz)) {
+		if (pi->ugp ? uaccess(pi, a, b, sz, 1) : copyout(b, (caddr_t)a, sz)) {
 			pi->fa = a;
 			pi->fssw = 0x8000 | (sz == 4 ? 0 : sz == 1 ? 0x20 : 0x40) | pi->fc;
 			return -2;
 		}
 		return 0;
 	}
-	if (copyin((caddr_t)a, b, sz)) {
+	if (pi->ugp ? uaccess(pi, a, b, sz, 0) : copyin((caddr_t)a, b, sz)) {
 		pi->fa = a;
 		pi->fssw = 0x8100 | (sz == 4 ? 0 : sz == 1 ? 0x20 : 0x40) | pi->fc;
 		return -2;
@@ -671,7 +700,7 @@ priv1(gp, pi)
 		return 0;
 	}
 	if ((op & 0xff00) == 0x0e00 && (op & 0xc0) != 0xc0) {	/* moves */
-		int sz = 1 << ((op >> 6) & 3), fc, us;
+		int sz = 1 << ((op >> 6) & 3), fc;
 		long *rp;
 
 		if (iword(pi, &ext) || mode < 2)
@@ -680,20 +709,14 @@ priv1(gp, pi)
 		/* a user function code reaches the guest's user space, not the supervisor's */
 		fc = (ext & 0x800 ? gp->gp_vdfc : gp->gp_vsfc) & 7;
 		pi->fc = fc;
-		us = gp->gp_mmu && (gp->gp_vsr & SR_S) && (fc == 1 || fc == 2);
-		if (us) {
-			gp->gp_vsr &= ~SR_S;
-			guest_mmu_space(gp, 0);
-		}
+		if (gp->gp_mmu && (gp->gp_vsr & SR_S) && (fc == 1 || fc == 2))
+			pi->ugp = gp;
 		if (ext & 0x800) {
 			v = *rp;
 			e = operand(pi, mode, reg, sz, &v, 1, 0);
 		} else
 			e = operand(pi, mode, reg, sz, &v, 0, 0);
-		if (us) {
-			gp->gp_vsr |= SR_S;
-			guest_mmu_space(gp, SR_S);
-		}
+		pi->ugp = 0;
 		if (e != 0 || ext & 0x800)
 			return e;
 		if (ext & 0x8000)
@@ -734,6 +757,7 @@ guest_priv(gp, r, v)
 	pi.pc = GR_PC(r);
 	pi.len = 0;
 	pi.fssw = pi.fc = 0;
+	pi.ugp = 0;
 	bcopy(r, save, sizeof save);
 	e = priv1(gp, &pi);
 	if (e == 0)

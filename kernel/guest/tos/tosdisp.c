@@ -66,6 +66,7 @@ static unsigned short px, py;		/* motion posted to the cartridge */
 static unsigned char kdown[128];	/* scan codes held */
 static int hidden;			/* in the background: input is dropped */
 static int planar;			/* bitplanes: only fVDI draws */
+static unsigned char dark[256];		/* 1-bit host: colour index shown black */
 static int pvs;				/* PV_* in use */
 static unsigned long lvbl;		/* the cartridge's VBL count */
 static unsigned long lvg;		/* gvbl() when it last changed */
@@ -326,6 +327,11 @@ palette(tv, g)
 		gr[i] = comp(v >> 4);
 		b[i] = comp(v);
 	}
+	if (fi.fi_depth == 1) {
+		for (i = 0; i < n; i++)
+			dark[i] = 2L * r[i] + 5L * gr[i] + b[i] < 4L * 0x10000;
+		return;
+	}
 	cm.cm_start = 0;
 	cm.cm_count = n;
 	cm.cm_red = r;
@@ -379,10 +385,12 @@ refresh(tv, g, full)
 	int ow = g->w * g->sx / g->step, oh = g->h * g->sy / g->step;
 	int ox = ((int)fi.fi_width - ow) / 2, oy = ((int)fi.fi_height - oh) / 2;
 	unsigned char *src = (unsigned char *)tv->tv_base, *sh = shadow, *d;
-	int y, x, k;
+	int y, x, k, v, bits;
 
 	if (ox < 0)
 		ox = 0;
+	if (fi.fi_depth == 1)
+		ox &= ~7;
 	if (oy < 0)
 		oy = 0;
 	if (tv->tv_base >= ramsize || g->rowb * g->h > ramsize - tv->tv_base)
@@ -402,6 +410,25 @@ refresh(tv, g, full)
 			if (row >= (int)fi.fi_height)
 				break;
 			d = fb + fi.fi_offset + row * fi.fi_rowbytes + ox;
+			if (fi.fi_depth == 1) {
+				d = fb + fi.fi_offset + row * fi.fi_rowbytes + ox / 8;
+				if (g->planes == 1 && g->sx == 1 && g->step == 1 && dark[1] != dark[0]) {
+					for (x = 0; x < ow / 8 && ox + 8 * x < (int)fi.fi_width; x++)
+						d[x] = dark[1] ? src[x] : ~src[x];
+					continue;
+				}
+				for (x = 0, bits = 0; x < ow && ox + x < (int)fi.fi_width; x++) {
+					if (g->step == 2)
+						v = line[2 * x] + line[2 * x + 1] + line2[2 * x] +
+						    line2[2 * x + 1];
+					else
+						v = line[x * g->step / g->sx];
+					bits = bits << 1 | dark[v];
+					if ((x & 7) == 7)
+						d[x / 8] = bits;
+				}
+				continue;
+			}
 			if (g->sx == 1 && g->step == 1)
 				memcpy(d, line, ow < (int)fi.fi_width ? ow : fi.fi_width);
 			else if (g->step == 2)
@@ -643,7 +670,7 @@ disp(fd, verbose, ram)
 		}
 		goto input;
 	}
-	if (fi.fi_depth != 8) {
+	if (fi.fi_depth != 8 && (fi.fi_depth != 1 || fi.fi_layout != FBL_PACKED)) {
 		fprintf(stderr, "starttos: %lu-bit screens are not supported\n", fi.fi_depth);
 		return;
 	}

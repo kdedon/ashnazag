@@ -79,11 +79,14 @@ OpenGL is Mesa 5 in software; on a Voodoo3, direct rendering through its DRI dri
 and its system media as `media`, or give `-x PROGRAM -m MEDIA`; `-e NAME` uses a named
 subdirectory.
 For the Voyage 200, `media` is your Flash dump (AMS 2.09 and 3.10 tested); it boots from
-reset to the AMS desktop, and the archive is kept in `flash.img` beside it. Cmd-Q quits.
+reset to the AMS desktop. Archived variables are files in `archive/` beside it, in TI's
+variable file format (`.v2e`, `.v2p` ...), so TI's link tools can exchange them; the dump is
+never written. Cmd-Q quits.
 
 ## NeXT
 
-`startnext` (status: kernel entry) loads the `mach_kernel` of your OPENSTEP 4.2 CD into
-`~/NeXT/NAME` (`tools/makenext.sh NAME` copies the CD there) and enters it natively. The kernel
-reaches its board probe and stops where it needs drivers and the MMU, which are not there
-yet. With a 128 KB turbo boot ROM named `media` in the folder it runs the ROM instead. Cmd-Q quits.
+`startnext` (status: console login) runs the `mach_kernel` of your OPENSTEP 4.2 CD natively from
+`~/NeXT/NAME` (`tools/makenext.sh NAME` copies the CD there), with that folder as its root. It
+boots to the console's `login:`; keys typed on the host reach the console shell. Its timer,
+clock and NVRAM are host services; there is no window server, disk, sound or network yet.
+Cmd-Q quits.

@@ -2,7 +2,8 @@
  * t_v200: the tiplatform module (registered, loaded, opened), then AMS
  * from the user's Flash dump on SCSI disk 4 (tests/v200/mkvol.sh):
  * boot from reset to the Home screen, 12+34 typed on the host keyboard
- * gives 46, no fault on the way.  The LCD is read from the calculator's
+ * gives 46, OFF blanks the LCD and ON restores it, the archived variable
+ * is a host file that survives a restart, no hardware-page fault on the way.  The LCD is read from the calculator's
  * RAM file; screen dumps of each step go to the display results.
  */
 #include <sys/types.h>
@@ -26,6 +27,7 @@
 #define	MNT	"/v200"
 #define	ROOT	"/tmp/v200"
 #define	LOG	"/tmp/v200.log"
+#define	ARC	ROOT "/archive/a.v2e"
 #define	TOP	20		/* LCD rows hashed: below the clock, above the entry line's cursor */
 #define	BOTTOM	109
 
@@ -135,6 +137,24 @@ filecrc(path)
 static int dev = -1;
 static pid_t pid;		/* the calculator */
 
+extern int getksym();
+
+/* a kernel long through /dev/kmem, -1 if unreadable */
+static long
+getsym(name)
+	char *name;
+{
+	unsigned long a = 0, i;
+	long v;
+	int fd, ok;
+
+	if (getksym(name, &a, &i) < 0 || (fd = open("/dev/kmem", O_RDONLY)) < 0)
+		return -1;
+	ok = lseek(fd, (off_t)a, 0) != -1 && read(fd, (char *)&v, 4) == 4;
+	close(fd);
+	return ok ? v : -1;
+}
+
 static struct ti_info info;
 
 /* the LCD from the RAM file: 1, or 0 if the calculator is not running */
@@ -207,11 +227,87 @@ logtail()
 	close(fd);
 }
 
+/* a TI-92 Plus / Voyage 200 variable file */
+static int
+sig(path)
+	char *path;
+{
+	char buf[8];
+	int fd, ok;
+
+	if ((fd = open(path, O_RDONLY)) < 0)
+		return 0;
+	ok = read(fd, buf, 8) == 8 && memcmp(buf, "**TI92P*", 8) == 0;
+	close(fd);
+	return ok;
+}
+
+/* the calculator on the volume's dump, keeping the archive files of the last run */
+static pid_t
+start()
+{
+	pid_t pid;
+	int fd;
+
+	unlink(LOG);
+	if ((pid = fork()) == 0) {
+		fd = open(LOG, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+		setpgrp();
+		close(0);
+		open("/dev/null", O_RDONLY);
+		dup2(fd, 1);
+		dup2(fd, 2);
+		putenv("NATIVEHOST_ROOT=" ROOT);
+		execl(MNT "/native", "native", MNT "/media", (char *)0);
+		_exit(127);
+	}
+	return pid;
+}
+
+/* the calculator and its display process, gone before the next start */
+static void
+stop(pid)
+	pid_t pid;
+{
+	int i, status;
+
+	kill(-pid, SIGTERM);
+	waitpid(pid, &status, 0);
+	for (i = 0; i < 100 && kill(-pid, 0) == 0; i++)
+		poll((struct pollfd *)0, 0, 100);
+}
+
+static void
+type(keys)
+	char **keys;
+{
+	char req[32];
+
+	for (; *keys; keys++) {
+		sprintf(req, "key %s", *keys);
+		host(req);
+		poll((struct pollfd *)0, 0, 200);
+	}
+}
+
+static char *sum[] = { "ret", "1", "2", "kp_add", "3", "4", "ret", 0 };
+/* 5 STO a, then Archive a */
+static char *store[] = { "5", "apostrophe", "a", "ret",
+	"a", "r", "c", "h", "i", "v", "e", "spc", "a", "ret", 0 };
+/* Clear Home (F1 8), then a */
+static char *recall[] = { "f1", "8", "a", "ret", 0 };
+static char *explore[][3] = {
+	{ "f10", "v200_mode", "esc" }, { "insert", "v200_catalog", "esc" },
+	{ "f2", "v200_f2", "esc" }, { "f9", "v200_apps", 0 },
+	{ "home", "v200_homekey", 0 }, { "end", "v200_off", 0 }, { "f12", "v200_on", 0 },
+	{ 0, 0, 0 }
+};
+
 static void
 calculator()
 {
-	static char *keys[] = { "ret", "1", "2", "kp_add", "3", "4", "ret", 0 };
-	unsigned long image, home, sum;
+	long npriv0, bad0;
+	unsigned long image, home, sum1, kept, recall1, writes;
 	struct stat st;
 	char req[32];
 	int i, k, status, alive;
@@ -231,39 +327,54 @@ calculator()
 	t_info("image", "crc %08lx%s", image, known[k].image ? "" : ", no stored screens");
 	hostopen();
 	mkdir(ROOT, 0700);
-	unlink(ROOT "/flash.img");
-	unlink(LOG);
-	if ((pid = fork()) == 0) {
-		int fd = open(LOG, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-		setpgrp();
-		close(0);
-		open("/dev/null", O_RDONLY);
-		dup2(fd, 1);
-		dup2(fd, 2);
-		putenv("NATIVEHOST_ROOT=" ROOT);
-		execl(MNT "/native", "native", MNT "/media", (char *)0);
-		_exit(127);
-	}
+	unlink(ARC);
+	rmdir(ROOT "/archive");
+	pid = start();
 	home = settle(120);
+	npriv0 = getsym("guest_npriv");
+	bad0 = getsym("guest_nprivbad");
 	shot("v200_home");
+	t_info("first_boot", "flash writes %lu", info.flash);
 	if (t_check("home", home != 0, "LCD never settled") && known[k].image)
 		t_check("home_screen", home == known[k].home, "LCD crc %08lx", home);
 	else if (home)
 		t_info("home_crc", "%08lx", home);
-	if (home && hfd >= 0) {
-		for (i = 0; keys[i]; i++) {
-			sprintf(req, "key %s", keys[i]);
-			host(req);
-			poll((struct pollfd *)0, 0, 200);
-		}
-		sum = settle(60);
-		shot("v200_sum");
-		if (known[k].image)
-			t_check("sum_46", sum == known[k].sum, "LCD crc %08lx", sum);
-		else if (t_check("sum", sum != 0 && sum != home, "LCD crc %08lx", sum))
-			t_info("sum_crc", "%08lx", sum);
-	} else
+	if (!home || hfd < 0) {
+		logtail();
 		t_skip("sum", "no Home screen or no host keyboard");
+		stop(pid);
+		system("/sbin/umount " MNT);
+		return;
+	}
+	type(sum);
+	sum1 = settle(60);
+	shot("v200_sum");
+	if (known[k].image)
+		t_check("sum_46", sum1 == known[k].sum, "LCD crc %08lx", sum1);
+	else if (t_check("sum", sum1 != 0 && sum1 != home, "LCD crc %08lx", sum1))
+		t_info("sum_crc", "%08lx", sum1);
+	type(store);
+	settle(60);
+	shot("v200_archive");
+	type(recall);
+	recall1 = settle(60);
+	shot("v200_recall1");
+	for (i = 0; explore[i][0]; i++) {
+		sprintf(req, "key %s", explore[i][0]);
+		host(req);
+		settle(20);
+		shot(explore[i][1]);
+		t_info(explore[i][1], "flash %lu", info.flash);
+		if (strcmp(explore[i][1], "v200_off") == 0)
+			t_check("off_dark", info.dark != 0, "LCD still on");
+		else if (strcmp(explore[i][1], "v200_on") == 0)
+			t_check("on_lit", info.dark == 0, "LCD still off");
+		if (!explore[i][2])
+			continue;
+		sprintf(req, "key %s", explore[i][2]);
+		host(req);
+		settle(20);
+	}
 	alive = waitpid(pid, &status, WNOHANG) == 0;
 	logtail();
 	memset(&info, 0, sizeof info);
@@ -271,17 +382,34 @@ calculator()
 	ioctl(dev, TI_INFO, &info);
 	t_info("counts", "ticks %lu interrupts %lu io %lu flash %lu", info.ticks, info.ints,
 	    info.io, info.flash);
+	t_check("no_hw_faults", info.io == 0, "%lu hardware-page faults", info.io);
+	t_info("privileged_emulated", "%ld", getsym("guest_npriv") - npriv0);
+	t_check("no_refused_insns", bad0 < 0 || getsym("guest_nprivbad") == bad0,
+	    "%ld refused instructions", getsym("guest_nprivbad") - bad0);
 	t_check("fault_free", alive && info.faults == 0 && info.ints > 0 &&
 	    stat(LOG, &st) == 0 && st.st_size == 0,
 	    "alive %d faults %lu log %ld bytes", alive, info.faults, (long)st.st_size);
-	/* the calculator and its display process, gone before the module unloads */
-	kill(-pid, SIGTERM);
-	waitpid(pid, &status, 0);
-	for (i = 0; i < 100 && kill(-pid, 0) == 0; i++)
-		poll((struct pollfd *)0, 0, 100);
+	stop(pid);
+	t_check("archive_file", stat(ARC, &st) == 0 && st.st_size > 0x58 && sig(ARC), "no %s", ARC);
+
+	/* again from the dump: the archived variable comes back from its file */
+	pid = start();
+	settle(120);
+	writes = info.flash;
+	shot("v200_reboot");
+	t_info("second_boot", "flash writes %lu", writes);
+	type(sum);
+	type(recall);
+	kept = settle(60);
+	shot("v200_recall2");
+	t_check("archive_kept", kept != 0 && kept == recall1, "LCD crc %08lx, before %08lx",
+	    kept, recall1);
+	t_check("no_hw_faults_again", info.io == 0, "%lu hardware-page faults", info.io);
+	stop(pid);
+	t_check("archive_file_again", stat(ARC, &st) == 0, "no %s", ARC);
 	system("/sbin/umount " MNT);
-	/* 4.3 MB the later tests may need */
-	unlink(ROOT "/flash.img");
+	unlink(ARC);
+	rmdir(ROOT "/archive");
 	unlink(ROOT "/ram");
 	rmdir(ROOT);
 	unlink(LOG);
@@ -308,7 +436,7 @@ main()
 	struct mod_mreg reg;
 	int mj = TI_MAJOR, id;
 
-	t_init("v200", 400);
+	t_init("v200", 900);
 	if (access(MD "/tiplatform", 0) < 0 || access("/dev/tiplatform", 0) < 0) {
 		t_skip("module", "no tiplatform module on this root");
 		return t_done();

@@ -113,8 +113,8 @@ if [ -z "$TESTKB" ]; then
 	[ -d "$CPMB/root" ] && TESTKB=$((TESTKB + 128 + 3 * $(du -sk "$CPMB/root" | cut -f1)))
 	[ ! -f "$B/bin/t_gl" ] || TESTKB=$((TESTKB + $(du -sk "$B/bin/t_gl" | cut -f1)))
 	[ ! -f "$W16B/startwin" ] || TESTKB=$((TESTKB + 64 + $(du -sk "$W16B/startwin" | cut -f1)))
-	# t_v200: the 4 MB Flash copy and 256 KB RAM file in /tmp
-	[ ! -f "$V2B/v200.img" ] || TESTKB=$((TESTKB + 4096 + 256 + 64))
+	# t_v200: the 4 MB Flash file, its running copy and the 256 KB RAM file in /tmp
+	[ ! -f "$V2B/v200.img" ] || TESTKB=$((TESTKB + 8192 + 256 + 64))
 	# t_next: the VRAM file and NVRAM in /tmp
 	[ ! -f "$NXB/next.img" ] || TESTKB=$((TESTKB + 256 + 64))
 fi

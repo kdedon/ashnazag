@@ -189,6 +189,7 @@ extern int guest_rommap();		/* (dev, pa, size): the host's ROM in place */
 extern int guest_halt();		/* root's Shut Down from a session */
 extern int guest_mmu_init();		/* (gp, pbase, plimit, lo, hi): the guest may enable its MMU */
 extern int guest_mmu_xlate();		/* (gp, va, rw, &pa): its translation, -1 none */
+extern caddr_t guest_mmu_user();	/* (gp, va, sz, wr): the guest frame of a user-space access, 0 none */
 extern void guest_mmu_stats();		/* (gp, v[5]): fills, faults, space switches, flushes, privileged */
 extern void guest_mmu_free(), guest_mmu_space();
 extern int guest_mmu_creg(), guest_mmu_insn();

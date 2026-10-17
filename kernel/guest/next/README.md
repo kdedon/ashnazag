@@ -1,15 +1,17 @@
 # NeXT
 
-`native` runs the user's OPENSTEP `mach_kernel` (below) or, given a 128 KB NeXT turbo boot ROM, the ROM
-from its reset vector, as native 68k code with the MMU off. The nextguest module supplies the
-CPU-side board only: system and interrupt registers, timers, clock chip and NVRAM, and a 2-bit
-1120x832 display drawn centred on the host's 8-bit screen. Chip and controller models (SCSI, DMA,
-desktop bus, ethernet) are not provided: those devices come as drivers over host calls.
+`native` runs the user's OPENSTEP `mach_kernel` (below) as native 68k code, entered with the MMU off.
+No board register is modelled: the I/O pages the kernel touches are memory holding the ids it
+reads, and its routines for the timer, event counter, clock chip, NVRAM and software interrupts
+are patched in the loaded copy to call host services in the nextguest module. The screen is a
+2-bit 1120x832 display drawn centred on the host's 8-bit screen. Devices (SCSI, DMA, desktop bus,
+ethernet) come as drivers over host calls. Given a 128 KB boot ROM instead, `native` starts it
+from its reset vector; the ROM drives the board directly and stops early.
 
     sh kernel/guest/next/build.sh OUTDIR     # OUTDIR/native
 
 Per environment (`~/NeXT/<env>`): `mach_kernel` or `media` (the ROM image, 128 KB), `nvram` keeps the
-clock chip's settings, `vram` is the screen. RAM is the largest of 32, 16 or 8 MB that
+NVRAM, `vram` is the screen. RAM is the largest of 32, 16 or 8 MB that
 free memory holds. Cmd-Q quits.
 `NEXT_CENSUS=1` prints each register's first access on stderr; `NEXT_PC=1` the guest's PC every 2 s.
 
@@ -22,7 +24,7 @@ frame it reads from its entry stack (monitor globals zeroed, one RAM bank, empty
 string) and enters it with the MMU off; no ROM is needed. The monitor's services are host
 services: the kernel's message ring is copied to this program's output on every timer tick
 (its address comes from the kernel's symbols), its "back to the monitor" trap vector points at
-a store to a doorbell, which ends the run and prints the command line the kernel passed, and
+a host call, which ends the run and prints the command line the kernel passed, and
 the desktop-bus driver's start routine (named in the symbols) is replaced by a return in the
 loaded copy, since no controller answers its reset. Without the ROM monitor a bank's end
 leaves 8 KB for the kernel's message ring. `tools/makenext.sh ENV` copies
@@ -51,13 +53,11 @@ flag at +4, count at +6, operations at +28, vfs at +36, type at +40, rdev at +44
 data at +46. Directories are read as 1024-byte blocks of `ino, reclen, namlen, name`.
 
 The kernel's MMU runs on guestcore's shadow: RAM is one object mapped at its physical address and again
-at `NX_PHYS` above, where the host side reads it once the guest's translation takes the low addresses.
+at `NX_PHYS` above (the host filesystem region and the I/O windows follow it in the object), where the host side reads it once the guest's translation takes the low addresses.
 The host filesystem region sits past bank 0, inside the range the kernel maps one to one.
 
-The host-call doorbell is a long store at `NX_DOORBELL + 4`; the launcher's signal handlers run on
-their own stack, since the guest's stack is virtual. `pagein` and `pageout` of the vnode operations
+A host call is `jsr HF_HCALL` with the service in d0 (`hfswire.h`): an illegal instruction at a fixed
+address the module recognises. The launcher's signal handlers run on their own stack, since the guest's stack is virtual. `pagein` and `pageout` of the vnode operations
 are host reads and writes of one page.
 
-Where it stops: the root mounts from the host folder; the kernel then looks up `/etc/mach_init` and
-`/etc/init`, reads their attributes and gives up with ENOEXEC without reading the file or paging
-it in, and halts.
+Where it stops: the whole tree reaches the console's `login:`; root logs in and runs commands.

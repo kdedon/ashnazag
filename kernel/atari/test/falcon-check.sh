@@ -35,12 +35,16 @@
 # mac6 (an image made with MACENV=1): System 6's Finder desktop; Command-A
 # and Command-O open its windows; the hot key to the console, whose
 # Ctrl-C ends it.
+# CPU=060: a CT60 Falcon (68060, TTRAM MB of FastRAM, default 64) on
+# unix-atari060.elf.
 set -e
 T=$(cd "$(dirname "$0")" && pwd)
 A=$(cd "$T/.." && pwd)
 AUX=$(cd "$A/../.." && pwd)
 OUT=$1 IMG=${2:-$AUX/kernel/build/atari/disk/falcon-disk.img}
 STAGES=${STAGES:-vga rgb}
+CPU=${CPU:-030} CPUOPT=
+[ $CPU = 030 ] || CPUOPT="-t ${TTRAM:-64}"
 [ -n "$OUT" ] || { echo "usage: $0 OUTDIR [IMAGE]" >&2; exit 2; }
 HATARI=${HATARI:-$AUX/ref/hatari/build/src/hatari}
 [ -x "$HATARI" ] || { echo "[SKIP] no Hatari"; exit 0; }
@@ -68,10 +72,10 @@ run() {		# stage monitor
 	# a fresh copy per stage, whose kernel also copies the console to the log
 	cp --sparse=always "$IMG" "$OUT/disk.img"
 	python3 "$A/instboot.py" "$OUT/disk.img" "$B/bootsec.bin" "$B/axbload.bin" \
-		"${KERNEL:-$AUX/kernel/build/unix-atari030.elf}" "root=c?d0s1 nfcons" > /dev/null
+		"${KERNEL:-$AUX/kernel/build/unix-atari$CPU.elf}" "root=c?d0s1 nfcons" > /dev/null
 	# tosloop writes its own
 	[ ! -f "$T/falcon-$1-keys.txt" ] || sed "s|OUT/|$OUT/$1-|g" "$T/falcon-$1-keys.txt" > "$OUT/$1-keys.txt"
-	WAIT=${WAIT:-600} sh "$A/run-hatari.sh" $HOPTS -r "$ROM" -d "$OUT/disk.img" -f 400000 -T ${3:-1500} \
+	WAIT=${WAIT:-600} sh "$A/run-hatari.sh" -c $CPU $CPUOPT $HOPTS -r "$ROM" -d "$OUT/disk.img" -f 400000 -T ${3:-1500} \
 		-o "$OUT/$1-final.png" -l "$OUT/$1.log" -K "$OUT/$1-keys.txt" -- \
 		--natfeats yes --monitor "$2" > "$OUT/$1-run.txt" 2>&1 || true
 	if grep -q 'key script' "$OUT/$1-run.txt"; then echo "[FAIL] $1: key script"; fail=1; fi

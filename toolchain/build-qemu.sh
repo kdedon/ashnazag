@@ -1,5 +1,5 @@
 #!/bin/sh
-# build-qemu.sh -- build qemu-system-m68k 8.2.2 with qemu-patches/ into qemu-local/.
+# build-qemu.sh -- build qemu-system-m68k 11.1.2 with qemu-patches/ into qemu-local/.
 #
 #   sh toolchain/build-qemu.sh [WORK]
 #
@@ -13,8 +13,8 @@ set -e
 TC=$(cd "$(dirname "$0")" && pwd)
 W=${1:-$TC/qemu-build}
 DEST=$TC/qemu-local
-V=8.2.2
-SUM=847346c1b82c1a54b2c38f6edbd85549edeb17430b7d4d3da12620e2962bc4f3
+V=11.1.2
+SUM=731b5681e4bb18be313231579b8efd0296c5b015fa36dc533874b639ba838016
 PIPWHL=pip-24.2-py3-none-any.whl
 PIPSUM=2cd581cf58ab7fcfca4ce8efa6dcacd0de5bf8d0a3eb9ec927e07405f4d9e2a2
 mkdir -p "$W"
@@ -30,13 +30,13 @@ for p in "$TC"/qemu-patches/*.patch; do
 done
 
 # meson and ninja in a venv; pip itself from its wheel (no ensurepip needed)
-if [ ! -x venv/bin/ninja ]; then
+if [ ! -x venv/bin/ninja ] || [ "$(venv/bin/meson --version)" != 1.11.1 ]; then
 	rm -rf venv
 	python3 -m venv --without-pip --system-site-packages venv
 	[ -f $PIPWHL ] || curl -fsSLO https://files.pythonhosted.org/packages/py3/p/pip/$PIPWHL
 	echo "$PIPSUM  $PIPWHL" | sha256sum -c -
 	venv/bin/python $PIPWHL/pip install -q --disable-pip-version-check pip==24.2
-	venv/bin/pip install -q --disable-pip-version-check meson==1.2.3 ninja==1.13.0 setuptools
+	venv/bin/pip install -q --disable-pip-version-check meson==1.11.1 ninja==1.13.0 setuptools
 fi
 PATH=$W/venv/bin:$PATH
 

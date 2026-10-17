@@ -72,8 +72,15 @@ sed -e "s/@TARGET@/$T/g" \
 chmod 755 "$DEST/bin/$T-gcc"
 
 mkdir -p libgcc
+# a compile-only toolchain has no AMIX headers
+NOLIBC=
+if [ ! -f "$OLD/$T/sysroot/usr/include/stdlib.h" ]; then
+	mkdir -p nolibc
+	cp "$S/gcc/glimits.h" nolibc/limits.h
+	NOLIBC="-Dinhibit_libc -I nolibc -I $S/gcc/ginclude"
+fi
 for f in $FUNCS; do
-	$N "$DEST/bin/$T-gcc" -O2 -DIN_GCC -DCROSS_COMPILE -DIN_LIBGCC2 \
+	$N "$DEST/bin/$T-gcc" -O2 -DIN_GCC -DCROSS_COMPILE -DIN_LIBGCC2 $NOLIBC \
 		-D__GCC_FLOAT_NOT_NEEDED -I gcc -I gcc/include -I "$S/gcc" \
 		-I "$S/gcc/config" -I "$S/include" \
 		-DL$f -c "$S/gcc/libgcc2.c" -o libgcc/$f.o
