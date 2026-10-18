@@ -190,13 +190,14 @@ amigasrcs() {
 	radeon)	echo "$K/drm/radeon_drv.c $K/drm/radeon_cp.c $K/drm/radeon_state.c $K/drm/radeon_irq.c" \
 		    "$K/drm/radeon_mem.c $A/mod/radeon/radeonmod.c" ;;
 	v3bars)	echo "$A/test/v3bars.c" ;;
+	bigram)	echo "$A/mod/bigram/bigram.c" ;;
 	esac
 }
 amiga() {
 	A=$K/amiga
 	[ -z "$KERNEL" ] || grep -qx dlm_cacheflush "$O/exports" ||
 		{ echo "mods.sh: $KERNEL has no DLM" >&2; exit 1; }
-	for m in amilib opci pci ne xsurf zz9000 voodoo3 tdfx radeonds radeon floppy v3bars; do	# each after the module it depends on
+	for m in amilib opci pci ne xsurf zz9000 voodoo3 tdfx radeonds radeon floppy v3bars bigram; do	# each after the module it depends on
 		CC="$(kcc $m) -fno-common -Wall -Wno-comment"
 		CC="$CC -I$DLM/include -I$A/include -I$K/drm -I$K/guest/include -I$A/amilib -I$K/atari/netusbee -DNU_PCI"
 		d=$O/src/$m

@@ -1,0 +1,4 @@
+# bigram: Zorro III RAM above 1 GB that Unix does not use (a BigRamPlus)
+# as the block device /dev/dsk/bigram, for swap
+$modtype misc
+bigram	bigram	m	0	0	0
