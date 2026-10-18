@@ -19,17 +19,17 @@ nice -n19 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68000 -DDS_AMIGA -Wall -Wno-c
  -I"$K/mac/display" -I"$K/mac/video" -I"$K/mac/adb" -c "$K/mac/display/ds.c" -o "$W/ds.o"
 nice -n19 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68000 -DDS_AMIGA -Wall -Wno-comment -fno-common \
  -I"$K/mac/display" -I"$K/mac/video" -I"$K/mac/adb" -I"$A/include" -c "$A/amigads.c" -o "$W/amigads.o"
-WEAK="--weaken-symbol dmainit --weaken-symbol execsw --weaken-symbol fmodsw"
+WEAK="--weaken-symbol dmainit --weaken-symbol execsw --weaken-symbol fmodsw --weaken-symbol vfssw"
 for s in sdopen sdqueue sdhardwarename; do WEAK="$WEAK --weaken-symbol $s"; done
 MARK="sysseginit mfree sptalloc hat_init page_init memialloc kmem_init seg_alloc segmap_create segu_create dispinit hrtinit itinit pid_init svirtophys vstart mlsetup figuredisplaytype btrace_mark bzero"
-OVR="ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig kbintr unt_latch vtop hat_ptalloc uiomove aciabintr pstart screeninit config_cachefix"
+OVR="ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig kbintr unt_latch vtop hat_ptalloc uiomove aciabintr pstart screeninit config_cachefix vfs_getvfssw"
 for s in $OVR $MARK; do WEAK="$WEAK --weaken-symbol $s"; done
-for s in $MARK sendsig valid_usr_range fsig kbintr unt_latch hat_ptalloc uiomove aciabintr pstart screeninit config_cachefix; do
+for s in $MARK sendsig valid_usr_range fsig kbintr unt_latch hat_ptalloc uiomove aciabintr pstart screeninit config_cachefix vfs_getvfssw; do
  v=$(m68k-linux-gnu-nm "$BASE" | awk -v s="$s" '$3==s && $2=="T"{print $1}')
  [ -n "$v" ] || { echo "[FAIL] no $s"; exit 1; }
  WEAK="$WEAK --add-symbol __amix_$s=.text:0x$v,function,global"
 done
-for pair in execsw:data fmodsw:data; do
+for pair in execsw:data fmodsw:data vfssw:data; do
  s=${pair%:*}; sec=${pair#*:}
  v=$(m68k-linux-gnu-nm "$BASE" | awk -v s="$s" '$3==s && $2=="D"{print $1}')
  [ -n "$v" ] || { echo "[FAIL] no $s"; exit 1; }
@@ -59,7 +59,7 @@ nice -n19 m68k-cbm-sysv4-gcc -m68040 -c "$A/ide/ide040.s" -o "$W/ide040.o"
 sh "$A/csppc/script.sh" "$W"
 nice -n19 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68040 -I"$ALIEN" -I"$W" -c "$A/csppc/csppc.c" -o "$W/csppc.o"
 OBJS="$W/vtop.o $W/ptalloc.o $W/uiomod.o $W/amigadlm.o $W/amigarom.o $W/amigazorro.o $W/devkvmap.o $W/cpu060.o $W/bootmark.o $W/ide.o $W/amigaide.o $W/ide040.o $W/csppc.o $W/ds.o $W/amigads.o $W/guest/guest.o"
-for f in dlm_core dlm_ld dlm_sym dlm_slot dlm_str dlmconf dlm_cache dlm_hooksw; do
+for f in dlm_core dlm_ld dlm_sym dlm_slot dlm_str dlm_fs dlmconf dlm_cache dlm_hooksw; do
  OBJS="$OBJS $W/dlm/$f.o"
 done
 nice -n19 m68k-cbm-sysv4-gcc -m68040 -c "$K/atari/ata060math.s" -o "$W/math.o"

@@ -7,8 +7,8 @@
 #include "sys/errno.h"
 #include "sys/inline.h"
 #include "sys/moddefs.h"
-#include "rico.h"
-#include "sd.h"
+#include "amiga/alien/rico.h"
+#include "amiga/alien/sd.h"
 #include "sdhook.h"
 #include "scsi.h"
 

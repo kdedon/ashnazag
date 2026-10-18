@@ -1,11 +1,11 @@
 #!/bin/sh
-# mkmod -- build a loadable module from a module directory (MISC type).
+# mkmod -- build a loadable module from a module directory (MISC or FS type).
 #
 #   mkmod [-k kernel.elf | -e exports] [-d depmodule]... [-o outdir] dir
 #
 # dir holds:
 #   Driver.o   the module's code (any number of objects linked into it)
-#   Master     "$depend a b ..." lines (any number), "$modtype misc",
+#   Master     "$depend a b ..." lines (any number), "$modtype misc|fs",
 #              and a final line "name prefix flags ..." ('#' comments)
 #   Space.c    optional, compiled and linked in
 #   Mtune      optional, "PREFIX_UNLOAD_DELAY n" (seconds)
@@ -48,7 +48,7 @@ NAME=$1 PREFIX=$2
 [ -n "$NAME" ] && [ -n "$PREFIX" ] || { echo "mkmod: no definition line in Master" >&2; exit 1; }
 DEPEND=$(sed -n 's/^\$depend[ 	]*//p' "$D/Master" | tr '\n' ' ')
 TYPE=$(sed -n 's/^\$modtype[ 	]*//p' "$D/Master" | tail -1)
-[ -z "$TYPE" ] || [ "$TYPE" = misc ] || { echo "mkmod: \$modtype $TYPE not supported yet" >&2; exit 1; }
+case ${TYPE:=misc} in misc|fs) ;; *) echo "mkmod: \$modtype $TYPE not supported yet" >&2; exit 1 ;; esac
 PU=$(echo "$PREFIX" | tr a-z A-Z)
 DELAY=
 [ -f "$D/Mtune" ] && DELAY=$(awk -v k="${PU}_UNLOAD_DELAY" '$1==k{print $2}' "$D/Mtune")
@@ -56,7 +56,8 @@ DELAY=
 mkdir -p "$OUT/mod.d" "$OUT/mod_register.d" "$OUT/loadmods.d"
 W="$OUT/work.$NAME"
 rm -rf "$W"; mkdir -p "$W"
-CC="m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -I$DLM/include"
+CC="env AMIX_SYSROOT=$W/none m68k-cbm-sysv4-gcc -O -traditional -fno-builtin -Dinline=__inline__"
+CC="$CC -m68020 -D_KERNEL -DSVR40 -DSVR4 -I$DLM/../include -I$DLM/include"
 OBJS="$D/Driver.o"
 
 if [ -n "$DELAY" ]; then
@@ -91,7 +92,7 @@ if [ -n "$KERN" ]; then
 fi
 "$TB/modfix" ${EXP:+-e "$EXP"} $DEPS -p "$PREFIX" -m "$NAME" "$W/$NAME"
 mv "$W/$NAME" "$OUT/mod.d/$NAME"
-echo "misc	$NAME" > "$OUT/mod_register.d/$NAME"
+echo "$TYPE	$NAME" > "$OUT/mod_register.d/$NAME"
 rm -f "$OUT/loadmods.d/$NAME"
 if [ -f "$D/System" ] && awk -v n="$NAME" '$1==n && $2=="Y"{f=1} END{exit !f}' "$D/System"; then
 	echo "$NAME" > "$OUT/loadmods.d/$NAME"

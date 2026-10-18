@@ -38,6 +38,14 @@ hand.
 | `radeon` | Amiga | `/dev/dri/card1`: DRM for the Radeon's 3D |
 | `floppy` | Amiga | `/dev/floppyN` (62): raw tracks for the floppy service |
 
+## Filesystems
+
+A module of type `fs` claims one of 8 spare `vfssw` rows. A mount of an unknown type loads the module of that name from the module path; it cannot unload while mounted.
+
+| Module | Role |
+|---|---|
+| `cdfs` | read-only CD: ISO 9660, Rock Ridge, Joliet, UDF, HFS, HFS+, audio tracks. `mount -F cdfs card,unit /cdrom` (SCSI adapter index, target id, e.g. `0,3`); the disk root ships `/usr/lib/fs/cdfs/mount` and `/cdrom` |
+
 ## Services
 
 - Display (`docs/display-service-design.md`): `dsuser`'s devices. Each

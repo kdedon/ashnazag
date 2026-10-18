@@ -11,7 +11,7 @@ top of it as environments: ordinary Unix processes with their own display sessio
 | Quadra 800 (68040) | QEMU `q800` with a Quadra 800 ROM | Tested | Boots from disk to a multi-user login on the built-in screen and ADB keyboard. SCSI, SONIC Ethernet, clock, swap, ufs, loadable modules, display and sound services, X11. All environments below. |
 | Falcon030 (68030, no FPU) | Hatari (TOS 4.04) | Tested; slow | Boots from IDE to a login on VGA or RGB monitors. X11 and xdm, TOS, CP/M and System 6 environments. |
 | CT60/CT63 Falcon (68060) | Hatari 060 with FastRAM | In progress | Kernel boots from FastRAM; SuperVidel or Videl console. |
-| Amiga A3000, A4000 (68040, 68060) | Amiberry; WinUAE for PCI 3D cards | Untested | Started from AmigaDOS by `unix_boot040`; login on the console. Root on the A3000's SCSI, the A4000's IDE or a CyberStorm PPC/MK III's SCSI. PCI through openpci.library (Prometheus, Mediator), NE2000 Ethernet, ZZ9000 RTG, Voodoo3 display with 3D (X and 8-, 16- and 32-bit Workbench); Radeon 9200 driver written, not yet run on a card. |
+| Amiga A3000, A4000 (68040, 68060) | Amiberry (Mediator, Voodoo3, CyberStorm PPC) | Untested | Started from AmigaDOS by `unix_boot040`; login on the console. Root on the A3000's SCSI, the A4000's IDE or a CyberStorm PPC/MK III's SCSI. PCI through openpci.library (Prometheus, Mediator), NE2000 Ethernet, ZZ9000 RTG, Voodoo3 display with 3D (X and 8-, 16- and 32-bit Workbench); Radeon 9200 driver written, not yet run on a card. |
 
 ## Environments
 
@@ -27,9 +27,12 @@ Start commands, run as an ordinary user. Ctrl-Option-Command-0 shows the console
 | Amiga (Kickstart 3.2, Workbench) | `startmig` | Quadra, Amiga (68040 or 68060) | Partial: Workbench on RTG at 8, 16 or 32 bits where the host has them; Warp3D on a Voodoo3 (16-bit screens), else in software (slow); slow start; no chipset display. |
 | Concurrent CP/M-68K | `startcpm` | Quadra, Falcon | Works, in the terminal: CP/M 3 BDOS, XDOS processes, more consoles with `startcpm -c N`, RSXes. Z80 and 8086 programs too. |
 | Windows 3.x programs (Win16) | `startwin` | Quadra | Works for Program Manager and the tested programs. Each user installs their own Windows 3.1/3.11 and Wabi 2.2 with `startwin -install`. |
+| Apple Lisa (Office System 3.1) | `startlisa` | Quadra | Partial: your Lisa ROM boots your ProFile volume to the Office desktop; a stray "micro diskette" dialog stays open. The ProFile is read only, writes go to a file beside it. |
+| TI Voyage 200 (AMS 2.09, 3.10) | `startvoyage200` | Quadra | Works: your Flash dump boots to the AMS desktop; archived variables are TI variable files on the host; OFF/ON. |
+| NeXTSTEP / OPENSTEP | `startnext` | Quadra | In progress: your NeXT ROM's monitor, the Mach kernel boots to a console login; the window server is in progress. |
 | X11R6.3 | `startx`, `xsession` | Quadra, Falcon, Amiga | Works: twm, XView, xdm session chooser; sessions for each environment. OpenGL through Mesa 5, in software or on a Voodoo3 through DRI; `glxgears`. |
 
-Software Quake runs on the display service; the game data is yours. SMSQ/E, TI
+Software Quake runs on the display service; the game data is yours. SMSQ/E, other TI
 calculators, TT and more are planned (`docs/*-plan.md`).
 
 ## What you need
@@ -43,6 +46,9 @@ You supply:
 - Amiga environment: the AmigaOS 3.2 CD and Picasso96; Amiga host: its Kickstart ROM and openpci.library
 - CP/M: optionally Digital Research's CP/M-68K 1.3 release zip, for its programs (AS68, ED, STAT, ...); the system itself is ours
 - Win16, at run time: Windows 3.1 or 3.11 and Wabi 2.2
+- Lisa: your Lisa boot ROM and a ProFile image with the Office System installed
+- Voyage 200: a Flash dump of your calculator
+- NeXT: your NeXT ROM and an OPENSTEP CD
 
 `tools/setup.sh` builds the toolchains and fetches the open-source parts; see `BUILDING.md`.
 
@@ -69,7 +75,7 @@ missing. [docs/hosts.md](docs/hosts.md) covers booting each host.
 | `kernel/atari/` | Falcon030 and CT60 platform layer, loader, disk image, Hatari tests |
 | `kernel/amiga/` | Amiga host: amilib (AmigaOS libraries in the kernel), openpci, PCI and RTG drivers |
 | `kernel/dlm/` | SVR4.2-style loadable kernel modules ([docs/modules.md](docs/modules.md)) |
-| `kernel/guest/` | environments: A/UX personality and Mac (`mod/`), TOS (`tos/`), Amiga (`amiga/`), CP/M (`cpm/`), Win16 (`win16/`) |
+| `kernel/guest/` | environments: A/UX personality and Mac (`mod/`), TOS (`tos/`), Amiga (`amiga/`), CP/M (`cpm/`), Win16 (`win16/`), Lisa (`lisaboot/`, `mod/lisaguest/`), Voyage 200 (`voyage200/`), NeXT (`next/`) |
 | `kernel/otbridge/` | Open Transport bridge for Mac OS 8 networking |
 | `kernel/drm/` | DRM for 3D cards (Voodoo3) |
 | `gl/` | Mesa, DRI drivers, Glide3 and Quake builds |

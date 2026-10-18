@@ -124,12 +124,14 @@ p1int p2int p3int p4int p5int p6int parinit qlintr slpoll autocon delayus
 ramopen ramclose ramstrategy ramprint ramsize backtrace fpu_setup inituname
 sdopen sdqueue sdhardwarename sdpartition sdvalid sdblkno sddevsize
 prhasfp fpuinit fpu_save fpu_restore setregs clkset
-dmainit ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig mdboot fsflush memialloc"
+dmainit ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig mdboot fsflush memialloc
+vfs_getvfssw"
 # Amiga data replaced: the console streamtab, the device switches and the
-# exec and STREAMS module switches.
-OVRD="coinfo cdevsw bdevsw execsw fmodsw"
+# exec, STREAMS module and filesystem switches.
+OVRD="coinfo cdevsw bdevsw execsw fmodsw vfssw"
 # Stock bodies kept under __amix_<name> for the wrappers.
-ALIAS="fpu_setup:T inituname:T sendsig:T valid_usr_range:T fsig:T execsw:D fmodsw:D memialloc:T"
+ALIAS="fpu_setup:T inituname:T sendsig:T valid_usr_range:T fsig:T execsw:D fmodsw:D memialloc:T
+vfssw:D vfs_getvfssw:T"
 # Stock bodies the emulator chains to, as <name>_fpe_orig.
 FPEORIG="fpuinit fpu_save fpu_restore setregs"
 

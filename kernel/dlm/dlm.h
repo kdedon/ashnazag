@@ -306,6 +306,10 @@ extern int dlm_loadname();
 /* dlm_str.c */
 extern void dlm_str_init();
 
+/* dlm_fs.c */
+extern void dlm_fs_init();
+extern int dlm_fsbusy();
+
 /* dlmconf.c */
 extern long dlm_maximage;
 extern int dlm_verbose;

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# summarize.py SERIAL.LOG STATE -- per-area table and FAIL list from a test console log.
+# summarize.py SERIAL.LOG STATE [QEMU.ERR] -- per-area table and FAIL list from a test console log.
 # STATE: done, panic, timeout or exited.
 # Exit: 0 all PASS, 1 any FAIL, 2 run incomplete.
 import re, sys
@@ -28,6 +28,21 @@ for m in re.finditer(r'^HALT ([\w-]+)\.(\S+)$', log, re.M):
 	a['PASS' if ok else 'FAIL'] += 1
 	if not ok:
 		fails.append('%s.%s: no halt' % (area, name))
+
+# a run cut short fails the test it was in, with the emulator's last words
+cur = re.findall(r'^(?:=== (\S+)|--- (\S+?):)', log, re.M)
+if state != 'done' and cur and cur[-1][0]:
+	name = cur[-1][0]
+	err = ''
+	if len(sys.argv) > 3:
+		try:
+			err = [l for l in open(sys.argv[3], 'rb').read().decode('latin-1').split('\n')
+			    if l.strip()]
+			err = ([l for l in err if 'ERROR' in l] or err or [''])[-1]
+		except OSError:
+			pass
+	areas.setdefault(name, {'PASS': 0, 'FAIL': 0, 'SKIP': 0})['FAIL'] += 1
+	fails.append('%s.run: run %s here%s' % (name, state, ': ' + err if err else ''))
 
 done = re.search(r'^TESTS DONE (.*)$', log, re.M)
 print('%-12s %5s %5s %5s' % ('area', 'pass', 'fail', 'skip'))

@@ -89,6 +89,9 @@ case " $ONLY " in "  "|*/t_v200.c*) sh "$T/v200/mkvol.sh" "$V2B" ;; *) rm -rf "$
 # t_next's volume (SCSI disk 6): its native host and the user's boot ROM
 NXB=$B/next
 case " $ONLY " in "  "|*/t_next.c*) sh "$T/next/mkvol.sh" "$NXB" ;; *) rm -rf "$NXB" ;; esac
+# t_lisa's volume (SCSI disk 6): the user's Lisa volume, only when asked for
+LSB=$B/lisa
+case " $ONLY " in */t_lisa.c*) sh "$T/lisa/mkvol.sh" "$LSB" ;; *) rm -rf "$LSB" ;; esac
 # t_ufs's volume: /d/f0../d/f3 in t_pattern (run-qemu.sh adds it as SCSI disk 2)
 UFSB=$B/ufs
 if [ -z "$NET" ]; then
@@ -117,6 +120,8 @@ if [ -z "$TESTKB" ]; then
 	[ ! -f "$V2B/v200.img" ] || TESTKB=$((TESTKB + 8192 + 256 + 64))
 	# t_next: the VRAM file and NVRAM in /tmp
 	[ ! -f "$NXB/next.img" ] || TESTKB=$((TESTKB + 256 + 64))
+	# t_lisa: the blocks the Lisa OS writes, in /tmp
+	[ ! -f "$LSB/lisa.img" ] || TESTKB=$((TESTKB + 1024))
 fi
 
 # /etc/group with the display devices' group
@@ -169,6 +174,7 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 	[ -f "$AUXB/mod.d/nhcall" ] && echo "c /dev/nhcall 600 0 3 66 0"
 	[ -f "$AUXB/mod.d/tiplatform" ] && echo "c /dev/tiplatform 660 0 25 65 0"
 	[ -f "$AUXB/mod.d/nextguest" ] && echo "c /dev/nextguest 660 0 25 67 0"
+	[ -f "$AUXB/mod.d/lisaguest" ] && echo "c /dev/lisa 660 0 3 68 0"
 	if [ -d "$AUXB/mod.d" ]; then
 		echo "d /tests/aux 755 0 3"
 		echo "d /tests/aux/mod.d 755 0 3"
@@ -298,11 +304,15 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 		echo "b /dev/dsk/c4d0s0 600 0 3 18 4"
 		echo "d /v200 755 0 3"
 	fi
+	if [ -f "$LSB/lisa.img" ]; then
+		echo "b /dev/dsk/c6d0s0 600 0 3 18 6"
+		echo "d /lisa 755 0 3"
+	fi
 	if [ -f "$NXB/next.img" ]; then
 		echo "b /dev/dsk/c6d0s0 600 0 3 18 6"
 		echo "d /next 755 0 3"
 	fi
-	if [ -f "$AMIB/sys.img" ] || [ -f "$UFSB/ufs.img" ] || [ -f "$V2B/v200.img" ] || [ -f "$NXB/next.img" ] || [ -f "$AUXB/macsys.img" ] ||
+	if [ -f "$AMIB/sys.img" ] || [ -f "$UFSB/ufs.img" ] || [ -f "$V2B/v200.img" ] || [ -f "$NXB/next.img" ] || [ -f "$LSB/lisa.img" ] || [ -f "$AUXB/macsys.img" ] ||
 	    [ -f "$W16B/win16.img" ] || [ -f "$QKB/quake.img" ]; then
 		echo "d /usr/lib/fs/ufs 755 0 3"
 		echo "f /usr/lib/fs/ufs/mount 555 0 3 $RD/build/core/usr/lib/fs/ufs/mount"

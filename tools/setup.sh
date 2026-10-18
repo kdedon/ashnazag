@@ -41,6 +41,8 @@ N="nice -n 19"
 . "$AUX/kernel/port-tree.sh"
 IDE_URL=https://github.com/hmlio/amix-gayle-ide
 IDE_PIN=71480b065c6efbc1a6fc3e6c490a5f50d102f795
+CDFS_URL=https://github.com/jusii/amix-cdfs
+CDFS_PIN=34447c2d7ce783be7eed518607436841d592577a
 BU_V=2.43.1
 BU_SUM=13f74202a3c4c51118b797a39ea4200d3f6cfbe224da6d1d95bb938480132dfd
 GCC_V=13.3.0
@@ -288,6 +290,9 @@ sh "$AUX/kernel/guest/win16/ft/freetype.sh" > /dev/null || die "FreeType: see ke
 
 step "A4000 IDE driver at $IDE_PIN"
 gitpin $IDE_URL $IDE_PIN "$AUX/ref/amix-gayle-ide"
+
+step "CD filesystem at $CDFS_PIN"
+gitpin $CDFS_URL $CDFS_PIN "$AUX/ref/amix-cdfs"
 
 step "68040/68060 port at $PORT_PIN"
 PT=$AUX/kernel/amix-040-060-port

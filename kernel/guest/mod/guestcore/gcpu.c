@@ -69,6 +69,21 @@ vsr_get(gp, r)
 	return (gp->gp_vsr & SR_VIRT) | (GR_SR(r) & SR_REAL);
 }
 
+/* the address space follows vSR.S: the 68040 shadow's, or the profile's */
+#define	SPACED(gp)	((gp)->gp_mmu || (gp)->gp_space)
+typedef char gp_spaceat[(int)&((struct guest_proc *)0)->gp_space == 72 ? 1 : -1];	/* the gates read it */
+
+static void
+space(gp, s)
+	struct guest_proc *gp;
+	int s;
+{
+	if (gp->gp_mmu)
+		guest_mmu_space(gp, s);
+	else
+		(*gp->gp_space)(gp, s);
+}
+
 static void
 vsr_set(gp, r, v)
 	struct guest_proc *gp;
@@ -83,8 +98,8 @@ vsr_set(gp, r, v)
 		GR_USP(r) = gp->gp_vusp;
 		gp->gp_vusp = t;
 	}
-	if (gp->gp_mmu && ((v ^ gp->gp_vsr) & SR_S))
-		guest_mmu_space(gp, v);
+	if (SPACED(gp) && ((v ^ gp->gp_vsr) & SR_S))
+		space(gp, v);
 	if ((v & SR_IPL) < (gp->gp_vsr & SR_IPL))
 		gp->gp_flags |= GPF_IDROP;
 	gp->gp_vsr = (v & SR_VIRT) | (gp->gp_flags & GPF_SPIN ? SR_S : 0);
@@ -159,27 +174,34 @@ guest_reflect(gp, r, pc, fv, x, n, ipl)
 
 	if (n < 2 || n > sizeof f - 6)
 		return -1;
-	P16(f, sr);
-	P32(f + 2, pc);
-	P16(f + 6, fv);
-	if (n > 2)
-		bcopy(x, f + 8, n - 2);
+	if (gp->gp_flags & GPF_FRAME68K) {	/* the words of x, then SR and PC */
+		bcopy(x, f, n - 2);
+		P16(f + n - 2, sr);
+		P32(f + n, pc);
+		n -= 2;
+	} else {
+		P16(f, sr);
+		P32(f + 2, pc);
+		P16(f + 6, fv);
+		if (n > 2)
+			bcopy(x, f + 8, n - 2);
+	}
 	nsr = (sr & ~0xc000) | SR_S;
 	if (ipl >= 0)
 		nsr = (nsr & ~SR_IPL) | ipl << 8;
 	sp = (sr & SR_S) || (gp->gp_flags & GPF_SPIN) ? GR_USP(r) : gp->gp_vusp;
 	sp -= 6 + n;
 	ov = gp->gp_vsr;
-	if (gp->gp_mmu) {
+	if (SPACED(gp)) {
 		gp->gp_vsr |= SR_S;		/* the table and the stack are in the supervisor space */
-		guest_mmu_space(gp, SR_S);
+		space(gp, SR_S);
 	}
 	bad = copyin((caddr_t)(gp->gp_vvbr + (fv & 0xfff)), (caddr_t)&h, 4) ||
 	    copyout(f, (caddr_t)sp, 6 + n);
 	gp->gp_vsr = ov;
 	if (bad) {
-		if (gp->gp_mmu)
-			guest_mmu_space(gp, sr);
+		if (SPACED(gp))
+			space(gp, sr);
 		return -1;
 	}
 	vsr_set(gp, r, nsr);
@@ -480,9 +502,10 @@ vrte(gp, pi)
 	long usp = GR_USP(r);
 	int n;
 
-	if (copyin((caddr_t)usp, b, 8))
+	if (copyin((caddr_t)usp, b, gp->gp_flags & GPF_FRAME68K ? 6 : 8))
 		return -2;
-	switch (G16(b + 6) >> 12) {
+	switch (gp->gp_flags & GPF_FRAME68K ? 6 : G16(b + 6) >> 12) {
+	case 6: n = 6; break;
 	case 0: n = 8; break;
 	case 2: case 3: n = 12; break;
 	case 4: if (!gp->gp_mmu) return -1; n = 16; break;
@@ -921,14 +944,14 @@ guest_unote(p)
 		return 1;
 	/* the vector table is in the guest's supervisor space */
 	ov = gp->gp_vsr;
-	if (gp->gp_mmu) {
+	if (SPACED(gp)) {
 		gp->gp_vsr |= SR_S;
-		guest_mmu_space(gp, SR_S);
+		space(gp, SR_S);
 	}
 	bad = copyin((caddr_t)(gp->gp_vvbr + 8), (caddr_t)&h, 4) || h == 0 || (h & 1);
 	gp->gp_vsr = ov;
-	if (gp->gp_mmu)
-		guest_mmu_space(gp, ov);
+	if (SPACED(gp))
+		space(gp, ov);
 	if (bad)
 		return 1;
 	gp->gp_flags |= GPF_UNOTE;

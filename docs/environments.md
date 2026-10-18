@@ -83,6 +83,16 @@ reset to the AMS desktop. Archived variables are files in `archive/` beside it, 
 variable file format (`.v2e`, `.v2p` ...), so TI's link tools can exchange them; the dump is
 never written. Cmd-Q quits.
 
+## Lisa
+
+`startlisa` boots your Lisa ROM and the Office System on your ProFile volume natively; the
+Lisa's chips are not modelled. The environment's folder holds `lisa.rom` (`-r` names
+another), `profile.dc42` (DC42 or raw 532-byte blocks, `-d`) and `parameter-memory` (`-p`).
+The ProFile is read only: blocks the Lisa writes go to `profile.writes` beside it and are
+read back at the next start. Design: `kernel/guest/mod/lisaguest/DESIGN.md`.
+
+Known issues: a "micro diskette" dialog stays over the desktop.
+
 ## NeXT
 
 `startnext` (status: console login) runs the `mach_kernel` of your OPENSTEP 4.2 CD natively from

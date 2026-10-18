@@ -108,7 +108,7 @@ for s in ${ONLY:-"$T"/src/t_*.c "$T/src/runall.c"}; do
 	t_nativehost) extra="$O/nativehost.o $MODO" ;;
 	t_nhplat) extra=$O/nativehost_platform.o ;;
 	t_nativecall) extra="$O/nativecall.o $O/ncprobe.o $O/nativehost.o $MODO" ;;
-	t_v200|t_next|t_gmmu) extra=$MODO ;;
+	t_v200|t_next|t_gmmu|t_lisa) extra=$MODO ;;
 	t_radeon) cc "$KDIR/amiga/radeon/rdsinit.c" "$O/rdsinit.o"; extra=$O/rdsinit.o ;;
 	esac
 	link "$BIN/$n" "$O/$n.o" "$O/t.o" $extra
@@ -119,6 +119,9 @@ cc "$KDIR/guest/nativeenv/startnative.c" "$O/startnative.o" $XA -I"$KDIR/guest/i
 link "$BIN/startnative" "$O/startnative.o"
 cc "$T/src/natpayload.c" "$O/natpayload.o" $XA
 link "$BIN/natpayload" "$O/natpayload.o"
+# startlisa: Lisa OS from the user's volume, run natively
+cc "$KDIR/guest/lisaboot/startlisa.c" "$O/startlisa.o" $XA -I"$NH" -I"$KDIR/mac/display" -I"$KDIR/guest/include"
+link "$BIN/startlisa" "$O/startlisa.o" "$O/nativehost.o"
 # t_env runs startmac's lock helper
 cc "$AUX/images/macenv/envlock.c" "$O/envlock.o" $XA -w
 link "$BIN/envlock" "$O/envlock.o"

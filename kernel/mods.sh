@@ -5,7 +5,8 @@
 #   sh kernel/mods.sh -t kernel.elf	(prints the kernel's target)
 #
 # Sets: guest (environment modules), display (dsuser), drivers (the
-# target's hardware modules); default all.  Out: OUT/mod.d/*, plus
+# target's hardware modules), fs (cdfs, from CDFS_SRC or ref/amix-cdfs);
+# default all.  Out: OUT/mod.d/*, plus
 # OUT/modadmin for the Atari drivers.
 #
 # Undefined symbols are checked against include/kabi.<target>, the kernel
@@ -34,13 +35,13 @@ fi
 
 . "$AUX/toolchain/src/gcc-cross-amix/build/env.sh"
 export PATH
-usage() { echo "usage: mods.sh TARGET=mac|amiga|atari030|atari060 OUT [KERNEL=elf] [guest|display|drivers]..." >&2; exit 2; }
+usage() { echo "usage: mods.sh TARGET=mac|amiga|atari030|atari060 OUT [KERNEL=elf] [guest|display|drivers|fs]..." >&2; exit 2; }
 case $1 in TARGET=*) TARGET=${1#TARGET=} ;; *) usage ;; esac
 [ -n "$2" ] || usage
 O=$2; shift 2
 KERNEL=
 case $1 in KERNEL=*) KERNEL=${1#KERNEL=}; shift ;; esac
-SETS=${*:-guest display drivers}
+SETS=${*:-guest display drivers fs}
 
 # target: guest flags, display CPU and flags, driver CPU and flags, 64-bit check
 case $TARGET in
@@ -53,15 +54,9 @@ atari060)	GF="-DDS_ATARI -DATA060" DCPU=-m68000 DF="-DDS_ATARI -DATA060"
 esac
 KABI=$K/include/kabi.$TARGET
 
-# modules built on include/ alone, without the AMIX headers
-OWN=" amilib auxexec auxsnd cpmguest dmasnd floppy opci pci radeon radeonds scsi tdfx v3bars voodoo3 "
-kcc() {	# module
-	case $OWN in
-	*" $1 "*) echo "$NICE env AMIX_SYSROOT=$O/none m68k-cbm-sysv4-gcc -O -traditional -fno-builtin" \
-		"-Dinline=__inline__ -m68020 -D_KERNEL -DSVR40 -DSVR4 -I$K/include" ;;
-	*) echo "$NICE m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS" ;;
-	esac
-}
+# include/ only, never the toolchain's system headers
+KC="$NICE env AMIX_SYSROOT=$O/none m68k-cbm-sysv4-gcc -O -traditional -fno-builtin"
+KC="$KC -Dinline=__inline__ -m68020 -D_KERNEL -DSVR40 -DSVR4 -I$K/include"
 
 mkdir -p "$O/tools" "$O/src"
 $HCC -DDLM_TOOL -I"$DLM" -I"$DLM/include" -o "$O/tools/mkksym" \
@@ -79,9 +74,9 @@ if [ -n "$KERNEL" ]; then
 	fi
 fi
 
-# the compiler's warnings, less the system headers' own, fail the build
+# the compiler's warnings fail the build
 warn() {	# src obj
-	if grep -v 'types.h:182\|strsubr.h:70\|In file included\|^ *from ' "$2.warn" | grep .; then
+	if grep -v 'In file included\|^ *from ' "$2.warn" | grep .; then
 		echo "[FAIL] warnings in $1"; exit 1
 	fi
 }
@@ -90,8 +85,8 @@ mkmod() {	# dir
 }
 
 guest() {
-	for m in guestcore auxcore auxexec uinter tosguest amigaguest cpmguest tiplatform nextguest; do
-		KCC="$(kcc $m) -Wall -I$DLM/include -I$G/include -I$G/mod/auxcore -I$G/mod/guestcore -I$K/mac/display -I$G/mod/tosguest -I$G/voyage200 $GF"
+	for m in guestcore auxcore auxexec uinter tosguest amigaguest cpmguest tiplatform nextguest lisaguest; do
+		KCC="$KC -Wall -I$DLM/include -I$G/include -I$G/mod/auxcore -I$G/mod/guestcore -I$K/mac/display -I$G/mod/tosguest -I$G/voyage200 $GF"
 		d=$O/src/$m
 		rm -rf "$d"; mkdir -p "$d"
 		objs=
@@ -121,9 +116,9 @@ display() {
 	rm -rf "$d"; mkdir -p "$d"
 	objs=
 	for f in dsdev dsseg dsuser; do
-		$NICE m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS $DCPU $DF -fno-common -Wall -Wno-comment \
+		$KC $DCPU $DF -fno-common -Wall -Wno-comment \
 		 -I"$D" -I"$K/mac/video" -I"$K/mac/adb" -I"$DLM/include" \
-		 -c "$D/$f.c" -o "$d/$f.o" 2> "$d/$f.warn"
+		 -c "$D/$f.c" -o "$d/$f.o" 2> "$d/$f.warn" || { cat "$d/$f.warn"; exit 1; }
 		[ ! -s "$d/$f.warn" ] || { cat "$d/$f.warn"; exit 1; }
 		objs="$objs $d/$f.o"
 	done
@@ -148,8 +143,7 @@ atarisrcs() {
 atari() {
 	A=$K/atari
 	for m in scsi sd aen dpn dmasnd auxsnd; do
-		CC="$(kcc $m) $VCC -Wall -Wno-comment -I$DLM/include"
-		[ $m != sd ] || CC="$CC -I$AMIX_ROOT/usr/sys/amiga/alien"
+		CC="$KC $VCC -Wall -Wno-comment -I$DLM/include"
 		d=$O/src/$m
 		rm -rf "$d"; mkdir -p "$d"
 		objs=
@@ -168,9 +162,13 @@ atari() {
 		cp "$M" "$d/"
 		mkmod "$d"
 	done
-	# modadmin, which registers them at boot
-	sh "$DLM/tools/modadmin.sh" "$O/src"
-	cp "$O/src/modadmin" "$O/modadmin"
+	# modadmin, which registers them at boot; it links with the AMIX libraries
+	if [ -f "$AMIX_CRT_DIR/crt1.o" ]; then
+		sh "$DLM/tools/modadmin.sh" "$O/src"
+		cp "$O/src/modadmin" "$O/modadmin"
+	else
+		echo "[skip] modadmin: no AMIX libraries"
+	fi
 }
 
 amigasrcs() {
@@ -197,7 +195,7 @@ amiga() {
 	[ -z "$KERNEL" ] || grep -qx dlm_cacheflush "$O/exports" ||
 		{ echo "mods.sh: $KERNEL has no DLM" >&2; exit 1; }
 	for m in amilib opci pci ne xsurf zz9000 voodoo3 tdfx radeonds radeon floppy v3bars; do	# each after the module it depends on
-		CC="$(kcc $m) -fno-common -Wall -Wno-comment"
+		CC="$KC -fno-common -Wall -Wno-comment"
 		CC="$CC -I$DLM/include -I$A/include -I$K/drm -I$K/guest/include -I$A/amilib -I$K/atari/netusbee -DNU_PCI"
 		d=$O/src/$m
 		rm -rf "$d"; mkdir -p "$d"
@@ -221,10 +219,44 @@ amiga() {
 	done
 }
 
+# upstream ANSI sources, built as they are; cdfsmod.c adds the wrapper
+fs() {
+	C=${CDFS_SRC:-$AUX/ref/amix-cdfs}
+	[ -f "$C/platform/amix-kernel/cdfs_vfsops.c" ] || { echo "[skip] cdfs: no $C"; return 0; }
+	CC="$NICE env AMIX_SYSROOT=$O/none m68k-cbm-sysv4-gcc -O2 -m68020 -D_KERNEL"
+	CC="$CC -DODFS_PLATFORM_AMIX_KERNEL -I$K/include"
+	CC="$CC -I$C/platform/amix-kernel/compat -I$C/platform/amix/compat -I$C/include -I$C/backends"
+	d=$O/src/cdfs
+	rm -rf "$d"; mkdir -p "$d"
+	objs=
+	for s in core/error core/log core/node core/namefix core/cache_block core/cache_meta \
+	    core/charset core/ancestry core/mount core/session backends/iso9660/iso9660 \
+	    backends/rock_ridge/rock_ridge backends/joliet/joliet backends/udf/udf backends/hfs/hfs \
+	    backends/hfsplus/hfsplus backends/cdda/cdda platform/amix-kernel/amix_kern_media \
+	    platform/amix-kernel/cdfs_vfsops platform/amix-kernel/cdfs_vnodeops \
+	    platform/amix-kernel/cdfs_node platform/amix-kernel/kstring platform/amiga/printf_local; do
+		o=$d/$(basename $s).o
+		x=
+		case $s in
+		*/amix_kern_media) x=-I$K/include/amiga/alien ;;
+		*/kstring) x=-fno-builtin ;;
+		esac
+		$CC $x -c "$C/$s.c" -o "$o" 2> "$o.warn" || { cat "$o.warn"; exit 1; }
+		objs="$objs $o"
+	done
+	$KC -Wall -I"$DLM/include" -c "$K/fs/cdfs/cdfsmod.c" -o "$d/cdfsmod.o" 2> "$d/cdfsmod.o.warn" ||
+		{ cat "$d/cdfsmod.o.warn"; exit 1; }
+	warn "$K/fs/cdfs/cdfsmod.c" "$d/cdfsmod.o"
+	m68k-cbm-sysv4-ld -r -o "$d/Driver.o" $objs "$d/cdfsmod.o"
+	[ -z "$CHK64" ] || python3 "$K/atari/chk64.py" "$d/Driver.o"
+	cp "$K/fs/cdfs/Master" "$d/"
+	mkmod "$d"
+}
+
 rm -rf "$O/mod.d"
 for s in $SETS; do
 	case $s in
-	guest|display) $s ;;
+	guest|display|fs) $s ;;
 	drivers)
 		case $TARGET in
 		amiga) amiga ;;

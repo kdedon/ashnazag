@@ -35,6 +35,8 @@ long pc;
 	}
 	if (format < 0)
 		format = 0;
+	if (gp->gp_flags & GPF_FRAME68K)
+		format = 0;
 	switch (format >> 12) {
 	case 0: n = 0; break;
 	case 2: case 3: n = 4; break;
@@ -66,12 +68,24 @@ int v;
 		guest_lone_stat.hostcalls++;
 		return 1;
 	}
-	if (v == 8 && !(gp->gp_vsr & 0x2000))
-		return lone_reflect(gp, r, 8, GR_PC(r), GR_FV(r));
+	/* an untraced user-mode A-line goes to the profile's entry with its pc pushed, staying in user mode */
+	if (v == 10 && gp->gp_ualine && !(gp->gp_vsr & 0x2000) && !(GR_SR(r) & 0x8000)) {
+		long pc = GR_PC(r);
+
+		if (copyout((caddr_t)&pc, (caddr_t)(GR_USP(r) - 4), 4) == 0) {
+			GR_USP(r) -= 4;
+			GR_PC(r) = gp->gp_ualine;
+			guest_trapret();
+			return 0;
+		}
+	}
 	if (v != 8 && v != 11)
 		return lone_reflect(gp, r, v, GR_PC(r), GR_FV(r));
 	if (!copyin((caddr_t)GR_PC(r), b, 2))
 		op = G16(b);
+	/* a 68000 reads SR in user mode too */
+	if (v == 8 && !(gp->gp_vsr & 0x2000) && !((gp->gp_flags & GPF_FRAME68K) && (op & 0xffc0) == 0x40c0))
+		return lone_reflect(gp, r, 8, GR_PC(r), GR_FV(r));
 	if (v == 11 || (op & 0xffc0) == 0xf000) {
 		if (((op >> 9) & 7) == 1 && fpu_present)
 			return 1;

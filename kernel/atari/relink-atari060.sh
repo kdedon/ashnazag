@@ -107,10 +107,11 @@ hw_clkstart clkreld p1int p2int p3int p4int p5int p6int parinit qlintr slpoll
 autocon delayus ramopen ramclose ramstrategy ramprint ramsize backtrace inituname
 sdopen sdqueue sdhardwarename sdpartition sdvalid sdblkno sddevsize
 clkset dmainit ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig mdboot
-vtop hat_ptalloc uiomove unt_latch page_free segu_get swapinub memialloc krnlflt"
-OVRD="coinfo cdevsw bdevsw execsw fmodsw"
+vtop hat_ptalloc uiomove unt_latch page_free segu_get swapinub memialloc krnlflt vfs_getvfssw"
+OVRD="coinfo cdevsw bdevsw execsw fmodsw vfssw"
 ALIAS="inituname:T sendsig:T valid_usr_range:T fsig:T execsw:D fmodsw:D
-hat_ptalloc:T uiomove:T unt_latch:T page_free:T segu_get:T swapinub:T memialloc:T krnlflt:T"
+hat_ptalloc:T uiomove:T unt_latch:T page_free:T segu_get:T swapinub:T memialloc:T krnlflt:T
+vfssw:D vfs_getvfssw:T"
 
 echo "[*] weakening the Amiga platform entry points"
 WEAK="--globalize-symbol freemem_wait"

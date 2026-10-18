@@ -10,6 +10,7 @@ Loadable MISC modules for the Mac kernel, as specified in `docs/dlm-spec.md`, wi
 | `dlm_ld.c` | ELF checks, layout, symbol resolution, commons, relocation, module table |
 | `dlm_sym.c` | table blocks (`<sys/ksym.h>`): build, hash, check, lookup by name/address; shared with `mkksym` |
 | `dlm_slot.c` | exec-format and hook linkages: enlarged `execsw`, per-slot trampolines that load the module on first use, `EXF_FIRST` fall-through |
+| `dlm_fs.c` | filesystem-type linkage: enlarged `vfssw` with spare rows, `vfs_getvfssw` loading the module named by an unknown type, no unload while mounted |
 | `dlm_hooksw.s` | weak empty `hooksw`, replaced by the guest shim |
 | `dlmconf.c` | tunables, static-module list, `dmainit` override |
 | `dlm_cache.s` | `dlm_cacheflush` (060 / 040 / 020-030), weak default `plat_dmainit` |

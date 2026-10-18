@@ -10,6 +10,7 @@ The repository is MIT (`LICENSE`). Components below keep their own licences and 
 | XFree86 / Mesa / Glide3 patches | `gl/`, `x11/` patches | Patches against MIT/X11 (XFree86 3.3.6 and 4.3 DRI, X11R6.3, Mesa 5 MIT) code, fetched at build. Our new files: MIT. Glide3: see below |
 | asokero `amix-040-060-port` | `kernel/port-*.diff`, `kernel/port-tree.sh`, derived `pstart*.s` | MIT, Copyright asokero. Derived files say so |
 | hmlio `amix-gayle-ide` | `kernel/amiga/ide` | MIT, Copyright (c) 2026 Emre Bastuz (`kernel/amiga/ide/LICENSE`) |
+| jusii `amix-cdfs` | fetched at a pinned commit; glue `kernel/fs/cdfs` | BSD 2-clause, Copyright (c) 2026 Stefan Reinauer, Jussi Alanärä. Built as a loadable module only |
 | ZZ9000 driver | `kernel/amiga/zz9000` | MIT, Copyright (c) 2026 Ignacio Soriano (`LICENSE`) |
 | Radeon init tables | `kernel/amiga/radeon/rdsinit.c` | MIT. Copyright 2004 ATI Technologies, 2007-8 Advanced Micro Devices, 2008 Red Hat. Notice in the file |
 | NetBSD m68k FPE | fetched at build from a pinned NetBSD tarball; glue `fpe_glue.c`, `fpe040.s` | BSD, see below |

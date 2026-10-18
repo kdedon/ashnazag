@@ -118,6 +118,8 @@ gc_exec(p)
 		gp->gp_vsr = 0;
 		gp->gp_vusp = gp->gp_vvbr = gp->gp_vcacr = 0;
 		gp->gp_vsfc = gp->gp_vdfc = 0;
+		gp->gp_space = 0;
+		gp->gp_ualine = 0;
 		if (pf->gpf_exec)
 			(*pf->gpf_exec)(gp);
 	}

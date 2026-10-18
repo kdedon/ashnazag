@@ -222,7 +222,11 @@ busy(m)
 	struct dlm_mod *m;
 {
 	return m->m_refs || m->m_deps || m->m_incall ||
-	    (m->m_flags & (DM_LOCKED | DM_TRANS));
+	    (m->m_flags & (DM_LOCKED | DM_TRANS))
+#ifndef DLM_HOST
+	    || dlm_fsbusy(m)
+#endif
+	    ;
 }
 
 /* ---- linkages ---- */
@@ -244,6 +248,8 @@ knownops(a)
 #ifndef DLM_HOST
 	if (a == DLM_KADDR(&mod_strops, "mod_strops"))
 		return &mod_strops;
+	if (a == DLM_KADDR(&mod_fsops, "mod_fsops"))
+		return &mod_fsops;
 #endif
 	return 0;
 }
@@ -1104,6 +1110,7 @@ dlm_init()
 	dlm_slot_init();
 #ifndef DLM_HOST
 	dlm_str_init();
+	dlm_fs_init();
 #endif
 	if (dlm_blkcheck(dlm_ksym, (long)KSYM_SPACE) != 0 ||
 	    G32(dlm_ksym + KH_LO) != DLM_KLO || G32(dlm_ksym + KH_HI) != DLM_KHI) {

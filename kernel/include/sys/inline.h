@@ -8,6 +8,9 @@ static inline int _spl1() { int s; asm volatile("mov.w %%sr,%0;mov.w &0x2100,%%s
 static inline int _spl2() { int s; asm volatile("mov.w %%sr,%0;mov.w &0x2200,%%sr" : "=d"(s) :); return s; }
 static inline int _spl3() { int s; asm volatile("mov.w %%sr,%0;mov.w &0x2300,%%sr" : "=d"(s) :); return s; }
 static inline int _spl4() { int s; asm volatile("mov.w %%sr,%0;mov.w &0x2400,%%sr" : "=d"(s) :); return s; }
+static inline int _spl5() { int s; asm volatile("mov.w %%sr,%0;mov.w &0x2500,%%sr" : "=d"(s) :); return s; }
+static inline int _spl6() { int s; asm volatile("mov.w %%sr,%0;mov.w &0x2600,%%sr" : "=d"(s) :); return s; }
+static inline int _spl7() { int s; asm volatile("mov.w %%sr,%0;mov.w &0x2700,%%sr" : "=d"(s) :); return s; }
 
 static inline int
 splx(sr)
@@ -28,6 +31,20 @@ strlen(p)
 	while (*e++)
 		;
 	return e - p - 1;
+}
+
+/* len bytes, a nonzero multiple of 4 */
+static inline void
+struct_zero(addr, len)
+	char *addr;
+	unsigned len;
+{
+	long *p = (long *)addr;
+
+	len >>= 2;
+	do
+		*p++ = 0;
+	while (--len);
 }
 
 #define spl0		_spl0

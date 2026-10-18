@@ -51,6 +51,7 @@ GP_FLAGS = 12
 GP_VSR = 20
 GP_VVBR = 28
 GP_MMU = 68
+GP_SPACE = 72
 P_EVPDP = 0xc8
 P_SIG = 0x9c
 P_HOLD = 0xa4
@@ -138,6 +139,8 @@ gc_ftrap:
 	bnew	Lft1
 	btst	&GPF_SPIN_BIT,%a1@(GP_FLAGS+3)
 	bnew	Lft1
+	tstl	%a1@(GP_SPACE)
+	bnew	Lftfault		| S changes: the C path switches spaces
 	moveal	%a1@(GP_VUSP),%a0
 Lft1:
 	subql	&8,%a0
@@ -297,6 +300,8 @@ Lfpur6:
 	moveal	%d2,%a6
 	bra	Lfpdone
 Lfprte:
+	btst	&0,%a1@(GP_FLAGS+1)	| bit 16, GPF_FRAME68K: the C path pops 6 bytes
+	bnew	Lfpfault
 	movesw	%a2@(6),%d1
 	cmpiw	&0x0fff,%d1
 	bhiw	Lfpfault		| format 0 only
@@ -361,6 +366,8 @@ Lfpset:					| d0: the new SR
 	beqw	Lfps0
 	tstl	%a1@(GP_MMU)
 	bnew	Lfpsi			| S changes under a shadow MMU: the C path switches spaces
+	tstl	%a1@(GP_SPACE)
+	bnew	Lfpsi
 Lfps0:
 	movew	%d0,%d1
 	andiw	&0x0700,%d1

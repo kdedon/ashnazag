@@ -114,12 +114,12 @@ ramopen ramclose ramstrategy ramprint ramsize
 config_orig
 dmainit
 ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig
-clkset stime mdboot memialloc $VTOP $PTALLOC"
+clkset stime mdboot memialloc vfs_getvfssw $VTOP $PTALLOC"
 # Amiga data replaced: the console streamtab named by cdevsw[0] and oncons(),
-# the device switches and io_start[].
-OVRD="coinfo cdevsw bdevsw io_start execsw fmodsw"
+# the device switches, io_start[] and the module-extended switches.
+OVRD="coinfo cdevsw bdevsw io_start execsw fmodsw vfssw"
 # Stock bodies kept under __amix_<name>: the wrappers and dlm_init call them.
-ALIAS="sendsig:T valid_usr_range:T fsig:T execsw:D stime:T fmodsw:D memialloc:T"
+ALIAS="sendsig:T valid_usr_range:T fsig:T execsw:D stime:T fmodsw:D memialloc:T vfssw:D vfs_getvfssw:T"
 [ $MODE = port ] && OVR="$OVR sysseginit" ALIAS="$ALIAS sysseginit:T"
 [ -n "$PTALLOC" ] && ALIAS="$ALIAS hat_ptalloc:T" GLOB=freemem_wait
 

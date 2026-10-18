@@ -4,11 +4,16 @@
  *
  * dlmta exports dlmta_value (1000) and dlmta_add(); dlmtb depends on it
  * and its _load adds 234.  Loaded values are read back through getksym
- * and /dev/kmem.  Skips when the kernel has no module support.
+ * and /dev/kmem.  dlmtf is a filesystem type that its first mount
+ * loads.  Skips when the kernel has no module support.
  */
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
+#include <sys/statvfs.h>
+#include <sys/mount.h>
+#include <sys/fstyp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -291,6 +296,85 @@ test_modadmin()
 	t_check("modadmin_unload", admin("-U", "dlmta") == 0 && nloaded() == 0, "");
 }
 
+/* id of the loaded module name, -1 if none */
+static int
+modid(name)
+char *name;
+{
+	struct modstatus st;
+	int id = 1;
+
+	while (modstat(id, &st, 1) == 0) {
+		if (strcmp(st.ms_name, name) == 0)
+			return st.ms_id;
+		id = st.ms_id + 1;
+	}
+	return -1;
+}
+
+#define	MNT	"/tmp/dlmtf"
+
+static void
+test_fs()
+{
+	struct modstatus st;
+	struct statvfs sv;
+	struct stat s0, s1;
+	int id, e;
+
+	modpath("/tests/mod.d");
+	mkdir(MNT, 0755);
+	t_check("fs_not_loaded", nloaded() == 0 && sysfs(GETFSIND, "dlmtf") < 0,
+	    "%d loaded", nloaded());
+	e = E(mount("none", MNT, MS_DATA | MS_RDONLY, "dlmtf", (char *)0, 0));
+	if (!t_check("fs_mount_loads", e == 0 && (id = modid("dlmtf")) > 0,
+	    "%s", strerror(e)))
+		return;
+	t_check("fs_type", modstat(id, &st, 0) == 0 &&
+	    st.ms_msinfo[0].mss_type == MOD_TY_FS &&
+	    st.ms_msinfo[0].mss_p0[0] == sysfs(GETFSIND, "dlmtf"),
+	    "type %d row %d index %d", st.ms_msinfo[0].mss_type,
+	    st.ms_msinfo[0].mss_p0[0], sysfs(GETFSIND, "dlmtf"));
+	t_check("fs_mounted", statvfs(MNT, &sv) == 0 &&
+	    strcmp(sv.f_basetype, "dlmtf") == 0 && stat("/tmp", &s0) == 0 &&
+	    stat(MNT, &s1) == 0 && s1.st_dev != s0.st_dev && S_ISDIR(s1.st_mode),
+	    "%s: type '%s'", T_ERR, sv.f_basetype);
+	t_check("fs_unload_busy", E(moduload(id)) == EBUSY, "%s", T_ERR);
+	mkdir(MNT "2", 0755);
+	t_check("fs_mount_twice", E(mount("none", MNT "2", MS_DATA, "dlmtf",
+	    (char *)0, 0)) == EBUSY, "%s", T_ERR);
+	rmdir(MNT "2");
+	t_check("fs_umount", umount(MNT) == 0, "%s", T_ERR);
+	t_check("fs_unload", moduload(id) == 0 && nloaded() == 0 &&
+	    sysfs(GETFSIND, "dlmtf") < 0, "%s", T_ERR);
+	t_check("fs_unknown", E(mount("none", MNT, MS_DATA, "dlmtnone", (char *)0, 0)) ==
+	    EINVAL && nloaded() == 0, "%s", T_ERR);
+	t_check("fs_remount_loads", mount("none", MNT, MS_DATA, "dlmtf", (char *)0, 0) == 0 &&
+	    umount(MNT) == 0 && moduload(0) == 0 && nloaded() == 0, "%s", T_ERR);
+	rmdir(MNT);
+}
+
+/* cdfs loads on a mount whose device it then refuses */
+static void
+test_cdfs()
+{
+	struct stat s;
+	int id, e;
+
+	if (stat("/tests/mod.d/cdfs", &s) < 0) {
+		t_skip("cdfs", "no cdfs module");
+		return;
+	}
+	modpath("/tests/mod.d");
+	mkdir(MNT, 0755);
+	e = E(mount("none", MNT, MS_DATA | MS_RDONLY, "cdfs", (char *)0, 0));
+	t_check("cdfs_loads", e == EINVAL && (id = modid("cdfs")) > 0 &&
+	    sysfs(GETFSIND, "cdfs") > 0, "%s", strerror(e));
+	t_check("cdfs_unload", moduload(0) == 0 && nloaded() == 0 &&
+	    sysfs(GETFSIND, "cdfs") < 0, "%d loaded", nloaded());
+	rmdir(MNT);
+}
+
 int
 main()
 {
@@ -305,6 +389,8 @@ main()
 	test_errors();
 	test_perm();
 	test_modadmin();
+	test_fs();
+	test_cdfs();
 	moduload(0);
 	modpath((char *)0);
 	return t_done();

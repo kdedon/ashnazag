@@ -17,7 +17,7 @@
 # line), screen.png, summary.txt.
 # AMIGANET=1 (direct boot): the root also has TCP/IP, for t_amiga's
 # bsdsocket.library checks (user-mode network, no echo service).
-# GROUP=smoke|core|mac|tos|mint|cpm|smsqe|amiga|display|sound|win16|gl|quake|native|v200|next|stable runs that set only.
+# GROUP=smoke|core|mac|tos|mint|cpm|smsqe|amiga|display|sound|win16|gl|quake|native|lisa|v200|next|stable runs that set only.
 # Exit: 0 all PASS, 1 any FAIL, 2 timeout, panic or no TESTS DONE.
 # up to QSLOTS QEMUs at once (tools/qslot.sh)
 # one run per checkout at a time: they share tests/build
@@ -29,6 +29,7 @@ Q=$AUX/toolchain/qemu-local; [ -x "$Q/usr/bin/qemu-system-m68k" ] || Q=$AUX/tool
 MODE=direct
 BUILD=1
 KDIR=$AUX/kernel
+ARGS="$*"
 while [ $# -gt 0 ]; do
 	case $1 in
 	--rom) MODE=rom ;;
@@ -63,16 +64,27 @@ win16)	G="t_win16" ;;
 gl)	G="t_gl" ;;
 quake)	G="t_quake" ;;
 native)	G="t_nativehost t_nhplat t_nativecall t_natenv" ;;
+lisa)	G="t_lisa t_natenv" ;;
 v200)	G="t_v200 t_natenv" ;;
 next)	G="t_gmmu t_next"; GEOM=${GEOM:-1152x870x8} ;;
 stable)	G="t_stable"; TMO=${TMO0:-14400} ;;
-*)	echo "GROUP: smoke core mac tos mint cpm smsqe amiga display sound win16 gl quake native v200 next stable"; exit 2 ;;
+*)	echo "GROUP: smoke core mac tos mint cpm smsqe amiga display sound win16 gl quake native lisa v200 next stable"; exit 2 ;;
 esac
 if [ -n "${G:-}" ]; then
 	ONLY="$T/src/runall.c"
 	for t in $G; do ONLY="$ONLY $T/src/$t.c"; done
 	export ONLY
 fi
+# t_next's and t_lisa's volumes are both SCSI disk 6: one boot each
+case " $ONLY " in
+*"/t_next.c "*"/t_lisa.c "*|*"/t_lisa.c "*"/t_next.c "*)
+	echo "[*] t_next and t_lisa both use SCSI disk 6: two boots, t_lisa in the second"
+	rmdir "$OUT"
+	GROUP= ONLY=$(echo " $ONLY " | sed 's# [^ ]*/t_lisa\.c # #') sh "$0" $ARGS; r1=$?
+	GROUP= ONLY="$T/src/runall.c $T/src/t_lisa.c" sh "$0" $ARGS; r2=$?
+	[ $r1 -ge $r2 ] && exit $r1
+	exit $r2 ;;
+esac
 # keep the newest dozen result directories
 ls -dt "$T"/results/*/ 2>/dev/null | tail -n +13 | while read d; do rm -rf "$d"; done
 
@@ -137,8 +149,12 @@ if [ $MODE = direct ]; then
 		-drive file="$T/build/v200/v200.img",format=raw,if=none,id=hd4,snapshot=on \
 		-device scsi-hd,scsi-id=4,drive=hd4
 	# t_next's volume, writes discarded
-	[ -f "$T/build/next/next.img" ] && set -- "$@" \
+	case " $ONLY " in "  "|*/t_next.c*) [ -f "$T/build/next/next.img" ] ;; *) false ;; esac && set -- "$@" \
 		-drive file="$T/build/next/next.img",format=raw,if=none,id=hd6,snapshot=on \
+		-device scsi-hd,scsi-id=6,drive=hd6
+	# t_lisa's volume, writes discarded
+	case " $ONLY " in *"/t_lisa.c"*) [ -f "$T/build/lisa/lisa.img" ] ;; *) false ;; esac && set -- "$@" \
+		-drive file="$T/build/lisa/lisa.img",format=raw,if=none,id=hd6,snapshot=on \
 		-device scsi-hd,scsi-id=6,drive=hd6
 	# t_quake's volume, writes discarded
 	[ -f "$T/build/quake/quake.img" ] && set -- "$@" \
@@ -169,7 +185,7 @@ fi
 echo "[*] $MODE boot, $MEM MB, timeout $TMO s -> $OUT"
 LD_LIBRARY_PATH=$Q/lib timeout "$TMO" nice -n 19 $QEMU "$@" \
 	-serial file:"$OUT/serial.log" $SERB \
-	-qmp unix:"$SOCK",server=on,wait=off &
+	-qmp unix:"$SOCK",server=on,wait=off 2> "$OUT/qemu.err" &
 QPID=$!
 HPID=
 if [ $MODE = direct ]; then
@@ -205,7 +221,7 @@ fi
 [ -n "$HPID" ] && kill $HPID 2>/dev/null
 wait
 
-python3 "$T/summarize.py" "$OUT/serial.log" "$state" > "$OUT/summary.txt"
+python3 "$T/summarize.py" "$OUT/serial.log" "$state" "$OUT/qemu.err" > "$OUT/summary.txt"
 rc=$?
 cat "$OUT/summary.txt"
 echo "results: $OUT"
