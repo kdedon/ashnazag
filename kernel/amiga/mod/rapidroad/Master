@@ -1,0 +1,5 @@
+# rapidroad: the ISP1763 USB host controller of an X-Surf-100's RapidRoad
+# module, registered with the usb module (GPL-2, loadable only)
+$depend usb
+$modtype misc
+rapidroad	rr	m	0	0	0

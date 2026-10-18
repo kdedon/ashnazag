@@ -37,6 +37,8 @@ hand.
 | `tdfx` | Amiga | `/dev/dri/card0`: DRM for the Voodoo3's 3D |
 | `radeon` | Amiga | `/dev/dri/card1`: DRM for the Radeon's 3D |
 | `floppy` | Amiga | `/dev/floppyN` (62): raw tracks for the floppy service |
+| `usb` | Amiga | `/dev/usb` (64): the USB stack (U-Boot's core and hub code as FreeMiNT carries them, GPL-2) and its bulk-only mass storage class driver; `usbtool` polls the hubs, lists devices, reads blocks |
+| `rapidroad` | Amiga | the ISP1763 host controller of a RapidRoad on an X-Surf-100, registered with `usb` when loaded (`modadmin -l rapidroad`); GPL-2, from U-Boot's isp1760 driver |
 
 ## Services
 

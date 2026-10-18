@@ -9,7 +9,7 @@
 # UNIX_Root ufs = c6d0s1, UNIX_Swap = c6d0s2) and outdir/boot/, the
 # AmigaDOS volume: S/Startup-Sequence runs unix_boot040 on the kernel.
 # A login runs on the serial port.  The root holds the amilib, opci, pci
-# ne, xsurf, zz9000, voodoo3, tdfx, radeonds, radeon, floppy and v3bars modules (floppy loaded at boot, the first of zz9000, voodoo3 and radeonds found, order in /etc/default/display), modadmin, lspci and pci.ids, fltool, tcpcat, drmtest, drmkill, radeontest, /dev/pci, /dev/ne0, /dev/dri/card0 (tdfx) and card1 (radeon), registered at
+# ne, xsurf, zz9000, voodoo3, tdfx, radeonds, radeon, floppy, v3bars, usb and rapidroad modules (floppy loaded at boot, the first of zz9000, voodoo3 and radeonds found, order in /etc/default/display), modadmin, lspci and pci.ids, fltool, usbtool, tcpcat, drmtest, drmkill, radeontest, /dev/pci, /dev/ne0, /dev/usb, /dev/dri/card0 (tdfx) and card1 (radeon), registered at
 # run level 2; ne0 comes up as 10.0.2.15 (Amiberry's user-mode network).
 # AMIX_TAPE: tape segments (default media/amix-tape).  UNIXBOOT: the
 # unix_boot040 executable.  OPENPCI: openpci's unpacked archive (Libs/
@@ -112,6 +112,7 @@ CC="nice -n 19 m68k-cbm-sysv4-gcc -O"
 $CC -I"$DLM/include" -o "$S/bin/modadmin" "$DLM/modadmin.c" "$S/bin"/mod*.o "$S/bin/getksym.o"
 $CC -I"$A/include" -o "$S/bin/lspci" "$A/pci/lspci.c"
 $CC -I"$K/guest/include" -o "$S/bin/fltool" "$A/floppy/fltool.c"
+$CC -I"$K/usb" -o "$S/bin/usbtool" "$K/usb/usbtool.c"
 $CC -o "$S/bin/kread" "$A/test/kread.c"
 $CC -I"$K/mac/display" -I"$K/drm" -o "$S/bin/drmtest" "$A/test/drmtest.c"
 $CC -I"$K/mac/display" -I"$K/drm" -o "$S/bin/radeontest" "$A/test/radeontest.c"
@@ -211,6 +212,7 @@ f /sbin/modadmin 555 0 3 bin/modadmin
 f /usr/bin/lspci 555 2 2 bin/lspci
 f /usr/share/lib/pci.ids 444 2 2 $A/pci/pci.ids
 f /usr/bin/fltool 555 2 2 bin/fltool
+f /usr/bin/usbtool 555 2 2 bin/usbtool
 f /usr/bin/tcpcat 555 2 2 bin/tcpcat
 f /usr/bin/kread 555 2 2 bin/kread
 f /usr/bin/drmtest 555 2 2 bin/drmtest
@@ -235,6 +237,9 @@ f /etc/conf/mod.d/radeonds 644 0 3 mods/mod.d/radeonds
 f /etc/conf/mod.d/radeon 644 0 3 mods/mod.d/radeon
 f /etc/conf/mod.d/floppy 644 0 3 mods/mod.d/floppy
 f /etc/conf/mod.d/v3bars 644 0 3 mods/mod.d/v3bars
+f /etc/conf/mod.d/usb 644 0 3 mods/mod.d/usb
+f /etc/conf/mod.d/rapidroad 644 0 3 mods/mod.d/rapidroad
+c /dev/usb 600 0 3 64 0
 c /dev/floppy0 666 0 3 62 0
 c /dev/floppy1 666 0 3 62 1
 c /dev/floppy2 666 0 3 62 2

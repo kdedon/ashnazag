@@ -50,5 +50,7 @@ These are separate programs, patches or separately loaded modules and keep their
 | XaAES, TeraDesk, FreeMiNT | fetched at build, source shipped with the binaries | GPL |
 | EmuTOS | fetched, separate image, patched in memory only | GPL-2.0-or-later |
 | manx, atari-sysv-sp1 (slaapliedje) | fetched at build | GPL-2.0 |
+| USB stack: U-Boot's core and hub code as FreeMiNT carries them (`kernel/usb`, with atari-sysv-sp1's driver-ub) | loadable module `usb` | GPL-2.0 (`kernel/usb/LICENSE`); copyright David Galvez, the U-Boot and Linux authors, notices in the files |
+| ISP1763 host controller driver from U-Boot's `drivers/usb/isp1760` and `usb_urb.c` (`kernel/amiga/rapidroad`) | loadable module `rapidroad` | GPL-2.0; copyright Linaro (Rui Miguel Silva), Laurent Pinchart, Sebastian Siewior, notices in the files |
 
 Files that are ours inside these projects' patches follow the patched project's licence.
