@@ -190,13 +190,15 @@ amigasrcs() {
 	radeon)	echo "$K/drm/radeon_drv.c $K/drm/radeon_cp.c $K/drm/radeon_state.c $K/drm/radeon_irq.c" \
 		    "$K/drm/radeon_mem.c $A/mod/radeon/radeonmod.c" ;;
 	v3bars)	echo "$A/test/v3bars.c" ;;
+	usb)	echo "$K/usb/usb.c $K/usb/hub.c $K/usb/ucd.c $K/usb/udd.c $K/usb/ubstor.c $K/usb/usbmod.c" ;;
+	rapidroad)	echo "$A/rapidroad/isp1763.c $A/rapidroad/rrmod.c" ;;
 	esac
 }
 amiga() {
 	A=$K/amiga
 	[ -z "$KERNEL" ] || grep -qx dlm_cacheflush "$O/exports" ||
 		{ echo "mods.sh: $KERNEL has no DLM" >&2; exit 1; }
-	for m in amilib opci pci ne xsurf zz9000 voodoo3 tdfx radeonds radeon floppy v3bars; do	# each after the module it depends on
+	for m in amilib opci pci ne xsurf zz9000 voodoo3 tdfx radeonds radeon floppy v3bars usb rapidroad; do	# each after the module it depends on
 		CC="$(kcc $m) -fno-common -Wall -Wno-comment"
 		CC="$CC -I$DLM/include -I$A/include -I$K/drm -I$K/guest/include -I$A/amilib -I$K/atari/netusbee -DNU_PCI"
 		d=$O/src/$m
@@ -209,6 +211,8 @@ amiga() {
 			[ $m != xsurf ] || cc=$(echo "$CC" | sed 's/ -DNU_PCI/ -DNU_XSURF/')
 			# ANSI templates, upstream warnings kept; __STDC__ 0 keeps the system headers' extensions
 			case $c in */drm/*) cc="$(echo "$CC" | sed 's/ -traditional//; s/ -Wall//') -D__STDC__=0 -DDS_AMIGA -I$K/mac/display" ;; esac
+			# the USB stack and the ISP1763 driver: ANSI C from U-Boot
+			case $c in */usb/*|*/rapidroad/*) cc="$(echo "$CC" | sed 's/ -traditional//') -D__STDC__=0 -I$K/usb" ;; esac
 			$cc -c "$c" -o "$o" 2> "$o.warn" || { cat "$o.warn"; exit 1; }
 			warn "$c" "$o"
 			objs="$objs $o"

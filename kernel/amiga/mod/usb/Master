@@ -1,0 +1,3 @@
+# usb: the USB stack (U-Boot core and hub code as FreeMiNT carries them,
+# GPL-2, loadable only) and its mass storage class driver, /dev/usb
+usb	usb	m	0	0	0
