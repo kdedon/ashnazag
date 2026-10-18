@@ -23,7 +23,10 @@ bcmp
 bcopy
 bdevcnt
 bdevsw
+biodone
 bootinfo
+bp_mapin
+bp_mapout
 bzero
 canput
 cantmask
@@ -148,6 +151,7 @@ physmem
 pid_rele
 plat_iomap
 plat_vtop
+plat_zorro
 pollwakeup
 ppcopy
 preempt
