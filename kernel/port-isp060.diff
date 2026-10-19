@@ -1,0 +1,241 @@
+# The 68060 integer package for user traps, on https://github.com/asokero/amix-040-060-port
+# The package is fetched at build time; its Motorola notice is in THIRD_PARTY.md.
+diff --git a/relink-040.sh b/relink-040.sh
+index f2e7b49..32fb401 100644
+--- a/relink-040.sh
++++ b/relink-040.sh
+@@ -99,6 +99,14 @@ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/lmul060.s"    -o "$HERE/build/lmul060.o
+ #                zero elsewhere in libc/ld.so/as/ld.  Everything else declines, counted, to
+ #                nullvect.  cputype-gated, so the 040 never enters it.
+ m68k-cbm-sysv4-gcc -m68040 -c "$HERE/src/isp61_060.s"  -o "$HERE/build/isp61_060.o"
++#   isp060     = the 68060 integer package for the user forms isp61_060 declines
++. "$HERE/tools/netbsd-pin.sh"
++netbsd_syssrc_verify "$NETBSD_SYSSRC"
++IW="$HERE/build/isp060-work"
++rm -rf "$IW"; mkdir -p "$IW"
++tar xzf "$NETBSD_SYSSRC" -C "$IW" usr/src/sys/arch/m68k/060sp/isp.S
++cat "$HERE/src/isp060_head.s" "$IW/usr/src/sys/arch/m68k/060sp/isp.S" "$HERE/src/isp060_glue.s" > "$IW/isp060_pkg.s"
++m68k-linux-gnu-gcc -x assembler-with-cpp -m68060 -c "$IW/isp060_pkg.s" -o "$HERE/build/isp060_pkg.o"
+ #   fpu060     = ISSUE-43 (2026-08-12): fpu_save / fpu_restore / fpu_setup for the 68060.
+ #                The inherited bodies decide "does this process have live FP state?" from
+ #                BYTE ZERO of the FSAVE frame.  That is the format byte on a 68881/040 and
+@@ -546,7 +554,7 @@ m68k-cbm-sysv4-ld -r -o "$OUT" "$HERE/build/unix-stage1" \
+ 	"$HERE/build/uvatosde040.o" "$HERE/build/prfastmap040.o" "$HERE/build/prumap040.o" "$HERE/build/haltsys040.o" \
+ 	"$HERE/build/segu_lockfix.o" "$HERE/build/segu_ubptbl040.o" \
+ 	"$HERE/build/inituname040.o" \
+-	"$HERE/build/cputype060.o" "$HERE/build/lmul060.o" "$HERE/build/isp61_060.o" \
++	"$HERE/build/cputype060.o" "$HERE/build/lmul060.o" "$HERE/build/isp61_060.o" "$HERE/build/isp060_pkg.o" \
+ 	"$HERE/build/fpu060.o" $FPUINIT_OBJ \
+ 	"$HERE/build/kvecprobe040.o" \
+ 	"$HERE/build/bp_map040.o" "$HERE/build/runtime040.o" "$HERE/build/krnxmemflt040.o" \
+diff --git a/src/isp060_glue.s b/src/isp060_glue.s
+new file mode 100644
+index 0000000..fd8dc3e
+--- /dev/null
++++ b/src/isp060_glue.s
+@@ -0,0 +1,142 @@
++| Call-outs of the 68060 integer package.  It is entered only for user
++| traps, so every memory access goes through copyin/copyout.
++
++	U_AR0	=	0x40000864	| u.u_ar0
++
++	.text
++| emulated: back to the process through the user-exception exit
++Lic_done:
++	moveml	%d0-%fp,%sp@-
++	movel	sup_cacr,%d0
++	.word	0x4e7b,0x0002		| movec %d0,%cacr
++	movel	%usp,%a0
++	movel	%a0,%sp@-
++	movel	%sp,U_AR0
++	moveal	%sp@+,%a0
++	movel	%a0,%usp
++	jmp	ureturn
++
++| chk, divide by zero, trace or access error: the frame the package built
++| goes to that vector's handler; a traced chk or divide becomes a trace
++Lic_vec:
++	cmpiw	#0x2018,%sp@(6)
++	beqs	1f
++	cmpiw	#0x2014,%sp@(6)
++	bnes	2f
++1:	tstb	%sp@
++	bpls	2f
++	moveb	#0x24,%sp@(7)
++2:	subql	#4,%sp
++	movel	%a0,%sp@-
++	movel	%d0,%sp@-
++	.word	0x4e7a,0x8801		| movec %vbr,%a0
++	movew	%sp@(18),%d0
++	andiw	#0x0ffc,%d0
++	movel	%a0@(0,%d0:w),%sp@(8)
++	movel	%sp@+,%d0
++	moveal	%sp@+,%a0
++	rts
++
++Lic_cas:
++	jmp	isp060_top+0x88
++Lic_cas2:
++	jmp	isp060_top+0x90
++
++| The cas cores run with interrupts masked and cannot take a page fault:
++| a0 user operand, d1 nonzero for a long.  Reading and writing it back
++| makes its pages resident and writable; d0 = 0, or an FSLW for the
++| access error; a0 kept.
++Lic_lock:
++	moveq	#2,%d0
++	tstb	%d1
++	beqs	1f
++	moveq	#4,%d0
++1:	subql	#4,%sp			| operand copy
++	movel	%a0,%sp@-
++	movel	%d0,%sp@-
++	movel	%d0,%sp@-
++	pea	%sp@(12)
++	movel	%a0,%sp@-
++	jsr	copyin
++	lea	%sp@(12),%sp
++	movel	#0x01010001,%d1		| read, long, data
++	tstl	%d0
++	bnes	2f
++	movel	%sp@,%sp@-
++	movel	%sp@(8),%sp@-
++	pea	%sp@(16)
++	jsr	copyout
++	lea	%sp@(12),%sp
++	movel	#0x00810001,%d1		| write, long, data
++2:	tstl	%d0
++	beqs	3f
++	movel	%d1,%d0
++3:	moveal	%sp@(4),%a0
++	lea	%sp@(12),%sp
++	rts
++Lic_unlock:
++	clrl	%d0
++	rts
++
++| a0 user source, a1 kernel destination, d0 count; d1 = 0 when done
++Lic_read:
++	movel	%d0,%sp@-
++	movel	%a1,%sp@-
++	movel	%a0,%sp@-
++	jsr	copyin
++	lea	%sp@(12),%sp
++	movel	%d0,%d1
++	rts
++
++| a0 kernel source, a1 user destination, d0 count
++Lic_write:
++	movel	%d0,%sp@-
++	movel	%a1,%sp@-
++	movel	%a0,%sp@-
++	jsr	copyout
++	lea	%sp@(12),%sp
++	movel	%d0,%d1
++	rts
++
++| d1 bytes at user a0 into the low end of d0
++Lic_rb:
++	moveq	#1,%d1
++	bras	Lic_rd
++Lic_rw:
++	moveq	#2,%d1
++	bras	Lic_rd
++Lic_rl:
++	moveq	#4,%d1
++Lic_rd:
++	clrl	%sp@-
++	movel	%d1,%sp@-
++	lea	%sp@(8),%a1
++	subal	%d1,%a1
++	movel	%a1,%sp@-
++	movel	%a0,%sp@-
++	jsr	copyin
++	lea	%sp@(12),%sp
++	movel	%d0,%d1
++	movel	%sp@+,%d0
++	rts
++
++| the low d1 bytes of d0 to user a0
++Lic_wb:
++	moveq	#1,%d1
++	bras	Lic_wr
++Lic_ww:
++	moveq	#2,%d1
++	bras	Lic_wr
++Lic_wl:
++	moveq	#4,%d1
++Lic_wr:
++	movel	%d0,%sp@-
++	movel	%d1,%sp@-
++	movel	%a0,%sp@-
++	lea	%sp@(12),%a1
++	subal	%d1,%a1
++	movel	%a1,%sp@-
++	jsr	copyout
++	lea	%sp@(16),%sp
++	movel	%d0,%d1
++	rts
+diff --git a/src/isp060_head.s b/src/isp060_head.s
+new file mode 100644
+index 0000000..ff131c3
+--- /dev/null
++++ b/src/isp060_head.s
+@@ -0,0 +1,29 @@
++| Call-out table of the 68060 integer package, which follows it as
++| one assembly unit.  The package finds each call-out at a fixed offset
++| from this table and starts at isp060_top+128.
++
++	.text
++	.globl	isp060_top
++isp060_top:
++	.long	Lic_vec   - isp060_top	| chk
++	.long	Lic_vec   - isp060_top	| divbyzero
++	.long	Lic_vec   - isp060_top	| trace
++	.long	Lic_vec   - isp060_top	| access
++	.long	Lic_done  - isp060_top
++	.long	Lic_cas   - isp060_top
++	.long	Lic_cas2  - isp060_top
++	.long	Lic_lock  - isp060_top	| lock_page
++	.long	Lic_unlock - isp060_top	| unlock_page
++	.long	0, 0, 0, 0, 0, 0, 0
++	.long	Lic_read  - isp060_top	| imem_read
++	.long	Lic_read  - isp060_top	| dmem_read
++	.long	Lic_write - isp060_top	| dmem_write
++	.long	Lic_rw    - isp060_top	| imem_read_word
++	.long	Lic_rl    - isp060_top	| imem_read_long
++	.long	Lic_rb    - isp060_top	| dmem_read_byte
++	.long	Lic_rw    - isp060_top	| dmem_read_word
++	.long	Lic_rl    - isp060_top	| dmem_read_long
++	.long	Lic_wb    - isp060_top	| dmem_write_byte
++	.long	Lic_ww    - isp060_top	| dmem_write_word
++	.long	Lic_wl    - isp060_top	| dmem_write_long
++	.long	0, 0, 0, 0, 0
+diff --git a/src/isp61_060.s b/src/isp61_060.s
+index d7f92e7..e585a19 100644
+--- a/src/isp61_060.s
++++ b/src/isp61_060.s
+@@ -308,16 +308,20 @@ Lisp_nonuser:
+ 	braw	Lisp_unwind		| by lmul060.s; a supervisor hit is a real surprise
+ Lisp_trace:
+ 	addql	&1,isp61_trace_decline_n
+-	braw	Lisp_unwind
++	braw	Lisp_isp
+ Lisp_ifetch:
+ 	addql	&1,isp61_ifetch_fail_n
+-	braw	Lisp_unwind
++	braw	Lisp_isp
+ Lisp_operand:
+ 	addql	&1,isp61_opfetch_fail_n	| the INSTRUCTION was readable but its memory source
+-	braw	Lisp_unwind		| operand was not -- a different event from ifetch,
++	braw	Lisp_isp		| operand was not -- a different event from ifetch,
+ 					| and counted separately so it cannot hide there
+ Lisp_unsup:
+ 	addql	&1,isp61_unsupported_n
++Lisp_isp:				| other user forms: the integer package
++	moveal	%a6,%sp
++	moveml	%sp@+,%d0-%fp
++	jmp	isp060_top+128
+ Lisp_unwind:
+ 	moveal	%a6,%sp			| a6 is the base whether or not scratch was taken
+ 	moveml	%sp@+,%d0-%fp		| restore D0-D7/A0-A6 exactly
