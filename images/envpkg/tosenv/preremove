@@ -1,2 +1,2 @@
-/sbin/modadmin -U tosguest > /dev/null 2>&1
+/usr/aux/lib/modfree starttos tosguest || exit 1
 exit 0

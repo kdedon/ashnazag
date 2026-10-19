@@ -1,7 +1,9 @@
 #!/bin/sh
-# The environment module path: this host's own builds first.
+# The environment module path: this host's own builds first.  The kernel
+# names the machine; the 68030 Atari kernel's name ends in 030.
 case `uname -m` in
-Atari*)		d=/usr/aux/lib/mod.atari ;;
+Atari*030)	d=/usr/aux/lib/mod.atari ;;
+Atari*)		d=/usr/aux/lib/mod.atari060 ;;
 A[0-9]*|[Aa]miga*)	d=/usr/aux/lib/mod.amiga ;;
 *)		d= ;;
 esac

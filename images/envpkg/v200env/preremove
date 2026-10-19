@@ -1,2 +1,2 @@
-/sbin/modadmin -U tiplatform > /dev/null 2>&1
+/usr/aux/lib/modfree startvoyage200 tiplatform || exit 1
 exit 0

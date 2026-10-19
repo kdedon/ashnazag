@@ -1,2 +1,2 @@
-/sbin/modadmin -U lisaguest > /dev/null 2>&1
+/usr/aux/lib/modfree startlisa lisaguest || exit 1
 exit 0

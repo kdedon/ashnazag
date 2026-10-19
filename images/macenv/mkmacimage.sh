@@ -47,7 +47,7 @@ KERNEL=$KERNEL sh "$AUX/images/envpkg/mkenvpkgs.sh" "$P/envpkg" > "$P/envpkg.log
 	{ tail "$P/envpkg.log"; exit 1; }
 ENVPKGS=
 for p in envcore macenv tosenv amigaenv cpmenv win16env lisaenv v200env; do
-	f=$P/envpkg/pkgs/env/$p-1.0.pkg
+	f=`echo "$P/envpkg/pkgs/env/$p"-*.pkg`
 	[ ! -f "$f" ] || ENVPKGS="$ENVPKGS $f"
 done
 I=$P/image.manifest
@@ -132,7 +132,7 @@ done
 for f in $ENVPKGS; do echo "f /var/spool/pkg/${f##*/} 644 0 3 $f"; done >> "$I"
 if [ "$MACNETWORK" = 1 ] && [ -f "$CD81" ]; then
 	sh "$D/network/build.sh" "$P/network"
-	ENVPKGS="$ENVPKGS $P/envpkg/pkgs/env/macnet-1.0.pkg"
+	ENVPKGS="$ENVPKGS `echo "$P"/envpkg/pkgs/env/macnet-*.pkg`"
 fi
 
 # the Amiga environment's Kickstart, floppies and SYS: template from

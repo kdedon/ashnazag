@@ -1,2 +1,2 @@
-/sbin/modadmin -U amigaguest > /dev/null 2>&1
+/usr/aux/lib/modfree startamiga amigaguest || exit 1
 exit 0

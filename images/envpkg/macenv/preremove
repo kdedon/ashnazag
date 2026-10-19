@@ -1,10 +1,13 @@
 # The File ID daemon and the modules, unless in use; their registrations
 # end at the next boot.
+/usr/aux/lib/modfree startmac uinter || exit 1
 for p in `ps -e | nawk '$4 == "fidd" { print $1 }'`; do
 	kill $p
 done
-for m in auxexec uinter auxcore; do
-	/sbin/modadmin -U $m > /dev/null 2>&1
+n=0
+while [ $n -lt 10 ] && ps -e | nawk '$4 == "fidd"' | grep . > /dev/null; do
+	sleep 1; n=`expr $n + 1`
 done
+/usr/aux/lib/modfree "A/UX programs" auxexec auxcore || exit 1
 rm -f /etc/aux/memsize
 exit 0

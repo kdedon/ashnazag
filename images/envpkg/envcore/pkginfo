@@ -1,7 +1,6 @@
 PKG=envcore
 NAME=Environment core: the guest module and its directories
 ARCH=m68k
-VERSION=1.0
 CATEGORY=system
 CLASSES=none
 VENDOR=Ash Nazag

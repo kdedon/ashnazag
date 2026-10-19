@@ -1,0 +1,11 @@
+#!/bin/sh
+# modfree cmd module... -- unload the modules that are loaded; exit 1,
+# naming cmd, at the first one in use.
+c=$1; shift
+for m in "$@"; do
+	/sbin/modadmin -s | nawk '{ print $NF }' | grep "^$m\$" > /dev/null || continue
+	/sbin/modadmin -U $m > /dev/null 2>&1 && continue
+	echo "$m is in use: quit $c first" >&2
+	exit 1
+done
+exit 0

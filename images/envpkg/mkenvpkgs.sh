@@ -20,8 +20,10 @@
 # outdir/guest/home/guest (guest's TOS, SMSQ and WIN16 folders, for disk
 # images) and outdir/dri/cpm (DRI's CP/M files, likewise).  The modules are
 # KERNEL's (default kernel/build/unix-mac.elf); builds that differ for
-# ATARIKERNEL or AMIGAKERNEL (default kernel/build/unix-atari030.elf,
-# unix-amiga.elf, if present) go in /usr/aux/lib/mod.atari or mod.amiga.
+# ATARIKERNEL, ATARI060KERNEL or AMIGAKERNEL (default kernel/build's
+# unix-atari030.elf, unix-atari060.elf, unix-amiga.elf, if present) go in
+# /usr/aux/lib/mod.atari, mod.atari060 or mod.amiga, by the kernel's
+# target.  VERSION defaults to version.sh's.
 # ROMs, OS media and other proprietary files never go in.
 set -e
 D=$(cd "$(dirname "$0")" && pwd)
@@ -30,8 +32,9 @@ OUT=$1
 case $OUT in ""|/) echo "usage: mkenvpkgs.sh outdir" >&2; exit 2 ;; esac
 KERNEL=${KERNEL:-$AUX/kernel/build/unix-mac.elf}
 ATARIKERNEL=${ATARIKERNEL:-$AUX/kernel/build/unix-atari030.elf}
+ATARI060KERNEL=${ATARI060KERNEL:-$AUX/kernel/build/unix-atari060.elf}
 AMIGAKERNEL=${AMIGAKERNEL:-$AUX/kernel/build/unix-amiga.elf}
-VERSION=1.0
+VERSION=${VERSION:-$(sh "$D/version.sh")}
 TC=$AUX/toolchain/amix
 SYS=$TC/m68k-cbm-sysv4/sysroot
 G=$AUX/kernel/guest
@@ -62,9 +65,16 @@ mods() {	# kernel host
 }
 mods "$KERNEL" mac
 H=
-for h in atari amiga; do
-	eval k=\$`echo $h | tr a-z A-Z`KERNEL
-	[ ! -f "$k" ] || { mods "$k" $h; H="$H $h"; }
+for k in "$ATARIKERNEL" "$ATARI060KERNEL" "$AMIGAKERNEL"; do
+	[ -f "$k" ] || continue
+	case `sh "$AUX/kernel/mods.sh" -t "$k"` in
+	amiga) h=amiga ;;
+	atari030) h=atari ;;
+	atari060) h=atari060 ;;
+	*) continue ;;
+	esac
+	case " $H " in *" $h "*) continue ;; esac
+	mods "$k" $h; H="$H $h"
 done
 mod() {		# package module...
 	p=$1; shift
@@ -82,7 +92,7 @@ mod() {		# package module...
 # envcore
 mod envcore guestcore
 mkdir -p "$W/envcore/etc/rc2.d" "$W/envcore/var/sadm/install/admin"
-cp "$D/envcore/moddirs" "$W/envcore/usr/aux/lib/"
+cp "$D/envcore/moddirs" "$D/envcore/modfree" "$W/envcore/usr/aux/lib/"
 cp "$D/envcore/admin" "$W/envcore/var/sadm/install/admin/envpkg"
 cp "$D/envcore/S04envcore" "$W/envcore/etc/rc2.d/"
 
@@ -185,7 +195,11 @@ for p in envcore macenv macnet tosenv amigaenv cpmenv smsqenv win16env lisaenv v
 		continue
 	fi
 	f=env/$p-$VERSION.pkg
-	python3 "$D/pkgmk.py" -r "$W/$p" "$D/$p/prototype" "$OUT/pkgs/$f" \
+	# depend: every P line wants this build's version
+	rm -rf "$W/meta"; cp -R "$D/$p" "$W/meta"
+	[ ! -f "$D/$p/depend" ] ||
+		awk -v v="$VERSION" '{ print } /^P/ { print "\t(m68k)" v }' "$D/$p/depend" > "$W/meta/depend"
+	python3 "$D/pkgmk.py" -r "$W/$p" "$W/meta/prototype" "$OUT/pkgs/$f" \
 		VERSION=$VERSION PSTAMP=ashnazag-$p-$VERSION
 	deps=`sed -n 's/^P[	 ]*\([a-z0-9]*\).*/\1/p' "$D/$p/depend" 2> /dev/null | paste -sd, -`
 	name=`sed -n 's/^NAME=//p' "$D/$p/pkginfo"`

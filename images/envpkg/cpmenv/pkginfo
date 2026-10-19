@@ -1,7 +1,6 @@
 PKG=cpmenv
 NAME=CP/M-68K environment: startcpm and its module
 ARCH=m68k
-VERSION=1.0
 CATEGORY=system
 CLASSES=none
 VENDOR=Ash Nazag

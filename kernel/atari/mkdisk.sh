@@ -150,13 +150,13 @@ if [ -n "$TOSENV$MACENV" ]; then
 	mkdir -p "$E"
 	MK=${MACKERNEL:-$K/build/unix-mac.elf}
 	[ -f "$MK" ] || MK=$KERNEL
-	ATARIKERNEL=$KERNEL KERNEL=$MK AMIGAKERNEL=/nonexistent \
+	ATARIKERNEL=$KERNEL KERNEL=$MK AMIGAKERNEL=/nonexistent ATARI060KERNEL=/nonexistent \
 		sh "$K/../images/envpkg/mkenvpkgs.sh" "$E/envpkg" > "$E/envpkg.log" 2>&1 ||
 		{ tail "$E/envpkg.log"; exit 1; }
-	pk="$pk $EP/envcore-1.0.pkg"
-	[ "$MACENV" != 1 ] || pk="$pk $EP/macenv-1.0.pkg"
+	pk="$pk `echo "$EP"/envcore-*.pkg`"
+	[ "$MACENV" != 1 ] || pk="$pk `echo "$EP"/macenv-*.pkg`"
 	if [ "$TOSENV" = 1 ]; then
-		for p in tosenv cpmenv win16env; do [ ! -f "$EP/$p-1.0.pkg" ] || pk="$pk $EP/$p-1.0.pkg"; done
+		for p in tosenv cpmenv win16env; do ef=`echo "$EP/$p"-*.pkg`; [ ! -f "$ef" ] || pk="$pk $ef"; done
 		[ ! -d "$E/envpkg/dri/cpm" ] || printf 't\t/cpm\t0\t3\t%s\n' "$E/envpkg/dri/cpm" >> "$W/root.manifest"
 	fi
 fi

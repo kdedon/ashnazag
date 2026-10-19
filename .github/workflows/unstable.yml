@@ -27,12 +27,12 @@ jobs:
           pattern: mod.d-*
           path: mods
       - name: SVR4 packages
-        run: VERSION="unstable-$(git rev-parse --short HEAD)" sh images/envpkg/mkmodpkgs.sh mods pkgs
-      - name: Packages only hold modules
+        run: sh images/envpkg/mkmodpkgs.sh mods pkgs
+      - name: Packages only hold hardware modules
         run: |
           for f in pkgs/*.pkg; do
             case $(basename "$f") in
-            mod*|envm*|cdfs*|disk*|am*|at*) ;;
+            mod*|cdfs*|disk*|am*|at*) ;;
             *) echo "unexpected $f"; exit 1 ;;
             esac
           done
@@ -50,12 +50,13 @@ jobs:
         run: |
           git tag -f unstable "$GITHUB_SHA"
           git push -f origin refs/tags/unstable
-          notes="Rolling build of main at $GITHUB_SHA: kernel modules for mac, amiga, atari030 and atari060 as SVR4 datastreams (pkgadd -d FILE all). Userland and environment packages that link the AMIX libraries are built locally."
+          notes=pkgs/.notes
+          printf '\nCommit %s.\n' "$GITHUB_SHA" >> "$notes"
           if gh release view unstable > /dev/null 2>&1; then
-            gh release edit unstable --prerelease --latest=false --target "$GITHUB_SHA" --title unstable --notes "$notes"
+            gh release edit unstable --prerelease --latest=false --target "$GITHUB_SHA" --title unstable --notes-file "$notes"
             gh release view unstable --json assets --jq '.assets[].name' |
               while read -r a; do gh release delete-asset unstable "$a" --yes; done
           else
-            gh release create unstable --prerelease --latest=false --target "$GITHUB_SHA" --title unstable --notes "$notes"
+            gh release create unstable --prerelease --latest=false --target "$GITHUB_SHA" --title unstable --notes-file "$notes"
           fi
           gh release upload unstable pkgs/*.pkg pkgs/SHA256SUMS

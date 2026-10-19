@@ -1,2 +1,2 @@
-/sbin/modadmin -U cpmguest > /dev/null 2>&1
+/usr/aux/lib/modfree startcpm cpmguest || exit 1
 exit 0

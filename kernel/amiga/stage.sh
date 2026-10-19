@@ -30,7 +30,7 @@ c /dev/fb0 660 0 25 51 0
 c /dev/kbd 660 0 25 52 0
 c /dev/mouse 660 0 25 53 0
 MANIFEST
-AMIGAKERNEL=$KERNEL KERNEL=$MK ATARIKERNEL=/nonexistent \
+AMIGAKERNEL=$KERNEL KERNEL=$MK ATARIKERNEL=/nonexistent ATARI060KERNEL=/nonexistent \
 	sh "$K/../images/envpkg/mkenvpkgs.sh" "$O/envpkg" > "$O/envpkg.log" 2>&1 ||
 	{ tail "$O/envpkg.log"; exit 1; }
 mkdir "$O/check"

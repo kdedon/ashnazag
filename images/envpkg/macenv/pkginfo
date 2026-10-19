@@ -1,7 +1,6 @@
 PKG=macenv
 NAME=Mac environment: startmac and the A/UX modules
 ARCH=m68k
-VERSION=1.0
 CATEGORY=system
 CLASSES=none
 VENDOR=Ash Nazag

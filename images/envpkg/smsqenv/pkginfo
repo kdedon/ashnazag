@@ -1,7 +1,6 @@
 PKG=smsqenv
 NAME=SMSQ/E environment: startsmsq and SMSQ/E for the Atari
 ARCH=m68k
-VERSION=1.0
 CATEGORY=system
 CLASSES=none
 VENDOR=Ash Nazag
