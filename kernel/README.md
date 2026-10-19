@@ -61,9 +61,7 @@ Real Amiga hardware is untested.
 ## Guest RAM
 
 The launchers share demand-paged VM region setup; Mac allocations use host VM.
-For Atari TOS passthrough, `starttos -P` defaults to scattered resident pages
-with contiguous backing requested only for DMA spans. `-A contiguous` selects
-a whole physical block; `-m MB` sets its exact size. The shared guestcore API in
+The shared guestcore API in
 `guest/include/guest_mem.h` owns pages through mapping/fork lifetimes and
 returns them after the final close. It reserves nothing at boot. Session creation admits a RAM budget; faults
 allocate resident pages and can reclaim ordinary VM. DMA backing remains resident and is not swappable.

@@ -42,6 +42,7 @@ extern struct mod_operations mod_execops;
 extern struct mod_operations mod_hookops;
 extern struct mod_operations mod_drvops;
 extern struct mod_operations mod_strops;
+extern struct mod_operations mod_fsops;
 
 extern int mod_hold();			/* (struct modwrapper *) */
 extern void mod_rele();			/* (struct modwrapper *) */
@@ -79,6 +80,17 @@ struct mod_str_data {
 	char		str_name[9];	/* FMNAMESZ + 1 */
 	struct streamtab *str_tab;
 	int		*str_flag;
+};
+
+/*
+ * A filesystem type: a vfssw row named fs_name.  fs_init(vswp, fstype)
+ * runs on install, as a vsw_init, and sets vswp->vsw_vfsops.  The
+ * module cannot unload while a vfs of that type is mounted.
+ */
+struct mod_fs_data {
+	char	*fs_name;
+	int	(*fs_init)();
+	long	fs_flags;		/* vsw_flag */
 };
 
 /* hooks: array, ends with hd_name == 0 */
@@ -148,6 +160,16 @@ struct hooksw {
 	MOD_TWRAPPER_(p, mod_hookops, hook, load, unload, desc)
 #define	MOD_STR_WRAPPER(p, load, unload, desc) \
 	MOD_TWRAPPER_(p, mod_strops, str, load, unload, desc)
+#define	MOD_FS_WRAPPER(p, load, unload, desc) \
+	extern struct mod_fs_data p##_fsdata; \
+	static struct mod_type_data p##_mod_td = \
+		{ desc, (void *)&p##_fsdata }; \
+	static struct modlink p##_mod_link[] = { \
+		{ &mod_fsops, (void *)&p##_mod_td }, { 0, 0 } }; \
+	asm(".weak " #p "_conf_data"); \
+	extern struct mod_conf_data p##_conf_data; \
+	struct modwrapper p##_wrapper = { \
+		MODREV, load, unload, 0, &p##_conf_data, p##_mod_link }
 #define	MOD_DRV_WRAPPER(p, load, unload, halt, desc) \
 	extern struct mod_drv_data p##_drvdata[]; \
 	static struct mod_type_data p##_mod_td = \
@@ -199,6 +221,16 @@ struct hooksw {
 	extern struct mod_conf_data p/**/_conf_data; \
 	struct modwrapper p/**/_wrapper = { \
 		MODREV, load, unload, halt, &p/**/_conf_data, p/**/_mod_link }
+#define	MOD_FS_WRAPPER(p, load, unload, desc) \
+	extern struct mod_fs_data p/**/_fsdata; \
+	static struct mod_type_data p/**/_mod_td = \
+		{ desc, (char *)&p/**/_fsdata }; \
+	static struct modlink p/**/_mod_link[] = { \
+		{ &mod_fsops, (char *)&p/**/_mod_td }, { 0, 0 } }; \
+	asm(".weak p" "_conf_data"); \
+	extern struct mod_conf_data p/**/_conf_data; \
+	struct modwrapper p/**/_wrapper = { \
+		MODREV, load, unload, 0, &p/**/_conf_data, p/**/_mod_link }
 #endif
 
 /* host bus adapter: no slot, no auto-load; _unload returns EBUSY */

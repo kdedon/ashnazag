@@ -97,6 +97,22 @@ if printf '%s\n' "$SYMBOLS" | grep ' T ds_modinit$' >/dev/null; then
 	MANIFEST=$B/display.manifest
 fi
 
+# cdfs and its mount(1M) helper, when the kernel loads filesystem modules
+CDFS=${CDFS_SRC:-$AUX/ref/amix-cdfs}
+if printf '%s\n' "$SYMBOLS" | grep ' D mod_fsops$' >/dev/null && [ -f "$CDFS/platform/amix/mount.c" ]; then
+	K=$(cd "$D/../.." && pwd)
+	sh "$K/mods.sh" TARGET=$(sh "$K/mods.sh" -t "$KERNEL") "$B/fs" KERNEL="$KERNEL" fs > "$B/fs.log" 2>&1 ||
+		{ tail "$B/fs.log"; exit 1; }
+	(. "$AUX/toolchain/src/gcc-cross-amix/build/env.sh" &&
+		nice -n 19 m68k-cbm-sysv4-gcc -O2 -o "$B/fs/cdfsmount" "$CDFS/platform/amix/mount.c") ||
+		{ echo "[FAIL] cdfs mount helper"; exit 1; }
+	[ "$MANIFEST" = "$B/display.manifest" ] || cp "$MANIFEST" "$B/display.manifest"
+	BF=$(cd "$B/fs" && pwd)
+	printf 'f /etc/conf/mod.d/cdfs 644 0 3 %s\nd /usr/lib/fs/cdfs 755 0 3\nf /usr/lib/fs/cdfs/mount 555 0 3 %s\nd /cdrom 755 0 3\n' \
+		"$BF/mod.d/cdfs" "$BF/cdfsmount" >> "$B/display.manifest"
+	MANIFEST=$B/display.manifest
+fi
+
 if [ "$ROOTFS" = ufs ]; then
 	$PY "$D/mkufs.py" -s "$ROOTMB" -t "$STAMP" -r "${DISKROOT_SRCDIR:-$D}" "$MANIFEST" "$B/root.img.new"
 	$PY "$D/ufscheck.py" "$B/root.img.new" -l > "$B/root.lst" || {

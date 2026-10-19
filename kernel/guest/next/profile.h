@@ -20,8 +20,9 @@
 #define NX_VRAM 0x0c000000UL
 #define NX_VRAM_SIZE 0x100000UL
 #define NX_LIMIT 0x20000000UL	/* local bus; above it nothing answers */
-#define NX_TOP 0x3ffe0000UL	/* the guest's virtual space, the host's first gigabyte: its tasks load libraries up to 0x33000000 */
-#define NX_PHYS 0xa0000000UL	/* physical address p is also at NX_PHYS + p, for the shadow MMU and the host side */
+#define NX_TOP 0xb8000000UL	/* the guest's virtual space, up to the host program: the window server allocates from 0x80000000 */
+#define NX_HOST 0xb8000000UL	/* the host program's link address; its heap ends at 0xc0000000 */
+#define NX_PHYS 0xd0000000UL	/* physical address p is also at NX_PHYS + p, for the shadow MMU and the host side */
 #define NX_RAMNEW 0x4e580003	/* unsigned long: the RAM object (the host filesystem region and the I/O window after it), mmap offsets from 0 */
 #define NXF_CENSUS 1		/* count accesses to addresses nothing backs */
 #define NXF_HOST 2		/* code above the bus is the host's own: its faults stay signals */
@@ -35,6 +36,7 @@ struct nx_enter {
 struct nx_census { unsigned long addr, pc, value; unsigned char size, write, pad[2]; unsigned long count, lastpc; };
 struct nx_info {
 	unsigned long ticks, ints, io, faults, nvseq, level, stat, mask, ncensus, lasta, lastpc, monexit;
+	unsigned long high, higha, highpc;	/* guest accesses at or above NX_TOP; the latest address and pc */
 	unsigned long mmu[5];	/* MMU fills, faults, space switches, flushes; privileged instructions */
 	unsigned long utraps;	/* trap instructions from the guest's user mode */
 	unsigned long utrap[16][8];	/* the latest: vector, d0, pc, URP, d5, three return addresses up the frame chain */

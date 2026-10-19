@@ -3,10 +3,11 @@
 #
 #   sh atari/mods.sh kernel.elf outdir [target]
 #
-# Out: outdir/mod.d/{scsi,sd,aen,dpn,dmasnd,auxsnd}, built for that kernel's
+# Out: outdir/mod.d/{ataide,scsi,sd,aen,dpn,dmasnd,auxsnd}, built for that kernel's
 # CPU and checked against its exports.  They go in /etc/conf/mod.d; sysinit
 # registers aen (18), dmasnd (46), auxsnd (47) and dpn (58), which load on
-# their first open; sd (over scsi) loads on the first open of a card 1 disk.
+# their first open.  ataide and sd (over scsi) are the disk controllers: boot
+# modules, else loaded on the first open of a card 0 or 1 disk.
 set -e
 K=$(cd "$(dirname "$0")/.." && pwd)
 [ $# -eq 2 ] || [ $# -eq 3 ] || { echo "usage: mods.sh kernel.elf outdir [target]" >&2; exit 2; }

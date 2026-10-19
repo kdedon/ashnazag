@@ -507,6 +507,11 @@ static int DRM(takedown)( drm_device_t *dev )
 	DRM_DEBUG( "\n" );
 
 	DRIVER_PRETAKEDOWN();
+#ifdef __AMIX__
+	if (DRM(card).c_vtake)
+		(void)(*DRM(card).c_vtake)(0);
+	DRM(amix_unsave)();
+#endif
 #if __HAVE_DMA_IRQ
 	if ( dev->irq ) DRM(irq_uninstall)( dev );
 #endif
@@ -1183,6 +1188,19 @@ int DRM(lock)( DRM_IOCTL_ARGS )
 #endif
                         if ( DRM(lock_take)( &dev->lock.hw_lock->lock,
 					     lock.context ) ) {
+#ifdef __AMIX__
+				/* VRAM given up at a switch comes back for the front */
+				if ( !(priv->sess && priv->sess != ds_front) &&
+				     DRM(amix_restore)(dev) != 0 ) {
+					DRM(lock_free)(dev, &dev->lock.hw_lock->lock, lock.context);
+					ret = DRM(tsleep)((caddr_t)&dev->lock.lock_queue, HZ);
+					if (ret == EBUSY)
+						ret = 0;
+					if (ret)
+						break;
+					continue;
+				}
+#endif
                                 dev->lock.pid       = DRM_CURRENTPID;
                                 dev->lock.lock_time = jiffies;
 #ifdef __AMIX__

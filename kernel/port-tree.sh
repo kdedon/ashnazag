@@ -3,7 +3,7 @@
 PORT_URL=https://github.com/asokero/amix-040-060-port
 PORT_PIN=54fba4de3da276e5d09d5ea09e2c76a13ec20ffa
 PORT_DIFFS="$AUX/kernel/port-local.diff $AUX/kernel/port-segvn.diff
-	$AUX/kernel/mac/hat-boundary/hat-chgprot040.diff"
+	$AUX/kernel/mac/hat-boundary/hat-chgprot040.diff $AUX/kernel/port-isp060.diff"
 
 # port_index DIR INDEX: write the expected tree into git index file INDEX
 port_index() {

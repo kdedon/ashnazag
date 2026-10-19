@@ -34,6 +34,7 @@
 #define ASC_IRQMASKB	0xF29
 #define ASC_IRQHALF	0x01	/* below half full */
 #define ASC_IRQEMPTY	0x02	/* full or empty: empty while playing */
+#define ASC_IRQSTOP	0x100	/* in se_irq: FIFO A ran empty, chip stopped */
 #define ASC_RATE	0x56EE8BA3	/* 22254.545 Hz, 16.16 */
 
 struct sndev {

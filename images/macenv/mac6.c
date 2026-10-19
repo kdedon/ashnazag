@@ -34,19 +34,19 @@ main(argc, argv)
 		strcpy(sys, "/mac/sys/System Folder");
 	} else {
 		if (pw == 0 || strlen(pw->pw_name) > 64) {
-			fprintf(stderr, "startmac6: who are you?\n");
+			fprintf(stderr, "startmac: who are you?\n");
 			return 1;
 		}
 		sprintf(home, "/home/%s", pw->pw_name);
 		sprintf(sys, "%s/System Folder", home);
 	}
 	if (chroot(ROOT6) < 0 || chdir("/") < 0 || setgid(gid) < 0 || setuid(uid) < 0) {
-		perror("startmac6");
+		perror("startmac");
 		return 1;
 	}
 	sprintf(tb, "%s/System", sys);
 	if (access(tb, R_OK) < 0) {
-		fprintf(stderr, "startmac6: no %s%s\n", ROOT6, sys);
+		fprintf(stderr, "startmac: no %s%s\n", ROOT6, sys);
 		return 1;
 	}
 	if (m == 0 || *m == 0 || strlen(m) > 20 || strspn(m, "0123456789KMkm") != strlen(m))
@@ -56,6 +56,6 @@ main(argc, argv)
 	sprintf(mv, "TBMEMORY=%s", m);
 	argv[0] = STARTMAC;
 	execve(STARTMAC, argv, env);
-	perror("startmac6: " ROOT6 STARTMAC);
+	perror("startmac: " ROOT6 STARTMAC);
 	return 1;
 }

@@ -59,12 +59,12 @@
 #define USED(a, b)	(((b) - (a)) & (RING - 1))	/* bytes from a to b */
 
 extern unsigned long ata_sndbuf, ata_pool, ata_mch, vr_contig();
-extern void ata_sirq();
+extern void ata_sirq(), (*ata_sndhw)();
 extern int uiomove(), copyin(), copyout(), timeout(), drv_usectohz();
-extern void untimeout(), pollwakeup(), drv_usecwait(), bzero(), bcopy();
+extern void untimeout(), pollwakeup(), drv_usecwait(), bzero(), bcopy(), dlm_cachepush();
 
 static struct {
-	int	open, falcon, held;
+	int	open, falcon;
 	caddr_t	ring;			/* physical = kernel address */
 	int	mode, prescale, fsize;	/* R_MODE, R_PRESCALE, bytes per frame */
 	long	bps;			/* bytes per second */
@@ -410,23 +410,6 @@ struct dssess *s;
 	snd_event(0);
 }
 
-/* a passthrough guest takes (1) or leaves (0) the hardware */
-static void
-snd_own(on)
-int on;
-{
-	register int x = DS_SPL(DS_HI);
-
-	if (on && snd.playing)
-		snd_stop();
-	snd.held = snd_ev.se_hold = on;
-	snd_event(0);
-	DS_SPLX(x);
-	if (!on)
-		snd_mwinit();	/* the guest may have changed it */
-	snd_room();
-}
-
 static int
 snd_room_now()
 {
@@ -440,7 +423,7 @@ snd_room_now()
 static int
 snd_ready()
 {
-	return !snd.held && snd_room_now() >= snd.limit / 4;
+	return snd_room_now() >= snd.limit / 4;
 }
 
 /*ARGSUSED*/
@@ -478,6 +461,7 @@ struct cred *cr;
 		return ENOMEM;
 	}
 	snd.ring = (caddr_t)ata_sndbuf;
+	dlm_cachepush(ata_sndbuf, RING);	/* lines a VM user left over the ring */
 	snd.playing = snd.chained = 0;
 	bzero(snd.ring, RING);
 	bzero((caddr_t)&snd.st, sizeof snd.st);
@@ -494,16 +478,12 @@ struct cred *cr;
 	snd_ev.se_irq = 0;
 	snd_ev.se_front = ds_front->s_id;
 	snd_ev.se_fuid = ds_front->s_uid;
-	snd.held = snd_ev.se_hold = DS_GUEST(ds_front) != 0;
-	if (!snd.held)
-		REG(R_CTRL) = 0;
+	REG(R_CTRL) = 0;
 	snd_pend = 1;
 	ds_frontfn = snd_front;
-	ds_sndown = snd_own;
-	ds_sndhw = snd_intr;
+	ata_sndhw = snd_intr;
 	DS_SPLX(x);
-	if (!snd.held)
-		snd_mwinit();
+	snd_mwinit();
 	return 0;
 }
 
@@ -519,8 +499,7 @@ struct cred *cr;
 	if (snd.playing)
 		snd_stop();
 	ds_frontfn = 0;
-	ds_sndown = 0;
-	ds_sndhw = 0;
+	ata_sndhw = 0;
 	snd.open = 0;
 	DS_SPLX(x);
 	return 0;
@@ -566,7 +545,7 @@ struct cred *cr;
 
 	while (uio->uio_resid >= snd.fsize) {
 		x = DS_SPL(DS_HI);
-		while ((n = snd_room_now()) == 0 && !snd.held) {
+		while ((n = snd_room_now()) == 0) {
 			if (uio->uio_fmode & (FNDELAY | FNONBLOCK)) {
 				DS_SPLX(x);
 				return uio->uio_resid == resid ? EAGAIN : 0;
@@ -577,8 +556,6 @@ struct cred *cr;
 			}
 		}
 		DS_SPLX(x);
-		if (snd.held)
-			return EBUSY;
 		if (n > BOUNCE)
 			n = BOUNCE;
 		if (n > uio->uio_resid)
@@ -586,10 +563,6 @@ struct cred *cr;
 		if (uiomove(buf, (long)n, UIO_WRITE, uio))
 			return EFAULT;
 		x = DS_SPL(DS_HI);
-		if (snd.held) {
-			DS_SPLX(x);
-			return EBUSY;
-		}
 		for (i = 0; i < n; i += chunk) {
 			chunk = RING - snd.wpos < n - i ? RING - snd.wpos : n - i;
 			bcopy(buf + i, snd.ring + snd.wpos, chunk);
@@ -637,8 +610,7 @@ int *rvalp;
 		if (arg < 0 || arg > 7)
 			return EINVAL;
 		snd.vol = arg;
-		if (!snd.held)
-			snd_volume();
+		snd_volume();
 		return 0;
 	case DMA_FLUSH:
 		x = DS_SPL(DS_HI);
@@ -651,7 +623,6 @@ int *rvalp;
 	case DMA_STATS:
 		snd.st.d_chained = snd.chained;
 		snd.st.d_playing = snd.playing;
-		snd.st.d_held = snd.held;
 		return copyout((caddr_t)&snd.st, (caddr_t)arg, sizeof snd.st) ? EFAULT : 0;
 	}
 	return EINVAL;

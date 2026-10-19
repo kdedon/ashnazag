@@ -21,7 +21,9 @@ extern unsigned long vtop();
 extern void __amix_aciabintr();
 
 extern int autocon();
-extern unsigned long VSIZOFMEM;
+extern unsigned long VSIZOFMEM, MAINSTORE, dlm_bootpack();
+extern char end[];
+extern void amiga_boottab();
 
 #define MAXMEM	0x8000000		/* more and segu cannot be allocated */
 
@@ -107,6 +109,7 @@ char *bi;
 	bootmark(2, kind);
 	if (kind != 3)
 		return;
+	amiga_boottab(bi);
 	for (i = 0, m = bi + NAUTO * CDSIZE; i < 16; i++, m += 32)
 		while (L(m + 24) && boardmem(bi, m)) {
 			for (j = 0; j < (15 - i) * 8; j++)
@@ -137,9 +140,13 @@ amiga_quiesce()
 	__volatile__ unsigned char *b;
 	char *a;
 	long n;
+	unsigned long k;
 
 	if (VSIZOFMEM > MAXMEM)
 		VSIZOFMEM = MAXMEM;
+	k = dlm_bootpack((unsigned long)end, MAINSTORE + VSIZOFMEM, 1);
+	if (k < MAINSTORE + VSIZOFMEM)		/* boot modules above */
+		VSIZOFMEM = (k & ~0xFFFUL) - MAINSTORE;
 	if (autocon(0x21400064, 0, &a, &n)) {			/* CyberStorm SCSI */
 		((__volatile__ unsigned char *)0xF60000)[8] = 0x82;
 		b = (__volatile__ unsigned char *)0xF40000;

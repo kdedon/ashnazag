@@ -10,6 +10,7 @@
 #   sh kernel/atari/test/falcon-check.sh OUTDIR [IMAGE]
 #
 # IMAGE defaults to kernel/build/atari/disk/falcon-disk.img; it is copied.
+# BOOTMODS: the boot modules, as for mkdisk.sh.
 # TOSROM: the TOS 4.04 image or its zip (default: tos404*.zip in the
 # repo root).  Skips (exit 0) without the ROM or Hatari.  HOPTS: more
 # run-hatari.sh options, e.g. "-c 060 -t 32" for a CT60 with 32 MB FastRAM.
@@ -19,9 +20,9 @@
 # server stopped and the console back; then in 2 colours with the German
 # layout (x-4-de.png shows "keyz"), stopped from the console.
 # tosloop starts the TOS environment BOOTS times (default 15) in one
-# session and checks each desktop.  tosint: three -P starts in a row, each
+# session and checks each desktop.  tosint: three starts in a row, each
 # ended by SIGINT, each reaching the desktop.  xtos (an image made with X11=<pkg>
-# TOSENV=1): guest starts X, then starttos -P from the console; the hot
+# TOSENV=1): guest starts X, then starttos from the console; the hot
 # keys switch between X, the GEM desktop and the console; each ends.
 # xdm (an image made with X11=<pkg> TOSENV=1 BOOTX=1 XPKGS=xview): guest
 # logs in on xdm and picks Console, twm, XView and TOS in turn, each
@@ -60,6 +61,8 @@ esac
 [ $(wc -c < "$ROM") -eq 524288 ] || { echo "[FAIL] $ROM: not a 512 KB TOS image"; exit 1; }
 
 B=$AUX/kernel/build/atari/disk/boot
+BM=
+for m in ${BOOTMODS-ataide scsi sd}; do BM="$BM $AUX/kernel/build/atari/disk/src/build/mods/mod.d/$m"; done
 
 fail=0
 check() {	# log pattern...
@@ -72,7 +75,7 @@ run() {		# stage monitor
 	# a fresh copy per stage, whose kernel also copies the console to the log
 	cp --sparse=always "$IMG" "$OUT/disk.img"
 	python3 "$A/instboot.py" "$OUT/disk.img" "$B/bootsec.bin" "$B/axbload.bin" \
-		"${KERNEL:-$AUX/kernel/build/unix-atari$CPU.elf}" "root=c?d0s1 nfcons" > /dev/null
+		"${KERNEL:-$AUX/kernel/build/unix-atari$CPU.elf}" "root=c?d0s1 nfcons" 3 $BM > /dev/null
 	# tosloop writes its own
 	[ ! -f "$T/falcon-$1-keys.txt" ] || sed "s|OUT/|$OUT/$1-|g" "$T/falcon-$1-keys.txt" > "$OUT/$1-keys.txt"
 	WAIT=${WAIT:-600} sh "$A/run-hatari.sh" -c $CPU $CPUOPT $HOPTS -r "$ROM" -d "$OUT/disk.img" -f 400000 -T ${3:-1500} \
@@ -91,7 +94,7 @@ for s in $STAGES; do
 		check "$OUT/mod.log.out" 'auxreg-rc=0' 'opened-ok' "$(printf '\ttosguest')" "$(printf '\tuinter')" 'mods-done' 'stat-rc=0' 'rebooted-ok'
 		! grep -q '^modfail=\|PANIC\|panic' "$OUT/mod.log.out" || { echo "[FAIL] module load"; fail=1; } ;;
 	tos)	run tos vga
-		check "$OUT/tos.log.out" 'auxreg-rc=0' 'mods-done' '\^C' 'log-done' 'starttos-left=0'
+		check "$OUT/tos.log.out" 'auxreg-rc=0' 'mods-done' '\^C' 'log-done' 'starttos-left=0' 'xaaes-log=1'
 		# the desktop, the console on the hot key, the desktop again, the shell after
 		# the console's Ctrl-C
 		python3 "$T/tosshot.py" desktop "$OUT/tos-1-desktop.png" || fail=1
@@ -99,8 +102,9 @@ for s in $STAGES; do
 		python3 "$T/tosshot.py" differ "$OUT/tos-1-ctrlc.png" "$OUT/tos-2-console.png" || fail=1
 		python3 "$T/tosshot.py" same "$OUT/tos-1-ctrlc.png" "$OUT/tos-3-back.png" || fail=1
 		python3 "$T/tosshot.py" differ "$OUT/tos-3-back.png" "$OUT/tos-4-exit.png" || fail=1
-		# the console's Videl mode, a whole mouse move, the time G:'s window took to redraw
-		python3 "$T/tospass.py" "$OUT/tos-1-desktop.png" "$OUT/tos-2-console.png" "$OUT/tos.log.out" || fail=1 ;;
+		python3 "$T/tosshot.py" desktop "$OUT/tos-5-xaaes.png" || fail=1
+		# the console's size; after boot no hardware access or emulation
+		python3 "$T/tossteady.py" "$OUT/tos-1-desktop.png" "$OUT/tos-2-console.png" "$OUT/tos.log.out" || fail=1 ;;
 	x)	run x vga
 		check "$OUT/x.log.out" 'x-2-up' 'key-42-ok' 'x-7-ended' 'fb: /dev/fb0 Videl 640x480 depth 8' \
 			'x-4-up' 'keyz' 'x-11-ended' 'fb: /dev/fb0 Videl 640x480 depth 1' 'x-9-done'
@@ -149,7 +153,7 @@ for s in $STAGES; do
 		# each start must find its ST-RAM again after the last one's SIGINT
 		{ sed -n '1,/^wait mods-done/p' "$T/falcon-tos-keys.txt"
 		for i in 1 2 3; do
-			printf '%s\n' 'type T=/tests; [ -d /tests ] || T=/usr/bin; C=$T/tosml.img; [ -f $C ] || C=/etc/tos/tosml.img; $T/starttos -P -C /tmp/c -c $C 2> /tmp/st.log\n'
+			printf '%s\n' 'type T=/tests; [ -x $T/starttos ] || T=/usr/bin; C=$T/tosml.img; [ -f $C ] || C=/etc/tos/tosml.img; $T/starttos -C /tmp/c -c $C 2> /tmp/st.log\n'
 			echo "shot $OUT/tosint-$i.png desktop"
 			printf 'event keydown 0x1d\nevent keydown 0x38\nevent keypress 0x01\nevent keyup 0x38\nevent keyup 0x1d\nsleep 5\n'
 			printf 'event keydown 0x1d\nevent keypress 0x2e\nevent keyup 0x1d\nwait ^C\n'
@@ -165,7 +169,7 @@ for s in $STAGES; do
 		n=${BOOTS:-15}
 		{ sed -n '1,/^wait mods-done/p' "$T/falcon-tos-keys.txt"
 		i=1; while [ $i -le $n ]; do
-			printf '%s\n' 'type T=/tests; [ -d /tests ] || T=/usr/bin; C=$T/tosml.img; [ -f $C ] || C=/etc/tos/tosml.img; $T/starttos -P -C /tmp/c -c $C -v 2> /tmp/st.log\n'
+			printf '%s\n' 'type T=/tests; [ -x $T/starttos ] || T=/usr/bin; C=$T/tosml.img; [ -f $C ] || C=/etc/tos/tosml.img; $T/starttos -C /tmp/c -c $C -v 2> /tmp/st.log\n'
 			echo "shot $OUT/tosloop-$i.png desktop"
 			# the hot key to the console, then Ctrl-C there ends the session
 			printf 'event keydown 0x1d\nevent keydown 0x38\nevent keypress 0x01\nevent keyup 0x38\nevent keyup 0x1d\nsleep 5\n'

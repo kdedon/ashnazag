@@ -27,6 +27,7 @@ extern int mm_next(), ws_next();
 #define	WBASE	0x2000
 
 struct wnd *desktop;
+u32 user_titlethunk;		/* icon titles' window procedure */
 struct wnd *wnd_focus, *wnd_active, *wnd_capture;
 int vis_epoch = 1;
 u16 cur_arrow;
@@ -1090,15 +1091,18 @@ static void
 destroy_r(w)
 	struct wnd *w;
 {
-	struct wnd *c, *n;
+	struct wnd *c;
 	int i;
 
 	w->flags |= WF_DESTROYING;
 	wnd_send(w, WM_DESTROY, 0, 0);
-	for (c = w->child; c; c = n) {
-		n = c->next;
-		if (wnd_get(c->h))
-			destroy_r(c);
+	/* from the top each time: a child's owned windows (an icon's title) may be its siblings */
+	for (;;) {
+		for (c = w->child; c && (c->flags & WF_DESTROYING); c = c->next)
+			;
+		if (!c)
+			break;
+		destroy_r(c);
 	}
 	/* owned windows go too */
 	for (i = 0; i < NWND; i++)
@@ -1265,6 +1269,36 @@ wnd_setpos(w, after, x, y, cx, cy, flags)
 	PW(l + 12, flags | (moved ? 0 : SWP_NOMOVE) | (sized ? 0 : SWP_NOSIZE));
 	wnd_send(w, WM_WINDOWPOSCHANGED, 0, wp);
 	ufree(wp);
+	if (((w->style & WS_MINIMIZE) || w->ititle) && wnd_get(w->h))
+		user_icontitle(w, 1);
+}
+
+/* the first place at the foot of w's parent no other icon holds, rows going up */
+static void
+iconplace(w, xp, yp)
+	struct wnd *w;
+	int *xp, *yp;
+{
+	struct wnd *p = w->parent, *c;
+	struct rect a;
+	int k, x, y, cols;
+
+	a = (w->style & WS_CHILD) ? p->cr : desktop->wr;
+	cols = (a.r - a.l - 4) / 76;
+	if (cols < 1)
+		cols = 1;
+	for (k = 0; k < 256; k++) {
+		x = a.l + 20 + 76 * (k % cols);
+		y = a.b - 66 - 75 * (k / cols);
+		for (c = p->child; c; c = c->next)
+			if (c != w && (c->style & (WS_MINIMIZE | WS_VISIBLE)) == (WS_MINIMIZE | WS_VISIBLE) &&
+			    c->wr.l < x + 36 && c->wr.r > x && c->wr.t < y + 36 && c->wr.b > y)
+				break;
+		if (!c)
+			break;
+	}
+	*xp = x - ((w->style & WS_CHILD) ? a.l : 0);
+	*yp = y - ((w->style & WS_CHILD) ? a.t : 0);
 }
 
 void
@@ -1310,18 +1344,13 @@ wnd_show(w, cmd)
 		}
 	} else if (cmd == SW_SHOWMINIMIZED || cmd == SW_MINIMIZE || cmd == SW_SHOWMINNOACTIVE) {
 		if (!(w->style & WS_MINIMIZE)) {
-			static int slot;
-			int ix = 8 + 76 * (slot++ % 8), iy = desktop->wr.b - 64;
+			int ix, iy;
 
+			iconplace(w, &ix, &iy);
 			if (!(w->style & WS_MAXIMIZE))
 				w->normal = w->wr;
 			w->style |= WS_MINIMIZE;
 			w->style &= ~WS_MAXIMIZE;
-			/* a child's icon at the foot of its parent */
-			if (w->style & WS_CHILD) {
-				ix = 20 + 76 * (slot % 6);
-				iy = w->parent->cr.b - w->parent->cr.t - 54;
-			}
 			wnd_setpos(w, (struct wnd *)0, ix, iy, 36, 36,
 			    SWP_SHOWWINDOW | SWP_FRAMECHANGED);
 			wnd_send(w, WM_SIZE, 1, 0);
@@ -1378,6 +1407,8 @@ wnd_show(w, cmd)
 		if (wnd_get(w->h))
 			wnd_send(w, WM_CHILDACTIVATE, 0, 0);
 	}
+	if (wnd_get(w->h))
+		user_icontitle(w, 1);
 }
 
 int
@@ -1512,6 +1543,7 @@ wnd_frompoint(x, y, htp)
 static u32 lastclick[3], lastclickpos[3];
 static u16 lastclickwnd[3];
 static int btnstate;
+u32 user_downms;		/* when the last button went down */
 
 /* a modal loop of ours took clicks: the next one is not a double click */
 void
@@ -1552,7 +1584,7 @@ input(e)
 {
 	struct wnd *w;
 	int ht, x, y, msg, k;
-	u32 now = w16_ticks();
+	u32 now = e->ms;
 	static u16 lastmove;
 
 	kernel_tick();
@@ -1585,9 +1617,10 @@ input(e)
 		scr_mx = e->x;
 		scr_my = e->y;
 		k = e->btn > 2 ? 0 : e->btn;
-		if (e->down)
+		if (e->down) {
 			btnstate |= 1 << k;
-		else
+			user_downms = now;
+		} else
 			btnstate &= ~(1 << k);
 		asyncstate[k == 0 ? VK_LBUTTON : k == 1 ? VK_RBUTTON : VK_MBUTTON] = e->down ? 0x80 : 0;
 		if (wnd_capture) {
@@ -1595,6 +1628,11 @@ input(e)
 			ht = HTCLIENT;
 		} else
 			w = wnd_frompoint(e->x, e->y, &ht);
+		/* an icon's title is clicked as the icon's caption */
+		if (w && w->cls && w->cls->proc == user_titlethunk && w->owner) {
+			w = w->owner;
+			ht = HTCAPTION;
+		}
 		if (e->down && blocked(w) && !wnd_capture) {
 			user_beep(0);
 			return;
@@ -2301,6 +2339,8 @@ user_init()
 	controls_init();
 	p = thunk_internal(desk_proc, "wwwl", 'l', "DesktopProc");
 	cls_register("#32769", CS_GLOBALCLASS, p, 0, 0, 0, 0, cur_arrow, 0, (u32)0, 1);
+	user_titlethunk = thunk_internal(user_titleproc, "wwwl", 'l', "IconTitleProc");
+	cls_register("#32772", CS_GLOBALCLASS, user_titlethunk, 0, 0, 0, 0, cur_arrow, 0, (u32)0, 1);
 	desktop = wnd_alloc();
 	{
 		u32 t = ustr("#32769");
@@ -2554,6 +2594,7 @@ wnd_reparent(w, p)
 
 	if (w->parent == p || w == desktop)
 		return;
+	user_icontitle(w, 0);
 	unlink_w(w);
 	offsetall(w, p->cr.l - w->parent->cr.l, p->cr.t - w->parent->cr.t);
 	w->parent = p;
@@ -2565,6 +2606,7 @@ wnd_reparent(w, p)
 		expose(&old);
 	if (wnd_visible(w))
 		expose_in(w, &w->wr, 1);
+	user_icontitle(w, 1);
 }
 
 /* paint what needs it now, as a modal loop of ours goes on */

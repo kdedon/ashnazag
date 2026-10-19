@@ -1,14 +1,16 @@
 #!/bin/sh
 # mkvol.sh -- t_win16's inputs: startwin for AMIX and a ufs volume
 # (SCSI disk 3) with the test programs, their expected results and, when
-# found, the user's Windows 3.11 setup disks and Wabi 2.2 package.
+# found, the user's Windows for Workgroups 3.11 (or Windows 3.11) setup
+# disks and Wabi 2.2 package.
 #
 #   sh tests/win16/mkvol.sh outdir
 #
 # Out: outdir/startwin, outdir/win16.img.  WIN311 names the Windows 3.11
-# disks: a .7z holding DISK*.IMG or a directory of them (default: the
-# retail 3.5" set in media/).  WABI names Wabi's pkgs/SUNWwabi (default:
-# media/Wabi's x86 one).  Both proprietary: copied into the volume only.
+# disks: a .7z holding Disk*.img or a directory of them (default: the
+# Windows for Workgroups set in media/, else the retail 3.5" set).  WABI
+# names Wabi's pkgs/SUNWwabi (default: media/Wabi's x86 one).  Both
+# proprietary: copied into the volume only.
 # x86diff goes on too, with a corpus from the 80386 suite when SST names
 # a checkout of it (default ref/sst-80386).
 # Without the AMIX toolchain nothing is built and t_win16 skips.
@@ -16,7 +18,11 @@ set -e
 T=$(cd "$(dirname "$0")/.." && pwd)
 AUX=$(cd "$T/.." && pwd)
 OUT=$1
-WIN311=${WIN311:-$AUX/media/Microsoft Windows 3.11 (Retail Full) (3.5).7z}
+if [ -z "$WIN311" ]; then
+	for WIN311 in "$AUX"/media/*Windows*for*Workgroups*3.11*.7z "$AUX"/media/*Windows*3.11*.7z; do
+		[ -f "$WIN311" ] && break
+	done
+fi
 WABI=${WABI:-$AUX/media/Wabi/x86/pkgs/SUNWwabi}
 case $OUT in ""|/) echo "usage: mkvol.sh outdir" >&2; exit 2 ;; esac
 rm -rf "$OUT"
@@ -52,9 +58,18 @@ for e in "$T"/win16/expect/*.txt; do
 	echo "f /expect/$(basename "$e") 644 0 3 expect/$(basename "$e")" >> "$M"
 done
 case $WIN311 in
-*.7z)	[ ! -f "$WIN311" ] || 7z e -y -o"$S/disks" "$WIN311" '*/DISK*.IMG' > /dev/null ;;
-*)	[ ! -d "$WIN311" ] || cp "$WIN311"/DISK*.IMG "$S/disks/" ;;
+*.7z)	[ ! -f "$WIN311" ] || 7z e -y -o"$S/disks" "$WIN311" -i'r!disk*.img' -i'r!DISK*.IMG' -i'r!Disk*.img' > /dev/null ;;
+*)	[ ! -d "$WIN311" ] || cp "$WIN311"/[Dd][Ii][Ss][Kk]*.[Ii][Mm][Gg] "$S/disks/" ;;
 esac
+# DISKn.IMG, as t_win16 looks for them
+for d in "$S"/disks/*; do
+	[ -f "$d" ] || continue
+	n=$(basename "$d" | sed -n 's/.*[^0-9]\([0-9][0-9]*\)[^0-9]*$/\1/p' | sed 's/^0*//')
+	[ -n "$n" ] || { rm -f "$d"; continue; }
+	[ "$d" = "$S/disks/DISK$n.IMG" ] && continue
+	[ ! -e "$S/disks/DISK$n.IMG" ] || { echo "mkvol: duplicate disk $n" >&2; exit 1; }
+	mv "$d" "$S/disks/DISK$n.IMG"
+done
 if [ -n "$(ls "$S/disks" 2>/dev/null)" ] && [ -f "$WABI/pkgmap" ]; then
 	echo "d /disks 755 0 3" >> "$M"
 	for d in "$S"/disks/*; do

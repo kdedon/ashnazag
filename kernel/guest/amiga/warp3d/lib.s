@@ -1,6 +1,6 @@
 | Warp3D.library: resident tag and one stub per library vector.  Each
 | stub hands its vector number to glue, which calls the host function
-| startmig placed in its table (w3dshare.h) with the vector's registers
+| startamiga placed in its table (w3dshare.h) with the vector's registers
 | as C arguments, on the host stack, under the library's semaphore.
 
  .set TAB, 0x25000000

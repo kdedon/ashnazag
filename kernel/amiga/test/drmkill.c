@@ -382,7 +382,7 @@ char **argv;
 		fprintf(stderr, "drmkill: no room for 3D\n");
 		return 1;
 	}
-	vram = map(fd, fbm.offset, (unsigned long)sp->textureOffset + 4096);
+	vram = map(fd, fbm.offset, (unsigned long)sp->fifoOffset + sp->fifoSize);
 	swap = (*(volatile unsigned long *)(reg + STATUS) & 0x1f) == 0;
 	close(fd);
 	fd = client(&ctx);

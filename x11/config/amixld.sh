@@ -1,6 +1,7 @@
 #!/bin/sh
 # amixld.sh -- link an AMIX program from a cc-style link line with the
-# cross ld: crt files, shared libc, libm, libc's archive-only members.
+# cross ld: crt files, fastmem.o ahead of the archives (fast memcpy,
+# memset, sqrt), shared libc, libm, libc's archive-only members.
 #
 #   amixld.sh -o out [cc flags] objects archives -Ldir -lname ...
 #
@@ -15,6 +16,8 @@ TC=$AUX/toolchain/amix
 SYS=$TC/m68k-cbm-sysv4/sysroot
 LD=$TC/bin/m68k-cbm-sysv4-ld
 EXTRA=${AMIXLD_EXTRA:?libextra.a path}
+FAST=$(dirname "$EXTRA")/fastmem.o
+[ -f "$FAST" ] || FAST=
 LIBGCC=$(ls "$TC"/lib/gcc-lib/m68k-cbm-sysv4/*/libgcc.a | tail -1)
 
 out=a.out
@@ -41,7 +44,7 @@ while [ $# -gt 0 ]; do
 done
 
 link() {
-	"$LD" "$@" -o "$out" "$SYS/usr/ccs/lib/crt1.o" "$SYS/usr/ccs/lib/crti.o" $args \
+	"$LD" "$@" -o "$out" "$SYS/usr/ccs/lib/crt1.o" "$SYS/usr/ccs/lib/crti.o" $FAST $args \
 		"$SYS/usr/lib/libc.so.1" "$SYS/usr/ccs/lib/libm.a" "$EXTRA" "$LIBGCC" \
 		"$SYS/usr/ccs/lib/crtn.o"
 }

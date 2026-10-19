@@ -599,6 +599,8 @@ auxcore_load()
 	d->gd_fn = guest_priv;
 	aux_profile.gpf_disp[11] = *d;
 	aux_profile.gpf_disp[11].gd_fn = guest_fline;
+	aux_profile.gpf_disp[4] = *d;
+	aux_profile.gpf_disp[4].gd_fn = guest_illeg;
 	d = &aux_profile.gpf_disp[10];
 	d->gd_kind = GD_REFLECT;
 	d->gd_flags = GDF_USER;

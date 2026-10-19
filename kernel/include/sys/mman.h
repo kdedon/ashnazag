@@ -11,6 +11,21 @@
 
 #define MAP_SHARED	1
 #define MAP_PRIVATE	2
+#define MAP_TYPE	0xf
 #define MAP_FIXED	0x10
+#define MAP_RENAME	0x20
+#define MAP_NORESERVE	0x40
+#define _MAP_NEW	0x80000000	/* mmap() as opposed to the old smmap() */
+
+#define PROC_TEXT	(PROT_EXEC | PROT_READ)
+#define PROC_DATA	(PROT_READ | PROT_WRITE | PROT_EXEC)
+
+/* memcntl() */
+#define MC_SYNC		1
+#define MC_LOCK		2
+#define MC_UNLOCK	3
+#define MC_ADVISE	4
+#define MC_LOCKAS	5
+#define MC_UNLOCKAS	6
 
 #endif

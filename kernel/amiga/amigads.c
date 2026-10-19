@@ -119,25 +119,135 @@ unsigned long code, qual;
 
 /* the card's depths when it has more than 8 bits; then each session maps the deepest */
 int am_dsfull;
-unsigned long am_dsphys, am_dsvram;
 
-/* a free frame of VRAM for a new session, its offset; 0 if none */
+/*
+ * Card memory from r_base's page, am_dsvram bytes, shared by everyone:
+ *
+ *   0                am_vneed()                am_v3d          am_dsvram
+ *   | session in front | frames of their own | free | 3D driver's |
+ *
+ * The session in front is at 0.  Hidden ones wait in RAM, so [0,
+ * am_vneed()) is the largest live session's and stays free for it to
+ * come back.  Up to am_valtfb sessions keep a frame of their own instead.
+ * The 3D driver holds the rest from its first open to its last close.
+ */
+int am_valtfb;
+unsigned long am_dsphys, am_dsvram, am_v3d;
+
+/* bytes from 0 a session in front may hold: the largest live one's, at least a frame */
+unsigned long
+am_vneed()
+{
+	unsigned long n = ds_disp.d_vsize;
+	int i;
+
+	for (i = 1; i <= DS_NSESS; i++)
+		if (ds_sess[i].s_used && !DS_OWNV(&ds_sess[i]) && ds_sess[i].s_size > n)
+			n = ds_sess[i].s_size;
+	return n;
+}
+
+/* where VRAM above 0 is first held by another session's frame or the 3D driver */
+unsigned long
+am_vheld(s)
+struct dssess *s;
+{
+	unsigned long n = am_v3d ? am_v3d : am_dsvram;
+	int i;
+
+	for (i = 1; i <= DS_NSESS; i++)
+		if (ds_sess[i].s_used && &ds_sess[i] != s && DS_OWNV(&ds_sess[i]) &&
+		    ds_sess[i].s_voff < n)
+			n = ds_sess[i].s_voff;
+	return n;
+}
+
+/* a frame of its own for a new session, its offset; 0 if none */
 unsigned long
 am_vslot()
 {
-	unsigned long off;
+	unsigned long off, end = am_v3d ? am_v3d : am_dsvram, f = ds_disp.d_vsize;
+	int i, n = 0;
+
+	if (!am_dsvram)
+		return 0;
+	for (i = 1; i <= DS_NSESS; i++)
+		if (ds_sess[i].s_used && DS_OWNV(&ds_sess[i]))
+			n++;
+	if (n >= am_valtfb)
+		return 0;
+	off = (am_vneed() + DS_PGOFF) & ~DS_PGOFF;
+	for (i = 1; i <= DS_NSESS && off + f <= end; i++)
+		if (ds_sess[i].s_used && DS_OWNV(&ds_sess[i]) &&
+		    ds_sess[i].s_voff < off + f && ds_sess[i].s_voff + f > off) {
+			off = ds_sess[i].s_voff + f;
+			i = 0;
+		}
+	return off + f <= end ? off : 0;
+}
+
+/*
+ * The 3D driver takes (1) VRAM above the session in front and the frames
+ * of their own, from the offset returned to the top, or 0 if none; takes
+ * it from offset take (> 1) again, or 0 if that is held; gives it back
+ * (0).  Hidden sessions wait in RAM: the driver gives its VRAM back
+ * before each switch.
+ */
+unsigned long
+am_vtake(take)
+unsigned long take;
+{
+	unsigned long lo = ds_disp.d_vsize;
 	int i;
 
-	if (!am_rtg || !am_rtg->r_pan)
+	am_v3d = 0;
+	if (!take || !am_dsvram)
 		return 0;
-	for (off = ds_disp.d_vsize; off + ds_disp.d_vsize <= am_dsvram; off += ds_disp.d_vsize) {
-		for (i = 1; i <= DS_NSESS; i++)
-			if (ds_sess[i].s_used && ds_sess[i].s_voff == off)
-				break;
-		if (i > DS_NSESS)
-			return off;
+	if (ds_front && !DS_OWNV(ds_front) && ds_front->s_size > lo)
+		lo = ds_front->s_size;
+	for (i = 1; i <= DS_NSESS; i++)
+		if (ds_sess[i].s_used && DS_OWNV(&ds_sess[i]) &&
+		    ds_sess[i].s_voff + ds_disp.d_vsize > lo)
+			lo = ds_sess[i].s_voff + ds_disp.d_vsize;
+	lo = (lo + DS_PGOFF) & ~DS_PGOFF;
+	if (take > 1) {
+		if (take < lo || take >= am_dsvram)
+			return 0;
+		lo = take;
 	}
-	return 0;
+	if (lo >= am_dsvram)
+		return 0;
+	return am_v3d = lo;
+}
+
+/*
+ * Card modes: each depth at each timing that fits the frame sized at
+ * attach, deepest last.  The attach timing keeps its ids.
+ */
+static int am_ntim;		/* timings listed: am_tim[0..am_ntim) */
+static unsigned char am_tim[16];
+static int am_curt = -1, am_curbits;	/* what the card shows */
+unsigned char am_tried[16];	/* by card timing: kept once, no trial */
+
+static void
+am_tims()
+{
+	struct am_mode *m;
+	int i;
+
+	am_ntim = 0;
+	if (!am_rtg->r_setmode || am_rtg->r_nmode <= 0) {
+		am_tim[am_ntim++] = 0;
+		return;
+	}
+	for (i = 0; i < am_rtg->r_nmode && am_ntim < sizeof am_tim; i++) {
+		m = &am_rtg->r_modes[i];
+		if (i == am_rtg->r_mode || (m->m_width <= am_rtg->r_width &&
+		    m->m_height <= am_rtg->r_height))
+			am_tim[am_ntim++] = i;
+	}
+	if (am_rtg->r_mode >= 0 && am_rtg->r_mode < sizeof am_tried)
+		am_tried[am_rtg->r_mode] = 1;
 }
 
 /* bits a pixel of the card's mode n */
@@ -147,10 +257,21 @@ int n;
 {
 	int i;
 
+	n /= am_ntim;
 	for (i = 0; i < 3; i++)
 		if ((am_rtg->r_depths & 1 << i) && n-- == 0)
 			return 8 << i;
-	return 0;
+	return 8;
+}
+
+/* the card timing of mode n, -1 for chipset modes */
+int
+am_mtiming(n)
+int n;
+{
+	if (!am_rtg || !am_rtg->r_setmode)
+		return -1;
+	return n < 0 ? am_rtg->r_mode : am_tim[n % am_ntim];
 }
 
 int
@@ -160,11 +281,25 @@ am_nvmode()
 
 	if (!am_rtg)
 		return AM_NMODE;
-	if (am_dsfull)
+	if (am_dsfull) {
 		for (i = 0; i < 3; i++)
 			if (am_rtg->r_depths & 1 << i)
 				n++;
-	return n;
+	} else if (am_ntim > 1)
+		n = 1;
+	return n * am_ntim;
+}
+
+/* FBM_* of mode n, and its refresh */
+int
+am_vmflags(n, hzp)
+int n;
+unsigned long *hzp;
+{
+	int t = am_mtiming(n);
+
+	*hzp = t >= 0 ? am_rtg->r_modes[t].m_hz : 0;
+	return t < 0 || (t < sizeof am_tried && am_tried[t]) ? FBM_TRIED : 0;
 }
 
 void
@@ -172,14 +307,21 @@ am_vminfo(n, fi)
 int n;
 struct fbinfo *fi;
 {
-	int d = n % AM_PLANES + 1, lace = n >= AM_PLANES;
+	int d = n % AM_PLANES + 1, lace = n >= AM_PLANES, t;
+	struct am_mode *m;
 
 	*fi = ds_disp.d_info;
 	if (am_rtg) {
 		d = am_rtgbits(n);
-		fi->fi_mode = AM_RTGID + d;
 		fi->fi_depth = d;
 		fi->fi_rowbytes = am_rtg->r_row * (d / 8);
+		if ((t = am_mtiming(n)) >= 0 && t != am_rtg->r_mode) {
+			m = &am_rtg->r_modes[t];
+			fi->fi_width = m->m_width;
+			fi->fi_height = m->m_height;
+			fi->fi_rowbytes = m->m_width * (d / 8);
+		}
+		fi->fi_mode = AM_RTGID + d + (t >= 0 && t != am_rtg->r_mode ? (t + 1) << 8 : 0);
 		if (d > 8) {
 			fi->fi_visual = FBV_TRUE;
 			fi->fi_rmask = am_rtg->r_rgb[d / 32][0];
@@ -204,13 +346,41 @@ int
 am_vmfind(id)
 unsigned long id;
 {
+	struct fbinfo fi;
 	int n;
 
-	for (n = 0; n < am_nvmode(); n++)
-		if (am_rtg ? id == AM_RTGID + am_rtgbits(n) :
+	for (n = 0; n < am_nvmode(); n++) {
+		if (am_rtg)
+			am_vminfo(n, &fi);
+		if (am_rtg ? id == fi.fi_mode :
 		    id == AM_MODEID + (n >= AM_PLANES ? 8 : 0) + n % AM_PLANES + 1)
 			return n;
+	}
 	return -1;
+}
+
+/* the card shows timing t at bits, if it does not already */
+static void
+am_cardmode(t, bits)
+int t, bits;
+{
+	if (am_rtg->r_setmode && t >= 0) {
+		if (t != am_curt || bits != am_curbits)
+			(*am_rtg->r_setmode)(t, bits);
+	} else if (am_dsfull)
+		(*am_rtg->r_setdepth)(bits);
+	am_curt = t;
+	am_curbits = bits;
+}
+
+/* panic: the card back to its attach mode, the chipset's picture */
+void
+am_rtgpanic()
+{
+	if (!am_rtg)
+		return;
+	am_cardmode(am_rtg->r_mode, 8);
+	(*am_rtg->r_show)(0);
 }
 
 /* the screen shows s's planes: its mode's, else one */
@@ -222,8 +392,10 @@ struct dssess *s;
 	int i;
 
 	if (am_rtg) {
-		if (am_dsfull)
-			(*am_rtg->r_setdepth)(s->s_vmode ? am_rtgbits(s->s_vmode - 1) : 8);
+		if (s->s_vmode)
+			am_cardmode(am_mtiming(s->s_vmode - 1), am_rtgbits(s->s_vmode - 1));
+		else
+			am_cardmode(am_mtiming(-1), 8);
 		return;
 	}
 	if (s->s_vmode)
@@ -349,6 +521,11 @@ am_dsinit()
 	am_lines = height;
 	am_dsvsize = am_rtg ? 0 : size;
 	am_dsfull = am_rtg && am_rtg->r_setdepth && (am_rtg->r_depths & 6);
+	if (am_rtg) {
+		am_tims();
+		am_curt = am_mtiming(-1);
+		am_curbits = 8;
+	}
 	/* a page over: the guest's allocator keeps bytes between bitmaps, so two screens at half depth fit */
 	if (am_dsfull)
 		am_dsvsize = (am_rtg->r_base & DS_PGOFF) + (unsigned long)am_rtg->r_row *
@@ -356,6 +533,7 @@ am_dsinit()
 	if (am_rtg) {
 		am_dsphys = am_rtg->r_phys ? am_rtg->r_phys - am_rtg->r_base : 0;
 		am_dsvram = am_rtg->r_pan ? am_rtg->r_vram : 0;
+		am_valtfb = am_rtg->r_altfb;
 		fbcons.fc_m.fm_base = am_rtg->r_base;
 		fbcons.fc_m.fm_width = am_rtg->r_width; fbcons.fc_m.fm_height = am_rtg->r_height;
 		fbcons.fc_m.fm_depth = am_rtg->r_depth; fbcons.fc_m.fm_row = am_rtg->r_row;

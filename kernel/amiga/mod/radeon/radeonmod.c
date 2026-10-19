@@ -8,6 +8,7 @@
 #include "sys/errno.h"
 #include "sys/moddefs.h"
 #include "sys/opci.h"
+#include "sys/amrtg.h"
 
 #include "drmcard.h"
 
@@ -17,7 +18,7 @@ extern int radeon_amix_attach(), radeon_amix_detach();
 extern void radeon_amix_retarget(), rds_tell();
 extern unsigned long plat_vtop();
 extern __volatile__ unsigned char *rd_reg, *rd_fb;
-extern unsigned long rd_physfb, rd_vram, rd_dsvram;
+extern unsigned long rd_physfb, rd_vram;
 extern int rds_width, rds_height;
 extern struct opci_dev *rd_dev;
 extern void (*rd_fronthook)();
@@ -44,7 +45,8 @@ radeon_load()
 	c.c_physfb = rd_physfb;
 	c.c_fbsize = rd_vram;
 	c.c_vram = rd_vram;
-	c.c_free = rd_dsvram;
+	c.c_free = 0;
+	c.c_vtake = am_vtake;
 	c.c_width = rds_width;
 	c.c_height = rds_height;
 	c.c_dev = rd_dev;

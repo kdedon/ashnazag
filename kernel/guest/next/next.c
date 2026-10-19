@@ -8,7 +8,7 @@
  * is done here instead: the m68k slice of the user's kernel is loaded into
  * RAM and entered with the MMU off and the boot arguments it expects; the
  * ROM is not needed.  RAM is cleared at every start;
- * VRAM is $NATIVEHOST_ROOT/vram and NVRAM $NATIVEHOST_ROOT/nvram.  This
+ * VRAM is $NATIVEHOST_ROOT.vram and NVRAM $NATIVEHOST_ROOT.nvram.  This
  * process becomes the machine (nextguest); a child shows the 2-bit
  * framebuffer and keeps the NVRAM file.  Cmd-Q quits.
  */
@@ -32,6 +32,7 @@
 #include "nativehost.h"
 #include "profile.h"
 #include "hfswire.h"
+#include "sndout.h"
 
 extern unsigned char hfs_blob[];
 extern unsigned long hfs_blob_len, hfs_entry;
@@ -42,9 +43,9 @@ void hf_serve();
 static unsigned long width, height, rowbytes;	/* the guest's screen: the host's, 2 bits per pixel */
 static unsigned long shownw, shownh;	/* the part of it the host screen shows */
 
-/* the kernel's console window, 100 columns by 48 rows framed, must fit */
-#define MIN_WIDTH 832
-#define MIN_HEIGHT 624
+/* the window server draws 1120x832 */
+#define MIN_WIDTH 1120
+#define MIN_HEIGHT 832
 static unsigned long ramsize;	/* the largest of 32, 16, 8 MB that free memory holds */
 
 static struct nh_display display;
@@ -97,7 +98,8 @@ screen()
 		return -1;
 	}
 	close(fd);
-	width = (fi.fi_width > 4080 ? 4080 : fi.fi_width < MIN_WIDTH ? MIN_WIDTH : fi.fi_width) & ~15UL;
+	/* at most 127 longs a row: the cursor's row length is a moveq */
+	width = (fi.fi_width > 2032 ? 2032 : fi.fi_width < MIN_WIDTH ? MIN_WIDTH : fi.fi_width) & ~15UL;
 	rowbytes = width / 4;
 	height = fi.fi_height > 4095 ? 4095 : fi.fi_height < MIN_HEIGHT ? MIN_HEIGHT : fi.fi_height;
 	if (height > NX_VRAM_SIZE / rowbytes)
@@ -115,8 +117,8 @@ savenv(root, info)
 	char tmp[1100], path[1100];
 	int fd;
 
-	sprintf(tmp, "%s/nvram.tmp", root);
-	sprintf(path, "%s/nvram", root);
+	sprintf(tmp, "%s.nvram.tmp", root);
+	sprintf(path, "%s.nvram", root);
 	if ((fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0600)) < 0)
 		return;
 	if (write(fd, info->nvram, NX_NVRAM) != NX_NVRAM) {
@@ -162,6 +164,62 @@ static char *keymap[] = {
 	"\000\000\000\000\000/*7894561230.\015\000\000\000\000\000\000\000\000\000\000\000\000\000",
 };
 
+/* NeXT key codes by position: the unshifted character each key types */
+static char nextkeys[] = "\0\0\0\\][iop" "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0" "\177=-890" "\0\0\0\0\0" "`" "\0\0\0"
+	"\r';l,./zxcvbmn asdfgkjh\tqweruyt\033" "1234765";
+
+/* an event word for the event driver */
+static void
+post(w)
+	unsigned long w;
+{
+	struct hf_keys *k = (struct hf_keys *)(NX_PHYS + HF_KEYS);
+
+	if (k->ehead - k->etail < sizeof k->ev / sizeof k->ev[0]) {
+		k->ev[k->ehead & 63] = w;
+		k->ehead++;
+	}
+}
+
+/* a key or modifier change as the keyboard reports it: modifiers (valid bit, command, shifts, control), up bit, code */
+static void
+keyword(map, code, down, mods)
+	char *map;
+	int code, down, mods;
+{
+	unsigned long w = (mods & 4 ? 8 : 0) | (mods & 1 ? 2 : 0) | (mods & 2 ? 1 : 0);
+	int c, i;
+
+	w <<= 8;
+	c = code < 128 ? map[code] : 0;
+	if (c >= ' ' || c == '\r' || c == '\t' || c == 033 || c == 8) {
+		if (c == 8)
+			c = 0177;
+		for (i = 0; i < sizeof nextkeys - 1 && nextkeys[i] != c; i++)
+			;
+		if (i < sizeof nextkeys - 1)
+			w |= 0x8000 | (down ? 0 : 0x80) | i;
+	}
+	post(w);
+}
+
+/* mouse motion and buttons: deltas of at most 63, subtracted by the driver; buttons low when down */
+static void
+mouseword(dx, dy, buttons)
+	long dx, dy;
+	int buttons;
+{
+	long x, y;
+
+	do {
+		x = dx > 63 ? 63 : dx < -63 ? -63 : dx;
+		y = dy > 63 ? 63 : dy < -63 ? -63 : dy;
+		post(HF_MOUSE | (-y & 0x7f) << 9 | (buttons & 2 ? 0 : 0x100) | (-x & 0x7f) << 1 | (buttons & 1 ? 0 : 1));
+		dx -= x;
+		dy -= y;
+	} while (dx || dy);
+}
+
 /* a key going down: its character into the guest's console ring */
 static void
 typed(map, code, mods)
@@ -186,6 +244,57 @@ typed(map, code, mods)
 }
 
 /* the child: the screen out, keys and mouse in, NVRAM kept, until the machine ends */
+static struct sndout so;
+
+/* the guest's queued output to the host's sound service, a tenth of a second ahead */
+static void
+pump()
+{
+	static unsigned long gen, rate, tk, off, ends[HF_SNDBUFS], played;
+	struct hf_snd *sd = (struct hf_snd *)(NX_PHYS + HF_SND);
+	unsigned long b, e, head = sd->head;
+	long n, k;
+
+	if (sd->gen != gen) {
+		gen = sd->gen;
+		if (rate)
+			so_flush(&so);
+		tk = sd->tail = sd->from;
+		off = 0;
+		played = 0;
+		head = sd->head;
+	}
+	if (tk == head && sd->tail == tk)
+		return;
+	if ((sd->rate ? sd->rate : 44100) != rate) {
+		rate = sd->rate ? sd->rate : 44100;
+		so_start(&so, rate << 16, SNDE_S16, 2);
+		played = 0;
+	}
+	for (n = so_due(&so, (long)rate / 10); n > 0 && tk != head; ) {
+		b = sd->buf[tk % HF_SNDBUFS][0];
+		e = sd->buf[tk % HF_SNDBUFS][1];
+		if (b < NX_RAM || e > NX_RAM + ramsize || e < b)
+			e = b;
+		k = (long)((e - b) / 4 - off);
+		if (k > n)
+			k = n;
+		if (k > 0) {
+			so_put(&so, (char *)(NX_PHYS + b) + 4 * off, k);
+			off += k;
+			n -= k;
+		}
+		if (off >= (e - b) / 4) {
+			ends[tk++ % HF_SNDBUFS] = so.so_taken;
+			off = 0;
+			if (!played++)
+				fprintf(stderr, "next: sound out at %lu Hz\n", rate);
+		}
+	}
+	while (sd->tail != tk && (long)(so_now(&so) - ends[sd->tail % HF_SNDBUFS]) >= 0)
+		sd->tail++;
+}
+
 static int
 host(root)
 	char *root;
@@ -194,8 +303,10 @@ host(root)
 	static struct nx_info info;
 	struct fbcmap colors;
 	unsigned short grey[256];
-	struct pollfd p;
+	struct pollfd p[2];
 	struct inev ev;
+	long dx, dy;
+	int buttons = 0;
 	struct evinfo ei;
 	char *map;
 	unsigned long seq = 0, shownc = 0;
@@ -218,11 +329,13 @@ host(root)
 	if (ioctl(display.keyboard, EVIOCGINFO, &ei) < 0)
 		ei.ei_kset = EVK_ADB;
 	map = keymap[ei.ei_kset == EVK_AMIGA ? 1 : ei.ei_kset == EVK_IKBD ? 2 : 0];
+	so_init(&so);
 	while (getppid() == machine) {
-		p.fd = display.keyboard;
-		p.events = POLLIN;
-		p.revents = 0;
-		poll(&p, 1, 20);
+		p[0].fd = display.keyboard;
+		p[1].fd = display.mouse;
+		p[0].events = p[1].events = POLLIN;
+		p[0].revents = p[1].revents = 0;
+		poll(p, display.mouse >= 0 ? 2 : 1, 20);
 		while ((n = nh_input(display.keyboard, &ev)) > 0) {
 			if (ev.ie_type == IE_DROP)
 				mods = 0;
@@ -236,10 +349,24 @@ host(root)
 				mods = ev.ie_value != 0 ? mods | i : mods & ~i;
 			else if (ev.ie_type == IE_KEY && ev.ie_value)
 				typed(map, ev.ie_code, mods);
+			if (ev.ie_type == IE_KEY)
+				keyword(map, ev.ie_code, ev.ie_value != 0, mods);
 		}
 		if (n < 0 && errno != EAGAIN && errno != EINTR)
 			break;
+		dx = dy = 0;
+		i = buttons;
+		while (display.mouse >= 0 && nh_input(display.mouse, &ev) > 0)
+			if (ev.ie_type == IE_REL && ev.ie_code == IE_RELX)
+				dx += ev.ie_value;
+			else if (ev.ie_type == IE_REL && ev.ie_code == IE_RELY)
+				dy += ev.ie_value;
+			else if (ev.ie_type == IE_BTN && ev.ie_code >= 1 && ev.ie_code <= 2)
+				buttons = ev.ie_value ? buttons | ev.ie_code : buttons & ~ev.ie_code;
+		if (dx || dy || buttons != i)
+			mouseword(dx, dy, buttons);
 		present(vram, shown);
+		pump();
 		if (++loops % 10 == 0 && ioctl(bridge, NX_INFO, &info) == 0) {
 			if (info.nvseq != seq) {
 				seq = info.nvseq;
@@ -276,6 +403,8 @@ conflicts()
 				if ((unsigned long)maps[i].pr_vaddr < NX_TOP ||
 				    (unsigned long)maps[i].pr_vaddr + maps[i].pr_size > NX_PHYS &&
 				    (unsigned long)maps[i].pr_vaddr < NX_PHYS + NX_LIMIT) {
+					fprintf(stderr, "next: %lx-%lx is in the machine's space\n", (unsigned long)maps[i].pr_vaddr,
+					    (unsigned long)maps[i].pr_vaddr + maps[i].pr_size);
 					errno = EBUSY;
 					result = -1;
 				}
@@ -374,7 +503,7 @@ memory(root, rom)
 	for (i = 0, off = ramsize + HF_SIZE; i < sizeof windows / sizeof windows[0]; off += windows[i++].n)
 		if (twice(windows[i].a, windows[i].n, PROT_READ | PROT_WRITE, MAP_SHARED, bridge, (off_t)off) < 0)
 			return -1;
-	sprintf(path, "%s/vram", root);
+	sprintf(path, "%s.vram", root);
 	if ((fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0600)) < 0 ||
 	    ftruncate(fd, (off_t)NX_VRAM_SIZE) < 0 ||
 	    twice(NX_VRAM, NX_VRAM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, (off_t)0) < 0)
@@ -385,16 +514,19 @@ memory(root, rom)
 
 #define BE(p) ((unsigned long)(p)[0] << 24 | (p)[1] << 16 | (p)[2] << 8 | (p)[3])
 #define CPU_M68K 6
-#define ARGS (NX_RAM + 0x00400000UL)	/* boot frame; the kernel and its tables lie below */
+#define ARGS (NX_RAM + ramsize - BANKTOP + 0x8000UL)	/* boot frame and monitor globals, kept for good: the kernel's entry stack grows down from it */
 #define MG_FLAGS 369
 #define MGF_VERBOSE 8
 #define MAXBOOT 0x1000UL
-#define BANKTOP 0x2000UL	/* the kernel keeps its message ring just above a bank's end */
+#define BANKTOP 0x10000UL	/* above the bank's end: the kernel's message ring, then ARGS */
 
 static unsigned long adbinit;	/* the desktop-bus driver's start routine */
 static unsigned long kmsend;	/* the keyboard unit's command sender */
 static unsigned long kmpaint;	/* the console's character painter */
 static unsigned long kminput, timeout, hz;	/* the console's input, the callout, its rate */
+static unsigned long evkintr, evmintr, evopen;	/* the event driver's keyboard and mouse entries, its open flag */
+static unsigned long vidon, vidoff;	/* the frame buffer's retrace interrupt enable and disable */
+static unsigned long vidprobe;		/* the frame buffer probe, which walks the drivers' table */
 static unsigned long msgp;		/* address of the kernel's pointer to its message ring */
 static unsigned long msgdone;
 
@@ -426,11 +558,22 @@ static struct ksym bsyms[] = {
 	{ "_clock_timer_init" }, { "_install_scanned_intr" }, { "_eventc_latch" }, { "_eventc_l" }, { "_timer_csr" },
 	{ "_intrstat" }, { "_scr2" }, { "_rtc_get" }, { "_rtc_set" }, { "_startrtclock" }, { "_nvram_check" },
 	{ "_nvram_set" }, { "_rtc_power_down" }, { "_mon_reset" }, { "_zsintsetup" }, { "_enintsetup" }, { "ipl6" },
+	{ "_copyin" }, { "_copyout" },
 };
 /* drivers of devices this machine has none of: their probes find nothing */
 static struct ksym absent[] = {
 	{ "_fcdriver" }, { "_scdriver" }, { "_ocdriver" }, { "_npdriver" }, { "_sounddriver" }, { "_dspdriver" },
 	{ "_endriver" },
+};
+/* what the audio server's output needs: found by name */
+static struct ksym ssyms[] = {
+	{ "_softint_sched" }, { "_vm_map_lookup_entry" }, { "_kernel_map" }, { "_dma_start" }, { "_dma_abort" },
+	{ "_kern_serv_call_proc" },
+};
+/* the DSP's and the DMA channels' setup, start and stop */
+static struct ksym nodsp[] = {
+	{ "_dsp_dev_init" }, { "_dsp_dev_reset_hard" }, { "_dma_init" }, { "_dma_close" }, { "_dma_start" },
+	{ "_dma_cleanup" }, { "_dma_abort" },
 };
 #define B_CLOCKVALUE 0
 #define B_TIMESTAMP 1
@@ -454,6 +597,8 @@ static struct ksym absent[] = {
 #define B_ZSSETUP 19
 #define B_ENSETUP 20
 #define B_IPL6 21
+#define B_COPYIN 22
+#define B_COPYOUT 23
 
 /* the address of the named symbol in the slice at off, 0 if none */
 static unsigned long
@@ -526,12 +671,24 @@ loadkernel(path)
 			kminput = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16), BE(cmd + 20), "_km_input");
 			timeout = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16), BE(cmd + 20), "_timeout");
 			hz = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16), BE(cmd + 20), "_hz");
+			evkintr = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16), BE(cmd + 20), "_ev_k_intr");
+			evmintr = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16), BE(cmd + 20), "_ev_m_intr");
+			evopen = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16), BE(cmd + 20), "_eventsOpen");
+			vidon = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16), BE(cmd + 20), "_vidInterruptEnable");
+			vidoff = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16), BE(cmd + 20), "_vidInterruptDisable");
+			vidprobe = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16), BE(cmd + 20), "_vidProbeForFB");
+			for (n = 0; n < sizeof nodsp / sizeof nodsp[0]; n++)
+				nodsp[n].addr = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16),
+				    BE(cmd + 20), nodsp[n].name);
 			for (n = 0; n < sizeof ksyms / sizeof ksyms[0]; n++)
 				ksyms[n].addr = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16),
 				    BE(cmd + 20), ksyms[n].name);
 			for (n = 0; n < sizeof bsyms / sizeof bsyms[0]; n++)
 				bsyms[n].addr = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16),
 				    BE(cmd + 20), bsyms[n].name);
+			for (n = 0; n < sizeof ssyms / sizeof ssyms[0]; n++)
+				ssyms[n].addr = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16),
+				    BE(cmd + 20), ssyms[n].name);
 			for (n = 0; n < sizeof absent / sizeof absent[0]; n++)
 				absent[n].addr = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16),
 				    BE(cmd + 20), absent[n].name);
@@ -718,6 +875,9 @@ struct hctx {
 	unsigned long vfsops[8], vnodeops[36];
 };
 
+static int inkernel(), framed();
+static unsigned short *find();
+
 static int
 hostfs(folder)
 	char *folder;
@@ -748,9 +908,27 @@ hostfs(folder)
 		k->input = (long (*)())kminput;
 		k->timeout = (long (*)())timeout;
 		k->ticks = L(hz) / 20 ? L(hz) / 20 : 1;
+		if (evkintr && evmintr && evopen) {
+			k->kintr = (long (*)())evkintr;
+			k->mintr = (long (*)())evmintr;
+			k->open = evopen;
+		}
 	}
 	e = HF_CODE + hfs_entry;
 	((long (*)())e)();
+	k = (struct hf_keys *)HF_KEYS;
+	if (k->timeout && framed(vidon) && framed(vidoff)) {
+		/* no retrace interrupt: its handler runs from the clock */
+		stub = (unsigned short *)vidon;
+		stub[0] = 0x4ef9;
+		stub[1] = k->vidon >> 16;
+		stub[2] = (unsigned short)k->vidon;
+		stub = (unsigned short *)vidoff;
+		stub[0] = 0x4ef9;
+		stub[1] = k->vidoff >> 16;
+		stub[2] = (unsigned short)k->vidoff;
+	} else if (k->timeout)
+		fprintf(stderr, "next: no retrace from the clock\n");
 	/*
 	 * The kernel's root-device setup is replaced by a stub that names our
 	 * filesystem type as the root's; the first free switch entry carries it.
@@ -818,6 +996,48 @@ kmhook()
 }
 
 /*
+ * The mono cursor's save and draw routines take the row as a constant,
+ * 70 longs (1120 pixels), not the console info's row.  The probe gives
+ * the drivers' table: moveq #last,d2; lea table,a3; move.w d2,d3;
+ * muls.w #size,d3.  In each entry's routines 5 and 6, a moveq #70,Dn
+ * followed by #313 (the older DMA chip's test) becomes the screen's row.
+ */
+static void
+cursorrow()
+{
+	static unsigned short lea = 0x47f9;
+	unsigned short *p, *r;
+	unsigned long t, f, n;
+	int e, i, j, k, done = 0;
+
+	if (!inkernel(vidprobe) || !(p = find((unsigned short *)vidprobe, 16, &lea, 1)) ||
+	    (p[-1] & 0xff00) != 0x7400 || p[4] != 0xc7fc) {
+		fprintf(stderr, "next: no cursor row\n");
+		return;
+	}
+	t = (unsigned long)p[1] << 16 | p[2];
+	for (e = 0; e <= (p[-1] & 0x7f); e++)
+		for (i = 5; i <= 6; i++) {
+			n = t + e * p[5] + 4 * i;
+			if (!inkernel(n) || !inkernel(f = L(n)))
+				continue;
+			r = (unsigned short *)f;
+			for (j = 0; j < 64; j++) {
+				if ((r[j] & 0xf1ff) != 0x7046)
+					continue;
+				for (k = 1; k < 8 && r[j + k] != 0x0139; k++)
+					;
+				if (k < 8) {
+					r[j] = (r[j] & 0xff00) | rowbytes / 4;
+					done++;
+				}
+			}
+		}
+	if (!done)
+		fprintf(stderr, "next: no cursor row\n");
+}
+
+/*
  * The board's timer, event counter, clock chip and software interrupts
  * are reached only through the kernel's own routines; in the loaded copy
  * those become host calls.  Each is found by name and checked for the
@@ -837,6 +1057,14 @@ inkernel(a)
 	unsigned long a;
 {
 	return a >= NX_RAM && a < NX_RAM + ramsize;
+}
+
+/* a routine in the kernel starting with link or pea */
+static int
+framed(a)
+	unsigned long a;
+{
+	return inkernel(a) && (*(unsigned short *)a == 0x4e56 || *(unsigned short *)a == 0x4856);
 }
 
 /* the first n words w at or after p, within max words; 0 if none */
@@ -868,7 +1096,7 @@ jsrstub(p, svc)
 	p[2] = (unsigned short)a;
 }
 
-/* the routine at a, which starts with a frame link, is the host call svc; 0 for a plain return */
+/* the routine at a, which starts with a frame link, is the host call svc; 0 returns 0 */
 static int
 hcentry(a, svc)
 	unsigned long a;
@@ -876,10 +1104,11 @@ hcentry(a, svc)
 {
 	unsigned short *p = (unsigned short *)a;
 
-	if (!inkernel(a) || (p[0] != 0x4e56 && p[0] != 0x4856))
+	if (!framed(a))
 		return -1;
 	if (!svc) {
-		p[0] = 0x4e75;
+		p[0] = 0x7000;
+		p[1] = 0x4e75;
 		return 0;
 	}
 	p[0] = 0x7000 | svc;
@@ -887,6 +1116,29 @@ hcentry(a, svc)
 	p[2] = (HF_HCALL + 4) >> 16;
 	p[3] = (unsigned short)(HF_HCALL + 4);
 	return 0;
+}
+
+/*
+ * copyin or copyout at a, a host call: its first 10 bytes (link a6,#0;
+ * moveq #1,d0; movec d0,sfc or dfc) go to the trampoline t, followed by a
+ * jump back, for the pages the host call leaves to the routine.
+ */
+static int
+copyentry(a, svc, t)
+	unsigned long a, t;
+	int svc;
+{
+	unsigned short *p = (unsigned short *)a, *q = (unsigned short *)t;
+	int i;
+
+	if (!inkernel(a) || p[0] != 0x4e56 || p[1] != 0 || p[2] != 0x7001 || p[3] != 0x4e7b || (p[4] & ~1) != 0)
+		return -1;
+	for (i = 0; i < 5; i++)
+		q[i] = p[i];
+	q[5] = 0x4ef9;
+	q[6] = (a + 10) >> 16;
+	q[7] = (unsigned short)(a + 10);
+	return hcentry(a, svc);
 }
 
 /*
@@ -990,7 +1242,7 @@ static int
 services()
 {
 	unsigned short *c = (unsigned short *)HF_HCALL;
-	char *bad[30];
+	char *bad[18 + sizeof absent / sizeof absent[0] + sizeof nodsp / sizeof nodsp[0]];
 	int i, n = 0;
 
 	c[0] = 0x202f;				/* move.l 4(sp),d0 */
@@ -1039,6 +1291,10 @@ services()
 		bad[n++] = "zsintsetup";
 	if (hcentry(bsyms[B_ENSETUP].addr, 0) < 0)
 		bad[n++] = "enintsetup";
+	if (copyentry(bsyms[B_COPYIN].addr, HC_COPYIN, HF_TRAMP) < 0)
+		bad[n++] = "copyin";
+	if (copyentry(bsyms[B_COPYOUT].addr, HC_COPYOUT, HF_TRAMP + 16) < 0)
+		bad[n++] = "copyout";
 	/* a driver's probe and slave probe are its first two words, its controller setup the seventh */
 	for (i = 0; i < sizeof absent / sizeof absent[0]; i++)
 		if (inkernel(absent[i].addr) && inkernel(L(absent[i].addr))) {
@@ -1049,11 +1305,45 @@ services()
 				L(absent[i].addr + 24) = HF_HSTUB;
 		} else
 			bad[n++] = absent[i].name;
+	/* no DSP or DMA: these do nothing */
+	for (i = 0; i < sizeof nodsp / sizeof nodsp[0]; i++)
+		if (hcentry(nodsp[i].addr, 0) < 0)
+			bad[n++] = nodsp[i].name;
 	for (i = 0; i < n; i++)
 		fprintf(stderr, "next: not a host call: %s\n", bad[i]);
 	if (!n)
 		fprintf(stderr, "next: the board's routines are host calls\n");
 	return n ? -1 : 0;
+}
+
+/*
+ * The kernel calls a loaded server's procedures through kern_serv_call_proc
+ * (no procedure: 100; else proc(arg), 0).  The guest code's copy of it also
+ * finds the audio server and takes its output.
+ */
+static int
+audio()
+{
+	struct hf_snd *sd = (struct hf_snd *)HF_SND;
+	unsigned short *p = (unsigned short *)ssyms[5].addr;
+	static unsigned short code[] = { 0x4856, 0x2c4f, 0x206e, 0x000c, 0x4a88, 0x6604, 0x7064 };
+	int i;
+
+	for (i = 0; i < sizeof ssyms / sizeof ssyms[0]; i++)
+		if (!inkernel(ssyms[i].addr))
+			return -1;
+	if (!timeout || !sd->callproc || memcmp(p, code, sizeof code))
+		return -1;
+	sd->timeout = (long (*)())timeout;
+	sd->softint = (long (*)())ssyms[0].addr;
+	sd->lookup = (long (*)())ssyms[1].addr;
+	sd->kmap = ssyms[2].addr;
+	sd->dmastart = ssyms[3].addr;
+	sd->dmaabort = ssyms[4].addr;
+	p[0] = 0x4ef9;				/* jmp callproc */
+	p[1] = sd->callproc >> 16;
+	p[2] = (unsigned short)sd->callproc;
+	return 0;
 }
 
 /* a host call from the guest: the request in the mailbox */
@@ -1164,7 +1454,7 @@ main(argc, argv)
 		return 1;
 	}
 	memset(&ne, 0, sizeof ne);
-	sprintf(path, "%s/nvram", root);
+	sprintf(path, "%s.nvram", root);
 	if (stat(path, &st) == 0 && st.st_size == NX_NVRAM && (fd = open(path, O_RDONLY)) >= 0) {
 		if (read(fd, ne.nvram, NX_NVRAM) != NX_NVRAM)
 			defaults(ne.nvram);
@@ -1202,6 +1492,9 @@ main(argc, argv)
 		else {
 			fprintf(stderr, "next: root filesystem installed\n");
 			kmhook();
+			cursorrow();
+			if (audio() < 0)
+				fprintf(stderr, "next: no sound out\n");
 			sa.sa_handler = hostcall;
 			sa.sa_flags = SA_ONSTACK;
 			sigaction(SIGPWR, &sa, (struct sigaction *)0);

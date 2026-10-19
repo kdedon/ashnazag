@@ -111,62 +111,70 @@ void VID_ShiftPalette (unsigned char *palette)
 	VID_SetPalette (palette);
 }
 
+// Copy n bytes of an expanded row to the screen with longword stores
+// wherever the screen address allows: the frame buffer is uncached bus
+// space (Zorro III through the Mediator), where every store costs a bus
+// cycle whatever its width, and a read costs more.  The RAM side may be
+// misaligned; the 68020+ reads misaligned longs from memory.
+static void FB_Copy (byte *dst, byte *src, int n)
+{
+	unsigned long	*d;
+	byte		*s = src;
+
+	while (n > 0 && ((long)dst & 3))
+		*dst++ = *s++, n--;
+	d = (unsigned long *)dst;
+	for ( ; n >= 16; n -= 16, s += 16)
+	{
+		d[0] = *(unsigned long *)(s + 0);
+		d[1] = *(unsigned long *)(s + 4);
+		d[2] = *(unsigned long *)(s + 8);
+		d[3] = *(unsigned long *)(s + 12);
+		d += 4;
+	}
+	for ( ; n >= 4; n -= 4, s += 4)
+		*d++ = *(unsigned long *)s;
+	dst = (byte *)d;
+	while (n-- > 0)
+		*dst++ = *s++;
+}
+
 static void FB_Blit (byte *src, int stride, int x, int y, int w, int h)
 {
-	int	s = fb_scale, i, j, k;
+	// Expand each source row once into RAM, then store it s times; the
+	// screen is never read.
+	static byte	line[BASEWIDTH * 4 * 8];
+	int	s = fb_scale, i, j, k, n = w * fb_bpp * s;
 	byte	*row = fb_org + (y * fi.fi_rowbytes + x * fb_bpp) * s;
 
 	for (j = 0; j < h; j++, src += stride)
 	{
-		byte	*first = row;
-
-		if (fb_bpp == 1 && s == 1)
-			memcpy ((char *)row, (char *)src, w);
-		else if (fb_bpp == 1 && s == 2)
+		if (fb_bpp == 1)
 		{
-			unsigned short	*d = (unsigned short *)row;
+			byte	*d = line;
 
 			for (i = 0; i < w; i++)
-				*d++ = src[i] * 0x101;
+				for (k = 0; k < s; k++)
+					*d++ = src[i];
 		}
-		else if (fb_bpp == 2 && s == 1)
+		else if (fb_bpp == 2)
 		{
-			unsigned short	*d = (unsigned short *)row;
+			unsigned short	*d = (unsigned short *)line;
 
 			for (i = 0; i < w; i++)
-				*d++ = fb_pix[src[i]];
-		}
-		else if (fb_bpp == 2 && s == 2)
-		{
-			unsigned long	*d = (unsigned long *)row;
-
-			for (i = 0; i < w; i++)
-				*d++ = fb_pix[src[i]] * 0x10001;
-		}
-		else if (fb_bpp == 4)
-		{
-			unsigned long	*d = (unsigned long *)row, p;
-
-			for (i = 0; i < w; i++)
-				for (p = fb_pix[src[i]], k = 0; k < s; k++)
-					*d++ = p;
+				for (k = 0; k < s; k++)
+					*d++ = fb_pix[src[i]];
 		}
 		else
 		{
-			byte	*d = row;
+			unsigned long	*d = (unsigned long *)line;
 
 			for (i = 0; i < w; i++)
-				for (k = 0; k < s; k++, d += fb_bpp)
-				{
-					if (fb_bpp == 1)
-						*d = src[i];
-					else
-						*(unsigned short *)d = fb_pix[src[i]];
-				}
+				for (k = 0; k < s; k++)
+					*d++ = fb_pix[src[i]];
 		}
-		row += fi.fi_rowbytes;
-		for (k = 1; k < s; k++, row += fi.fi_rowbytes)
-			memcpy ((char *)row, (char *)first, w * fb_bpp * s);
+		for (k = 0; k < s; k++, row += fi.fi_rowbytes)
+			FB_Copy (row, line, n);
 	}
 }
 
@@ -206,6 +214,8 @@ void VID_Init (unsigned char *palette)
 	i = COM_CheckParm ("-scale");
 	if (i && i < com_argc - 1 && Q_atoi (com_argv[i+1]) < fb_scale)
 		fb_scale = Q_atoi (com_argv[i+1]);
+	if (fb_scale > 8)		// FB_Blit's row buffer
+		fb_scale = 8;
 	if (fb_scale < 1)
 		Sys_Error ("VID_Init: screen smaller than %dx%d", BASEWIDTH, BASEHEIGHT);
 	for (i = 0; i < fi.fi_height; i++)

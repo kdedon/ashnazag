@@ -69,6 +69,21 @@ vsr_get(gp, r)
 	return (gp->gp_vsr & SR_VIRT) | (GR_SR(r) & SR_REAL);
 }
 
+/* the address space follows vSR.S: the 68040 shadow's, or the profile's */
+#define	SPACED(gp)	((gp)->gp_mmu || (gp)->gp_space)
+typedef char gp_spaceat[(int)&((struct guest_proc *)0)->gp_space == 72 ? 1 : -1];	/* the gates read it */
+
+static void
+space(gp, s)
+	struct guest_proc *gp;
+	int s;
+{
+	if (gp->gp_mmu)
+		guest_mmu_space(gp, s);
+	else
+		(*gp->gp_space)(gp, s);
+}
+
 static void
 vsr_set(gp, r, v)
 	struct guest_proc *gp;
@@ -83,8 +98,8 @@ vsr_set(gp, r, v)
 		GR_USP(r) = gp->gp_vusp;
 		gp->gp_vusp = t;
 	}
-	if (gp->gp_mmu && ((v ^ gp->gp_vsr) & SR_S))
-		guest_mmu_space(gp, v);
+	if (SPACED(gp) && ((v ^ gp->gp_vsr) & SR_S))
+		space(gp, v);
 	if ((v & SR_IPL) < (gp->gp_vsr & SR_IPL))
 		gp->gp_flags |= GPF_IDROP;
 	gp->gp_vsr = (v & SR_VIRT) | (gp->gp_flags & GPF_SPIN ? SR_S : 0);
@@ -159,27 +174,34 @@ guest_reflect(gp, r, pc, fv, x, n, ipl)
 
 	if (n < 2 || n > sizeof f - 6)
 		return -1;
-	P16(f, sr);
-	P32(f + 2, pc);
-	P16(f + 6, fv);
-	if (n > 2)
-		bcopy(x, f + 8, n - 2);
+	if (gp->gp_flags & GPF_FRAME68K) {	/* the words of x, then SR and PC */
+		bcopy(x, f, n - 2);
+		P16(f + n - 2, sr);
+		P32(f + n, pc);
+		n -= 2;
+	} else {
+		P16(f, sr);
+		P32(f + 2, pc);
+		P16(f + 6, fv);
+		if (n > 2)
+			bcopy(x, f + 8, n - 2);
+	}
 	nsr = (sr & ~0xc000) | SR_S;
 	if (ipl >= 0)
 		nsr = (nsr & ~SR_IPL) | ipl << 8;
 	sp = (sr & SR_S) || (gp->gp_flags & GPF_SPIN) ? GR_USP(r) : gp->gp_vusp;
 	sp -= 6 + n;
 	ov = gp->gp_vsr;
-	if (gp->gp_mmu) {
+	if (SPACED(gp)) {
 		gp->gp_vsr |= SR_S;		/* the table and the stack are in the supervisor space */
-		guest_mmu_space(gp, SR_S);
+		space(gp, SR_S);
 	}
 	bad = copyin((caddr_t)(gp->gp_vvbr + (fv & 0xfff)), (caddr_t)&h, 4) ||
 	    copyout(f, (caddr_t)sp, 6 + n);
 	gp->gp_vsr = ov;
 	if (bad) {
-		if (gp->gp_mmu)
-			guest_mmu_space(gp, sr);
+		if (SPACED(gp))
+			space(gp, sr);
 		return -1;
 	}
 	vsr_set(gp, r, nsr);
@@ -480,9 +502,10 @@ vrte(gp, pi)
 	long usp = GR_USP(r);
 	int n;
 
-	if (copyin((caddr_t)usp, b, 8))
+	if (copyin((caddr_t)usp, b, gp->gp_flags & GPF_FRAME68K ? 6 : 8))
 		return -2;
-	switch (G16(b + 6) >> 12) {
+	switch (gp->gp_flags & GPF_FRAME68K ? 6 : G16(b + 6) >> 12) {
+	case 6: n = 6; break;
 	case 0: n = 8; break;
 	case 2: case 3: n = 12; break;
 	case 4: if (!gp->gp_mmu) return -1; n = 16; break;
@@ -501,11 +524,15 @@ vrte(gp, pi)
 extern int fpu_present;
 extern void fsave(), frestore();
 
-/* size of a 68040 FPU state frame from its header, 0 if not one */
+/* size of an FPU state frame from its header, 0 if not one */
 static int
 fplen(b)
 	u_char *b;
 {
+	long *__volatile__ ct = &g_cputype;
+
+	if (ct && *ct == 60)		/* three longs, the format in byte 2 */
+		return b[2] == 0 || b[2] == 0x60 || b[2] == 0xe0 ? 12 : 0;
 	if (b[0] == 0)
 		return 4;
 	if (b[0] == 0x41 && (b[1] == 0 || b[1] == 0x30 || b[1] == 0x60))
@@ -539,7 +566,7 @@ fpstate(pi, op)
 			e = copyout((caddr_t)f, (caddr_t)a, n) ? -2 : 0;
 		if (e)
 			frestore((caddr_t)f);
-		else if (n > 4) {
+		else if (n > 4 && n != 12) {
 			/* keep the unit live so a switch still saves fp0-fp7 */
 			f[0] = 0x41000000;
 			frestore((caddr_t)f);
@@ -797,14 +824,74 @@ guest_priv(gp, r, v)
 	return 1;			/* stock: SIGILL */
 }
 
-/* vector 11: the 68030's privileged MMU instructions are line F on a 68040 or 68060 */
+/*
+ * movep, which a 68060 takes at vector 61.  0: done; -1: not a movep;
+ * -2: the byte at *fa faulted (*ssw), the registers unchanged and the
+ * instruction to rerun once the profile has resolved the fault.
+ */
+int
+guest_movep(gp, r, fa, ssw)
+	struct guest_proc *gp;
+	char *r;
+	unsigned long *fa;
+	int *ssw;
+{
+	struct pi pi;
+	u_short op, d;
+	long a, v, *dp;
+	char b;
+	int i, n, wr;
+
+	pi.r = r;
+	pi.pc = GR_PC(r);
+	pi.len = 0;
+	if (iword(&pi, &op) || (op & 0xf138) != 0x0108 || iword(&pi, &d))
+		return -1;
+	n = op & 0x40 ? 4 : 2;
+	wr = op & 0x80;
+	a = *areg(&pi, op & 7) + (short)d;
+	dp = &GR_D(r, op >> 9 & 7);
+	for (v = 0, i = 0; i < n; i++, a += 2) {
+		b = *dp >> 8 * (n - 1 - i);
+		if (wr ? copyout(&b, (caddr_t)a, 1) : copyin((caddr_t)a, &b, 1)) {
+			*fa = a;
+			*ssw = (wr ? 0 : 0x100) | 0x20 | 1;
+			return -2;
+		}
+		v = v << 8 | (b & 0xff);
+	}
+	if (!wr)
+		*dp = n == 4 ? v : (*dp & ~0xffffL) | v;
+	GR_PC(r) = pi.pc + pi.len;
+	guest_npriv++;
+	return 0;
+}
+
+/*
+ * vector 11: the 68030's privileged MMU instructions are line F on a 68040
+ * or 68060, and so is the 68040's ptest on a 68060
+ */
 int
 guest_fline(gp, r, v)
 	struct guest_proc *gp;
 	char *r;
 	int v;
 {
-	if (!(gp->gp_flags & GPF_CPU030) || (fuword((caddr_t)GR_PC(r)) >> 16 & 0xffc0) != 0xf000)
+	int op = fuword((caddr_t)GR_PC(r)) >> 16 & 0xffff;
+
+	if ((op & 0xffd8) == 0xf548 || ((gp->gp_flags & GPF_CPU030) && (op & 0xffc0) == 0xf000))
+		return guest_priv(gp, r, v);
+	return 1;
+}
+
+/* vector 4: a 68060 takes movec of a register it lacks (the MMUSR) as illegal */
+int
+guest_illeg(gp, r, v)
+	struct guest_proc *gp;
+	char *r;
+	int v;
+{
+	if ((fuword((caddr_t)GR_PC(r)) >> 16 & 0xfffe) != 0x4e7a)
 		return 1;
 	return guest_priv(gp, r, v);
 }
@@ -921,14 +1008,14 @@ guest_unote(p)
 		return 1;
 	/* the vector table is in the guest's supervisor space */
 	ov = gp->gp_vsr;
-	if (gp->gp_mmu) {
+	if (SPACED(gp)) {
 		gp->gp_vsr |= SR_S;
-		guest_mmu_space(gp, SR_S);
+		space(gp, SR_S);
 	}
 	bad = copyin((caddr_t)(gp->gp_vvbr + 8), (caddr_t)&h, 4) || h == 0 || (h & 1);
 	gp->gp_vsr = ov;
-	if (gp->gp_mmu)
-		guest_mmu_space(gp, ov);
+	if (SPACED(gp))
+		space(gp, ov);
 	if (bad)
 		return 1;
 	gp->gp_flags |= GPF_UNOTE;

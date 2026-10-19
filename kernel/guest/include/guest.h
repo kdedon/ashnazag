@@ -78,9 +78,11 @@ struct guest_proc {
 	/* the host's own code: its exceptions go to the stock handlers */
 	unsigned long		gp_hostlo, gp_hosthi;
 	struct guest_mmu	*gp_mmu;	/* 68040 MMU shadow, 0 = none */
+	void			(*gp_space)();	/* (gp, sr): vSR.S changed, 0 = none */
+	unsigned long		gp_ualine;	/* user-mode A-line entry, 0 = none */
 };
 
-/* gp_flags; the gates read the low 16 bits at offsets 14 and 15 */
+/* gp_flags; the gates read the low 17 bits at offsets 13 to 15 */
 #define	GPF_ALINE	0x01	/* A-line: frame to vVBR + $28 */
 #define	GPF_PRIV	0x02	/* privileged instructions emulated */
 #define	GPF_SPIN	0x04	/* vSR.S pinned on, one stack */
@@ -97,17 +99,18 @@ struct guest_proc {
 #define	GPF_QUIET	0x2000	/* in a host call that must not be interrupted: only termination signals pass */
 #define	GPF_AWATCH	0x4000	/* A-line: profile callback before reflection */
 #define	GPF_NCALL	0x8000	/* native C region: host dispatch and signal frames */
-#define	GPF_PROFILE	0xffff0000	/* profile's own bits */
+#define	GPF_FRAME68K	0x10000	/* sees a 68000: 6-byte frames, rte pops SR and PC */
+#define	GPF_PROFILE	0xfffe0000	/* profile's own bits */
 /* a sum equals the OR only if no two flags share a bit */
 #define	GPF_ALL	(GPF_ALINE + GPF_PRIV + GPF_SPIN + GPF_VPEND + GPF_FAULT + \
 	GPF_PRIVBAD + GPF_EXEC + GPF_UNOTE + GPF_FTRAP + GPF_FTRAP13 + \
-	GPF_CPU030 + GPF_ETAIL + GPF_IDROP + GPF_QUIET + GPF_AWATCH + GPF_NCALL)
+	GPF_CPU030 + GPF_ETAIL + GPF_IDROP + GPF_QUIET + GPF_AWATCH + GPF_NCALL + GPF_FRAME68K)
 #define	GPF_ANY	(GPF_ALINE | GPF_PRIV | GPF_SPIN | GPF_VPEND | GPF_FAULT | \
 	GPF_PRIVBAD | GPF_EXEC | GPF_UNOTE | GPF_FTRAP | GPF_FTRAP13 | \
-	GPF_CPU030 | GPF_ETAIL | GPF_IDROP | GPF_QUIET | GPF_AWATCH | GPF_NCALL)
+	GPF_CPU030 | GPF_ETAIL | GPF_IDROP | GPF_QUIET | GPF_AWATCH | GPF_NCALL | GPF_FRAME68K)
 typedef char gpf_distinct[GPF_ALL == GPF_ANY && !(GPF_ANY & GPF_PROFILE) ? 1 : -1];
 typedef char gpf_gatebits[GPF_SPIN == 1 << 2 && GPF_VPEND == 1 << 3 &&
-	GPF_AWATCH == 1 << 14 ? 1 : -1];
+	GPF_AWATCH == 1 << 14 && GPF_FRAME68K == 1 << 16 ? 1 : -1];
 #define	GUEST_PRIV(gp)	((char *)((gp) + 1))	/* profile state */
 #define	GUESTP(p)	((struct guest_proc *)(p)->p_evpdp)
 
@@ -173,6 +176,8 @@ extern void guest_profile_del();	/* (pf) */
 extern int guest_aline();		/* disposition: A-line reflection */
 extern int guest_priv();		/* disposition: privilege emulation */
 extern int guest_fline();		/* the same for 68030 MMU instructions in line F */
+extern int guest_illeg();		/* the same for movec taken as illegal */
+extern int guest_movep();		/* (gp, regs, &fa, &ssw): 0 done, -1 other, -2 fault */
 extern int guest_fnote();		/* disposition: note an access fault */
 extern int guest_bfault();		/* (regs, &fa, &ssw): 0 data, 1 fetch, -1 none */
 extern int guest_bfcycle();		/* (regs, &v): a 68030 cycle to finish here */

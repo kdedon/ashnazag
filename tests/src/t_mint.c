@@ -122,7 +122,7 @@ solo()
 {
 	struct tosenter te;
 	struct tosowner to, t0;
-	struct tosinput ti;
+	struct tosstat ts;
 	int fd, st, r = 0;
 	pid_t pid;
 
@@ -140,8 +140,7 @@ solo()
 			_exit(4);
 		if (ioctl(fd, TOSIOC_OWNER, &to) < 0 || to.to_pid != t0.to_pid)
 			_exit(5);
-		ti.ti_n = 0;
-		if (t0.to_pid == 0 && (ioctl(fd, TOSIOC_INPUT, &ti) == 0 || errno != ENXIO))
+		if (t0.to_pid == 0 && (ioctl(fd, TOSIOC_STAT, &ts) == 0 || errno != ENXIO))
 			_exit(6);
 		_exit(0);
 	}

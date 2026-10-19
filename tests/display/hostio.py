@@ -8,8 +8,8 @@
 #   ping
 #   key K[+K...]        press together, release (QEMU qcodes)
 #   down K, up K        one transition
-#   move DX DY [MS]     relative mouse motion; with MS, in steps of at most
-#                       63 per axis, MS ms apart, so each poll of the
+#   move DX DY [MS [S]] relative mouse motion; with MS, in steps of at most
+#                       S (63) per axis, MS ms apart, so each poll of the
 #                       mouse takes one step and later moves cannot cancel it
 #   button MASK [MS]    mouse buttons (1 = left), answered MS ms later (300)
 #   glide N DX DY MS    N moves of DX DY, MS ms apart, answered at once
@@ -254,8 +254,9 @@ def serve(q, cmd, a):
             time.sleep(0.3)
             return 'done'
         gap = int(a[2]) / 1000.
+        step = int(a[3]) if len(a) > 3 else 63
         while dx or dy:
-            sx, sy = max(-63, min(63, dx)), max(-63, min(63, dy))
+            sx, sy = max(-step, min(step, dx)), max(-step, min(step, dy))
             q.hmp('mouse_move %d %d' % (sx, sy))
             dx, dy = dx - sx, dy - sy
             time.sleep(gap)

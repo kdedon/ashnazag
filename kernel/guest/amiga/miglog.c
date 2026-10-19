@@ -33,7 +33,7 @@ miglog_ms(void)
     return (long)(times(&t) - start) * 1000 / hz;
 }
 
-/* "seconds message" on the log; with echo, "startmig: message" on stderr too */
+/* "seconds message" on the log; with echo, "startamiga: message" on stderr too */
 void
 miglog(int echo, const char *fmt, ...)
 {
@@ -48,7 +48,7 @@ miglog(int echo, const char *fmt, ...)
     strcat(line, "\n");
     if (miglog_fd >= 0) write(miglog_fd, line, strlen(line));
     if (echo) {
-        fputs("startmig: ", stderr);
+        fputs("startamiga: ", stderr);
         fputs(line + n, stderr);
     }
 }

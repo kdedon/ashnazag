@@ -1,7 +1,8 @@
 | fpe030.s -- 68030 F-line entry to the FPU emulator.
 |
 | Without an FPU the 030 takes every FPU instruction at vector 11 with a
-| four-word format-0 frame whose PC is the F-line word.  A user F-line goes
+| four-word format-0 frame whose PC is the F-line word.  A guest's F-line
+| goes to its gate, as the base vector would send it; another user F-line
 | to fpe_trap once fpuinit has armed the emulator; anything else keeps the
 | stock handler.  The stack built for fpe_trap is the one nullvect builds:
 | USP pseudo-register (u.u_ar0 points at it), D0-D7/A0-A6, then the frame.
@@ -11,6 +12,13 @@
 	.text
 	.globl	ata_fline
 ata_fline:
+	movel	%a0,%sp@-
+	moveal	curproc,%a0
+	tstl	%a0@(0xc8)		| p_evpdp: a guest
+	moveal	%sp@+,%a0
+	beqs	Lfl_host
+	jmp	guest_gate_11
+Lfl_host:
 	tstl	fpu_emul
 	beqs	Lfl_decline
 	btst	&5,%sp@			| S bit in the stacked SR

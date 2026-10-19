@@ -9,7 +9,7 @@
 #
 #   sh tests/tos/build.sh outdir
 #
-# Out: outdir/root/tos/bin/{starttos,maketos,pingd},
+# Out: outdir/root/tos/bin/{starttos,pingd},
 # outdir/root/tos/{sys,stik,exit,acc,fvdi,teradesk,qed,xaaes,xatick}/,
 # outdir/root/etc/tos/{emutos.img,rom,tosml.img}.
 # EMUTOS names the EmuTOS 512 KB release zip (default: ref/emutos-release),
@@ -44,16 +44,15 @@ case $TOSROM in
 esac
 [ -s "$R/etc/tos/rom" ] || rm -f "$R/etc/tos/rom"
 LIBGCC=$(ls "$TC"/lib/gcc-lib/m68k-cbm-sysv4/*/libgcc.a | tail -1)
-for c in tos/starttos tos/tosdisp tos/tossnd sndout; do
+for c in tos/starttos tos/tospatch tos/tosdisp tos/tossnd sndout; do
 	nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -Wall -Wno-implicit -D__STDC__=0 \
 		-I"$G/mod/tosguest" -I"$G/include" -I"$KDIR/mac/display" -I"$KDIR/mac/sound" \
 		-c "$G/$c.c" -o "$O/${c#tos/}.o"
 done
 nice -n 19 "$TC/bin/m68k-cbm-sysv4-ld" -o "$R/tos/bin/starttos" "$SYS/usr/ccs/lib/crt1.o" \
-	"$SYS/usr/ccs/lib/crti.o" "$O/starttos.o" "$O/tosdisp.o" "$O/tossnd.o" "$O/sndout.o" \
+	"$SYS/usr/ccs/lib/crti.o" "$O/starttos.o" "$O/tospatch.o" "$O/tosdisp.o" "$O/tossnd.o" "$O/sndout.o" \
 	"$SYS/usr/lib/libc.so.1" \
 	"$T/build/obj/libextra.a" "$LIBGCC" "$SYS/usr/ccs/lib/crtn.o"
-cp "$AUX/images/tosenv/maketos" "$R/tos/bin/maketos"
 # the echo service, for STIKTEST.PRG's ping
 sh "$KDIR/net/build.sh" "$O/net" > /dev/null
 cp "$O/net/pingd" "$R/tos/bin/pingd"

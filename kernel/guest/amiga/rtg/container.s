@@ -205,6 +205,23 @@ init_card:
  drawfn gbi_BlitRectNoMaskComplete, gbi_BlitRectNoMaskCompleteDefault, blit_complete
  moveq #1,%d0
  rts
+| d0 pixels wide: the rows of the smaller mode that wide in a1, else 0 (flags set)
+small_rows:
+ move.l %a0,-(%sp)
+ lea RTG_BASE+rtg_small,%a0
+ suba.l %a1,%a1
+1: tst.l (%a0)
+ beq 3f
+ cmp.l (%a0),%d0
+ beq 2f
+ addq.l #8,%a0
+ cmp.l #RTG_BASE+rtg_small+32,%a0
+ blo 1b
+ bra 3f
+2: move.l 4(%a0),%a1
+3: move.l (%sp)+,%a0
+ cmpa.w #0,%a1
+ rts
 noop:
  rts
 
@@ -394,7 +411,7 @@ row_bytes:
  cmp.l #4096,%d0
  bhi return_zero
  cmp.l #1,%d1
- bne 1f
+ bne 5f
  tst.l RTG_BASE+rtg_copy
  bne 1f
  cmp.l RTG_BASE+rtg_max_width,%d0
@@ -407,6 +424,13 @@ row_bytes:
  addq.l #3,%d0
  and.l #-4,%d0
  rts
+ | a smaller mode's width: the display's rows
+5: move.l %a1,-(%sp)
+ bsr small_rows
+ move.l (%sp)+,%a1
+ beq 1b
+ move.l RTG_BASE+rtg_max_width,%d0
+ bra 1b
 calculate_memory:
  move.l %a1,%d0
  rts

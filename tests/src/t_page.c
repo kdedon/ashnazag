@@ -7,6 +7,10 @@
  * The amount is sized from free memory and from what swap can still
  * reserve; when swap is too small to exceed free memory the same checks
  * run without paging and page.paged_out is skipped.
+ *
+ * Then: a disk area added twice or overlapping is refused, and swap -d
+ * takes it away again; a process that reserves all it can, then locks
+ * a page and forks, finishes.
  */
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -15,6 +19,8 @@
 #include <sys/fault.h>
 #include <sys/syscall.h>
 #include <sys/procfs.h>
+#include <sys/resource.h>
+#include <sys/mman.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -60,6 +66,89 @@ long *total, *freep;
 		*freep += t.e[i].ste_free;
 	}
 	return t.n;
+}
+
+#define SWDEV	"/dev/dsk/c2d0s0"
+
+static int
+swapctl3(cmd, start, len)
+int cmd;
+long start, len;
+{
+	swapres_t r;
+
+	r.sr_name = SWDEV;
+	r.sr_start = start;
+	r.sr_length = len;
+	return swapctl(cmd, (void *)&r) < 0 ? errno : 0;
+}
+
+/* add, add again, overlap, remove, re-add, remove; the first area stays */
+static void
+swaparea()
+{
+	long t0, f0, t1, f1, t2, f2;
+	int e;
+
+	if (access(SWDEV, 0) < 0) {
+		t_skip("swap_add", "no %s", SWDEV);
+		return;
+	}
+	swapfree(&t0, &f0);
+	e = swapctl3(SC_ADD, 0L, 2048L);
+	swapfree(&t1, &f1);
+	t_check("swap_add", e == 0 && t1 > t0, "error %d, swap %ld -> %ld pages", e, t0, t1);
+	if (e)
+		return;
+	/* refused: the first errno after an add is not always EEXIST */
+	e = swapctl3(SC_ADD, 1024L, 2048L);
+	swapfree(&t2, &f2);
+	t_check("swap_add_overlap", e != 0 && t2 == t1, "error %d, swap %ld -> %ld pages", e, t1, t2);
+	e = swapctl3(SC_ADD, 0L, 2048L);
+	swapfree(&t2, &f2);
+	t_check("swap_add_twice", e == EEXIST && t2 == t1, "error %d, swap %ld -> %ld pages", e, t1, t2);
+	e = swapctl3(SC_REMOVE, 0L, 0L);
+	swapfree(&t1, &f1);
+	t_check("swap_del", e == 0 && t1 == t0, "error %d, swap %ld pages, %ld before", e, t1, t0);
+	e = swapctl3(SC_ADD, 0L, 2048L);
+	t_check("swap_readd", e == 0, "error %d", e);
+	e = swapctl3(SC_REMOVE, 0L, 0L);
+	t_check("swap_del_again", e == 0, "error %d", e);
+}
+
+/*
+ * Reserve all it can, then lock a page and fork: the fork may fail for
+ * want of memory but nothing may hang; once it exits a fork works.
+ */
+static void
+full()
+{
+	char *m[2048];
+	long n, i, pgs;
+	pid_t pid, c;
+	int st, r, e;
+
+	pid = fork();
+	if (pid == 0) {
+		for (n = 0; n < 2048 && (m[n] = malloc(1 << 20)) != 0; n++)
+			for (i = 0; i < 1 << 20; i += pgsz)
+				m[n][i] = 1;
+		pgs = t_kmem("freemem");
+		e = n ? mlock((caddr_t)((unsigned long)m[0] & ~(pgsz - 1)), pgsz) : -1;
+		t_info("full", "%ld MB reserved, freemem %ld, mlock %d", n, pgs, e);
+		c = fork();
+		if (c == 0)
+			_exit(0);
+		if (c == -1 ? errno != EAGAIN : waitpid(c, &st, 0) != c)
+			_exit(1);
+		_exit(n > 0 ? 0 : 2);
+	}
+	r = t_waitchild(pid, &st, 300);
+	t_check("full_nowedge", r == pid && st == 0, "wait %d, status 0x%x", r, st);
+	c = fork();
+	if (c == 0)
+		_exit(0);
+	t_check("full_after", c != -1 && t_waitchild(c, &st, 60) == c, "fork: %s", T_ERR);
 }
 
 static int
@@ -189,8 +278,13 @@ main()
 	long rsum = 0, held = 0, wchan = 0;
 	int rp[2], gp[2], tp[2], i, n, round, st, bad = 0, first = 0, pressure;
 	char c;
+	struct rlimit rl;
 
 	t_init("page", 900);
+	/* holders may be larger than the default data limit */
+	rl.rlim_cur = rl.rlim_max = RLIM_INFINITY;
+	setrlimit(RLIMIT_DATA, &rl);
+	setrlimit(RLIMIT_VMEM, &rl);
 	/* dead holders show up as write errors */
 	signal(SIGPIPE, SIG_IGN);
 	pgsz = sysconf(_SC_PAGESIZE);
@@ -302,5 +396,7 @@ main()
 	swapfree(&swt, &sf1);
 	t_check("swap_recover", swt == sw0 && sf0 - sf1 < 16,
 	    "swap %ld -> %ld pages, free %ld -> %ld", sw0, swt, sf0, sf1);
+	swaparea();
+	full();
 	return t_done();
 }

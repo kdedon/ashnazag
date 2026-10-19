@@ -235,6 +235,7 @@ extern void w16_log(char *, ...);
 extern int w16_debug;
 extern int w16_dpi;		/* the screen's logical inch: 96 (small fonts) or 120 (large, the 8514 set) */
 extern u32 w16_ticks();		/* milliseconds since start */
+extern u32 w16_ticksat();	/* (sec, usec): a time of day on that clock */
 extern char windir[], sysdir[];	/* DOS paths of the Windows and system directories */
 extern int profile_get();	/* (file or 0 = WIN.INI, section, key, default, out, size) */
 extern int profile_put();	/* (file or 0, section, key, value) */

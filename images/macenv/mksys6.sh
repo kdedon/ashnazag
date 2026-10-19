@@ -67,6 +67,9 @@ for n in ('System', 'Finder', 'MultiFinder', 'DA Handler', '%AUX Resources',
           'Color', 'Monitors', 'Sound', '+Layers', '+NMgrFix', 'Scrapbook File', '_DTInit'):
     get(sf + '/' + n, sf + '/' + n)
 EOF
+# the A/UX screen in colour; startmac fits the size to the display
+python3 "$AUX/tools/rsrcedit.py" "$OUT/mac/sys/System Folder/System" -a scrn 0 \
+	0001007a000ee0000000008077fea801ffffffff0000000001e002800000
 # Log Out in the Apple menu, a desk accessory in the System file
 sh "$D/logout/build.sh" "$OUT/tmp/logout" "$OUT/mac/sys/System Folder/System"
 rm -rf "$OUT/tmp/logout"

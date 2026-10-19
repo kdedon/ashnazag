@@ -80,10 +80,9 @@ done
 "$W/bin/cc" $CF -c "$H/linea.c" -o "$W/linea.o"
 "$W/bin/cc" $CF -c "$H/pfb.c" -o "$W/pfb.o"
 "$W/bin/cc" $CF -c "$H/plane.c" -o "$W/plane.o"
-"$W/bin/cc" $CF -c "$H/hwblit.c" -o "$W/hwblit.o"
 "$W/bin/cc" -c "$H/../../drawops/drawops.s" -o "$W/drawops.o"
 prg "$OUT/ashfb.sys" "$D/c_common.gnu.o" "$D/common.gnu.o" "$D/clip.gnu.o" \
-	"$W/init.o" "$W/colours.o" "$W/printf.o" "$W/ashfb.o" "$W/linea.o" "$W/pfb.o" "$W/plane.o" "$W/hwblit.o" "$W/drawops.o"
+	"$W/init.o" "$W/colours.o" "$W/printf.o" "$W/ashfb.o" "$W/linea.o" "$W/pfb.o" "$W/plane.o" "$W/drawops.o"
 # fVDI's own drivers, each started only on the ROM's screen in its depths
 for d in bitplane:0x114:"init colours printf spec palette fill blit line" \
     16_bit:0x10000:"init colours printf 16_bit"; do

@@ -36,12 +36,12 @@ This answers [filesystem-package-handover.md](filesystem-package-handover.md). T
 
 ### Legacy paths
 
-The current single environments become the environment named `default`. Nothing moves:
+The current single environments become the installed environments 7.6.1, emutos and 3.2. Nothing moves:
 - `~/System Folder` stays the default Mac environment's System Folder;
 - `~/TOS` stays the default TOS C:;
 - `~/Amiga` stays the default Amiga SYS:.
 
-Each `make*` tool gains `-e ENV`; without it, behaviour is unchanged. `make* -e ENV --import` copies a legacy tree into a new environment. Nothing is ever merged silently.
+The legacy tree belongs to the family's default environment (7.6.1, emutos, 3.2). There is no make tool: a launcher's first start of an environment copies its template.
 
 ## How a guest sees the tiers
 
@@ -70,8 +70,8 @@ Rules:
 | Id | Work | Acceptance |
 |---|---|---|
 | L1 | `/etc/default/{mac,tos,amiga}` policy files; `.env` format | Parsed by the shell tools and by the builder fixtures |
-| L2 | `makemac`, `maketos` and `makeamiga` take `-e ENV` and `--import`; legacy default unchanged | Two environments of the same OS get distinct roots |
-| L3 | `startmac`, `starttos` and `startmig` take `-e ENV`; `fcntl` lock on `.env`, or on `.stamp` in the legacy `~/System Folder` | A second writable session is refused; the lock goes on exit or kill |
+| L2 | `startmac`, `starttos` and `startamiga` take `-e ENV -b BASE` (a new name copies BASE) and `-R` (refresh from the template); legacy default unchanged | Two environments of the same OS get distinct roots |
+| L3 | `startmac`, `starttos` and `startamiga` take `-e ENV`; `fcntl` lock on `.env`, or on `.stamp` in the legacy `~/System Folder` | A second writable session is refused; the lock goes on exit or kill |
 | L4 | Tier mapping per guest (Amiga assigns, TOS drives, Mac Applications aliases) | A guest sees apps from all three tiers, in order |
 | L5 | Per-environment Mac state: PRAM and System Folder, so two Mac environments run at once | 7.1 and 8.1 run side by side with separate preferences |
 | L6 | `pkginst`: relocatable packages into the account or environment tier, run as the user, with a per-tier `contents` database; root `pkgadd` for the system tier | Install, uninstall, `pkgchk`; uninstall keeps user data |

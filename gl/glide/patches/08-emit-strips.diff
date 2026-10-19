@@ -1,0 +1,42 @@
+--- a/distrip.c
++++ b/distrip.c
+@@ -557,4 +557,39 @@
+ #undef FN_NAME
+ } /* grDrawVertexArrayContiguous */
+ 
++#ifdef GLIDE_USE_C_TRISETUP
++/* As grDrawEmitFans for nstrip strips of nv vertices: emit(arg, fifo,
++ * first, n, hdr) stores vertices first..first+n-1 of all strips' vertices
++ * (with room for a constant colour write) as one packet, at most 15 to a
++ * packet.
++ */
++void
++grDrawEmitStrips(FxI32 nstrip, FxI32 nv,
++                 FxU32 *(*emit)(void *, FxU32 *, FxI32, FxI32, FxU32), void *arg)
++{
++#define FN_NAME "grDrawEmitStrips"
++  FxU32 vSize, hdr;
++  FxI32 i, k, n;
++
++  GR_BEGIN_NOFIFOCHECK(FN_NAME, 90);
++  GR_FLUSH_STATE();
++  vSize = gc->state.vData.vSize;
++  for (i = 0; i < nstrip; i++)
++    for (k = 0; k < nv; k += n) {
++      n = nv - k > 15 ? 15 : nv - k;
++      hdr = (kSetupStrip << SSTCP_PKT3_SMODE_SHIFT) |
++        (n << SSTCP_PKT3_NUMVERTEX_SHIFT) |
++        (k ? SSTCP_PKT3_DDDDDD : SSTCP_PKT3_BDDDDD) |
++        gc->cmdTransportInfo.cullStripHdr;
++      GR_SET_EXPECTED_SIZE(n * vSize + 8, 2);
++      if (gc->contextP) {
++        FxU32 *p = (*emit)(arg, gc->cmdTransportInfo.fifoPtr, i * nv + k, n, hdr);
++        gc->cmdTransportInfo.fifoRoom -= (FxU32)p - (FxU32)gc->cmdTransportInfo.fifoPtr;
++        gc->cmdTransportInfo.fifoPtr = p;
++      }
++    }
++#undef FN_NAME
++}
++#endif
++
+ #endif /* GLIDE3 */  

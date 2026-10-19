@@ -1,0 +1,276 @@
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_context.h
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_context.h
+@@ -923,6 +923,7 @@
+    GLuint SetupIndex;
+    GLuint SetupNewInputs;
+    void *EmitFifo;		/* writes this buffer's vertices to the fifo */
++   GLuint FlatEmit;		/* flat fans to the fifo: 0 no, 1 without q, 2 with q */
+    GLuint RenderIndex;
+    GLuint RenderWanted;
+    GLuint Fallback;
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tris.c
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tris.c
+@@ -1030,6 +1030,15 @@
+       tnl->Driver.Render.Triangle = rast_tab[index].triangle;
+       tnl->Driver.Render.Quad = rast_tab[index].quad;
+ 
++#if defined(__AMIX__) && defined(__m68k__)
++      if (index == TDFX_FLAT_BIT) {
++	 tnl->Driver.Render.PrimTabVerts = tdfx_flat_tab;
++	 tnl->Driver.Render.PrimTabElts = _tnl_render_tab_elts;
++	 tnl->Driver.Render.ClippedLine = tdfxRenderClippedLine;
++	 tnl->Driver.Render.ClippedPolygon = tdfxRenderClippedPoly;
++	 tnl->Driver.Render.UnclippedTab = tdfx_flat_tab;
++      } else
++#endif
+       if (index == 0) {
+ 	 tnl->Driver.Render.PrimTabVerts = tdfx_render_tab_verts;
+ 	 tnl->Driver.Render.PrimTabElts = tdfx_render_tab_elts;
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_vb.c
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_vb.c
+@@ -32,6 +32,7 @@
+ #include "mmath.h"
+ 
+ #include "math/m_translate.h"
++#include "tnl/t_pipeline.h"
+ #include "swrast_setup/swrast_setup.h"
+ 
+ #include "tdfx_context.h"
+@@ -418,6 +419,207 @@
+       return k ? (void *)emit_fifo_gt0t1 : (void *)emit_fifo_t0t1;
+    return k ? (void *)emit_fifo_gt0 : (void *)emit_fifo_t0;
+ }
++
++/* Flat shading: each quad or triangle goes to the fifo as a fan of its
++ * own, with the provoking vertex's colour in every vertex; the hardware
++ * culls it.
++ */
++extern void grDrawEmitFans( FxI32 nfan, FxI32 nv,
++			    FxU32 *(*emit)(void *, FxU32 *, FxI32, FxI32, FxU32),
++			    void *arg );
++
++struct tdfx_flat_arg {
++   GLcontext *ctx;
++   GLenum prim;
++   GLuint start, parity;
++   GLint nv;
++};
++
++static __inline__ GLuint flat_colour( struct vertex_buffer *VB, GLuint i )
++{
++   const struct gl_client_array *a = VB->ColorPtr[0];
++   union { GLuint ui; GLubyte ub[4]; } col;
++
++   if (a->Type == GL_FLOAT) {
++      const GLfloat *fc = (const GLfloat *)((GLubyte *)a->Ptr + i * a->StrideB);
++      UNCLAMPED_FLOAT_TO_UBYTE(col.ub[TDFX_CB], fc[2]);
++      UNCLAMPED_FLOAT_TO_UBYTE(col.ub[TDFX_CG], fc[1]);
++      UNCLAMPED_FLOAT_TO_UBYTE(col.ub[TDFX_CR], fc[0]);
++      UNCLAMPED_FLOAT_TO_UBYTE(col.ub[TDFX_CA], fc[3]);
++   } else {
++      const GLubyte *c = (GLubyte *)a->Ptr + i * a->StrideB;
++      col.ub[TDFX_CB] = c[2];
++      col.ub[TDFX_CG] = c[1];
++      col.ub[TDFX_CR] = c[0];
++      col.ub[TDFX_CA] = c[3];
++   }
++   return fifo_u(col.ui);
++}
++
++static FxU32 *flat_fans( void *arg, FxU32 *fifo, FxI32 first, FxI32 n,
++			 FxU32 hdr )
++{
++   struct tdfx_flat_arg *a = (struct tdfx_flat_arg *)arg;
++   tdfxContextPtr fxMesa = TDFX_CONTEXT(a->ctx);
++   struct vertex_buffer *VB = &TNL_CONTEXT(a->ctx)->vb;
++   const GLfloat *s = fxMesa->hw_viewport;
++   const GLfloat sx = s[0], sy = s[5], sz = s[10];
++   const GLfloat tx = s[12], ty = s[13], tz = s[14];
++   const GLuint ps = VB->NdcPtr->stride, q = fxMesa->FlatEmit == 2;
++   const GLubyte *p = (GLubyte *)VB->NdcPtr->data;
++   const GLuint st = a->start;
++   volatile GLuint *f = (volatile GLuint *)fifo;
++   GLuint v[15], pv, col;
++   GLint j, k;
++
++   hdr = fifo_u(hdr);
++   for (j = first; j < first + n; j++) {
++      switch (a->prim) {
++      case GL_TRIANGLES:
++	 v[0] = st + 3 * j; v[1] = v[0] + 1; v[2] = pv = v[0] + 2;
++	 break;
++      case GL_TRIANGLE_STRIP:
++	 v[(j ^ a->parity) & 1] = st + j;
++	 v[~(j ^ a->parity) & 1] = st + j + 1;
++	 v[2] = pv = st + j + 2;
++	 break;
++      case GL_TRIANGLE_FAN:
++	 v[0] = st; v[1] = st + j + 1; v[2] = pv = st + j + 2;
++	 break;
++      case GL_QUADS:
++	 v[0] = st + 4 * j; v[1] = v[0] + 1; v[2] = v[0] + 2; v[3] = pv = v[0] + 3;
++	 break;
++      case GL_QUAD_STRIP:
++	 v[0] = st + 2 * j; v[1] = v[0] + 1; v[2] = pv = v[0] + 3; v[3] = v[0] + 2;
++	 break;
++      default:
++	 for (k = 0; k < a->nv; k++)
++	    v[k] = st + k;
++	 pv = st;
++	 break;
++      }
++      col = flat_colour(VB, pv);
++      *f++ = hdr;
++      for (k = 0; k < a->nv; k++) {
++	 const GLfloat *x = (const GLfloat *)(p + v[k] * ps);
++	 f[0] = fifo_f(sx * x[0] + tx);
++	 f[1] = fifo_f(sy * x[1] + ty);
++	 f[2] = col;
++	 f[3] = fifo_f(sz * x[2] + tz);
++	 if (q) {
++	    f[4] = fifo_u(((const GLuint *)x)[3]);
++	    f++;
++	 }
++	 f += 4;
++      }
++   }
++   return (FxU32 *)f;
++}
++
++static void flat_prim( GLcontext *ctx, GLuint start, GLuint count,
++		       GLuint flags, GLenum prim )
++{
++   struct tdfx_flat_arg a;
++   GLint n = count - start, nfan;
++
++   if (!TDFX_CONTEXT(ctx)->FlatEmit || (prim == GL_POLYGON && n > 15)) {
++      _tnl_render_tab_verts[prim]( ctx, start, count, flags );
++      return;
++   }
++   switch (prim) {
++   case GL_TRIANGLES:		nfan = n / 3;		a.nv = 3; break;
++   case GL_TRIANGLE_STRIP:
++   case GL_TRIANGLE_FAN:	nfan = n - 2;		a.nv = 3; break;
++   case GL_QUADS:		nfan = n / 4;		a.nv = 4; break;
++   case GL_QUAD_STRIP:		nfan = n / 2 - 1;	a.nv = 4; break;
++   default:			nfan = n >= 3;		a.nv = n; break;
++   }
++   if (nfan <= 0)
++      return;
++   a.ctx = ctx;
++   a.prim = prim;
++   a.start = start;
++   a.parity = (flags & PRIM_PARITY) != 0;
++   grDrawEmitFans( nfan, a.nv, flat_fans, &a );
++}
++
++#define FLAT_PRIM( name, prim )						\
++static void flat_##name( GLcontext *ctx, GLuint start, GLuint count,	\
++			 GLuint flags )					\
++{									\
++   flat_prim( ctx, start, count, flags, prim );				\
++}
++FLAT_PRIM( triangles, GL_TRIANGLES )
++FLAT_PRIM( tri_strip, GL_TRIANGLE_STRIP )
++FLAT_PRIM( tri_fan, GL_TRIANGLE_FAN )
++FLAT_PRIM( quads, GL_QUADS )
++FLAT_PRIM( quad_strip, GL_QUAD_STRIP )
++FLAT_PRIM( poly, GL_POLYGON )
++
++static void flat_other( GLcontext *ctx, GLuint start, GLuint count,
++			GLuint flags )
++{
++   _tnl_render_tab_verts[flags & PRIM_MODE_MASK]( ctx, start, count, flags );
++}
++
++void (*tdfx_flat_tab[GL_POLYGON+2])( GLcontext *, GLuint, GLuint, GLuint ) = {
++   flat_other, flat_other, flat_other, flat_other,
++   flat_triangles, flat_tri_strip, flat_tri_fan,
++   flat_quads, flat_quad_strip, flat_poly, flat_other
++};
++
++/* 1 or 2 when flat fans can draw this buffer, 0 otherwise; *whole when
++ * they draw all of it.
++ */
++static GLuint choose_flat_emit( GLcontext *ctx, GLboolean *whole )
++{
++   tdfxContextPtr fxMesa = TDFX_CONTEXT(ctx);
++   TNLcontext *tnl = TNL_CONTEXT(ctx);
++   struct vertex_buffer *VB = &tnl->vb;
++   struct gl_client_array *col = VB->ColorPtr[0];
++   GLuint i, flags = 0, q;
++   const int *l;
++   GLint n;
++
++   *whole = GL_FALSE;
++   if (tnl->Driver.Render.PrimTabVerts != tdfx_flat_tab || VB->Elts ||
++       !(fxMesa->SetupIndex & TDFX_RGBA_BIT) ||
++       (fxMesa->SetupIndex & (TDFX_TEX0_BIT|TDFX_TEX1_BIT|TDFX_PTEX_BIT)))
++      return 0;
++   n = grEmitParams(&l);
++   if (n == 2 && l[0] == TDFX_Q_OFFSET && l[1] == TDFX_Z_OFFSET)
++      q = 1;
++   else if (n == 3 && l[0] == TDFX_ARGB_OFFSET && l[1] == TDFX_Z_OFFSET &&
++	    l[2] == TDFX_Q_OFFSET)
++      q = 2;
++   else
++      return 0;
++   if (col->Type != GL_UNSIGNED_BYTE && (col->Type != GL_FLOAT || col->Size != 4))
++      import_float_colors( ctx );
++   if (VB->ClipOrMask)
++      return q;
++   for (i = VB->FirstPrimitive; !(flags & PRIM_LAST);
++	i += VB->PrimitiveLength[i]) {
++      flags = VB->Primitive[i];
++      switch (flags & PRIM_MODE_MASK) {
++      case GL_TRIANGLES:
++      case GL_TRIANGLE_STRIP:
++      case GL_TRIANGLE_FAN:
++      case GL_QUADS:
++      case GL_QUAD_STRIP:
++      case GL_POLYGON+1:
++	 break;
++      case GL_POLYGON:
++	 if (VB->PrimitiveLength[i] <= 15)
++	    break;
++      default:
++	 return q;
++      }
++   }
++   *whole = GL_TRUE;
++   return q;
++}
++
+ #endif
+ 
+ void tdfxBuildVertices( GLcontext *ctx, GLuint start, GLuint count,
+@@ -428,6 +630,15 @@
+    GLuint stride = 1<<fxMesa->vertex_stride_shift;
+ 
+ #if defined(__AMIX__) && defined(__m68k__)
++   {
++      GLboolean whole;
++
++      fxMesa->FlatEmit = choose_flat_emit( ctx, &whole );
++      if (whole) {
++	 fxMesa->SetupNewInputs |= VERT_BIT_CLIP;
++	 return;
++      }
++   }
+    fxMesa->EmitFifo = choose_emit_fifo( ctx );
+    if (fxMesa->EmitFifo) {
+       /* the buffer stays stale */
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_vb.h
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_vb.h
+@@ -68,6 +68,11 @@
+    GLuint start;
+ };
+ 
++#if defined(__AMIX__) && defined(__m68k__)
++extern void (*tdfx_flat_tab[GL_POLYGON+2])( GLcontext *, GLuint, GLuint,
++					     GLuint );
++#endif
++
+ extern void tdfxBuildVertices( GLcontext *ctx, GLuint start, GLuint count,
+                                GLuint newinputs );
+ 

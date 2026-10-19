@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Install the Unix boot path on an AHDI disk image, or check it.
 
-  instboot.py IMAGE BOOTSEC LOADER KERNEL CMDLINE [TIMEOUT]
-  instboot.py --check IMAGE BOOTSEC LOADER KERNEL [CMDLINE]
+  instboot.py IMAGE BOOTSEC LOADER KERNEL CMDLINE [TIMEOUT [MODULE...]]
+  instboot.py --check IMAGE BOOTSEC LOADER KERNEL [CMDLINE [MODULE...]]
   instboot.py --restore IMAGE BACKUP
 
 Writes the root-sector boot code (bytes 0..len, at most 0x156 so ICD
 entries survive) and the checksum word; the partition table, disk size
 and bad-sector list are left as they are.  The AXB partition gets the
-loader (sectors 0-14), the command line (15) and the kernel ELF (16 on).
+loader (sectors 0-14), the command line (15, with the boot module table
+from byte 256), the kernel ELF (16 on) and the boot modules, named after
+their files.
 Refuses a root sector whose partitions or bad-sector list leave the disk
 or overlap.  The first install saves the root sector to IMAGE.rootsec
 (or ./NAME.rootsec for a device); --restore puts its boot code back.
@@ -19,6 +21,23 @@ SEC = 512
 CODEMAX = 0x156
 LOADMAX = 15 * SEC
 CMDSEC, KERNSEC = 15, 16
+MODTAB, MODMAX = 256, 8
+
+
+def modtab(kern, mods):
+    """The command sector's module table and the modules' sectors."""
+    if len(mods) > MODMAX:
+        die('more than %d boot modules' % MODMAX)
+    t = struct.pack('>4sI', b'BMOD', len(mods))
+    data = b''
+    sec = KERNSEC + (len(kern) + SEC - 1) // SEC
+    for name, m in mods:
+        if len(name) > 15:
+            die('module name %s longer than 15 bytes' % name)
+        t += struct.pack('>II16s', sec, len(m), name.encode())
+        data += m + bytes(-len(m) % SEC)
+        sec += (len(m) + SEC - 1) // SEC
+    return t, data
 
 
 def die(msg):
@@ -83,7 +102,7 @@ def axb(rs):
     die('no AXB partition in the root sector')
 
 
-def install(img, code, loader, kern, cmd, timeout):
+def install(img, code, loader, kern, cmd, timeout, mods):
     if len(code) > CODEMAX:
         die('boot code is %d bytes, max %d' % (len(code), CODEMAX))
     if len(loader) > LOADMAX or loader[:4] != b'AXB2':
@@ -101,7 +120,8 @@ def install(img, code, loader, kern, cmd, timeout):
         struct.pack_into('>H', rs, 0x1FE, (0x1234 - wsum(rs)) & 0xFFFF)
         assert rs[CODEMAX:0x1FE] == keep
         st, n = axb(rs)
-        if KERNSEC + (len(kern) + SEC - 1) // SEC > n:
+        tab, mdata = modtab(kern, mods)
+        if KERNSEC + (len(kern) + SEC - 1) // SEC + len(mdata) // SEC > n:
             die('AXB has %d sectors, too small for the kernel' % n)
         ld = bytearray(loader)
         struct.pack_into('>II', ld, 8, timeout, ksum(kern))
@@ -119,11 +139,12 @@ def install(img, code, loader, kern, cmd, timeout):
         f.write(rs)
         f.seek(st * SEC)
         f.write(ld + bytes(LOADMAX - len(ld)))
-        f.write(cmd + bytes(SEC - len(cmd)))
+        f.write(cmd + bytes(MODTAB - len(cmd)) + tab + bytes(SEC - MODTAB - len(tab)))
         f.write(kern + bytes(-len(kern) % SEC))
+        f.write(mdata)
 
 
-def check(img, code, loader, kern, cmd):
+def check(img, code, loader, kern, cmd, mods):
     with open(img, 'rb') as f:
         rs = f.read(SEC)
         if wsum(rs) != 0x1234:
@@ -137,7 +158,11 @@ def check(img, code, loader, kern, cmd):
                 die('partition %d ends past the disk size' % i)
         st, n = axb(rs)
         f.seek(st * SEC)
+        tab, mdata = modtab(kern, mods)
         a = f.read(KERNSEC * SEC + len(kern))
+        f.seek((st + KERNSEC + (len(kern) + SEC - 1) // SEC) * SEC)
+        if f.read(len(mdata)) != mdata:
+            die('AXB boot modules differ')
         if a[:8] != loader[:8] or a[16:len(loader)] != loader[16:]:
             die('AXB loader differs')
         if struct.unpack_from('>I', a, 12)[0] != ksum(kern):
@@ -145,12 +170,16 @@ def check(img, code, loader, kern, cmd):
         c = a[CMDSEC * SEC:KERNSEC * SEC]
         if cmd is not None and c[:len(cmd) + 1] != cmd + b'\0':
             die('AXB command line differs')
+        if c[MODTAB:MODTAB + len(tab)] != tab:
+            die('AXB module table differs')
         if a[KERNSEC * SEC:] != kern:
             die('AXB kernel differs')
         print('[OK] root sector: %d bytes of code, sum 0x1234; AXB %d+%d: '
-              'loader, timeout %d s, command line "%s", kernel %d bytes'
+              'loader, timeout %d s, command line "%s", kernel %d bytes, '
+              'modules: %s'
               % (len(code), st, n, struct.unpack_from('>I', a, 8)[0],
-                 c.split(b'\0')[0].decode(), len(kern)))
+                 c.split(b'\0')[0].decode(), len(kern),
+                 ' '.join(m for m, _ in mods) or 'none'))
 
 
 def restore(img, bak):
@@ -170,17 +199,22 @@ def restore(img, bak):
     print('[OK] boot code restored from ' + bak)
 
 
+def mods(paths):
+    return [(os.path.basename(p), open(p, 'rb').read()) for p in paths]
+
+
 def main(a):
     if a and a[0] == '--restore' and len(a) == 3:
         restore(a[1], a[2])
     elif a and a[0] == '--check':
-        if len(a) not in (5, 6):
-            die('usage: --check IMAGE BOOTSEC LOADER KERNEL [CMDLINE]')
+        if len(a) < 5:
+            die('usage: --check IMAGE BOOTSEC LOADER KERNEL [CMDLINE [MODULE...]]')
         r = [open(p, 'rb').read() for p in a[2:5]]
-        check(a[1], *r, a[5].encode() if len(a) == 6 else None)
-    elif len(a) in (5, 6):
+        check(a[1], *r, a[5].encode() if len(a) > 5 else None, mods(a[6:]))
+    elif len(a) >= 5:
         r = [open(p, 'rb').read() for p in a[1:4]]
-        install(a[0], *r, a[4].encode(), int(a[5]) if len(a) == 6 else 3)
+        install(a[0], *r, a[4].encode(), int(a[5]) if len(a) > 5 else 3,
+                mods(a[6:]))
     else:
         die(__doc__)
 

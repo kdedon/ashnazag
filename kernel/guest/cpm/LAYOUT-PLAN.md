@@ -12,7 +12,7 @@
 
 The plan said S:, T: and U:. DRI's CCP and PIP accept only A: to P: ("S:?", "INVALID FORMAT"), so the letters moved: temp is M: (Concurrent CP/M's scratch drive letter), root is O:, programs are P:. Other letters are unassigned. Users add drives with:
 - `~/CPM/DRIVES`: one `X=path` per line; `#` starts a comment; `~` and relative paths start at home; `X=` removes a drive.
-- `startcpm -d X=path`, after DRIVES.
+- `startcpm -D X=path`, after DRIVES.
 - `MOUNT X: path` on P:, inside a session; `MOUNT` alone lists the drives. The CCP upper-cases the path, so each missing name is matched ignoring case.
 
 ## Command search

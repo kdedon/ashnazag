@@ -83,7 +83,7 @@ mig_fs_broker_at(int ready, int life, int go, const char *root, int readonly,
     fs = mig_hostfs_create();
     if (!fs) return 1;
     if (mig_hostfs_mount(fs, 0, "Amiga", root, readonly) < 0) {
-        fprintf(stderr, "startmig: cannot mount host directory %s\n", root);
+        fprintf(stderr, "startamiga: cannot mount host directory %s\n", root);
         mig_hostfs_destroy(fs);
         return 1;
     }

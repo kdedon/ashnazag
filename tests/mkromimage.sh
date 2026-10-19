@@ -35,7 +35,7 @@ for pass in 1 2; do
 		{ tail -20 "$R/relink.log"; exit 1; }
 	K=$WORK/kernel/build/unix-mac.elf
 done
-nm "$K" | awk '$3 ~ /^(freemem|availrmem|availsmem|lbolt|fpu_present|anoninfo|ticks_til_clock|mac_ticks|dlm_inited|sn_nintr|sn_nslot|guest_loading|rd_unit)$/ { print $3, $1 }' |
+nm "$K" | awk 'NR == FNR { w[$1] = 1; next } ($3 in w) && ($3 != "idle" || $2 == "T") { print $3, $1 }' "$T/build/ksyms" - |
 	cmp -s - "$T/build/ksyms" || { echo "[FAIL] ksyms moved between passes"; exit 1; }
 nice -n 19 sh "$WORK/kernel/mac/boot/mkcoff.sh" "$K" "$R/unix-test.coff" >> "$R/relink.log" 2>&1
 "$WORK/kernel/mac/boot/build/elf2coff" -c "$R/unix-test.coff" | tail -1 | grep ACCEPTED ||

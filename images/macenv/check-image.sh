@@ -2,7 +2,7 @@
 # check-image.sh -- boot a built disk image and check X and each
 # environment: root's startx on the serial line brings X up (and glxgears
 # draws, if installed), then from a guest login starttos reaches the
-# desktop, startmig Workbench, startmac the Finder.
+# desktop, startamiga Workbench, startmac the Finder.
 #
 #   sh images/macenv/check-image.sh [image [outdir]]
 #
@@ -44,9 +44,9 @@ else
 		"serial:kill \`cat /tmp/Xamix.pid\`\n" wait:15 'serial:exit\n' wait:10 \
 		'type:guest\n' wait:5 'type:\n' wait:10 \
 		'type:starttos\n' wait:90 shot:02-tos "$HOT" wait:5 'hmp:sendkey ctrl-c' wait:20 \
-		'type:clear; makeamiga; startmig\n' wait:30 shot:03-mig-starting wait:150 shot:04-mig \
+		'type:clear; startamiga\n' wait:30 shot:03-mig-starting wait:150 shot:04-mig \
 		"$HOT" wait:5 shot:05-mig-console 'hmp:sendkey ctrl-c' wait:15 \
-		'type:clear; grep -c open Amiga/.startmig.log; grep RTG Amiga/.startmig.log\n' wait:8 shot:06-mig-log \
+		'type:clear; grep -c open Amiga/.startamiga.log; grep RTG Amiga/.startamiga.log\n' wait:8 shot:06-mig-log \
 		'type:startmac\n' wait:150 shot:07-mac quit
 fi
 QEXTRA="-g 640x480x8" sh "$AUX/images/qemu/run-mac.sh" --sock --tmo 1300 "$ROM" "$OUT/disk.img" 128 "$OUT" \
@@ -110,7 +110,7 @@ if not os.environ.get('XDM'):
         print('%s glxgears: red, green and blue gears (00-x.png)' % ('[ok]' if ok else '[FAIL]'))
         for l in [l for l in log.splitlines() if 'frames in' in l][:3]:
             print('  ' + l.strip(' #'))
-for name, what in (('02-tos', 'starttos: desktop'), ('04-mig', 'startmig: Workbench'),
+for name, what in (('02-tos', 'starttos: desktop'), ('04-mig', 'startamiga: Workbench'),
                    ('07-mac', 'startmac: Finder')):
     n = colours(name)
     ok = n > 2

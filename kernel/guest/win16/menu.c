@@ -656,6 +656,8 @@ static struct level lv[8];
 static int nlv;
 static struct wnd *owner;
 static int insys;
+static u32 opened;		/* when the click that opened the popup went down */
+extern u32 user_downms;
 
 static void
 select_(k, i)
@@ -764,6 +766,8 @@ hit(x, y, kp)
 			}
 			return -1;
 		}
+		if (!barwnd)
+			break;
 		*kp = k;
 		i = menu_barhit(barwnd, x, y);
 		if (i >= 0)
@@ -886,8 +890,18 @@ loop(startitem, key, mouse)
 				continue;
 			if (e.down) {
 				down = 1;
-				if (k < 0)
+				if (k < 0) {
+					/* the system menu's box clicked again: a double click closes, on an icon restores */
+					if (insys && owner && e.ms - opened < 500) {
+						int ht = user_nchittest(owner, e.x, e.y);
+
+						if (ht == HTSYSMENU)
+							return SC_CLOSE;
+						if (ht == HTCAPTION && (owner->style & WS_MINIMIZE))
+							return SC_RESTORE;
+					}
 					return -1;	/* outside: the menu closes */
+				}
 				if (i >= 0 && !lv[k].w && i == lv[k].sel && nlv > 1 && !moved) {
 					closeto(1);
 					continue;
@@ -1083,6 +1097,7 @@ menu_track(h, flags, x, y, w, item)
 		return 0;
 	owner = w;
 	insys = m->sys;
+	opened = user_downms;
 	if (m->sys && w)
 		sysmenu_update(w, m);
 	if (w)

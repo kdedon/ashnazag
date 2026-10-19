@@ -36,6 +36,7 @@
 #define PGSHIFT		11
 #endif
 #define ATA_MAXRAM	0x8000000	/* the 040's kvsegmap: 512 segments of 256 KB; kept on the 030 */
+#define BI_ATARI_MODULE	0x8f02		/* ours: boot module address, size, name[16] */
 #ifdef ATA060
 #define BI_ATARI_OSBASE	0x8f00		/* ours: physical start of the TOS image */
 #ifdef ATA_SV
@@ -102,6 +103,8 @@ extern unsigned long vr_hi[];
 extern int vr_n, vr_low;
 extern void vr_init();
 extern int vr_add(), vr_setup();
+extern void dlm_bootadd();
+extern unsigned long dlm_bootpack();
 extern int kernel_load_address;
 extern unsigned long M68Kvec[];
 extern void ata_clkint(), ata_aciaint(), ata_sndint(), ata_mfpstray(), ata_fline();
@@ -113,6 +116,9 @@ extern void ata_nfcall();
 extern void ikbd_init(), ikbd_intr();
 extern int ikbd_getc();
 extern unsigned long ata_ticks;
+#ifdef ATA060
+extern unsigned long cacr060;
+#endif
 extern int ata_spltty();
 extern void ata_splx();
 extern int ata_rd_config();
@@ -741,6 +747,10 @@ bi_parse()
 			break;
 #endif
 #endif
+		case BI_ATARI_MODULE:
+			if (size >= 4 + 8 + 16)
+				dlm_bootadd(p[0], p[1], (char *)&p[2]);
+			break;
 		case BI_MEMCHUNK:
 			if (ata_nchunk < MAXCHUNK) {
 				ata_chunk[ata_nchunk][0] = p[0];
@@ -750,6 +760,12 @@ bi_parse()
 			break;
 		case BI_COMMAND_LINE:
 			ata_nfwant = ata_word((char *)p, "nfcons");
+#ifdef ATA060
+			if (ata_word((char *)p, "noesb"))
+				cacr060 &= ~0x20000000;
+			if (ata_word((char *)p, "noebc"))
+				cacr060 &= ~0x00800000;
+#endif
 			mac_socktrace = ata_word((char *)p, "socktrace");
 			ata_rootparse((char *)p);
 			ata_vparse((char *)p);
@@ -916,7 +932,7 @@ config(arg0, arg1)
 unsigned long arg0, arg1;
 {
 	register int i;
-	unsigned long k;
+	unsigned long k, m;
 
 	boot_arg0 = arg0;
 	boot_arg1 = arg1;
@@ -984,6 +1000,9 @@ unsigned long arg0, arg1;
 				k = ata_osbase;
 #endif
 			chipmem = ata_chunk[i][1];
+			/* boot modules in ST-RAM: to the top of its VM part, clear of the sound buffer */
+			if ((m = dlm_bootpack((unsigned long)ST_LO, k - SNDBUF, 0)) < k - SNDBUF)
+				k = m & ~0xFFFUL;
 			if (vr_add(0UL, ST_LO, k))
 				chipmem -= k;
 		}
@@ -991,6 +1010,13 @@ unsigned long arg0, arg1;
 		ata_puts("config: ST-RAM left out of the VM\n");
 	if (MAINSTORE && !vr_low && !(ata_pool & 1))
 		ata_sndbuf = ata_pool - SNDBUF;
+	k = dlm_bootpack((unsigned long)end, MAINSTORE + VSIZOFMEM, 1);
+	if (k < MAINSTORE + VSIZOFMEM) {
+		k &= ~0xFFFUL;
+		putkv("config: boot modules at ", k);
+		ata_puts("\n");
+		VSIZOFMEM = k - MAINSTORE;
+	}
 	k = (unsigned long)end;
 	if (ata_rootarg >= 0) {
 		(void)ata_rd_config(0);
@@ -1176,25 +1202,6 @@ backtrace()
 		printf("%x->%x\n", (unsigned)pc, (unsigned)to);
 	}
 	printf("\n");
-}
-
-/*
- * The kernel address of the first n bytes of the machine's ROM, 0 if
- * beyond it.  DTT0 maps it one to one.  A CT60's flash is 1 MB, a
- * Falcon's TOS 512 KB.  A CT60 runs TOS from a copy in FastRAM; the
- * loader passes where that copy is.
- */
-unsigned long
-ata_romva(n)
-unsigned long n;
-{
-	if (ata_machtype != MACH_ATARI || n > (ata_cputype == 8 ? 0x100000 : 0x80000))
-		return 0;
-#ifdef ATA060
-	if (ata_osbase)
-		return ata_osbase;
-#endif
-	return 0xe00000;
 }
 
 /* ------------------------------------------------------ halt, monitor */

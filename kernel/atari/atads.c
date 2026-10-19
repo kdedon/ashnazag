@@ -156,14 +156,6 @@ int b;
 	ikbd_cons(c == I_CAPS ? c : c | (b & 0x80));
 }
 
-/* The IKBD scancode of an ADB code, 0 none. */
-int
-ata_vnative(c)
-int c;
-{
-	return ad_toikbd[c & 0x7F];
-}
-
 /* --------------------------------------------------------- Videl state */
 
 #define V8(o)	(*(VOL unsigned char *)(0xFFFF0000 | (o)))
@@ -270,45 +262,6 @@ register struct dsvid *d;
 		ad_vsync();
 		V16(0x8266) = 0x400;
 	}
-}
-
-/* a byte of the Videl's registers */
-int
-ata_vget(a)
-unsigned long a;
-{
-	return V8(a & 0xFFFF);
-}
-
-/* one guest write, as it was made */
-void
-ata_vput(a, sz, v)
-unsigned long a, v;
-int sz;
-{
-	a &= 0xFFFF;
-	if (sz == 4 && !(a & 3))
-		V32(a) = v;
-	else if (sz == 2 && !(a & 1))
-		V16(a) = v;
-	else
-		while (sz-- > 0)
-			V8(a++) = v >> 8 * sz;
-}
-
-/* a byte of the sound, codec and matrix registers */
-int
-ata_sget(a)
-unsigned long a;
-{
-	return V8(a & 0xFFFF);
-}
-
-void
-ata_sput(a, v)
-unsigned long a, v;
-{
-	V8(a & 0xFFFF) = v;
 }
 
 /* MFP input 7, the DMA sound end: on or off, on the given edge; any pending one dropped */
@@ -489,93 +442,14 @@ unsigned long base;
 	d->v_st = 0;
 }
 
-/* ------------------------------------------------------------ blitter */
+void (*ata_sndhw)();
 
-/* Waits for the blitter to go idle; 0, or -1 if it does not. */
-static int
-ab_idle()
-{
-	register long i;
-
-	for (i = 0; i < 1000000; i++)
-		if (!(V8(0x8A3C) & 0x80))
-			return 0;
-	V8(0x8A3C) = 0;
-	return -1;
-}
-
-/* the blitter's registers, $FF8A00-$FF8A3D, into b once it is idle */
+/* MFP input 7, the DMA sound end, for the host's sound driver */
 void
-ata_bsave(b)
-register unsigned char *b;
+ata_sndintr()
 {
-	register int i;
-
-	if (ata_tt)
-		return;			/* no blitter */
-	(void)ab_idle();
-	for (i = 0; i < 0x3E; i++)
-		b[i] = V8(0x8A00 + i);
-}
-
-/* b into the blitter, not started */
-void
-ata_bload(b)
-register unsigned char *b;
-{
-	register int i;
-
-	if (ata_tt)
-		return;
-	(void)ab_idle();
-	for (i = 0; i < 0x3C; i++)
-		V8(0x8A00 + i) = b[i];
-	V8(0x8A3D) = b[0x3D];
-	V8(0x8A3C) = b[0x3C] & 0x7F;
-}
-
-/*
- * r_yn lines, or part of one, in HOG mode: the CPU waits while the
- * blitter has the bus.  The addresses and line number it ends with go
- * back into r.  0, or -1 if it did not finish.
- */
-#ifdef ATA060
-extern void ata_dmasync();
-#endif
-
-int
-ata_brun(r)
-register struct dsbrun *r;
-{
-	register int i;
-
-	if (ata_tt || ab_idle())
-		return -1;
-	for (i = 0; i < 16; i++)
-		V16(0x8A00 + 2 * i) = r->r_ht[i];
-	V16(0x8A20) = r->r_sxi;
-	V16(0x8A22) = r->r_syi;
-	V32(0x8A24) = r->r_sa;
-	V16(0x8A28) = r->r_em[0];
-	V16(0x8A2A) = r->r_em[1];
-	V16(0x8A2C) = r->r_em[2];
-	V16(0x8A2E) = r->r_dxi;
-	V16(0x8A30) = r->r_dyi;
-	V32(0x8A32) = r->r_da;
-	V16(0x8A36) = r->r_xn;
-	V16(0x8A38) = r->r_yn ? r->r_yn : 1;
-	V8(0x8A3A) = r->r_hop;
-	V8(0x8A3B) = r->r_op;
-	V8(0x8A3D) = r->r_skew;
-	V8(0x8A3C) = 0xC0 | r->r_ctl;
-	i = ab_idle();
-#ifdef ATA060
-	ata_dmasync();
-#endif
-	r->r_sa = V32(0x8A24);
-	r->r_da = V32(0x8A32);
-	r->r_ctl = (r->r_ctl & 0xF0) | (V8(0x8A3C) & 15);
-	return i;
+	if (ata_sndhw)
+		(*ata_sndhw)();
 }
 
 /* The IKBD keyboard has no LEDs. */

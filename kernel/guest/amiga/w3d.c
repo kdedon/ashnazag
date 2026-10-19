@@ -35,6 +35,7 @@ extern unsigned long migdisp_gsize;
 
 /* the display session's /dev/fbN when its VRAM is the guest's card memory */
 int w3d_fbfd = -1;
+unsigned long w3d_textend;
 
 #define L(p, o) (*(unsigned long *)((char *)(p) + (o)))
 #define W(p, o) (*(unsigned short *)((char *)(p) + (o)))
@@ -140,6 +141,10 @@ struct tex {
     struct tex *next;
 };
 
+/* textures hashed by their W3D_Texture */
+#define NTEXH 64
+#define TEXH(obj) (((unsigned long)(obj) >> 4) & (NTEXH - 1))
+
 struct ctx {
     char *w3d;		/* the guest's W3D_Context */
     OSMesaContext gl;
@@ -160,7 +165,7 @@ struct ctx {
     int affine;		/* texture coordinates without w */
     unsigned long backsz;
     unsigned long state;
-    struct tex *texs, *cur;
+    struct tex *texs[NTEXH], *cur;
     float color[4];
     /* V4 arrays */
     char *vp, *tp, *cp;
@@ -237,6 +242,17 @@ dribind(struct ctx *c)
         c->bpr, c->w, c->h);
 }
 
+#define DRI_ROOM (2048UL * 1024)
+
+static int
+roomy(unsigned long n)
+{
+    char *p = malloc(n);
+    if (!p) return 0;
+    free(p);
+    return 1;
+}
+
 /* a context on the card, if the session has one with a DRI driver; W3D_SOFT set: software */
 static void
 dricontext(struct ctx *c)
@@ -247,6 +263,11 @@ dricontext(struct ctx *c)
     const char *err = 0;
 
     if (w3d_fbfd < 0 || c->bpp != 2 || getenv("W3D_SOFT")) return;
+    /* Mesa's driver leaves allocations unchecked: start it only with room */
+    if (!roomy(DRI_ROOM)) {
+        miglog(0, "Warp3D: no memory for direct rendering");
+        return;
+    }
     if (!tried) {
         tried = 1;
         if (ioctl(w3d_fbfd, FBIOGINFO, &fi) < 0) return;
@@ -258,8 +279,18 @@ dricontext(struct ctx *c)
         }
         drigeom[0] = fi.fi_width; drigeom[1] = fi.fi_height;
     }
-    if (!name || !onboard(c) || !(c->dri = drihost_create())) return;
+    if (!name) return;
+    if (!onboard(c)) {
+        miglog(0, "Warp3D: %lux%lu at %#lx, rows %lu: outside the session's card memory", c->w, c->h,
+            (unsigned long)c->mem + c->yoff * c->bpr, c->bpr);
+        return;
+    }
+    if (!(c->dri = drihost_create())) {
+        miglog(0, "Warp3D: no context on the card");
+        return;
+    }
     if (!dribind(c)) {
+        miglog(0, "Warp3D: context not bound to the card");
         drihost_destroy(c->dri);
         c->dri = 0;
         return;
@@ -530,6 +561,7 @@ CreateContext(unsigned long *err, unsigned long *tags)
 }
 
 static void freetex(struct ctx *, struct tex *);
+static void freetexs(struct ctx *);
 
 /* each vector's calls so far, for the log */
 static void
@@ -552,7 +584,7 @@ DestroyContext(char *w)
     c = (struct ctx *)L(w, C_DRIVER);
     calls();
     copyout(c);
-    while (c->texs) freetex(c, c->texs);
+    freetexs(c);
 #ifdef W3D_DRI
     if (c->dri) drihost_destroy(c->dri);
     else
@@ -748,7 +780,8 @@ static struct tex *
 findtex(struct ctx *c, char *obj)
 {
     struct tex *t;
-    for (t = c->texs; t; t = t->next)
+    if (c->cur && c->cur->obj == obj) return c->cur;
+    for (t = c->texs[TEXH(obj)]; t; t = t->next)
         if (t->obj == obj) return t;
     return 0;
 }
@@ -812,8 +845,8 @@ AllocTexObj(char *w, unsigned long *err, unsigned long *tags)
             teximage(obj, (unsigned char *)mips[lv - 1], lv, (unsigned long *)L(obj, T_PALETTE), 0, 0,
                 mw, mh, mw * texbpp[fmt]);
     }
-    t->next = c->texs;
-    c->texs = t;
+    t->next = c->texs[TEXH(obj)];
+    c->texs[TEXH(obj)] = t;
     L(obj, T_DRIVER) = (unsigned long)t;
     seterr(err, OK);
     return (long)obj;
@@ -823,7 +856,7 @@ static void
 freetex(struct ctx *c, struct tex *t)
 {
     struct tex **p;
-    for (p = &c->texs; *p; p = &(*p)->next)
+    for (p = &c->texs[TEXH(t->obj)]; *p; p = &(*p)->next)
         if (*p == t) {
             *p = t->next;
             break;
@@ -832,6 +865,14 @@ freetex(struct ctx *c, struct tex *t)
     glDeleteTextures(1, &t->name);
     free(t->obj);
     free(t);
+}
+
+static void
+freetexs(struct ctx *c)
+{
+    int i;
+    for (i = 0; i < NTEXH; i++)
+        while (c->texs[i]) freetex(c, c->texs[i]);
 }
 
 static long
@@ -851,7 +892,7 @@ FreeAllTexObj(char *w)
     struct ctx *c;
     if (!use(w)) return 0;
     c = (struct ctx *)L(w, C_DRIVER);
-    while (c->texs) freetex(c, c->texs);
+    freetexs(c);
     return 0;
 }
 
@@ -1445,11 +1486,39 @@ DrawElements(char *w, unsigned long prim, unsigned long type, unsigned long n, v
     return OK;
 }
 
+/*
+ * At the depth asked for, the smallest mode holding the size asked for,
+ * else the largest; the display's without a size.  -1 if the display
+ * lacks the depth.
+ */
+#define BMI_WIDTH 0x80203001UL
+#define BMI_HEIGHT 0x80203002UL
+#define BMI_DEPTH 0x80203003UL
+extern unsigned long p96depth();
+extern unsigned long amode[][3];
+extern int amodes;
+
+static long
+BestModeID(unsigned long *tags)
+{
+    unsigned long d = tag(tags, BMI_DEPTH, 16), k = p96depth(d), id = 0x50011000UL, e, best = ~0UL;
+    unsigned long w = tag(tags, BMI_WIDTH, 0), h = tag(tags, BMI_HEIGHT, 0), a;
+    int i;
+    if (d > 8 && !k) return -1L;
+    for (i = 0; (w || h) && i < amodes; i++) {
+        a = amode[i][1] * amode[i][2];
+        e = amode[i][1] < w || amode[i][2] < h ? 0x80000000UL - a : a;
+        if (e < best) best = e, id = amode[i][0];
+    }
+    miglog(0, "Warp3D: BestModeID %lux%lu, %lu bits: %#lx", w, h, d, id + k);
+    return (long)(id + k);
+}
+
 /* ---- the table ---- */
 
 #define U(n) static long u##n(void) { return unimpl(n); }
 U(30) U(34) U(35) U(37) U(38) U(39) U(40) U(41) U(42) U(45) U(48) U(49) U(50) U(51) U(52)
-U(53) U(54) U(56) U(65) U(68) U(69) U(74) U(75) U(76)
+U(53) U(54) U(56) U(65) U(68) U(69) U(74) U(75)
 
 static const struct { int n; char *name; long (*fn)(); } fns[] = {
     { 0, "CreateContext", CreateContext }, { 1, "DestroyContext", DestroyContext },
@@ -1485,7 +1554,7 @@ static const struct { int n; char *name; long (*fn)(); } fns[] = {
     { 69, "SetChromaTestBounds", u69 }, { 70, "ClearDrawRegion", ClearDrawRegion },
     { 71, "DrawTriangleV", DrawTriangleV }, { 72, "DrawTriFanV", DrawTriFanV },
     { 73, "DrawTriStripV", DrawTriStripV }, { 74, "GetScreenmodeList", u74 },
-    { 75, "FreeScreenmodeList", u75 }, { 76, "BestModeID", u76 },
+    { 75, "FreeScreenmodeList", u75 }, { 76, "BestModeID", BestModeID },
     { 77, "VertexPointer", VertexPointer }, { 78, "TexCoordPointer", TexCoordPointer },
     { 79, "ColorPointer", ColorPointer }, { 80, "BindTexture", BindTexture },
     { 81, "DrawArray", DrawArray }, { 82, "DrawElements", DrawElements },
@@ -1534,5 +1603,14 @@ w3d_init(struct mig_w3d *t)
     t->count = MIG_W3D_NFN;
     t->version = MIG_W3D_VERSION;
     t->magic = MIG_W3D_MAGIC;
+#ifdef W3D_DRI
+    {
+        const char *err;
+
+        /* the dynamic linker cannot run in guest context */
+        if (w3d_fbfd >= 0 && !getenv("W3D_SOFT") && drihost_load(w3d_fbfd, &err))
+            w3d_textend = drihost_textend();
+    }
+#endif
     miglog(0, "Warp3D: Mesa ready");
 }

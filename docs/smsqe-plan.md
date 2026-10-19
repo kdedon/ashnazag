@@ -54,7 +54,7 @@ Q68 8/16 console, `kbd_*` and `mouse` modules, replace register access
 with display-service events and a block-device service; keep the rest.
 
 ## 1. Falcon passthrough (first target)
-- `starttos -P` runs the PRG from `C:` (or a boot-sector disk). It owns the machine: needs exclusive hardware,
+- Passthrough (planned, not built) runs the PRG from `C:` (or a boot-sector disk). It owns the machine: needs exclusive hardware,
   root grant, no Unix use of its disk, and a way back (reset or hot key,
   restoring MFP, video, vectors).
 - ST-compatible modes only; keyboard and mouse via IKBD passthrough.

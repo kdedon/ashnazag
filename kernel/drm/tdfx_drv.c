@@ -52,6 +52,8 @@ do {									\
 #define DRIVER_DMA_QUIESCENT()	DRIVER_IDLE(dev)
 
 #define DRIVER_AMIX_MAPS(dev)	tdfx_amix_layout(dev)
+#define DRIVER_PRETAKEDOWN()	tdfx_amix_release(dev)
+static void tdfx_amix_release(drm_device_t *dev);
 static void tdfx_amix_layout(drm_device_t *dev);
 
 /*
@@ -59,6 +61,13 @@ static void tdfx_amix_layout(drm_device_t *dev);
  * the command fifo, and the card would read the next client's words as
  * its rest: finish it, then start the fifo afresh.
  */
+#define DRIVER_AMIX_KEEP(dev, lo, hi)	tdfx_amix_keep(dev, lo, hi)
+#define DRIVER_AMIX_EVICT(dev)	tdfx_amix_release(dev)
+#define DRIVER_AMIX_RESTORE(dev)	tdfx_amix_layout(dev)
+#define DRIVER_AMIX_TEXTOP(dev)	tdfx_amix_fixed(0, 0)
+static void tdfx_amix_keep(drm_device_t *dev, unsigned long *lo, unsigned long *hi);
+static unsigned long tdfx_amix_fixed(unsigned long *back, unsigned long *depth);
+
 #define HAVE_DRIVER_RELEASE	1
 #define DRIVER_RELEASE()	tdfx_amix_recover(dev)
 static void tdfx_amix_recover(drm_device_t *dev);
@@ -136,35 +145,52 @@ tdfx_wreg(int r, unsigned long v)
 }
 
 /*
- * The VRAM layout and command fifo an X server's driver would set up:
- * the fifo at the bottom of the free VRAM, depth (odd page) and back
- * (even page) buffers tiled at the top, under the tiled aperture,
- * textures between.  Written into the shared area for the clients.
+ * Depth (odd page) and back (even page) buffers tiled at the top, under
+ * the tiled aperture, the command fifo below them: where they are
+ * depends on the screen alone.  Returns the fifo's offset, 0 if no room.
  */
-static void
-tdfx_amix_layout(drm_device_t *dev)
+static unsigned long
+tdfx_amix_fixed(unsigned long *backp, unsigned long *depthp)
 {
 	struct drm_amixcard *c = &DRM(card);
-	tdfx_sarea_t *sp;
-	unsigned long tiles, buf, fifo, back, depth, tex;
-	int id = (int)opci_attr(c->c_dev, OPCI_DEVICE);
+	unsigned long tiles, buf, back, depth;
 
-	if (dev->lock.hw_lock == NULL)
-		return;
-	sp = (tdfx_sarea_t *)((char *)dev->lock.hw_lock + sizeof(drm_sarea_t));
 	tiles = (c->c_width * 2 + 127) >> 7;
 	buf = tiles * 128 * (((c->c_height + 31) >> 5) * 32);
-	fifo = (c->c_free + 0xfff) & ~0xfffUL;
-	tex = fifo + TDFX_FIFOSIZE;
-	if (c->c_vram < tex + 2 * buf + 0x3000)
-		return;
+	if (c->c_vram < 2 * buf + TDFX_FIFOSIZE + 0x3000)
+		return 0;
 	depth = (c->c_vram - buf) & ~0xfffUL;
 	if ((depth & 0x1000) == 0)
 		depth -= 0x1000;
 	back = (depth - buf) & ~0xfffUL;
 	if (back & 0x1000)
 		back -= 0x1000;
-	if (back <= tex)
+	if (backp)
+		*backp = back;
+	if (depthp)
+		*depthp = depth;
+	return back - TDFX_FIFOSIZE;
+}
+
+/*
+ * The VRAM layout and command fifo an X server's driver would set up,
+ * textures from the free VRAM up to the fifo.  Written into the shared
+ * area for the clients.
+ */
+static void
+tdfx_amix_layout(drm_device_t *dev)
+{
+	struct drm_amixcard *c = &DRM(card);
+	tdfx_sarea_t *sp;
+	unsigned long tiles, fifo, back, depth, tex;
+	int id = (int)opci_attr(c->c_dev, OPCI_DEVICE);
+
+	if (dev->lock.hw_lock == NULL)
+		return;
+	sp = (tdfx_sarea_t *)((char *)dev->lock.hw_lock + sizeof(drm_sarea_t));
+	tiles = (c->c_width * 2 + 127) >> 7;
+	tex = (c->c_free + 0xfff) & ~0xfffUL;
+	if ((fifo = tdfx_amix_fixed(&back, &depth)) <= tex)
 		return;
 	DRIVER_IDLE(dev);
 	tdfx_wreg(TDFX_FIFO(0x24), 0);			/* fifo off */
@@ -187,9 +213,40 @@ tdfx_amix_layout(drm_device_t *dev)
 	sp->backOffset = back;
 	sp->depthOffset = depth;
 	sp->textureOffset = tex;
-	sp->textureSize = back - tex;
+	sp->textureSize = fifo - tex;
 	sp->deviceID = id;
 	DRM_SAREA_SYNC();
+}
+
+/*
+ * The card as the display found it before the VRAM goes back: fifo off,
+ * or it would run pixels written there as commands; no tiled aperture.
+ */
+/* back and depth buffers; the fifo starts afresh and owners reset, so clients reload textures */
+static void
+tdfx_amix_keep(drm_device_t *dev, unsigned long *lo, unsigned long *hi)
+{
+	tdfx_sarea_t *sp;
+
+	if (dev->lock.hw_lock == NULL)
+		return;
+	sp = (tdfx_sarea_t *)((char *)dev->lock.hw_lock + sizeof(drm_sarea_t));
+	if (sp->fifoSize == 0)
+		return;
+	*lo = sp->backOffset;
+	*hi = DRM(card).c_vram;
+}
+
+static void
+tdfx_amix_release(drm_device_t *dev)
+{
+	struct drm_amixcard *c = &DRM(card);
+
+	if (c->c_reg == 0)
+		return;
+	DRIVER_IDLE(dev);
+	tdfx_wreg(TDFX_FIFO(0x24), 0);
+	tdfx_wreg(TDFX_LFBMEMCFG, 0x1fff);
 }
 
 /*
@@ -203,7 +260,8 @@ tdfx_amix_recover(drm_device_t *dev)
 	tdfx_sarea_t *sp;
 	unsigned long a, end;
 
-	if (dev->lock.hw_lock == NULL)
+	/* the fifo is not on the card while its VRAM is lent */
+	if (dev->lock.hw_lock == NULL || DRM(vat))
 		return;
 	sp = (tdfx_sarea_t *)((char *)dev->lock.hw_lock + sizeof(drm_sarea_t));
 	end = sp->fifoOffset + sp->fifoSize;

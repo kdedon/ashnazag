@@ -67,6 +67,12 @@ nx_fault(gp, r, v)
 		return 1;
 	if (guest_bfault(r, &fa, &ssw) >= 0) {
 		wr = !(ssw & 0x100);
+		/* guest accesses to the host's space, counted for the test */
+		if (fa >= NX_TOP) {
+			nx.st.high++;
+			nx.st.higha = fa;
+			nx.st.highpc = GR_PC(r);
+		}
 		if (nx_dev(phys(fa, wr), wr)) {
 			nx.st.io++;
 			if ((nx.flags & NXF_CENSUS) && nx_census(fa, wr))

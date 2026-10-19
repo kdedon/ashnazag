@@ -1,11 +1,11 @@
 /*
- * t_env.c -- guest environments: make and lock.
+ * t_env.c -- guest environments: choose, make and lock.
  *
  * Record locks on s5 (/tmp) and ufs (the Amiga SYS: volume): another
- * process sees the holder, and SIGKILL releases it.  maketos -e makes
- * two environments with distinct roots, refuses reserved and bad names,
- * and --import copies ~/TOS without its environments and without
- * changing it.  starttos -e and startmig -e hold the lock on the
+ * process sees the holder, and SIGKILL releases it.  starttos -l lists
+ * the environments, -d sets the user's default, which a start without
+ * -e then runs; the first start copies /tos/sys to ~/TOS.  Reserved and
+ * bad names are refused.  starttos -e and startamiga -e hold the lock on the
  * environment's .env while they wait for their ROM (a FIFO): a second
  * session is refused, other environments and the legacy ~/TOS lock on
  * their own, and the lock goes when the launcher is killed or exits.
@@ -27,8 +27,7 @@
 
 #define	H	"/tmp/envh"
 #define	STARTTOS "/tos/bin/starttos"
-#define	MAKETOS	"/tos/bin/maketos"
-#define	STARTMIG "/tests/amiga/startmig"
+#define	STARTMIG "/tests/amiga/startamiga"
 #define	SYSDEV	"/dev/dsk/c0d0s0"
 #define	SYS	"/amiga/sys"
 
@@ -147,56 +146,6 @@ fslock(name, dir)
 	unlink(path);
 }
 
-static void
-maketos()
-{
-	static char *mk[] = { MAKETOS, 0, 0, 0, 0 };
-	struct stat a, b, m0, m1;
-	int ok;
-
-	system("rm -rf " H);
-	mkdir(H, 0755);
-	if (!t_check("maketos_legacy", status(H, "/tmp/env.log", mk) == 0 &&
-	    stat(H "/TOS/AUTO", &a) == 0, "maketos failed"))
-		return;
-	system("echo mine > " H "/TOS/MINE.TXT");
-	mk[1] = "-e";
-	mk[2] = "one";
-	ok = status(H, "/tmp/env.log", mk) == 0;
-	mk[2] = "two";
-	ok &= status(H, "/tmp/env.log", mk) == 0;
-	ok &= stat(H "/TOS/one/AUTO", &a) == 0 && stat(H "/TOS/two/AUTO", &b) == 0 &&
-	    a.st_ino != b.st_ino;
-	t_check("maketos_two_roots", ok, "~/TOS/one and ~/TOS/two");
-	system("grep -s '^id=one$' " H "/TOS/one/.env > /dev/null && "
-	    "grep -s '^id=two$' " H "/TOS/two/.env > /dev/null && "
-	    "grep -s '^created=' " H "/TOS/two/.env > /dev/null && echo ok > /tmp/env.ok");
-	t_check("maketos_env_file", unlink("/tmp/env.ok") == 0, ".env lacks id or created");
-	mk[2] = "one";
-	t_check("maketos_exists", status(H, "/tmp/env.log", mk) == 1, "second maketos -e one");
-	mk[2] = "Shared";
-	ok = status(H, "/tmp/env.log", mk) == 1;
-	mk[2] = "../x";
-	ok &= status(H, "/tmp/env.log", mk) == 1;
-	mk[2] = ".x";
-	ok &= status(H, "/tmp/env.log", mk) == 1;
-	t_check("maketos_bad_names", ok && stat(H "/TOS/Shared", &a) < 0, "Shared, ../x or .x accepted");
-
-	stat(H "/TOS/MINE.TXT", &m0);
-	mk[2] = "imp";
-	mk[3] = "--import";
-	ok = status(H, "/tmp/env.log", mk) == 0;
-	stat(H "/TOS/MINE.TXT", &m1);
-	t_check("import_copy", ok && stat(H "/TOS/imp/MINE.TXT", &a) == 0 &&
-	    stat(H "/TOS/imp/AUTO", &a) == 0, "maketos -e imp --import");
-	t_check("import_no_envs", stat(H "/TOS/imp/one", &a) < 0 && stat(H "/TOS/imp/imp", &a) < 0,
-	    "environments copied into the import");
-	t_check("import_source", m0.st_mtime == m1.st_mtime && m0.st_size == m1.st_size &&
-	    m0.st_ino == m1.st_ino && stat(H "/TOS/.env", &a) < 0, "~/TOS changed");
-	t_check("import_no_merge", status(H, "/tmp/env.log", mk) == 1, "second import");
-	mk[3] = 0;
-}
-
 /* one launcher session: held, a second refused, released by kill or exit */
 static void
 sessions(name, home, av, meta, fifo)
@@ -243,9 +192,30 @@ tos()
 {
 	static char *av[] = { STARTTOS, "-e", "one", "-rom", "/tmp/rom.one", 0 };
 	static char *lv[] = { STARTTOS, "-rom", "/tmp/rom.leg", 0 };
+	static char *bv[] = { STARTTOS, "-e", "new", "-b", "emutos", "-rom", "/tmp/rom.new", 0 };
+	static char *ls[] = { STARTTOS, "-l", 0 };
+	static char *dv[] = { STARTTOS, "-d", "two", 0 };
+	struct stat sb;
 	pid_t p, q, r;
 	int st;
 
+	system("rm -rf " H);
+	mkdir(H, 0755);
+	t_check("tos_list", status(H, "/tmp/env1.log", ls) == 0 &&
+	    logged("/tmp/env1.log", "emutos (default)"), "starttos -l");
+	/* the first start makes ~/TOS */
+	mkfifo("/tmp/rom.leg", 0644);
+	p = run(H, "/tmp/env1.log", lv);
+	for (st = 0; st < 6 && !held(H "/TOS/.env", p); st++)
+		;	/* the copy may take a while */
+	t_check("tos_first_start", holder(H "/TOS/.env") == p && stat(H "/TOS/AUTO", &sb) == 0,
+	    "no ~/TOS/AUTO, holder %ld", holder(H "/TOS/.env"));
+	kill(p, SIGKILL);
+	t_waitchild(p, &st, 10);
+	unlink("/tmp/rom.leg");
+	/* the user's own copies of it */
+	system("mkdir -p " H "/TOS/one " H "/TOS/two && echo id=one > " H "/TOS/one/.env && "
+	    "echo id=two > " H "/TOS/two/.env");
 	sessions("tos", H, av, H "/TOS/one/.env", "/tmp/rom.one");
 	/* two environments and the legacy tree at once */
 	mkfifo("/tmp/rom.one", 0644);
@@ -263,34 +233,59 @@ tos()
 	t_waitchild(p, &st, 10);
 	t_waitchild(q, &st, 10);
 	t_waitchild(r, &st, 10);
+	/* -d: the default, which a start without -e runs */
+	t_check("tos_set_default", status(H, "/tmp/env1.log", dv) == 0 &&
+	    status(H, "/tmp/env1.log", ls) == 0 && logged("/tmp/env1.log", "two (default)"),
+	    "starttos -d two");
+	p = run(H, "/tmp/env1.log", lv);
+	t_check("tos_default_runs", held(H "/TOS/two/.env", p), "holder %ld",
+	    holder(H "/TOS/two/.env"));
+	kill(p, SIGKILL);
+	t_waitchild(p, &st, 10);
+	unlink(H "/.default/tos");
 	unlink("/tmp/rom.one");
 	unlink("/tmp/rom.leg");
-	av[2] = "nothere";
-	t_check("tos_missing", status(H, "/tmp/env1.log", av) == 1 &&
-	    logged("/tmp/env1.log", "maketos -e nothere"), "starttos -e nothere");
+	/* -b: a new name is a copy of base; an existing one refuses it */
+	mkfifo("/tmp/rom.new", 0644);
+	p = run(H, "/tmp/env1.log", bv);
+	for (st = 0; st < 6 && !held(H "/TOS/new/.env", p); st++)
+		;
+	t_check("tos_new_copy", holder(H "/TOS/new/.env") == p && stat(H "/TOS/new/AUTO", &sb) == 0 &&
+	    status(H, "/tmp/env2.log", ls) == 0 && logged("/tmp/env2.log", "new"),
+	    "no ~/TOS/new/AUTO, holder %ld", holder(H "/TOS/new/.env"));
+	kill(p, SIGKILL);
+	t_waitchild(p, &st, 10);
+	unlink("/tmp/rom.new");
+	bv[2] = "one";
+	t_check("tos_base_exists", status(H, "/tmp/env1.log", bv) == 1 &&
+	    logged("/tmp/env1.log", "exists"), "starttos -e one -b emutos");
 	av[2] = "Shared";
 	t_check("tos_reserved", status(H, "/tmp/env1.log", av) == 1, "starttos -e Shared");
+	dv[2] = "../x";
+	t_check("tos_bad_default", status(H, "/tmp/env1.log", dv) == 1 &&
+	    stat(H "/.default/tos", &sb) < 0, "starttos -d ../x");
 }
 
 static void
 amiga()
 {
 	static char *av[] = { STARTMIG, "-e", "u1", "-rom", "/tmp/rom.mig", 0 };
+	static char *bv[] = { STARTMIG, "-e", "u1", "-b", "3.2", 0 };
 	struct stat sb;
 
 	if (stat(SYSDEV, &sb) < 0 || stat(STARTMIG, &sb) < 0) {
-		t_skip("amiga", "no SYS: volume or startmig on this root");
+		t_skip("amiga", "no SYS: volume or startamiga on this root");
 		return;
 	}
 	if (!t_check("ufs_mount", system("/sbin/mount -F ufs " SYSDEV " " SYS) == 0, "mount failed"))
 		return;
 	fslock("ufs_lock", SYS);
 	/* an environment on ufs: HOME is a directory of the volume */
-	system("mkdir -p " SYS "/.envh/Amiga/u1");
+	system("mkdir -p " SYS "/.envh/Amiga/u1/S && echo id=u1 > " SYS "/.envh/Amiga/u1/.env && "
+	    ": > " SYS "/.envh/Amiga/u1/S/Startup-Sequence");
 	sessions("amiga", SYS "/.envh", av, SYS "/.envh/Amiga/u1/.env", "/tmp/rom.mig");
-	av[2] = "nothere";
-	t_check("amiga_missing", status(SYS "/.envh", "/tmp/env1.log", av) == 1 &&
-	    logged("/tmp/env1.log", "makeamiga -e nothere"), "startmig -e nothere");
+	t_check("amiga_base_exists", status(SYS "/.envh", "/tmp/env1.log", bv) == 1 &&
+	    logged("/tmp/env1.log", "exists"), "startamiga -e u1 -b 3.2");
 	system("rm -rf " SYS "/.envh");
 	t_check("ufs_umount", system("/sbin/umount " SYS) == 0, "umount failed");
 }
@@ -331,13 +326,9 @@ main()
 
 	t_init("env", 240);
 	fslock("s5_lock", "/tmp");
-	if (stat(MAKETOS, &sb) < 0 || stat("/tos/sys", &sb) < 0)
-		t_skip("maketos", "no maketos or /tos/sys on this root");
-	else
-		maketos();
-	if (stat(STARTTOS, &sb) < 0 || stat(H "/TOS/two", &sb) < 0 ||
+	if (stat(STARTTOS, &sb) < 0 || stat("/tos/sys", &sb) < 0 ||
 	    (fd = open("/dev/tos", O_RDWR)) < 0)
-		t_skip("tos", "no starttos, environments or /dev/tos");
+		t_skip("tos", "no starttos, /tos/sys or /dev/tos");
 	else {
 		close(fd);
 		tos();

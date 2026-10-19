@@ -1,8 +1,7 @@
 #!/bin/sh
 # mkdisk.sh -- build the Falcon IDE disk image (raw): AHDI root sector
-# with boot code, AXB (loader and kernel image), AXR (root, s1), AXS
-# (swap, s2) and AXU (/home, s3).  TOS 3/4 boot it from power on; or
-# run-hatari.sh -k KERNEL -a 'root=c0d0s1' -d COPY-OF-IMAGE.
+# with boot code, AXB (loader, kernel and disk modules), AXR (root, s1), AXS
+# (swap, s2) and AXU (/home, s3).  TOS 3/4 boot it from power on.
 #
 #   sh mkdisk.sh [kernel.elf [out.img]]
 #
@@ -14,6 +13,8 @@
 # rest (at most 508 MB) is a TOS FAT partition (BGM, s4) instead of /home.
 # ZONE: /etc/TIMEZONE's TZ (default CST6CDT); not TZ, which the host's shell sets.
 # BOOTARGS: kernel command line (default root=c?d0s1, ? = boot unit).
+# BOOTMODS: the disk controller modules the loader reads (default ataide
+# scsi sd; none: the kernel has no disk driver until the root mounts).
 # SVIDEL=0: the loader without the SuperVidel probe, for a kernel built so.
 # TESTS: programs from tests/build/bin to put in /tests, with /tests/ksyms
 # (e.g. TESTS=t_page).  MODS: a module directory (guest/build.sh -m's
@@ -33,7 +34,7 @@
 # environments; CUBASE (mkcubase.sh's) adds Cubase to guest's ~/TOS.
 # MACENV=1: System 6 (A/UX 2.0.1's startmac, System 6.0.7, from CD201,
 # default media/AUX_2.0.1_CD_Image.iso) in its own root /a201 on the ROM
-# file ROM6 (default the IIci's), with startmac6.
+# file ROM6 (default the IIci's), with startmac -e 6.
 # With X11, TOSENV or MACENV, guest is in group display.
 # /etc/motd lists what the image holds and how to start it.
 # The tape segments come from the Mac build or $AMIX_TAPE.
@@ -87,7 +88,7 @@ printf 'TZ=%s\nexport TZ\n' "$ZONE" > "$W/src/build/TIMEZONE"
   echo 'f /sbin/modadmin 555 0 3 build/mods/modadmin'
   echo 'd /etc/conf 755 0 3'
   echo 'd /etc/conf/mod.d 755 0 3'
-  for m in scsi sd aen dpn dmasnd auxsnd; do echo "f /etc/conf/mod.d/$m 644 0 3 build/mods/mod.d/$m"; done
+  for m in ataide scsi sd aen dpn dmasnd auxsnd; do echo "f /etc/conf/mod.d/$m 644 0 3 build/mods/mod.d/$m"; done
   # SCSI ID n is controller 8+n: minor slice<<4 | 8 | n
   for n in 0 1 2 3 4 5 6; do for sl in 0 1 2 3 4 5 6 7; do
 	echo "b /dev/dsk/c$((8 + n))d0s$sl 600 0 3 18 $((sl * 16 + 8 + n))"
@@ -218,8 +219,8 @@ if [ -n "$TESTS" ]; then
 	  fi; } >> "$W/root.manifest"
 fi
 { printf '\tSystem V Release 4.0\t\tAsh Nazag\n\n'
-  [ "$MACENV" != 1 ] || echo ' Mac    startmac6       System 6.0.7 (root); leave with Special > Logout'
-  [ "$TOSENV" != 1 ] || { echo ' TOS    starttos        EmuTOS and TeraDesk; -P this machine'"'"'s TOS, -M mono'
+  [ "$MACENV" != 1 ] || echo ' Mac    startmac -e 6   System 6.0.7 (root); leave with Special > Logout'
+  [ "$TOSENV" != 1 ] || { echo ' TOS    starttos        EmuTOS and TeraDesk; -e xaaes XaAES, -M mono'
 	[ -f "$EP/cpmenv-1.0.pkg" ] &&
 		printf '%s\n' ' CP/M   startcpm        Concurrent CP/M-68K; EXIT ends it, -c N joins' \
 		"                        A: ~/CPM, H: home, M: temp, O: /, P: DRI's programs"
@@ -247,8 +248,10 @@ DISKROOT_BUILD=$W/src/build DISKROOT_SRCDIR=$W/src DISKROOT_MANIFEST=$W/root.man
 	DISKROOT_SWAPPAGE=2 \
 	KERNEL=$KERNEL ROOTMB=$ROOTMB sh "$DR/mkdiskroot.sh"
 
-# AXB: loader and kernel, in 4 MB steps; /home: the rest, in 4 MB steps
-AXBMB=$(( ($(wc -c < "$KERNEL") + 16 * 512 + 4194303) / 4194304 * 4 ))
+# AXB: loader, kernel and boot modules, in 4 MB steps; /home: the rest, in 4 MB steps
+BM=
+for m in ${BOOTMODS-ataide scsi sd}; do BM="$BM $W/src/build/mods/mod.d/$m"; done
+AXBMB=$(( ($(cat "$KERNEL" $BM | wc -c) + (16 + 8) * 512 + 4194303) / 4194304 * 4 ))
 HOMEMB=$(( (DISKMB - AXBMB - ROOTMB - SWAPMB - 1) / 4 * 4 ))
 [ $HOMEMB -ge 4 ] || { echo "[FAIL] DISKMB too small"; exit 1; }
 if [ "$GEM" = 1 ]; then
@@ -307,11 +310,11 @@ for pid, st, n in parts:
 PYEOF
 sh "$A/mkboot.sh" "$W/boot"
 $PY "$A/instboot.py" "$OUT.new" "$W/boot/bootsec.bin" "$W/boot/axbload.bin" \
-	"$KERNEL" "$BOOTARGS"
+	"$KERNEL" "$BOOTARGS" 3 $BM
 
 echo "== checks"
 $PY "$A/instboot.py" --check "$OUT.new" "$W/boot/bootsec.bin" \
-	"$W/boot/axbload.bin" "$KERNEL" "$BOOTARGS"
+	"$W/boot/axbload.bin" "$KERNEL" "$BOOTARGS" $BM
 cc -std=gnu89 -w -o "$W/ahditest" "$A/test/ahditest.c" "$A/ahdi.c"
 "$W/ahditest" "$OUT.new" | tee "$W/slices.txt"
 set -- $(awk '$1 == "s1" { print $2, $3 }' "$W/slices.txt")

@@ -16,6 +16,7 @@ struct ev {
 	int	x, y;		/* EV_MOVE: absolute; EV_BTN too */
 	int	btn;		/* EV_BTN: 0 left, 1 right, 2 middle */
 	int	ch;		/* EV_CHAR: a character typed (scripts) */
+	unsigned long ms;	/* when it happened, on the GetTickCount clock */
 };
 #define	EV_KEY		1
 #define	EV_MOVE		2

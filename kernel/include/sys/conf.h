@@ -44,5 +44,6 @@ extern int bdevcnt, cdevcnt, fmodcnt;
 /* d_flag bits */
 #define D_NEW		0x00
 #define D_OLD		0x01
+#define D_NOBRKUP	0x10	/* takes requests of any size */
 
 #endif

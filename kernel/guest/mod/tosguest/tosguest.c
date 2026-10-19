@@ -33,24 +33,6 @@ extern void dlm_cacheflush();
 extern long lbolt;
 extern struct modwrapper tosguest_wrapper;
 extern struct proc *prfind();
-extern int tos_maprom();
-/* weak, absent on the Mac: read at run time, as the compiler takes a declared symbol's address as nonzero */
-__asm__(".weak ds_sndexit");
-extern void ds_sndexit();
-static void (*__volatile__ sndexit_p)() = ds_sndexit;
-__asm__(".weak ds_sndcb");
-extern void (*ds_sndcb)();
-static void (*__volatile__ *__volatile__ sndcb_p)() = &ds_sndcb;
-__asm__(".weak ds_ramdetach");
-extern void ds_ramdetach();
-static void (*__volatile__ ramdetach_p)() = ds_ramdetach;
-__asm__(".weak ds_ramsize_hook");
-extern unsigned long (*ds_ramsize_hook)();
-static unsigned long (*__volatile__ *__volatile__ ramsize_p)() = &ds_ramsize_hook;
-__asm__(".weak ds_ramphys_hook");
-extern int (*ds_ramphys_hook)();
-static int (*__volatile__ *__volatile__ ramphys_p)() = &ds_ramphys_hook;
-/* the weak ones above are absent on the Mac; the compiler would take their addresses as nonzero */
 
 struct tosctr tosc;
 int	tos_trace = 0;		/* 1: console lines for bus errors and odd accesses */
@@ -93,14 +75,6 @@ vipl(gp)
 	struct guest_proc *gp;
 {
 	return (gp->gp_vsr & SR_IPL) >> 8;
-}
-
-/* 1: an interrupt above the guest's IPL waits */
-int
-tos_irqwait(gp)
-	struct guest_proc *gp;
-{
-	return tosc.t_state == 1 && !tosc.t_paused && tosc.t_gp == gp && tos_level() > vipl(gp);
 }
 
 /*
@@ -187,7 +161,9 @@ tos_intr(gp, r)
 	struct tosctr *t = &tosc;
 	int s, l, vec;
 
-	if (t->t_gp != gp)
+	/* a host call finishes first, in our code or the C library on our stack */
+	if (t->t_gp != gp || (u_long)GR_PC(r) - gp->gp_hostlo < gp->gp_hosthi - gp->gp_hostlo ||
+	    (u_long)GR_USP(r) - t->t_stklo < t->t_stkhi - t->t_stklo)
 		return;
 	/*
 	 * A fault frame resumes its instruction part way through; restarting
@@ -208,13 +184,12 @@ tos_intr(gp, r)
 			break;
 		}
 		t->t_held = 0;
+		splx_(s);
+		tos_unsink();
+		s = splhi_();
 		if (l == 6) {
 			vec = mfp_ack();
 			splx_(s);
-			if (mfp_tcskip(gp, vec)) {
-				s = splhi_();
-				continue;
-			}
 		} else {
 			if (t->t_vblowed)
 				t->t_vblowed--;
@@ -426,35 +401,24 @@ tos_priv(gp, r, v)
 	return tos_refl0(gp, r, 4, GR_PC(r));	/* illegal instruction */
 }
 
-/* vector 11: 68030 MMU instructions emulated; FPU to the host */
+/* vector 11: 68030 MMU instructions to guestcore; FPU to the host */
 static int
 tos_fline(gp, r, v)
 	struct guest_proc *gp;
 	char *r;
 	int v;
 {
-	extern int tos_mmu();
-	int op = opword(r), n, sr;
-	char save[64];
+	int op = opword(r);
 
 	if (gp->gp_flags & TGF_SOLO)
 		return guest_lone_trap(gp, r, v);
 
 	TST(gp)->ts_lastpc = GR_PC(r);
-	if ((op & 0xffc0) == 0xf000 && !(gp->gp_flags & TGF_SOLO)) {
+	if ((op & 0xffc0) == 0xf000) {
 		if (!(gp->gp_vsr & SR_S))
 			return tos_refl0(gp, r, 8, GR_PC(r));
-		bcopy(r, save, sizeof save);
-		sr = GR_SR(r);
-		if ((n = tos_mmu(gp, r, (unsigned long)op)) <= 0) {
-			bcopy(save, r, sizeof save);	/* undo (An)+ and -(An) */
-			GR_SR(r) = sr;
-		} else {
+		if (guest_fline(gp, r, v) == 0) {
 			tosc.t_st.ts_mmu++;
-			GR_PC(r) += n;
-			if (GR_FV(r) >> 12)
-				u.u_sigflag |= USTKCLEAR;
-			guest_trapret();
 			return 0;
 		}
 	}
@@ -473,8 +437,9 @@ tos_sys(gp, r, v)
 	if (gp->gp_flags & TGF_SOLO)
 		return guest_lone_trap(gp, r, v);
 
-	if (!(gp->gp_flags & TGF_SOLO) && ((unsigned long)GR_PC(r) < 0xfa0000 ||
-	    (unsigned long)GR_PC(r) >= 0xfc0000))
+	/* host system calls: the cartridge's, and a host call's on our stack */
+	if (((unsigned long)GR_PC(r) < 0xfa0000 || (unsigned long)GR_PC(r) >= 0xfc0000) &&
+	    (unsigned long)GR_USP(r) - tosc.t_stklo >= tosc.t_stkhi - tosc.t_stklo)
 		return tos_refl(gp, r, v);
 	TST(gp)->ts_sys++;
 	return 1;
@@ -525,11 +490,8 @@ static void
 tos_pexit(gp)
 	struct guest_proc *gp;
 {
-	if (tosc.t_gp == gp) {
-		if (sndexit_p)
-			sndexit_p(gp->gp_proc);
+	if (tosc.t_gp == gp)
 		tos_stop();
-	}
 }
 
 static int
@@ -562,8 +524,6 @@ tosclose(dev, flag, otyp, cr)
 	struct cred *cr;
 {
 	tos_nopen = 0;			/* called on the last close only */
-	if (ramdetach_p)
-		ramdetach_p(tos_stpid);
 	guest_ram_free(tos_ram);
 	tos_ram = 0;
 	tos_stproc = 0;
@@ -594,23 +554,6 @@ struct cred *cr;
 	return guest_ram_map(tos_ram, dev, off, as, addrp, len, prot, maxprot, flags);
 }
 
-static unsigned long
-ram_size(pid)
-pid_t pid;
-{
-	return tos_ram && pid == tos_stpid ? guest_ram_size(tos_ram) : 0;
-}
-
-static int
-ram_phys(pid, off, len, out)
-pid_t pid;
-unsigned long off, len, *out;
-{
-	if (pid != tos_stpid)
-		return EACCES;
-	return guest_ram_phys(tos_ram, off, len, 0xE00000UL, out);
-}
-
 static int
 stram(size, flags)
 unsigned long size;
@@ -620,8 +563,12 @@ int flags;
 
 	if (GUESTP(curproc))
 		return EPERM;
-	if (tos_ram)
+	if (tosc.t_state != 0)
 		return EBUSY;
+	/* a session's mappings hold their own reference */
+	if (tos_ram)
+		guest_ram_free(tos_ram);
+	tos_ram = 0;
 	if ((e = guest_ram_new(size, flags, 0xE00000UL, &tos_ram)) == 0) {
 		tos_stproc = curproc;
 		tos_stpid = curproc->p_pid;
@@ -640,6 +587,122 @@ tosrdwr(dev, uiop, cr)
 
 static int solo();
 
+extern void hat_memload(), flushmmu();
+extern page_t *page_numtookpp();
+extern void ppcopy();
+__asm__(".weak hat_cm_ram");
+extern long hat_cm_ram;
+static long *__volatile__ tos_hat4k = &hat_cm_ram;
+
+#define	IOPG	0x1000
+#define	SINK	3		/* the RAM object's page after the three I/O pages */
+
+/*
+ * Map the RAM object's page at off to the I/O page at va.  The last page
+ * of the address space has no segment (none can end at 2^32): its PTEs
+ * go under the $FFF000 alias's.  0, or -1 if it is not mapped.
+ */
+static int
+ioload(va, off, prot)
+	unsigned long va, off;
+	u_int prot;
+{
+	struct seg *seg;
+	long pf;
+	page_t *pp;
+	int step = tos_hat4k ? 4096 : 2048, n;
+
+	if (curproc != tos_stproc)
+		return -1;
+	seg = as_segat(curproc->p_as, (caddr_t)(va >= 0xfffff000 ? 0xfff000 : va));
+	if (!seg || (va >= 0xfffff000 && seg->s_base != (addr_t)0xfff000))
+		return -1;
+	for (n = 0; n < IOPG; n += step) {
+		if ((pf = guest_ram_frame(tos_ram, off + n)) < 0 || !(pp = page_numtookpp((u_int)pf)))
+			return -1;
+		hat_memload(seg, (addr_t)(va + n), pp, prot | PROT_USER, HAT_NOFLAGS);
+		flushmmu((addr_t)(va + n), 1);	/* the ATC may hold the old protection */
+	}
+	return 0;
+}
+
+int
+tos_toppage()
+{
+	return ioload(0xfffff000, tosc.t_ramsize + 2 * IOPG, PROT_READ);
+}
+
+/* the RAM object's offset of the I/O page holding a, or 0 */
+static unsigned long
+iooff(a)
+	unsigned long a;
+{
+	static unsigned long pg[3] = { 0xff8000, 0xff9000, 0xfff000 };
+	int i;
+
+	if (a >> 24 != 0 && a >> 24 != 0xff)
+		return 0;
+	for (i = 0; i < 3; i++)
+		if ((a & 0xfff000) == pg[i])
+			return tosc.t_ramsize + i * IOPG;
+	return 0;
+}
+
+/* the RAM object's I/O page at off copied to the one at to */
+static int
+iocopy(off, to)
+	unsigned long off, to;
+{
+	long f, k;
+	page_t *a, *b;
+	int step = tos_hat4k ? 4096 : 2048, n;
+
+	for (n = 0; n < IOPG; n += step) {
+		if ((f = guest_ram_frame(tos_ram, off + n)) < 0 || (k = guest_ram_frame(tos_ram, to + n)) < 0 ||
+		    !(a = page_numtookpp((u_int)f)) || !(b = page_numtookpp((u_int)k)))
+			return -1;
+		ppcopy(a, b);
+	}
+	return 0;
+}
+
+/*
+ * A write to an I/O page: the page is saved to the sink and made writable;
+ * tos_unsink puts the saved constants back.  The mapping keeps its page:
+ * the 68030's HAT refuses to change one in place.
+ */
+int
+tos_iowrite(a)
+	unsigned long a;
+{
+	struct tosctr *t = &tosc;
+	unsigned long off = iooff(a);
+
+	if (off == 0)
+		return -1;
+	tos_unsink();
+	if (iocopy(off, t->t_ramsize + SINK * IOPG) < 0 ||
+	    ioload(a & ~(IOPG - 1), off, PROT_READ | PROT_WRITE) < 0)
+		return -1;
+	t->t_sinkva = a & ~(IOPG - 1);
+	t->t_sinkoff = off;
+	return 0;
+}
+
+/* the I/O page's constants back, read-only */
+void
+tos_unsink()
+{
+	struct tosctr *t = &tosc;
+
+	if (t->t_sinkva && t->t_gp && GUESTP(curproc) == t->t_gp) {
+		(void)iocopy(t->t_ramsize + SINK * IOPG, t->t_sinkoff);
+		dlm_cacheflush();	/* the 68030's data cache holds the guest's writes */
+		(void)ioload(t->t_sinkva, t->t_sinkoff, PROT_READ);
+		t->t_sinkva = 0;
+	}
+}
+
 static int
 enter(arg, cr)
 	caddr_t arg;
@@ -656,10 +719,16 @@ enter(arg, cr)
 		return EINVAL;
 	if (te.te_flags & TEF_NOMACH)
 		return solo();
+	if (GUESTP(curproc))
+		return EBUSY;
 	s = splhi_();
 	if (t->t_state != 0) {
 		splx_(s);
 		return EBUSY;
+	}
+	if (curproc != tos_stproc || curproc->p_pid != tos_stpid) {
+		splx_(s);
+		return EACCES;		/* only the RAM's owner maps the I/O pages */
 	}
 	t->t_state = 2;			/* claimed: the tick and hooks wait for 1 */
 	splx_(s);
@@ -668,21 +737,24 @@ enter(arg, cr)
 		return e;
 	}
 	gp = GUESTP(curproc);
-	gp->gp_flags |= GPF_PRIV | GPF_FTRAP;
+	gp->gp_flags |= GPF_PRIV | GPF_FTRAP | GPF_CPU030;
 	gp->gp_vsr = 0x2700;
 	gp->gp_vpend = 0;
 	gp->gp_vusp = gp->gp_vvbr = gp->gp_vcacr = 0;
+	gp->gp_hostlo = te.te_hostlo;
+	gp->gp_hosthi = te.te_hosthi;
 	bzero((caddr_t)&t->t_proc, sizeof *t - ((caddr_t)&t->t_proc - (caddr_t)t));
 	t->t_proc = curproc;
 	t->t_gp = gp;
 	t->t_uid = cr->cr_uid;
 	t->t_ramsize = te.te_ramsize;
 	t->t_flags = te.te_flags;
+	t->t_stklo = te.te_stklo;
+	t->t_stkhi = te.te_stkhi;
+	t->t_ien = 0xffff;
 	t->t_st.ts_pid = curproc->p_pid;
 	tos_devinit(t);
-	if ((t->t_flags & TEF_MONO) && te.te_w >= 1280 && te.te_h >= 960)
-		t->t_vid[0x62] = 6;	/* TT high */
-	tos_nvinit((int)te.te_w, (int)te.te_h, (int)te.te_depth);
+	(void)tos_toppage();
 	dlm_cacheflush();		/* the launcher's ROM and cartridge stores reach memory */
 	t->t_state = 1;
 	if ((t->t_tid = ttimeout(tos_tick, (caddr_t)0, 1L)) == -1)
@@ -786,15 +858,11 @@ tosioctl(dev, cmd, arg, mode, cr, rvp)
 	int *rvp;
 {
 	struct tosctr *t = &tosc;
-	struct tosinput ti;
-	struct tosvideo *tv;
-	int e, s;
+	struct tosvideo tv;
+	int s;
 
 	if (cmd == TOSIOC_ENTER)
 		return enter(arg, cr);
-	if (cmd == TOSIOC_MAPROM)
-		return GUESTP(curproc) && GUESTP(curproc)->gp_prof != &tos_profile ?
-		    EPERM : tos_maprom(dev, rvp);
 	if (cmd == TOSIOC_STRAM)
 		return stram((unsigned long)arg, GMR_CONTIG);
 	if (cmd == TOSIOC_RAM)
@@ -814,28 +882,12 @@ tosioctl(dev, cmd, arg, mode, cr, rvp)
 	if (cr->cr_uid != t->t_uid && cr->cr_uid != 0)
 		return EPERM;
 	switch (cmd) {
-	case TOSIOC_INPUT:
-		if (copyin(arg, (caddr_t)&ti, sizeof ti))
-			return EFAULT;
-		if (ti.ti_n < 0 || ti.ti_n > sizeof ti.ti_b)
-			return EINVAL;
-		tos_input(&ti);
-		return 0;
 	case TOSIOC_VIDEO:
-		tv = (struct tosvideo *)kmem_zalloc(sizeof *tv, KM_SLEEP);
 		s = splhi_();
-		tv->tv_gen = t->t_vgen;
-		tv->tv_base = t->t_vid[1] << 16 | t->t_vid[3] << 8 | t->t_vid[0x0d];
-		tv->tv_stmode = t->t_vid[0x60];
-		tv->tv_ttmode = t->t_vid[0x62] << 8 | t->t_vid[0x63];
-		bcopy((caddr_t)t->t_vid + 0x40, (caddr_t)tv->tv_stpal, sizeof tv->tv_stpal);
-		bcopy((caddr_t)t->t_ttpal, (caddr_t)tv->tv_ttpal, sizeof tv->tv_ttpal);
-		tv->tv_vbl = t->t_st.ts_vbl;
-		tv->tv_vblheld = t->t_st.ts_vblheld;
+		tv.tv_vbl = t->t_st.ts_vbl;
+		tv.tv_vblheld = t->t_st.ts_vblheld;
 		splx_(s);
-		e = copyout((caddr_t)tv, arg, sizeof *tv) ? EFAULT : 0;
-		kmem_free((caddr_t)tv, sizeof *tv);
-		return e;
+		return copyout((caddr_t)&tv, arg, sizeof tv) ? EFAULT : 0;
 	case TOSIOC_PAUSE:
 		s = splhi_();
 		t->t_paused = arg != 0;
@@ -863,12 +915,49 @@ tosioctl(dev, cmd, arg, mode, cr, rvp)
 	}
 	case TOSIOC_SOCK:
 		return curproc == t->t_proc ? tsock(arg) : EPERM;
+	case TOSIOC_TIMER:
+		if (curproc != t->t_proc)
+			return EPERM;
+		tos_xbtimer((unsigned long)arg);
+		tos_kick(0);
+		return 0;
+	case TOSIOC_INTEN:
+		if (curproc != t->t_proc)
+			return EPERM;
+		tos_inten((unsigned long)arg);
+		return 0;
 	case TOSIOC_HALT:
 		return curproc == t->t_proc ? guest_halt() : EPERM;
-	case TOSIOC_BLIT:
-		return curproc == t->t_proc ? tos_blit(arg) : EPERM;
 	}
 	return EINVAL;
+}
+
+/* vector 61: movep on a 68060, its accesses resolved as tos_fault's */
+int
+tos_isp(gp, r, v)
+	struct guest_proc *gp;
+	char *r;
+	int v;
+{
+	unsigned long fa;
+	int ssw, e, n;
+
+	for (n = 0; n < 4; n++) {
+		if ((e = guest_movep(gp, r, &fa, &ssw)) == -1)
+			return 1;	/* the host's: 64-bit multiplies */
+		if (e == 0) {
+			TST(gp)->ts_isp++;
+			guest_trapret();
+			return 0;
+		}
+		if ((gp->gp_flags & TGF_SOLO) || (e = tos_access(gp, r, fa, ssw)) == 1)
+			break;
+		if (e == 2)
+			return 0;
+	}
+	psignal(curproc, SIGSEGV);
+	guest_trapret();
+	return 0;
 }
 
 /* ---- module ---- */
@@ -880,12 +969,6 @@ tosguest_load()
 	int v;
 
 	tos_profile.gpf_name = "tos";
-	if (sndcb_p)
-		*sndcb_p = tos_sndend;
-	if (ramsize_p)
-		*ramsize_p = ram_size;
-	if (ramphys_p)
-		*ramphys_p = ram_phys;
 	tos_profile.gpf_wrapper = &tosguest_wrapper;
 	tos_profile.gpf_exit = tos_pexit;
 	tos_profile.gpf_fork = tos_pfork;
@@ -904,6 +987,10 @@ tosguest_load()
 			d->gd_fn = tos_sys;
 		}
 	}
+	d = &tos_profile.gpf_disp[61];
+	d->gd_flags = GDF_USER;
+	d->gd_kind = GD_EMULATE;
+	d->gd_fn = tos_isp;
 	return guest_profile_add(&tos_profile);
 }
 
@@ -913,12 +1000,6 @@ tosguest_unload()
 	if (tosc.t_state != 0 || tos_nopen)
 		return EBUSY;
 	guest_profile_del(&tos_profile);
-	if (sndcb_p)
-		*sndcb_p = 0;
-	if (ramsize_p)
-		*ramsize_p = 0;
-	if (ramphys_p)
-		*ramphys_p = 0;
 	return 0;
 }
 

@@ -248,6 +248,17 @@ nolink(rel, special)
 	return p;
 }
 
+/* n blocks of size bytes as 8 KB blocks, at most what the guest's signed longs hold */
+static unsigned long
+blocks8k(n, size)
+	unsigned long n, size;
+{
+	if (size >= 8192)
+		return n > 0x7fffffffUL / (size / 8192) ? 0x7fffffffUL : n * (size / 8192);
+	n /= size ? 8192 / size : 8192;
+	return n > 0x7fffffffUL ? 0x7fffffffUL : n;
+}
+
 static int
 errmap(e)
 	int e;
@@ -664,9 +675,10 @@ hf_serve(b)
 			break;
 		}
 		b->bsize = 8192;
-		b->fblocks = sv.f_blocks * sv.f_frsize / 8192;
-		b->ffree = sv.f_bavail * sv.f_frsize / 8192;
-		b->files = sv.f_files;
+		b->fblocks = blocks8k(sv.f_blocks, sv.f_frsize);
+		b->ffree = blocks8k(sv.f_bavail, sv.f_frsize);
+		b->files = sv.f_files > 0x7fffffffUL ? 0x7fffffffUL : sv.f_files;
+		b->nfree = sv.f_favail > 0x7fffffffUL ? 0x7fffffffUL : sv.f_favail;
 		break;
 	}
 	default:

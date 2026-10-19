@@ -10,8 +10,8 @@ from its reset vector; the ROM drives the board directly and stops early.
 
     sh kernel/guest/next/build.sh OUTDIR     # OUTDIR/native
 
-Per environment (`~/NeXT/<env>`): `mach_kernel` or `media` (the ROM image, 128 KB), `nvram` keeps the
-NVRAM, `vram` is the screen. RAM is the largest of 32, 16 or 8 MB that
+Per environment (`~/NeXT/<env>`): `mach_kernel` or `media` (the ROM image, 128 KB); beside it
+`<env>.nvram` keeps the NVRAM and `<env>.vram` is the screen. RAM is the largest of 32, 16 or 8 MB that
 free memory holds. Cmd-Q quits.
 `NEXT_CENSUS=1` prints each register's first access on stderr; `NEXT_PC=1` the guest's PC every 2 s.
 
@@ -60,4 +60,14 @@ A host call is `jsr HF_HCALL` with the service in d0 (`hfswire.h`): an illegal i
 address the module recognises. The launcher's signal handlers run on their own stack, since the guest's stack is virtual. `pagein` and `pageout` of the vnode operations
 are host reads and writes of one page.
 
-Where it stops: the whole tree reaches the console's `login:`; root logs in and runs commands.
+## Sound
+
+At its first procedure call the Audio server that `kern_loader` loads is found by shape (`sndguest.c`,
+reached from a jump at the kernel's server-call entry): its DMA start and abort calls hand the output
+buffers to the host's sound service, its DMA wait returns at once and its sound command sets the
+rate (44100 Hz, or 22050 with bit 4). A poll each tick marks played buffers done and schedules the
+channel's handler as the DMA interrupt would. The launcher plays them; the first prints
+`next: sound out at N Hz`.
+
+Where it stops: the first boot's panels, then the login panel or its automatic login, reach the
+Workspace Manager; `console` at the panel gives the text console.

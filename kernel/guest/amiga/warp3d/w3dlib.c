@@ -44,7 +44,7 @@ void *w3d_init(B *lib, void *seg)
 	*(const char **)(lib + 24) = w3d_idstring;
 	b->seg = seg;
 	EX(-558, 0, 0, b->sem, 0);		/* InitSemaphore */
-	/* without startmig's table there is no 3D */
+	/* without startamiga's table there is no 3D */
 	if (TAB[0] != MAGIC || TAB[1] != 1 || TAB[2] != 84) {
 		i = *(W *)(lib + 16);
 		EX(-210, i + *(W *)(lib + 18), 0, 0, lib - i);

@@ -2,6 +2,8 @@
 #ifndef _SYS_PROC_H
 #define _SYS_PROC_H
 
+#include <sys/immu.h>
+
 typedef struct proc {
 	char		p_stat;
 	char		_p0[3];
@@ -47,6 +49,9 @@ struct pid {
 #define p_pid		p_pidp->pid_id
 #define p_pgrp		p_pgidp->pid_id
 
+#define PID_HOLD(pidp)	(++(pidp)->pid_ref)
+#define PID_RELE(pidp)	((pidp)->pid_ref>1 ? --(pidp)->pid_ref : pid_rele(pidp))
+
 /* p_stat */
 #define SSLEEP		1
 #define SRUN		2
@@ -69,11 +74,13 @@ extern void psignal(proc_t *, int);
 extern int issig(int);
 extern void psig(void);
 extern proc_t *prfind(pid_t);
+extern int pid_rele(struct pid *);
 #else
 extern void psignal();
 extern int issig();
 extern void psig();
 extern proc_t *prfind();
+extern int pid_rele();
 #endif
 
 #endif

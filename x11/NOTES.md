@@ -128,7 +128,7 @@ so the server runs the **8 bpp cfb path** (PseudoColor, default map loaded throu
 sh x11/build.sh clibs              # libX11.a, libXext.a, Xt headers
 sh x11/manx/build.sh               # $X11W/manx/MANX.pkg   (/opt/amix/bin)
 sh x11/xview/build.sh              # $X11W/xview/XVIEW.pkg (/usr/openwin)
-sh x11/gl/build.sh                 # $X11W/gl/GL.pkg       (/usr/x11r6/bin/glxgears)
+sh x11/gl/build.sh                 # $X11W/gl/GL.pkg (libGL.so, glxgears), GLTDFX.pkg, GLR200.pkg (DRI drivers)
 XPKGS="manx xview gl" AMIX_TAPE=... sh x11/mkimage.sh   # installs them, as pkgadd would
 ```
 

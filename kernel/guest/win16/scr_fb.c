@@ -413,6 +413,8 @@ scr_beep()
 
 /* ---- input ---- */
 
+static u32 evms;	/* the time of the device event being read */
+
 static void
 add(type, x, y, down, vk, btn)
 	int type, x, y, down, vk, btn;
@@ -430,6 +432,7 @@ add(type, x, y, down, vk, btn)
 	e->vk = vk;
 	e->sc = vkscan(vk);
 	e->btn = btn;
+	e->ms = evms;
 }
 
 static void
@@ -444,6 +447,7 @@ readinput(fd)
 		return;
 	n /= sizeof ev[0];
 	for (i = 0; i < n; i++) {
+		evms = w16_ticksat(ev[i].ie_sec, ev[i].ie_usec);
 		switch (ev[i].ie_type) {
 		case IE_KEY:
 			vk = ev[i].ie_code < 128 ? (kset == EVK_AMIGA ? amigavk : kset == EVK_IKBD ? ikbdvk :

@@ -4,7 +4,7 @@
  *	minor 0	root image: boot-record BI_RAMDISK, else the linked-in image
  *	minor 1	swap when the RAM disk is root: rdswap=MB carves that
  *		much from the top of the kernel's memory chunk; without
- *		it, memory is swap, slots with no store (see rd_memsize)
+ *		it, a one-block unit, so swap is RAM alone
  *	minor 2	the host ROM, read only, set by rd_romdev()
  *
  * mac_rd_config() runs from config(): MMU off, BSS not yet cleared,
@@ -38,7 +38,6 @@
 #define RD_MINMEM	0x400000	/* memory left to VM above end */
 #define RD_MAXPA	0x40000000	/* identity-mapped limit */
 #define RD_MAGIC	0x52614D44	/* 'RaMD' */
-#define RD_MEMKEEP	0x200000	/* memory swap leaves at least this */
 
 #define BI_LAST		0x0000
 #define BI_RAMDISK	0x0006
@@ -53,7 +52,7 @@ struct rdunit {
 unsigned long rd_magic = 1;
 struct rdunit rd_unit[RD_NUNIT] = { { (caddr_t)1, 1 }, { (caddr_t)1, 1 }, { 0, 0 } };
 char rd_swapname[] = "/dev/swap";
-int rd_memsw = 1;		/* 1: memory swap, size not set yet */
+int rd_memsw = 1;		/* swap is memory */
 
 extern char rd_image[], rd_image_end[];
 extern char end[];
@@ -63,7 +62,6 @@ extern unsigned long MAINSTORE, VSIZOFMEM;
 extern dev_t rootdev, dumpdev;
 extern char rootfstype[];
 extern struct bootobj swapfile;
-extern int freemem, physmem, vr_shift;
 extern int cdevcnt;
 extern int nodev();
 extern paddr_t vtop();
@@ -244,26 +242,6 @@ int wantroot;
 	return 1;
 }
 
-/*
- * Memory as swap: anonymous pages need a swap slot each, so the swap
- * unit offers one per free page, less RD_MEMKEEP or an eighth of
- * memory for the kernel and the page cache.  Its pages cannot be
- * written out.  Sized when root is opened, before swap is added.
- */
-static void
-rd_memsize()
-{
-	unsigned long keep, n;
-
-	rd_memsw = 2;
-	keep = physmem / 8;
-	if (keep < RD_MEMKEEP >> vr_shift)
-		keep = RD_MEMKEEP >> vr_shift;
-	n = freemem > keep ? freemem - keep : 0;
-	rd_unit[RD_SWAP].nblk = n << (vr_shift - RD_BSHIFT);
-	swapfile.bo_size = rd_unit[RD_SWAP].nblk;
-}
-
 int
 ramopen(devp, flag, otyp, cr)
 dev_t *devp;
@@ -274,8 +252,6 @@ struct cred *cr;
 
 	if (rd_magic != RD_MAGIC)
 		rd_default();
-	if (m == RD_ROOT && rd_memsw == 1)
-		rd_memsize();
 	if (m >= RD_NUNIT || rd_unit[m].nblk == 0)
 		return ENXIO;
 	return 0;

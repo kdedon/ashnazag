@@ -32,6 +32,7 @@
 #define BI_MAC_ROMBASE	0x800b
 #define BI_MAC_VIA1BASE	0x8010
 #define BI_MAC_AUXINFO	0x8f00	/* ours: A/UX info block, d0, low memory */
+#define BI_MAC_MODULE	0x8f01	/* ours: a boot module: address, size, name[16] */
 
 #define MACH_MAC	3
 #define MAXCHUNK	4
@@ -290,6 +291,8 @@ unsigned short *bi;
 extern unsigned long rootdev, dumpdev;
 extern char swapfile[];
 extern int mac_rd_config(), mac_diskpick();
+extern void dlm_bootadd();
+extern unsigned long dlm_bootpack();
 extern void mac_dskname();
 
 long mac_rootarg = -1;		/* dd minor from root=, -1 none */
@@ -429,6 +432,10 @@ bi_parse()
 			mac_auxinfo[1] = p[1];
 			mac_auxinfo[2] = p[2];
 			break;
+		case BI_MAC_MODULE:
+			if (size >= 4 + 8 + 16)
+				dlm_bootadd(p[0], p[1], (char *)&p[2]);
+			break;
 		case BI_MEMCHUNK:
 			if (mac_nchunk < MAXCHUNK) {
 				mac_chunk[mac_nchunk][0] = p[0];
@@ -551,6 +558,14 @@ unsigned long arg0, arg1;
 			    MAC_MAXRAM : mac_chunk[i][0] + mac_chunk[i][1]);
 	if (!vr_setup())
 		mac_puts("config: memory below the kernel left out of the VM\n");
+	k = dlm_bootpack(k, MAINSTORE + VSIZOFMEM, 1);
+	if (k < MAINSTORE + VSIZOFMEM) {
+		k &= ~(0x40000UL - 1);
+		putkv("config: boot modules at ", k);
+		mac_puts("\n");
+		VSIZOFMEM = k - MAINSTORE;
+	}
+	k = (unsigned long)end;
 	mac_root();
 	putkv("config: MAINSTORE ", MAINSTORE);
 	putkv(" VSIZOFMEM ", VSIZOFMEM);

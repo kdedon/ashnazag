@@ -72,7 +72,7 @@ DSINC="-DDS_ATARI -I$MAC/display -I$MAC/video -I$MAC/adb"
 for c in "$MAC/display/ds.c" "$A/atads.c"; do
 	cc_nobss "$c" "-fno-common $DSINC $SOFTMUL"
 done
-for c in ataide ahdi; do
+for c in atadisk ahdi atafsflush atavpfree; do
 	cc_nobss "$A/$c.c" "-I$AMIX_ROOT/usr/sys/amiga/alien"
 done
 cc_nobss "$A/atartc.c" "-I$AMIX_ROOT/usr/sys/amiga/alien $SOFTMUL"
@@ -97,23 +97,26 @@ echo "[*] loadable modules and guest processes"
 sh "$K/dlm/build.sh" -k "$W/dlm"
 sh "$K/guest/build.sh" -k "$BASE" "$W/guest"
 
-OBJS="$W/dlm/dlm.o $W/guest/guest.o $W/ataentry.o $W/ataintr.o $W/pstartata.o $W/ata060math.o $W/ata060isp.o $W/cfgorig.o
+OBJS="$W/dlm/dlm.o $W/dlm/dlm_root.o $W/dlm/dlm_sd.o $W/guest/guest.o $W/ataentry.o $W/ataintr.o $W/pstartata.o $W/ata060math.o $W/ata060isp.o $W/cfgorig.o
 $W/ataconf.o $W/vmrgn.o $W/ikbd.o $W/fbcons.o $W/fbfont.o $W/atadevsw.o $W/atacons.o $W/ds.o
-$W/atads.o $W/ataide.o $W/ahdi.o $W/atartc.o $W/rd.o $RDB/rdimage.o
+$W/atads.o $W/atadisk.o $W/ahdi.o $W/atartc.o $W/atafsflush.o $W/atavpfree.o $W/rd.o $RDB/rdimage.o
 $W/uiomod.o $W/vtop.o $W/ptalloc.o"
 
 OVR="pstart config config_orig putchar getchar callrom sysdump haltsys rtnfirm
 hw_clkstart clkreld p1int p2int p3int p4int p5int p6int parinit qlintr slpoll
 autocon delayus ramopen ramclose ramstrategy ramprint ramsize backtrace inituname
 sdopen sdqueue sdhardwarename sdpartition sdvalid sdblkno sddevsize
-clkset dmainit ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig mdboot
-vtop hat_ptalloc uiomove unt_latch page_free segu_get swapinub memialloc krnlflt"
-OVRD="coinfo cdevsw bdevsw execsw fmodsw"
+clkset dmainit ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig mdboot fsflush free_vp_pages
+vtop hat_ptalloc uiomove unt_latch page_free segu_get swapinub memialloc krnlflt vfs_getvfssw vfs_mountroot"
+OVRD="coinfo cdevsw bdevsw execsw fmodsw vfssw architecture"
 ALIAS="inituname:T sendsig:T valid_usr_range:T fsig:T execsw:D fmodsw:D
-hat_ptalloc:T uiomove:T unt_latch:T page_free:T segu_get:T swapinub:T memialloc:T krnlflt:T"
+hat_ptalloc:T uiomove:T unt_latch:T page_free:T segu_get:T swapinub:T memialloc:T krnlflt:T
+vfssw:D vfs_getvfssw:T vfs_mountroot:T"
 
 echo "[*] weakening the Amiga platform entry points"
 WEAK="--globalize-symbol freemem_wait"
+# the free_vp_pages override uses these
+for s in free_pages pagecnt page_cachelist page_cachelist_size page_add; do WEAK="$WEAK --globalize-symbol $s"; done
 for s in $OVR; do
 	m68k-linux-gnu-nm "$BASE" | grep -q " T $s\$" || {
 		echo "[FAIL] $s is not a global function in the base"; exit 1; }
@@ -141,15 +144,19 @@ for t in c b; do
 	[ -n "$want" ] && [ $((0x$want)) -eq $((0x${have:-0})) ] || {
 		echo "[FAIL] ${t}devsw is 0x$have bytes, base shadow${t}sw 0x$want"; exit 1; }
 done
+# anonymous memory reserved against RAM plus swap
+WEAK="$WEAK $(sh "$K/vm/build.sh" "$BASE" "$W")"
+OBJS="$OBJS $W/vm.o"
 m68k-linux-gnu-objcopy $WEAK "$BASE" "$W/base.weak"
 python3 "$MAC/patch_s5pages.py" "$W/base.weak"
 python3 "$MAC/vtop/patch_vtop.py" "$W/base.weak"
 python3 "$MAC/patch_kvmpages.py" "$W/base.weak"
+python3 "$K/vm/patch_closef.py" "$W/base.weak"
 
 echo "[*] no 64-bit multiply or divide in the Atari objects"
 python3 "$A/chk64.py" $W/ataentry.o $W/ataintr.o $W/pstartata.o $W/ata060math.o $W/cfgorig.o \
 	$W/ataconf.o $W/ikbd.o $W/fbcons.o $W/fbfont.o $W/atadevsw.o $W/atacons.o \
-	$W/ds.o $W/atads.o $W/ataide.o $W/ahdi.o $W/atartc.o \
+	$W/ds.o $W/atads.o $W/atadisk.o $W/ahdi.o $W/atartc.o $W/atafsflush.o $W/atavpfree.o \
 	$W/uiomod.o $W/vtop.o $W/ptalloc.o $W/rd.o
 
 echo "[*] linking the Atari overrides over the base"
@@ -200,6 +207,7 @@ link() {
 	python3 "$MAC/patch_s5pages.py" -c "$OUT.elf"
 	python3 "$MAC/vtop/patch_vtop.py" -c "$OUT.elf"
 	python3 "$MAC/patch_kvmpages.py" -c "$OUT.elf"
+	python3 "$K/vm/patch_closef.py" -c "$OUT.elf"
 	python3 "$A/patch_spl.py" -c "$OUT.elf" $SPL_SITES
 	"$W/dlm/mkksym" "$OUT.elf"
 }

@@ -1,9 +1,10 @@
 /*
  * A Voodoo3 (or Banshee) behind the PCI bridge as the display service's
- * screen.  One mode at the size Space.c names, 8-bit CLUT, RGB565 or
- * 32 bits a pixel per session.  The front session's frame is at the
- * start of VRAM, then v3ds_altfb frames that hidden sessions keep;
- * bringing one of those to the front moves the desktop start.
+ * screen.  Its VESA modes up to the size Space.c names, 8-bit CLUT,
+ * RGB565 or 32 bits a pixel per session.  The display service hands out VRAM:
+ * the front session's frame at its start, up to v3ds_altfb frames that
+ * hidden sessions keep; bringing one of those to the front moves the
+ * desktop start.
  * Only the 2D video path is set up; the 3D engine is left as reset.
  *
  * A 3D driver for the card shares with this module, and must take from
@@ -11,8 +12,8 @@
  * - the card: this module holds it (opci_obtain) while loaded, and the
  *   register and frame buffer mappings (v3_reg, v3_fb, v3_physfb) and
  *   the register byte order (v3_swap);
- * - VRAM: sessions use [0, v3_dsvram); [v3_dsvram, v3_vram) is free for
- *   the command fifo, back, depth and texture buffers;
+ * - VRAM: the command fifo, back, depth and texture buffers go where
+ *   am_vtake() says, from its first open to its last close;
  * - ownership: the front session (am_rtg's r_pan offset) is the one a
  *   3D client may draw to the screen for; v3_fronthook, when set, is
  *   called after each change.
@@ -24,6 +25,7 @@
 #include "sys/amrtg.h"
 
 extern int printf();
+extern void drv_usecwait();
 extern unsigned long plat_vtop();
 extern int v3ds_width, v3ds_height;
 extern int v3ds_altfb;
@@ -33,8 +35,13 @@ extern int v3ds_altfb;
 #define	LFBMEMCFG	0x0c
 #define	MISCINIT0	0x10
 #define	MISCINIT1	0x14
+#define	DRAMINIT0	0x18
+#define	DRAMINIT1	0x1c
 #define	VGAINIT0	0x28
+#define	DRAMCOMMAND	0x30
+#define	DRAMDATA	0x34
 #define	PLLCTRL0	0x40
+#define	PLLCTRL1	0x44
 #define	DACMODE		0x4c
 #define	DACADDR		0x50
 #define	DACDATA		0x54
@@ -66,7 +73,8 @@ void (*v3_fronthook)();
 static __volatile__ unsigned char *v3_io;
 static struct am_rtg v3_rtg;
 static unsigned long v3_vp;	/* vidProcCfg with the video processor on */
-static int v3_bits = 8, v3_shown;
+static int v3_bits = 8, v3_shown, v3_w;
+static struct am_mode v3_modes[5];
 
 static unsigned long
 swab32(v)
@@ -120,6 +128,7 @@ static struct v3tim {
 	{ 1280, 1024, 108000, 1328, 1440, 1688, 1025, 1028, 1066, 0x00 },
 };
 #define	NTIM	(sizeof v3_tims / sizeof v3_tims[0])
+static struct v3tim *v3_tim;
 
 /* pllCtrl0 for khz: 14.318 MHz * (N + 2) / ((M + 2) << K) */
 static unsigned long
@@ -202,6 +211,8 @@ struct v3tim *t;
 	wl(VGAINIT0, 1 << 2 | 1 << 6 | 1 << 8 | 1 << 10 | 1 << 12);
 	wl(DACMODE, 0);
 	wl(VIDSCREENSIZE, t->w | (unsigned long)t->h << 12);
+	v3_w = t->w;
+	v3_tim = t;
 }
 
 static void
@@ -219,7 +230,7 @@ int bits;
 	v3_bits = bits;
 	/* the CPU's pixels land in the card's byte order */
 	wl(MISCINIT0, (rl(MISCINIT0) & ~MI0_SWIZ(3)) | MI0_SWIZ(bits == 32 ? 1 : bits == 16 ? 3 : 0));
-	wl(VIDDESKSTRIDE, (unsigned long)v3ds_width * (bits / 8));
+	wl(VIDDESKSTRIDE, (unsigned long)v3_w * (bits / 8));
 	v3_vp = VP_ON | VP_DESKTOP |
 	    (bits == 32 ? VP_FMT(3) | VP_CLUTBYPASS : bits == 16 ? VP_FMT(1) | VP_CLUTBYPASS : 0);
 	if (v3_shown)
@@ -243,6 +254,133 @@ int on;
 	wl(VIDPROCCFG, on ? v3_vp : v3_vp & ~(VP_ON | VP_DESKTOP));
 	/* hidden, the syncs stop: a monitor shared with the chipset switches back */
 	crtc(0x17, on ? 0xc3 : 0x43);
+}
+
+/* timing n at bits: blanked, set in the vertical blank, shown again */
+static void
+v3_setmode(n, bits)
+int n, bits;
+{
+	int i;
+
+	if (&v3_tims[n] != v3_tim) {
+		if (v3_shown) {
+			for (i = 0; i < 100000 && !(v3_io[VGA(0x3da)] & 8); i++)
+				;
+			wl(VIDPROCCFG, v3_vp & ~(VP_ON | VP_DESKTOP));
+		}
+		v3_timing(&v3_tims[n]);
+		crtc(0x17, v3_shown ? 0xc3 : 0x43);
+	}
+	v3_depth(bits);
+}
+
+/* board straps: dramInit0 SGRAM part size and count, dramInit1 SDRAM, miscInit1 PCI */
+#define	DI0_STRAPS	0x0c000000
+#define	DI1_SDRAM	0x40000000
+#define	MI1_STRAPS	0xff000000
+#define	PLL_RESET	0xc01		/* pllCtrl1 at power on: 50 MHz */
+#define	CFG_ROM		0x30
+
+/* the frame buffer wraps every 1 MB until the SGRAM is set up */
+static int
+v3_wraps()
+{
+	__volatile__ unsigned long *p0 = (__volatile__ unsigned long *)v3_fb;
+	__volatile__ unsigned long *p1 = (__volatile__ unsigned long *)(v3_fb + 0x100000);
+	unsigned long k0 = *p0, k1 = *p1;
+	int w;
+
+	*p0 = 0x5a5aa5a5;
+	*p1 = 0x12345678;
+	w = *p0 != 0x5a5aa5a5;
+	*p1 = k1;
+	*p0 = k0;
+	return w;
+}
+
+static unsigned long
+romw(rom, o, n)
+__volatile__ unsigned char *rom;
+unsigned long o;
+int n;
+{
+	unsigned long v = 0;
+
+	while (n-- > 0)
+		v = v << 8 | rom[o + n];
+	return v;
+}
+
+/*
+ * The card's BIOS init table: ROM word 0x50 points at a word that points
+ * at nine longs, pciInit0, miscInit0, miscInit1, dramInit0, dramInit1,
+ * agpInit, pllCtrl1, pllCtrl2 and the SGRAM mode.  0 if there is none.
+ */
+static int
+v3_romtab(d, tab)
+struct opci_dev *d;
+unsigned long *tab;
+{
+	__volatile__ unsigned char *rom = (unsigned char *)opci_attr(d, OPCI_ROMADDR);
+	unsigned long size = opci_attr(d, OPCI_ROMSIZE), cfg, o;
+	int i, ok = 0;
+
+	if (rom == 0 || size < 0x100)
+		return 0;
+	cfg = opci_cfgread(d, CFG_ROM, 4);
+	opci_cfgwrite(d, CFG_ROM, 4, cfg | 1);
+	if (rom[0] == 0x55 && rom[1] == 0xaa &&
+	    (o = romw(rom, 0x50L, 2)) + 2 <= size && (o = romw(rom, o, 2)) + 36 <= size) {
+		for (i = 0; i < 9; i++)
+			tab[i] = romw(rom, o + i * 4, 4);
+		ok = tab[6] != 0 && tab[6] <= 0xffff;
+	}
+	opci_cfgwrite(d, CFG_ROM, 4, cfg);
+	return ok;
+}
+
+/*
+ * Set up the memory as a PC BIOS does at power on: memory clock and
+ * timings from the ROM's table (else generic 16 Mbit SGRAM timings at
+ * 143 MHz), then load the SGRAM mode register, write mask and colour.
+ */
+static void
+v3_meminit(d)
+struct opci_dev *d;
+{
+	unsigned long tab[9], di0, di1;
+	int rom = v3_romtab(d, tab);
+
+	if (!rom) {
+		tab[2] = rl(MISCINIT1) | 1;
+		tab[3] = 0x00179d29;
+		tab[4] = 0x0028c031;
+		tab[6] = 0x3a05;
+	}
+	if (!rom || tab[8] > 0xfff)
+		tab[8] = 0x37;
+	di0 = (tab[3] & ~DI0_STRAPS) | (rl(DRAMINIT0) & DI0_STRAPS);
+	di1 = (tab[4] & ~DI1_SDRAM) | (rl(DRAMINIT1) & DI1_SDRAM);
+	wl(PLLCTRL1, tab[6]);
+	drv_usecwait(10000);
+	wl(DRAMINIT1, di1);
+	wl(DRAMINIT0, di0);
+	wl(MISCINIT1, (tab[2] & ~MI1_STRAPS) | (rl(MISCINIT1) & MI1_STRAPS));
+	drv_usecwait(1000);
+	wl(DRAMDATA, tab[8]);
+	wl(DRAMCOMMAND, 0x10dL);
+	drv_usecwait(1000);
+	if (!(di1 & DI1_SDRAM)) {
+		wl(DRAMDATA, 0xffffffffL);
+		wl(DRAMCOMMAND, 0x10eL);
+		drv_usecwait(1000);
+		wl(DRAMDATA, 0L);
+		wl(DRAMCOMMAND, 0x10fL);
+		drv_usecwait(1000);
+	}
+	printf("voodoo3: memory set up %s, clock %x, dramInit %x %x\n",
+	    rom ? "from the ROM table" : "with defaults", (int)tab[6], (int)di0, (int)di1);
 }
 
 /* VRAM: the largest power of two up to the aperture that does not wrap */
@@ -306,6 +444,8 @@ v3ds_attach()
 	/* tiled aperture at the top: the frame buffer window is linear */
 	wl(LFBMEMCFG, 0x1fff);
 	wl(MISCINIT0, rl(MISCINIT0) & ~MI0_SWIZ(3));
+	if (rl(PLLCTRL1) == PLL_RESET || v3_wraps())
+		v3_meminit(d);
 	v3_vram = v3_sizevram(opci_attr(d, OPCI_BARSIZE(1)));
 	if (v3_vram == 0) {
 		printf("voodoo3: card not responding at %x\n", (int)plat_vtop((unsigned long)v3_fb));
@@ -315,6 +455,8 @@ v3ds_attach()
 	/* a 32-bit screen and a page: Picasso96 keeps bytes between two 16-bit ones */
 	frame = (((unsigned long)v3ds_width * v3ds_height * 4 + 4095) & ~4095UL) + 4096;
 	if (frame > v3_vram) {
+		printf("voodoo3: %d KB VRAM, %dx%d needs %d KB\n", (int)(v3_vram >> 10),
+		    v3ds_width, v3ds_height, (int)(frame >> 10));
 		opci_release(d);
 		return ENOMEM;
 	}
@@ -347,8 +489,18 @@ v3ds_attach()
 	v3_rtg.r_rgb[1][1] = 0x0000ff00;
 	v3_rtg.r_rgb[1][2] = 0x000000ff;
 	v3_rtg.r_setdepth = v3_depth;
+	for (i = 0; i < NTIM; i++) {
+		v3_modes[i].m_width = v3_tims[i].w;
+		v3_modes[i].m_height = v3_tims[i].h;
+		v3_modes[i].m_hz = (int)(v3_tims[i].khz * 1000L / ((long)v3_tims[i].ht * v3_tims[i].vt));
+	}
+	v3_rtg.r_modes = v3_modes;
+	v3_rtg.r_nmode = NTIM;
+	v3_rtg.r_mode = t - v3_tims;
+	v3_rtg.r_setmode = v3_setmode;
 	v3_rtg.r_pan = v3_pan;
-	v3_rtg.r_vram = v3_dsvram;
+	v3_rtg.r_vram = v3_vram;
+	v3_rtg.r_altfb = n;
 	printf("voodoo3: %dx%d, %d MB, %d frames, %d KB for 3D, registers %s\n", v3ds_width,
 	    v3ds_height, (int)(v3_vram >> 20), (int)(v3_dsvram / frame),
 	    (int)((v3_vram - v3_dsvram) >> 10), v3_swap ? "byte swapped" : "in order");

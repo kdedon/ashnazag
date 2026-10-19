@@ -199,7 +199,7 @@ ds_gmodes(arg)
 caddr_t arg;
 {
 	struct fbmodes ms;
-	struct fbmodeinfo mi;
+	struct fbmodeinfo mi, *mp;
 	register struct fbinfo *fi = &ds_disp.d_info;
 	register unsigned long i, n;
 #ifdef DS_ATARI
@@ -209,7 +209,7 @@ caddr_t arg;
 #endif
 #ifdef DS_AMIGA
 	struct fbinfo vf;
-	extern int am_nvmode();
+	extern int am_nvmode(), am_vmflags();
 	extern void am_vminfo();
 #endif
 
@@ -222,7 +222,8 @@ caddr_t arg;
 #ifdef DS_AMIGA
 	n = 1 + am_nvmode();
 #endif
-	for (i = 0; i < n && i < ms.ms_count; i++) {
+	mp = ms.ms_modes;
+	for (i = 0; i < n && i < ms.ms_count; i++, mp++) {
 #if defined(DS_ATARI) || defined(DS_AMIGA)
 		if (i > 0) {
 #ifdef DS_AMIGA
@@ -237,6 +238,10 @@ caddr_t arg;
 			mi.mi_rowbytes = vf.fi_rowbytes;
 			mi.mi_offset = 0;
 			mi.mi_flags = 0;
+			mi.mi_hz = 0;
+#ifdef DS_AMIGA
+			mi.mi_flags = am_vmflags((int)i - 1, &mi.mi_hz);
+#endif
 		} else
 #endif
 		if (n == 1 || fbp_cur < 0) {
@@ -246,7 +251,8 @@ caddr_t arg;
 			mi.mi_depth = fi->fi_depth;
 			mi.mi_rowbytes = fi->fi_rowbytes;
 			mi.mi_offset = fi->fi_offset;
-			mi.mi_flags = FBM_CURRENT;
+			mi.mi_flags = FBM_CURRENT | FBM_TRIED;
+			mi.mi_hz = 0;
 		} else {
 			mi.mi_id = fbp_mode[i].pm_id;
 			mi.mi_width = fbp_mode[i].pm_width;
@@ -254,9 +260,10 @@ caddr_t arg;
 			mi.mi_depth = fbp_mode[i].pm_depth;
 			mi.mi_rowbytes = fbp_mode[i].pm_row;
 			mi.mi_offset = fbp_mode[i].pm_off;
-			mi.mi_flags = i == fbp_cur ? FBM_CURRENT : 0;
+			mi.mi_flags = i == fbp_cur ? FBM_CURRENT | FBM_TRIED : 0;
+			mi.mi_hz = 0;
 		}
-		if (copyout((caddr_t)&mi, (caddr_t)(ms.ms_modes + i), sizeof mi))
+		if (copyout((caddr_t)&mi, (caddr_t)mp, sizeof mi))
 			return EFAULT;
 	}
 	ms.ms_count = n;
@@ -313,23 +320,24 @@ struct cred *cr;
 {
 	struct fbacq a;
 	register struct dssess *s;
-	int err;
+	int err, n;
 
 	if (copyin(arg, (caddr_t)&a, sizeof a))
 		return EFAULT;
-	if (a.fa_kind != FBK_USER || (a.fa_flags & ~(FBA_FRONT | FBA_VIDEL)))
+	if (a.fa_kind != FBK_USER || (a.fa_flags & ~FBA_FRONT))
 		return EINVAL;
 	if (h->h_sess)
 		return EBUSY;
-	if ((a.fa_flags & (FBA_FRONT | FBA_VIDEL)) && !ds_mayfront(cr))
+	if ((a.fa_flags & FBA_FRONT) && !ds_mayfront(cr))
 		return EPERM;
 	a.fa_name[sizeof a.fa_name - 1] = 0;
-	if ((s = ds_mksess((long)cr->cr_uid, a.fa_name, &err, a.fa_flags & FBA_VIDEL)) == 0)
+	if ((s = ds_newsess((long)cr->cr_uid, a.fa_name, &err)) == 0)
 		return err;
 	h->h_sess = s;
 	a.fa_id = s->s_id;
-	if (a.fa_flags & FBA_FRONT)
-		(void)ds_switch(s);
+	/* as FBIOSWITCH: a lock holder gets its second */
+	for (n = 0; (a.fa_flags & FBA_FRONT) && ds_switch(s) == EBUSY && n < 20; n++)
+		delay(HZ / 10);
 	if (copyout((caddr_t)&a, arg, sizeof a))
 		return EFAULT;
 	return 0;
@@ -347,6 +355,7 @@ int *rvalp;
 	int n, e;
 	struct fbstate st;
 	struct fbinfo fi;
+	struct fbreq rq;
 	unsigned long v;
 
 	if (h == 0)
@@ -369,6 +378,23 @@ int *rvalp;
 			return ds_setmode(s, (unsigned long)arg);
 #endif
 		return ENXIO;
+	case FBIOREQMODE:
+		if (s == 0)
+			return EINVAL;
+		if (copyin((caddr_t)arg, (caddr_t)&rq, sizeof rq))
+			return EFAULT;
+		if ((e = ds_reqmode(s, &rq)) != 0)
+			return e;
+		if (copyout((caddr_t)&rq, (caddr_t)arg, sizeof rq))
+			return EFAULT;
+		return 0;
+	case FBIOMODEOK:
+		if (s == 0)
+			return EINVAL;
+		/* only the environment's starter vouches for a monitor */
+		if (arg != 0 && drv_priv(cr) != 0)
+			return EPERM;
+		return ds_modeok(s, (unsigned long)arg);
 	case FBIOGETCMAP:
 	case FBIOPUTCMAP:
 		if (s == 0)
@@ -437,12 +463,10 @@ int *rvalp;
 		if (s == 0)
 			return EINVAL;
 		return ds_setpan(s, (unsigned long)arg);
-#endif
-#ifdef DS_ATARI
-	case FBIOVIDEL:
+	case FBIOVSIZE:
 		if (s == 0)
 			return EINVAL;
-		return ds_vidpass(s, (unsigned long)arg);
+		return ds_vsize(s, (unsigned long)arg);
 #endif
 	}
 	return EINVAL;
@@ -626,10 +650,6 @@ int *rvalp;
 	case EVIOCGINFO:
 		bzero((caddr_t)&ei, sizeof ei);
 		ei.ei_kset = EVK_ADB;
-#ifdef DS_ATARI
-		if (e->e_sess && DS_GUEST(e->e_sess))
-			ei.ei_kset = EVK_IKBD;	/* IKBD scancodes */
-#endif
 		ei.ei_flags = EVF_CAPSLATCH;
 		for (i = 0; i < 16; i++)
 			if (adb_dev[i].d_orig == (e->e_mouse ? ADB_ADDR_MOUSE : ADB_ADDR_KBD)) {

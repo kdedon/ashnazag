@@ -6,13 +6,14 @@
 #
 #   envcore   the guest module, the module path (S04envcore), the admin
 #             file envpkg for unattended pkgadd and pkgrm
-#   macenv    startmac, makemac, startmac6, the A/UX modules (S05aux)
+#   macenv    startmac, the A/UX modules (S05aux)
 #   macnet    the Open Transport bridge (S06macnet)
 #   tosenv    starttos, EmuTOS, fVDI, XaAES, TeraDesk, /tos (S05tos)
-#   amigaenv  startmig, makeamiga, the Workbench drivers (S05amiga)
+#   amigaenv  startamiga, the Workbench drivers (S05amiga)
 #   cpmenv    startcpm (with DRI's release only: it builds against it)
 #   smsqenv   startsmsq and SMSQ/E (with its binaries zip)
 #   win16env  startwin
+#   lisaenv   startlisa, the native Lisa host (S05lisa)
 #   v200env   startvoyage200, the native Voyage 200 host (S05v200)
 #
 # Out: outdir/pkgs/env/PKG-VERSION.pkg, outdir/catalog in apkg's format,
@@ -101,7 +102,6 @@ done
 link68 "$R/usr/bin/envlock" "$W/envlock.o"
 link68 "$R/usr/aux/lib/mac6" "$W/mac6.o"
 cp "$M/startmac" "$R/usr/bin/startmac"
-cp "$M/makemac" "$M/startmac6" "$R/usr/bin/"
 cp "$M/S05aux" "$R/etc/rc2.d/"
 chmod 755 "$R"/usr/bin/*
 
@@ -127,8 +127,7 @@ A=$G/amiga
 mod amigaenv amigaguest
 mkdir -p "$R/usr/bin" "$R/usr/sbin" "$R/etc/rc2.d" "$R/etc/amiga" "$R/amiga/media" "$R/amiga/rtg" "$W/am"
 sh "$A/build.sh" "$W/am" > "$W/am.log" 2>&1 || { tail "$W/am.log"; exit 1; }
-cp "$W/am/startmig" "$R/usr/bin/"
-cp "$AUX/images/amigaenv/makeamiga" "$R/usr/bin/"
+cp "$W/am/startamiga" "$R/usr/bin/"
 $CC -I"$AUX/kernel/dlm/include" -I"$G/include" -c "$AUX/images/amigaenv/amigareg.c" -o "$W/amigareg.o"
 link68 "$R/usr/sbin/amigareg" "$W/amigareg.o" "$W"/lm/*.o
 sh "$A/rtg/build.sh" "$W/rtg" > "$W/rtg.log" 2>&1 || { tail "$W/rtg.log"; exit 1; }
@@ -140,7 +139,6 @@ cp "$A/dos/README.md" "$A/dos/CONTAINER" "$R/amiga/guest/dos/"
 cp "$A/input/README.md" "$R/amiga/guest/input/"
 cp "$R/amiga/guest/dos/container-boot.rom" "$R/etc/amiga/"
 cp "$D/amigaenv/S05amiga" "$R/etc/rc2.d/"
-chmod 755 "$R/usr/bin/makeamiga"
 chmod 644 "$R/etc/amiga/container-boot.rom" "$R/amiga/guest/dos/container-boot.rom"
 
 # cpmenv: DRI's files stay out
@@ -165,19 +163,23 @@ if [ -f "$W/win/root/usr/bin/startwin" ]; then
 	cp -R "$W/win/guest/." "$OUT/guest/"
 fi
 
-# v200env: launcher and native host
+# lisaenv, v200env: launcher (one program, named per environment) and native host
 $CC -I"$G/include" -c "$G/nativeenv/startnative.c" -o "$W/startnative.o"
-R=$W/v200env
-mod v200env tiplatform
-mkdir -p "$R/usr/bin" "$R/usr/lib/voyage200" "$R/etc/rc2.d"
-link68 "$R/usr/bin/startvoyage200" "$W/startnative.o"
-sh "$G/voyage200/build.sh" "$W/voyage200" > "$W/voyage200.log" 2>&1 || { tail "$W/voyage200.log"; exit 1; }
-cp "$W/voyage200/native" "$R/usr/lib/voyage200/"
-cp "$D/v200env"/S05* "$R/etc/rc2.d/"
+for e in "lisa lisaenv lisaguest startlisa lisaboot" "voyage200 v200env tiplatform startvoyage200 voyage200"; do
+	set -- $e
+	d=$1 p=$2 m=$3 l=$4 s=$5
+	R=$W/$p
+	mod $p $m
+	mkdir -p "$R/usr/bin" "$R/usr/lib/$d" "$R/etc/rc2.d"
+	link68 "$R/usr/bin/$l" "$W/startnative.o"
+	sh "$G/$s/build.sh" "$W/$d" > "$W/$d.log" 2>&1 || { tail "$W/$d.log"; exit 1; }
+	cp "$W/$d/native" "$R/usr/lib/$d/"
+	cp "$D/$p"/S05* "$R/etc/rc2.d/"
+done
 
 # the datastreams and their catalog
 echo '#apkg-catalog 1' > "$OUT/catalog"
-for p in envcore macenv macnet tosenv amigaenv cpmenv smsqenv win16env v200env; do
+for p in envcore macenv macnet tosenv amigaenv cpmenv smsqenv win16env lisaenv v200env; do
 	if [ ! -d "$W/$p" ]; then
 		echo "[skip] $p: inputs missing (see $W/*.log)"
 		continue

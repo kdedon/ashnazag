@@ -126,6 +126,9 @@ copyinstr(from, to, max, lenp)
 	return 0;
 }
 
+static struct vnode hostroot;
+struct vnode *rootdir = &hostroot;
+
 int
 vn_open(path, seg, mode, cmode, vpp, why)
 	char *path;
@@ -219,6 +222,13 @@ cmn_err(level, fmt, a, b, c)
 void
 dlm_cacheflush()
 {
+}
+
+struct bootmod *
+dlm_bootfind(name)
+	char *name;
+{
+	return 0;
 }
 
 /* ---- images ---- */

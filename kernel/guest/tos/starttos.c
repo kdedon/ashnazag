@@ -1,30 +1,29 @@
 /*
  * starttos -- run Atari TOS as this process: EmuTOS, or the user's ROM image.
  *
- *	starttos [-rom file | -P] [-c cartridge] [-e env | -C dir | -d disk] [-D L=dir] [-u dir | -U]
- *		[-m megabytes] [-M] [-S] [-v]
+ *	starttos [-rom file] [-c cartridge] [-e env [-b base] [-R] | -C dir | -i disk] [-d env]
+ *		[-D L=dir] [-u dir | -U] [-m megabytes] [-M] [-S] [-v]
+ *	starttos -d env | -l
  *
  * ST-RAM is a shared mapping at 0, the ROM file mapped read-only at its own
- * base, the machine-layer cartridge at $FA0000.  On an Atari, unless
- * -rom is given, and always with -P, the machine's own ROM runs in place,
- * read-only at $E00000, with Falcon registers.  Drives are host
+ * base, the machine-layer cartridge at $FA0000.  Drives are host
  * directories used with the caller's permissions: C:, the boot drive,
- * is ~/TOS (else /tos/sys, read-only) or, with -e, ~/TOS/env; U: is "/";
- * others come from /tos/sys/drives, ~/TOS/drives and -D.  -d makes C: a FAT image
+ * the environment's folder: ~/TOS for emutos, ~/TOS/env for the others,
+ * copied from /tos/sys (and /tos/xaaes for xaaes) at first use and with
+ * -R, keeping the user's other files.  A new name is a copy of base, by
+ * default the default.  Without -e it is the default, which -d sets; -l
+ * lists them.  U: is "/";
+ * others come from /tos/sys/drives, ~/TOS/drives and -D.  -i makes C: a FAT image
  * (512-byte sectors) instead.  One writable session per environment:
  * a second is refused.  A child process owns the display session:
  * it converts the TOS screen to the frame buffer and passes keyboard
  * and mouse to the IKBD.  The parent enters the ROM's reset code.
- * With -P the session owns the video hardware: TOS sets its own modes
- * and draws at the top of ST-RAM, which is the session's region.  Its
- * ST-RAM is fault-allocated in pages; DMA spans get contiguous backing.
- * -A contiguous uses one physical block instead.
  * -S keeps GEM on the ST screen: fVDI gets no frame buffer, for
  * programs that also write and read that screen themselves.  Files a -C
  * folder lacks, such as AUTO, come from the system's fVDI folder, so
  * it boots with fVDI unless -M or -S asks for the ST screen.
  * A second child, the sound pump, plays the guest's DMA sound on the
- * host's sound service; with -P the machine's own sound is used.  A
+ * host's sound service.  A
  * third, the spawner, runs the MiNT command-line programs the guest
  * starts as Unix processes under mintrun, each on a pseudo-terminal.
  */
@@ -47,33 +46,45 @@
 #include <pwd.h>
 #include "dsio.h"
 #include "tosio.h"
-#include "tosram.h"
 #include "tosfb.h"
+#include "hostcall.h"
 #include "../include/envroot.h"
 #include "../include/envmem.h"
 #include <stropts.h>
 
 #define	CART	0xfa0000
 #define	CARTSZ	0x20000
-#define	FROM	TOS_ROMBASE	/* a Falcon's ROM */
+#define	ALIAS	0xff000000
+#define	IOPG	0x1000
+
+/* the I/O pages, after the RAM in its object; each also at its 32-bit alias */
+static unsigned long iowin[] = { 0xff8000, 0xff9000, 0xfff000 };
+#define	NIO	(sizeof iowin / sizeof iowin[0])
 
 static char *rom = "/etc/tos/emutos.img";	/* the free TOS; -rom for the user's */
 static char *cart = "/etc/tos/tosml.img";
 static char *disk;
 static char *cdir;
-static char *env;
+static char *env, *ebase;
+static int refresh;
 static char *udir = "/";
 static char *xdrv[26];			/* -D */
 static char *tab[26];			/* drive -> host directory */
 static char tro[26];			/* read-only */
 static long ramsize = 4L << 20;
-static int mono, stscreen, verbose, pass, romarg, ramarg, cfold;
-static int ramcontig;
+static int mono, stscreen, verbose, cfold;
 static int tfd;
-static struct fbinfo hfi;		/* the host screen, for -P and 1-bit hosts */
-extern int fbpipe, vpass;
+static struct fbinfo hfi;		/* the host screen, for 1-bit hosts */
+extern int fbpipe;
+extern char *tos_nvram;
+extern unsigned long hc_stack[];
+int tos_bell = -1;			/* the sound pump's doorbell */
+unsigned long tos_romlo, tos_romsz;	/* the ROM, for the sound pump */
 
 extern void disp(), tossnd();
+extern int tos_patch();
+extern char etext;
+extern void _start();
 
 static void
 die(what)
@@ -264,9 +275,9 @@ drives()
 	sprintf(home, "%.1000s/TOS", h ? h : "/");
 	if (disk == 0 && cdir == 0) {
 		if (stat(home, &sb) == 0 && (sb.st_mode & S_IFMT) == S_IFDIR)
-			cdir = home;
+			cdir = strdup(home);
 		else {
-			fprintf(stderr, "starttos: no %s: drive C: is %s, read-only; run maketos for your own\n",
+			fprintf(stderr, "starttos: no %s: drive C: is %s, read-only\n",
 			    home, SYSDIR);
 			cdir = SYSDIR;
 			tro[2] = 1;
@@ -331,19 +342,6 @@ fbmap(fd)
 		return;
 	}
 	close(fd);
-	if (pass) {
-		/* the top of ST-RAM, where TOS keeps its screen, is the session's */
-		if (ioctl(rf.fd, FBIOGINFO, &fi) < 0 || fi.fi_size > (unsigned long)ramsize / 2 ||
-		    mmap((caddr_t)(ramsize - fi.fi_size), fi.fi_size, PROT_READ | PROT_WRITE | PROT_EXEC,
-		    MAP_SHARED | MAP_FIXED, rf.fd, 0) == (caddr_t)-1 ||
-		    ioctl(rf.fd, FBIOVIDEL, ramsize - fi.fi_size) < 0)
-			die("display");
-		hfi = fi;
-		close(rf.fd);
-		/* fVDI draws on the ROM's screen, in whatever mode TOS set */
-		put32((unsigned long)p, 1);
-		return;
-	}
 	/* a 1-bit screen: TOS on a monochrome monitor */
 	if (ioctl(rf.fd, FBIOGINFO, &fi) == 0 && fi.fi_depth == 1) {
 		mono = 1;
@@ -379,7 +377,7 @@ sndstart()
 	pid_t pid;
 
 	sd->sd_bell = -1;
-	if (pass || pipe(b) < 0)
+	if (pipe(b) < 0)
 		return;
 	if ((pid = fork()) == 0) {
 		close(b[1]);
@@ -392,7 +390,7 @@ sndstart()
 		return;
 	}
 	fcntl(b[1], F_SETFL, O_NDELAY);		/* full: the pump has been rung */
-	sd->sd_bell = b[1];
+	sd->sd_bell = tos_bell = b[1];
 }
 
 /* C: from the environment, locked for this session */
@@ -543,12 +541,58 @@ spawnstart()
 	put32((unsigned long)CART + 0x1080, (unsigned long)s[0]);
 }
 
+#define	XADIR	"/tos/xaaes"
+
+static char **
+tosenvs()
+{
+	static char *e[] = { "emutos", "xaaes", 0 };
+	struct stat sb;
+
+	if (stat(XADIR, &sb) < 0)
+		e[1] = 0;
+	return e;
+}
+
+static char *
+homedir()
+{
+	struct passwd *pw;
+	char *h = getenv("HOME");
+
+	if ((h == 0 || *h == 0) && (pw = getpwuid(getuid())) != 0)
+		h = pw->pw_dir;
+	return h;
+}
+
+/* environment id's C:, a copy of installed environment base; the metadata goes last */
+static int
+tosmake(id, base, path)
+	char *id, *base, *path;
+{
+	char x[1100];
+	int xa = strcmp(base, "xaaes") == 0;
+
+	/* the system's drive table stays the system's: ~/TOS/drives adds to it */
+	if (envcopy("starttos", "tos", xa ? (char *)0 : id, base, SYSDIR, path,
+	    "grep -v '^./drives$' |") < 0)
+		return -1;
+	if (xa) {
+		sprintf(x, "%.1000s/CLIPBRD", path);
+		if ((mkdir(x, 0755) < 0 && errno != EEXIST) ||
+		    envcopy("starttos", "tos", id, base, XADIR, path, (char *)0) < 0)
+			return -1;
+	}
+	fprintf(stderr, "starttos: %s is drive C: of %s\n", path, id);
+	return 0;
+}
+
 static int
 envsetup()
 {
-	char path[1024], *h;
-	struct passwd *pw;
+	char path[1024], meta[1100], *h, *id, *b;
 	struct stat sb;
+	int made;
 
 	if (cdir && (stat(cdir, &sb) < 0 || (sb.st_mode & S_IFMT) != S_IFDIR)) {
 		fprintf(stderr, "starttos: %s: no such folder\n", cdir);
@@ -556,23 +600,22 @@ envsetup()
 	}
 	if (disk || cdir)
 		return 0;
-	h = getenv("HOME");
-	if ((h == 0 || *h == 0) && (pw = getpwuid(getuid())) != 0)
-		h = pw->pw_dir;
-	if (envroot("tos", env, h, path, sizeof path) < 0) {
-		if (env == 0)
-			return 0;
-		fprintf(stderr, "starttos: %s: not an environment name\n", env);
+	h = homedir();
+	id = envchoose("tos", env, h, "emutos");
+	if ((b = envbase("starttos", "tos", id, ebase, h, "emutos", tosenvs())) == 0 ||
+	    envhome("tos", id, "emutos", h, path, sizeof path) < 0 ||
+	    envmeta("tos", path, meta, sizeof meta) < 0)
 		return -1;
-	}
-	if (stat(path, &sb) < 0 || (sb.st_mode & S_IFMT) != S_IFDIR) {
-		if (env == 0 || strcmp(env, "default") == 0)
-			return 0;
-		fprintf(stderr, "starttos: no environment %s; run maketos -e %s\n", env, env);
+	/* an interrupted copy has no metadata yet and is redone */
+	if (!(made = stat(meta, &sb) == 0) && tosmake(id, b, path) < 0) {
+		if (strcmp(id, "emutos") == 0)
+			return 0;	/* C: is the system's, read-only */
 		return -1;
 	}
 	cdir = strdup(path);
-	return envlock("starttos", "tos", cdir) == -1 ? -1 : 0;
+	if (envlock("starttos", "tos", cdir) == -1)
+		return -1;
+	return made && refresh ? tosmake(id, b, path) : 0;
 }
 
 static void
@@ -581,12 +624,29 @@ nothing(sig)
 {
 }
 
+/* what the chips read as, for good: no interrupt asserted, nothing received, nothing busy */
+static void
+iopage()
+{
+	unsigned char *io = (unsigned char *)0xff0000L;
+
+	io[0xfa01] = mono ? 0x7f : 0xff;	/* MFP GPIP: bit 7 the monitor */
+	io[0xfa2d] = 0x80;			/* USART transmitter empty */
+	io[0xfc00] = io[0xfc04] = 2;		/* ACIAs: transmitter empty */
+	io[0x8e09] = 1;				/* memory configured: warm boot */
+	io[0x9200] = 0x40;			/* DIP switches */
+	io[0x9201] = 0xff;
+	io[0x8607] = 1;				/* DMA: no error */
+	io[0x8260] = mono ? 2 : 0;
+	io[0x8262] = !mono ? 4 : hfi.fi_width >= 1280 && hfi.fi_height >= 960 ? 6 : 2;
+}
+
 int
 main(argc, argv)
 	int argc;
 	char **argv;
 {
-	char rbuf[16];
+	char rbuf[16], *def = 0;
 	struct tosenter te;
 	struct tosowner to;
 	struct sigaction sa;
@@ -597,15 +657,21 @@ main(argc, argv)
 	for (c = 1; c < argc; c++)
 		if (strcmp(argv[c], "-rom") == 0)
 			argv[c] = "-r";
-		else if (argv[c][0] == '-' && strchr("rcCdDemu", argv[c][1]) && argv[c][2] == 0)
+		else if (argv[c][0] == '-' && strchr("rcCdiDebmu", argv[c][1]) && argv[c][2] == 0)
 			c++;		/* skip the option's argument */
-	while ((c = getopt(argc, argv, "r:c:C:d:D:e:u:Um:MPSvA:")) != -1)
+	while ((c = getopt(argc, argv, "r:c:C:d:i:D:e:b:Rlu:Um:MSv")) != -1)
 		switch (c) {
-		case 'r': rom = optarg; romarg = 1; break;
+		case 'r': rom = optarg; break;
 		case 'c': cart = optarg; break;
 		case 'C': cdir = optarg; disk = 0; cfold = 1; break;
-		case 'd': disk = optarg; cdir = 0; cfold = 0; break;
+		case 'i': disk = optarg; cdir = 0; cfold = 0; break;
+		case 'd': def = optarg; break;
 		case 'e': env = optarg; break;
+		case 'b': ebase = optarg; break;
+		case 'R': refresh = 1; break;
+		case 'l':
+			envlist("tos", homedir(), "emutos", tosenvs());
+			return 0;
 		case 'D':
 			c = optarg[0] & ~040;
 			if (c < 'D' || c > 'T' || optarg[1] != '=') {
@@ -616,28 +682,24 @@ main(argc, argv)
 			break;
 		case 'u': udir = optarg; break;
 		case 'U': udir = 0; break;
-		case 'A':
-			if (!strcmp(optarg, "contiguous"))
-				ramcontig = 1;
-			else if (!strcmp(optarg, "paged"))
-				ramcontig = 0;
-			else {
-				fprintf(stderr, "starttos: -A is paged or contiguous\n");
-				return 2;
-			}
-			break;
-		case 'm': ramsize = atol(optarg) << 20; ramarg = 1; break;
+		case 'm': ramsize = atol(optarg) << 20; break;
 		case 'M': mono = 1; break;
-		case 'P': pass = 1; break;
 		case 'S': stscreen = 1; break;
 		case 'v': verbose = 1; break;
 		default:
-			fprintf(stderr, "usage: starttos [-rom file | -P] [-c cartridge] [-e env | -C dir | -d disk] [-D L=dir] [-u dir | -U] [-m MB] [-A paged|contiguous] [-M] [-S] [-v]\n");
+			fprintf(stderr, "usage: starttos [-rom file] [-c cartridge] [-e env [-b base] [-R] | -C dir | -i disk] [-d env] [-D L=dir] [-u dir | -U] [-m MB] [-M] [-S] [-v]\n"
+			    "       starttos -d env | -l\n");
 			return 2;
 		}
-	if (env && (cdir || disk)) {
-		fprintf(stderr, "starttos: -e, -C and -d exclude each other\n");
+	if ((env || ebase || refresh) && (cdir || disk)) {
+		fprintf(stderr, "starttos: -e, -C and -i exclude each other\n");
 		return 2;
+	}
+	if (def) {
+		if (envsetdefault("starttos", "tos", homedir(), def) < 0)
+			return 1;
+		if (env == 0 && cdir == 0 && disk == 0)
+			return 0;
 	}
 	if (ramsize < (1L << 20) || ramsize > (14L << 20)) {
 		fprintf(stderr, "starttos: ST-RAM is 1 to 14 MB\n");
@@ -656,62 +718,43 @@ main(argc, argv)
 		return 1;
 	}
 
-	/* the machine's own ROM, in place: asked for with -P, else unless -rom */
-	if (pass || !romarg) {
-		if ((c = ioctl(tfd, TOSIOC_MAPROM, 0)) > 0)
-			pass = 1;
-		else if (pass)
-			die("the machine's ROM");
-	}
-	if (pass) {
-		rom = "the ROM";
-		memcpy(rbuf, (char *)FROM, 16);
-		n = c;
-	} else
-		n = romopen(rom, rbuf);
+	n = romopen(rom, rbuf);
 	base = get32((unsigned char *)rbuf + 8);
 	pc = get32((unsigned char *)rbuf + 4);
-	if ((base != 0xe00000 && base != 0xfc0000) || pc < base || pc >= base + n ||
-	    (pass && base != FROM)) {
+	if ((base != 0xe00000 && base != 0xfc0000) || pc < base || pc >= base + n) {
 		fprintf(stderr, "starttos: %s: not a TOS image\n", rom);
 		return 1;
 	}
-	if (pass) {
-		if (tos_ramalloc(tfd, &ramsize, ramarg,
-		    ramcontig ? TOSIOC_STRAM : TOSIOC_RAM) < 0) {
-			if (errno != ENOMEM)
-				die("ST-RAM");
-			if (ramarg)
-				fprintf(stderr, "starttos: no %ld MB of %sST-RAM free; -m asks for less\n",
-				    ramsize >> 20, ramcontig ? "contiguous " : "");
-			else
-				fprintf(stderr, "starttos: no %sST-RAM free\n",
-				    ramcontig ? "contiguous " : "");
-			return 1;
-		}
-		if (!ramarg && ramsize < (4L << 20))
-			fprintf(stderr, "starttos: using %ld MB of ST-RAM (4 MB default unavailable)\n",
-			    ramsize >> 20);
-		if (verbose)
-			fprintf(stderr, "starttos: %ld MB %s ST-RAM\n",
-			    ramsize >> 20, ramcontig ? "contiguous" : "paged");
-		if (envmem_region(0, (unsigned long)ramsize, 1, tfd) < 0)
-			die("ST-RAM");
-	} else
-		region(0L, (unsigned long)ramsize, 1);
-	if (!pass) {
-		/* a file's pages stay in the page cache, shared by sessions */
-		if (romtmp) {
-			region(base, (n + 0xfff) & ~0xfffL, 0);
-			memcpy((char *)base, romtmp, n);
-			free(romtmp);
-			if (mprotect((caddr_t)base, (n + 0xfff) & ~0xfffL, PROT_READ | PROT_EXEC) < 0)
-				die("mprotect");
-		} else if (mmap((caddr_t)base, (n + 0xfff) & ~0xfffL, PROT_READ | PROT_EXEC,
-		    MAP_PRIVATE | MAP_FIXED, romfd, 0) == (caddr_t)-1)
-			die(rom);
-		close(romfd);
-	}
+	/* ST-RAM at 0 and at its 24-bit alias */
+	/* the I/O pages, then a spare the module maps for a write to them */
+	if (ioctl(tfd, TOSIOC_RAM, ramsize + (NIO + 1) * IOPG) < 0 ||
+	    mmap((caddr_t)0, ramsize, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_SHARED | MAP_FIXED,
+	    tfd, (off_t)0) == (caddr_t)-1 ||
+	    mmap((caddr_t)ALIAS, ramsize, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_SHARED | MAP_FIXED,
+	    tfd, (off_t)0) == (caddr_t)-1)
+		die("guest memory");
+	/* the module maps the last page's alias: no mapping can end at 2^32 */
+	for (c = 0; c < NIO; c++)
+		if (mmap((caddr_t)iowin[c], IOPG, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, tfd,
+		    (off_t)(ramsize + c * IOPG)) == (caddr_t)-1 ||
+		    (c < NIO - 1 && mmap((caddr_t)(ALIAS | iowin[c]), IOPG, PROT_READ | PROT_WRITE,
+		    MAP_SHARED | MAP_FIXED, tfd, (off_t)(ramsize + c * IOPG)) == (caddr_t)-1))
+			die("I/O pages");
+	/* a file's pages stay in the page cache, shared by sessions */
+	if (romtmp) {
+		region(base, (n + 0xfff) & ~0xfffL, 0);
+		memcpy((char *)base, romtmp, n);
+		free(romtmp);
+	} else if (mmap((caddr_t)base, (n + 0xfff) & ~0xfffL, PROT_READ | PROT_WRITE | PROT_EXEC,
+	    MAP_PRIVATE | MAP_FIXED, romfd, 0) == (caddr_t)-1)
+		die(rom);
+	close(romfd);
+	tos_romlo = base;
+	tos_romsz = n;
+	if (tos_patch(base, n, (unsigned long)ramsize, tfd) < 0)
+		return 1;
+	if (mprotect((caddr_t)base, (n + 0xfff) & ~0xfffL, PROT_READ | PROT_EXEC) < 0)
+		die("mprotect");
 	/* shared: the display process posts input in its last page */
 	region((unsigned long)CART, (unsigned long)CARTSZ, 1);
 	(void)readall(cart, (char *)CART, TOSPV - CART);
@@ -719,6 +762,8 @@ main(argc, argv)
 	if (disk)
 		drivec();
 	drives();
+	if (cdir && !tro[2] && (tos_nvram = malloc(strlen(cdir) + 8)) != 0)
+		sprintf(tos_nvram, "%s/.nvram", cdir);
 	spawnstart();
 
 	/* warm-boot system variables: TOS skips memory sizing */
@@ -738,7 +783,6 @@ main(argc, argv)
 	if (pid == 0) {
 		close(pfd[0]);
 		fbpipe = pfd[1];
-		vpass = pass;
 		disp(tfd, verbose, (unsigned long)ramsize);
 		_exit(0);
 	}
@@ -751,12 +795,21 @@ main(argc, argv)
 	sigaction(TOS_SIG, &sa, (struct sigaction *)0);
 	/* a guest's send on a reset connection fails instead of ending the session */
 	signal(SIGPIPE, SIG_IGN);
+	iopage();
+	for (c = 0; c < NIO; c++)
+		if (mprotect((caddr_t)iowin[c], IOPG, PROT_READ) < 0 ||
+		    (c < NIO - 1 && mprotect((caddr_t)(ALIAS | iowin[c]), IOPG, PROT_READ) < 0))
+			die("I/O pages");
 	memset((char *)&te, 0, sizeof te);
 	te.te_ramsize = ramsize;
 	te.te_w = hfi.fi_width;
 	te.te_h = hfi.fi_height;
 	te.te_depth = hfi.fi_depth;
-	te.te_flags = (mono ? TEF_MONO : 0) | (pass ? TEF_FALCON : 0);
+	te.te_flags = mono ? TEF_MONO : 0;
+	te.te_hostlo = (unsigned long)_start;
+	te.te_hosthi = (unsigned long)&etext;
+	te.te_stklo = (unsigned long)hc_stack;
+	te.te_stkhi = (unsigned long)(hc_stack + HC_NSTACK);
 	if (ioctl(tfd, TOSIOC_ENTER, &te) < 0)
 		die("TOSIOC_ENTER");
 	__asm__ __volatile__("mov.l %0,%%sp\n\tjmp (%1)" : : "d" (0x8000L), "a" (pc));

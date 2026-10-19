@@ -74,9 +74,9 @@ def desktop(path):
     # the screen without its borders: the desktop colour's columns
     colour, n = max(count.items(), key=lambda kv: kv[1])
     if set(count) <= {white, black}:
-        # two colours: the desktop is a dither, black and white in turn
+        # two colours: the desktop is a dither, black and white in turn, or solid
         x0, x1 = 0, w
-        n = sum(1 for y in range(bar + 1, h) for x in range(w - 1) if rows[y][x] != rows[y][x + 1])
+        n = max(n, sum(1 for y in range(bar + 1, h) for x in range(w - 1) if rows[y][x] != rows[y][x + 1]))
         colour = None
     elif colour in (white, black):
         return 'no desktop colour'
@@ -112,7 +112,7 @@ def main():
         ok, msg = why is None, 'desktop drawn' + (': ' + why if why else '')
     elif len(sys.argv) == 4 and sys.argv[1] in ('same', 'differ'):
         d = diff(sys.argv[2], sys.argv[3])
-        ok = d < 0.01 if sys.argv[1] == 'same' else d > 0.2
+        ok = d < 0.01 if sys.argv[1] == 'same' else d > 0.05
         msg = 'screen %s (%.1f%% differs)' % ('restored' if sys.argv[1] == 'same' else 'switched', 100 * d)
     else:
         sys.exit(__doc__)

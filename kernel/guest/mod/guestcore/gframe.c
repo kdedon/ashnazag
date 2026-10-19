@@ -38,7 +38,8 @@ guest_bfault(r, fa, ssw)
 	if (fmt == 4) {
 		*fa = G32(f + 8);
 		s = G16(f + 12);	/* FSLW 31-16: RW 24-23, size 22-21, TT/TM 20-16 */
-		*ssw = (s & 0x100) | sz060[s >> 5 & 3] | (s & 0x1f);
+		/* RW 11, a read-modify-write (bset on a read-only page), is a write */
+		*ssw = ((s & 0x180) == 0x100 ? 0x100 : 0) | sz060[s >> 5 & 3] | (s & 0x1f);
 		return (G16(f + 14) & 0x8000) != 0;
 	}
 	if (fmt != 0xa && fmt != 0xb)

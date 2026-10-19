@@ -8,7 +8,8 @@
 #       entry at mac_entry, for bootinfo loaders).  For A/UX
 #       Startup, boot/mkcoff.sh wraps the ELF as build/unix-mac.coff.
 #
-# Drivers: SCC tty (console), 53C96 SCSI (sd.h layer), RAM disk (root
+# Drivers: SCC tty (console), SCSI glue (sd.h layer; the 53C96 is the
+# ncr96 module), RAM disk (root
 # image from ramdisk/build/root.img when present), SONIC Ethernet (DLPI,
 # cdevsw[18]), display service (cdevsw[51-53]).  devtab/ replaces the
 # device switches and picks the disk root.
@@ -76,7 +77,8 @@ OBJS="$OBJS $W/display/ds.o"
 
 echo "[*] loadable modules: loader, system calls 64..69, kernel symbol table"
 sh "$K/dlm/build.sh" -k "$W/dlm"
-OBJS="$OBJS $W/dlm/dlm.o"
+OBJS="$OBJS $W/dlm/dlm.o $W/dlm/dlm_sd.o"
+[ -n "$AMIX_DIAG_CFLAGS" ] || OBJS="$OBJS $W/dlm/dlm_root.o"	# diag.c wraps the root mount itself
 
 echo "[*] guest processes: shims, hook table, vector gates"
 sh "$K/guest/build.sh" -k "$BASE" "$W/guest"
@@ -114,12 +116,12 @@ ramopen ramclose ramstrategy ramprint ramsize
 config_orig
 dmainit
 ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig
-clkset stime mdboot memialloc $VTOP $PTALLOC"
+clkset stime mdboot memialloc vfs_getvfssw vfs_mountroot $VTOP $PTALLOC"
 # Amiga data replaced: the console streamtab named by cdevsw[0] and oncons(),
-# the device switches and io_start[].
-OVRD="coinfo cdevsw bdevsw io_start execsw fmodsw"
+# the device switches, io_start[] and the module-extended switches.
+OVRD="coinfo cdevsw bdevsw io_start execsw fmodsw vfssw architecture"
 # Stock bodies kept under __amix_<name>: the wrappers and dlm_init call them.
-ALIAS="sendsig:T valid_usr_range:T fsig:T execsw:D stime:T fmodsw:D memialloc:T"
+ALIAS="sendsig:T valid_usr_range:T fsig:T execsw:D stime:T fmodsw:D memialloc:T vfssw:D vfs_getvfssw:T vfs_mountroot:T"
 [ $MODE = port ] && OVR="$OVR sysseginit" ALIAS="$ALIAS sysseginit:T"
 [ -n "$PTALLOC" ] && ALIAS="$ALIAS hat_ptalloc:T" GLOB=freemem_wait
 
@@ -142,8 +144,8 @@ if [ -n "$AMIX_DIAG_CFLAGS" ]; then
 		-o "$W/diag.o"
 	m68k-cbm-sysv4-gcc -m68040 -c "$MAC/bootdiag/diagvec.s" -o "$W/diagvec.o"
 	OBJS="$OBJS $W/diag.o $W/diagvec.o"
-	OVR="$OVR vfs_mountroot swapconf exece fpuinit idle"
-	ALIAS="$ALIAS vfs_mountroot:T swapconf:T exece:T fpuinit:T"
+	OVR="$OVR swapconf exece fpuinit idle"
+	ALIAS="$ALIAS swapconf:T exece:T fpuinit:T"
 fi
 
 echo "[*] weakening the Amiga platform entry points"
@@ -172,10 +174,14 @@ done
 off=$(m68k-linux-gnu-nm "$BASE" | awk '$3=="kvm_init" && $2=="t"{print $1}')
 [ -n "$off" ] || { echo "[FAIL] no kvm_init"; exit 1; }
 WEAK="$WEAK --add-symbol __amix_kvm_init=.text:0x$off,function,global"
+# anonymous memory reserved against RAM plus swap
+WEAK="$WEAK $(sh "$K/vm/build.sh" "$BASE" "$W")"
+OBJS="$OBJS $W/vm.o"
 m68k-linux-gnu-objcopy $WEAK "$BASE" "$W/base.weak"
 python3 "$MAC/patch_s5pages.py" "$W/base.weak"
 [ $MODE = stock ] || python3 "$MAC/vtop/patch_vtop.py" "$W/base.weak"
 [ $MODE = stock ] || python3 "$MAC/patch_kvmpages.py" "$W/base.weak"
+python3 "$K/vm/patch_closef.py" "$W/base.weak"
 
 # The switches must keep the base sizes: shadowcsw/shadowbsw and the
 # counts come from the base.
@@ -227,6 +233,7 @@ m68k-elf-ld -T "$MAC/mac.ld" -Map "$OUT.map" -o "$OUT.elf" "$OUT"
 python3 "$MAC/patch_s5pages.py" -c "$OUT.elf"
 [ $MODE = stock ] || python3 "$MAC/vtop/patch_vtop.py" -c "$OUT.elf"
 [ $MODE = stock ] || python3 "$MAC/patch_kvmpages.py" -c "$OUT.elf"
+python3 "$K/vm/patch_closef.py" -c "$OUT.elf"
 
 echo "[*] kernel symbol table into dlm_ksym"
 "$W/dlm/mkksym" "$OUT.elf"
@@ -234,4 +241,5 @@ echo "[*] kernel symbol table into dlm_ksym"
 m68k-elf-readelf -h "$OUT.elf" | grep -E 'Type|Entry'
 m68k-elf-size "$OUT.elf"
 sh "$MAC/sound/mods.sh" "$OUT.elf" "$W/sound"
+[ -n "$AMIX_DIAG_CFLAGS" ] || sh "$MAC/scsi/mods.sh" "$OUT.elf" "$W/scsi"
 echo "[OK] built $OUT and $OUT.elf"

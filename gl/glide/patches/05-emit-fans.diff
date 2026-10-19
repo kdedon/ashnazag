@@ -1,0 +1,43 @@
+--- a/gstrip.c
++++ b/gstrip.c
+@@ -289,5 +289,39 @@
+ 
+ #endif
+ 
++#if defined(GLIDE3) && defined(GLIDE_USE_C_TRISETUP)
++/* nfan separate fans of nv vertices each, which emit() writes straight
++ * into the fifo: emit(arg, fifo, first, n, hdr) stores fans
++ * first..first+n-1, each as the packet header hdr and its vertices as for
++ * grDrawEmit, and returns the next fifo word.
++ */
++void
++grDrawEmitFans(FxI32 nfan, FxI32 nv,
++               FxU32 *(*emit)(void *, FxU32 *, FxI32, FxI32, FxU32), void *arg)
++{
++#define FN_NAME "grDrawEmitFans"
++  FxU32 vSize, hdr;
++  FxI32 first = 0;
+ 
+-
++  GR_BEGIN_NOFIFOCHECK(FN_NAME, 90);
++  GR_FLUSH_STATE();
++  vSize = gc->state.vData.vSize;
++  hdr = (kSetupFan << SSTCP_PKT3_SMODE_SHIFT) |
++    (nv << SSTCP_PKT3_NUMVERTEX_SHIFT) | SSTCP_PKT3_BDDDDD |
++    gc->cmdTransportInfo.cullStripHdr;
++  while (nfan > 0) {
++    FxI32 n = nfan >= 16 ? 16 : nfan;
++    GR_SET_EXPECTED_SIZE(n * nv * vSize, n);
++    if (gc->contextP) {
++      FxU32 *p = (*emit)(arg, gc->cmdTransportInfo.fifoPtr, first, n, hdr);
++      gc->cmdTransportInfo.fifoRoom -= (FxU32)p - (FxU32)gc->cmdTransportInfo.fifoPtr;
++      gc->cmdTransportInfo.fifoPtr = p;
++    }
++    GR_INC_SIZE(n * nv * vSize);
++    GR_CHECK_SIZE();
++    first += n;
++    nfan -= n;
++  }
++#undef FN_NAME
++}
++#endif

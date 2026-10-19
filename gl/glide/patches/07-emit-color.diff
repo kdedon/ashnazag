@@ -1,0 +1,48 @@
+--- a/gstrip.c
++++ b/gstrip.c
+@@ -129,6 +129,45 @@
+ #include "fxglide.h"
+ #include "fxcmd.h"
+ 
++#if defined(GLIDE3) && defined(GLIDE_USE_C_TRISETUP)
++/* As grDrawEmitFans, with room for a constant colour write before each fan:
++ * grColor0Hdr() then the colour.
++ */
++void
++grDrawEmitFansC(FxI32 nfan, FxI32 nv,
++                FxU32 *(*emit)(void *, FxU32 *, FxI32, FxI32, FxU32), void *arg)
++{
++#define FN_NAME "grDrawEmitFansC"
++  FxU32 vSize, hdr;
++  FxI32 first = 0;
++
++  GR_BEGIN_NOFIFOCHECK(FN_NAME, 90);
++  GR_FLUSH_STATE();
++  vSize = gc->state.vData.vSize;
++  hdr = (kSetupFan << SSTCP_PKT3_SMODE_SHIFT) |
++    (nv << SSTCP_PKT3_NUMVERTEX_SHIFT) | SSTCP_PKT3_BDDDDD |
++    gc->cmdTransportInfo.cullStripHdr;
++  while (nfan > 0) {
++    FxI32 n = nfan >= 16 ? 16 : nfan;
++    GR_SET_EXPECTED_SIZE(n * (nv * vSize + 4), 2 * n);
++    if (gc->contextP) {
++      FxU32 *p = (*emit)(arg, gc->cmdTransportInfo.fifoPtr, first, n, hdr);
++      gc->cmdTransportInfo.fifoRoom -= (FxU32)p - (FxU32)gc->cmdTransportInfo.fifoPtr;
++      gc->cmdTransportInfo.fifoPtr = p;
++    }
++    first += n;
++    nfan -= n;
++  }
++#undef FN_NAME
++}
++
++FxU32
++grColor0Hdr(void)
++{
++  return (0x1 << SSTCP_PKT4_MASK_SHIFT) | FIFO_REG(BROADCAST_ID, c0) | SSTCP_PKT4;
++}
++#endif
++
+ #ifdef GLIDE_USE_C_TRISETUP
+ /*-------------------------------------------------------------------
+   Function: _grDrawVertexList

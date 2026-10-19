@@ -4,11 +4,17 @@
  *
  * dlmta exports dlmta_value (1000) and dlmta_add(); dlmtb depends on it
  * and its _load adds 234.  Loaded values are read back through getksym
- * and /dev/kmem.  Skips when the kernel has no module support.
+ * and /dev/kmem.  dlmtf is a filesystem type that its first mount
+ * loads.  dlmtn is too large to load; dlmth and dlmtk exercise sleeping kmem_alloc.  Skips
+ * when the kernel has no module support.
  */
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
+#include <sys/statvfs.h>
+#include <sys/mount.h>
+#include <sys/fstyp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -63,6 +69,8 @@ char *name;
 	return a ? kread(a) : -1;
 }
 
+static int	resident;	/* a module that never unloads is in */
+
 static int
 nloaded()
 {
@@ -70,7 +78,11 @@ nloaded()
 	int n = 0, id = 1;
 
 	while (modstat(id, &st, 1) == 0) {
-		n++;
+		/* the disk controller loads with the first disk and stays */
+		if (strcmp(st.ms_name, "ncr96") != 0)
+			n++;
+		else
+			resident = 1;
 		id = st.ms_id + 1;
 	}
 	return n;
@@ -190,7 +202,7 @@ test_load()
 	    kval("dlmta_loads") == 1 && nloaded() == 2, "%s: dlmta_value %ld",
 	    T_ERR, kval("dlmta_value"));
 	t_check("unload_all", moduload(0) == 0 && nloaded() == 0, "%d left", nloaded());
-	t_check("unload_all_none", E(moduload(0)) == EINVAL, "%s", T_ERR);
+	t_check("unload_all_none", E(moduload(0)) == (resident ? EBUSY : EINVAL), "%s", T_ERR);
 }
 
 static void
@@ -229,6 +241,69 @@ test_errors()
 	t_check("modadm_badtype", E(modadm(99, MOD_C_MREG, (caddr_t)&reg)) == EINVAL, "%s", T_ERR);
 	moduload(0);
 	t_check("errors_clean", nloaded() == 0, "%d loaded", nloaded());
+}
+
+/*
+ * With the heap grown and nearly full, new vnodes come from the last
+ * heap chunk, high above the fixed arena; closing them must not panic.
+ */
+static void
+test_heap_vnodes()
+{
+	int p[40], k, n;
+
+	for (n = 0; n < 20 && pipe(p + 2 * n) == 0; n++)
+		;
+	for (k = 0; k < 2 * n; k++)
+		close(p[k]);
+	t_check("heap_vnodes", n > 0, "%s", T_ERR);
+}
+
+/*
+ * A module image too large for the loader fails with ENOMEM; a sleeping
+ * kmem_alloc that must wait for dlmth's memory gets it once dlmth unloads.
+ */
+static void
+test_heap()
+{
+	pid_t pid, r;
+	int id, st, e, waited, p[2];
+	char c;
+
+	e = E(modload(MD "dlmtn"));
+	t_check("heap_impossible", e == ENOMEM, "errno %d", e);
+	/* the child exists before memory runs short */
+	if (pipe(p) < 0 || (pid = fork()) < 0) {
+		t_fail("heap_hog", "%s", T_ERR);
+		return;
+	}
+	if (pid == 0) {
+		close(p[1]);
+		read(p[0], &c, 1);
+		_exit(modload(MD "dlmtk") > 0 ? 0 : errno);
+	}
+	close(p[0]);
+	id = modload(MD "dlmth");
+	t_check("heap_hog", id > 0, "%s", T_ERR);
+	t_info("heap_hog", "%ld pieces", kval("dlmth_n"));
+	if (id > 0)
+		test_heap_vnodes();
+	write(p[1], "g", 1);
+	close(p[1]);
+	sleep(3);
+	r = waitpid(pid, &st, WNOHANG);
+	waited = r == 0;
+	if (id > 0)
+		moduload(id);
+	t_rearm(60);
+	if (waited)
+		r = t_waitchild(pid, &st, 30);
+	t_check("heap_wait_wakes", r == pid && WIFEXITED(st) && WEXITSTATUS(st) == 0,
+	    "status %#x", st);
+	t_info("heap_wait_wakes", "%s, %ld ticks", waited ? "waited" : "no wait",
+	    kval("dlmtk_ticks"));
+	moduload(0);
+	t_check("heap_clean", nloaded() == 0, "%d loaded", nloaded());
 }
 
 /* a non-root child: EPERM for all but getksym */
@@ -291,6 +366,85 @@ test_modadmin()
 	t_check("modadmin_unload", admin("-U", "dlmta") == 0 && nloaded() == 0, "");
 }
 
+/* id of the loaded module name, -1 if none */
+static int
+modid(name)
+char *name;
+{
+	struct modstatus st;
+	int id = 1;
+
+	while (modstat(id, &st, 1) == 0) {
+		if (strcmp(st.ms_name, name) == 0)
+			return st.ms_id;
+		id = st.ms_id + 1;
+	}
+	return -1;
+}
+
+#define	MNT	"/tmp/dlmtf"
+
+static void
+test_fs()
+{
+	struct modstatus st;
+	struct statvfs sv;
+	struct stat s0, s1;
+	int id, e;
+
+	modpath("/tests/mod.d");
+	mkdir(MNT, 0755);
+	t_check("fs_not_loaded", nloaded() == 0 && sysfs(GETFSIND, "dlmtf") < 0,
+	    "%d loaded", nloaded());
+	e = E(mount("none", MNT, MS_DATA | MS_RDONLY, "dlmtf", (char *)0, 0));
+	if (!t_check("fs_mount_loads", e == 0 && (id = modid("dlmtf")) > 0,
+	    "%s", strerror(e)))
+		return;
+	t_check("fs_type", modstat(id, &st, 0) == 0 &&
+	    st.ms_msinfo[0].mss_type == MOD_TY_FS &&
+	    st.ms_msinfo[0].mss_p0[0] == sysfs(GETFSIND, "dlmtf"),
+	    "type %d row %d index %d", st.ms_msinfo[0].mss_type,
+	    st.ms_msinfo[0].mss_p0[0], sysfs(GETFSIND, "dlmtf"));
+	t_check("fs_mounted", statvfs(MNT, &sv) == 0 &&
+	    strcmp(sv.f_basetype, "dlmtf") == 0 && stat("/tmp", &s0) == 0 &&
+	    stat(MNT, &s1) == 0 && s1.st_dev != s0.st_dev && S_ISDIR(s1.st_mode),
+	    "%s: type '%s'", T_ERR, sv.f_basetype);
+	t_check("fs_unload_busy", E(moduload(id)) == EBUSY, "%s", T_ERR);
+	mkdir(MNT "2", 0755);
+	t_check("fs_mount_twice", E(mount("none", MNT "2", MS_DATA, "dlmtf",
+	    (char *)0, 0)) == EBUSY, "%s", T_ERR);
+	rmdir(MNT "2");
+	t_check("fs_umount", umount(MNT) == 0, "%s", T_ERR);
+	t_check("fs_unload", moduload(id) == 0 && nloaded() == 0 &&
+	    sysfs(GETFSIND, "dlmtf") < 0, "%s", T_ERR);
+	t_check("fs_unknown", E(mount("none", MNT, MS_DATA, "dlmtnone", (char *)0, 0)) ==
+	    EINVAL && nloaded() == 0, "%s", T_ERR);
+	t_check("fs_remount_loads", mount("none", MNT, MS_DATA, "dlmtf", (char *)0, 0) == 0 &&
+	    umount(MNT) == 0 && moduload(0) == 0 && nloaded() == 0, "%s", T_ERR);
+	rmdir(MNT);
+}
+
+/* cdfs loads on a mount whose device it then refuses */
+static void
+test_cdfs()
+{
+	struct stat s;
+	int id, e;
+
+	if (stat("/tests/mod.d/cdfs", &s) < 0) {
+		t_skip("cdfs", "no cdfs module");
+		return;
+	}
+	modpath("/tests/mod.d");
+	mkdir(MNT, 0755);
+	e = E(mount("none", MNT, MS_DATA | MS_RDONLY, "cdfs", (char *)0, 0));
+	t_check("cdfs_loads", e == EINVAL && (id = modid("cdfs")) > 0 &&
+	    sysfs(GETFSIND, "cdfs") > 0, "%s", strerror(e));
+	t_check("cdfs_unload", moduload(0) == 0 && nloaded() == 0 &&
+	    sysfs(GETFSIND, "cdfs") < 0, "%d loaded", nloaded());
+	rmdir(MNT);
+}
+
 int
 main()
 {
@@ -303,8 +457,11 @@ main()
 	test_getksym();
 	test_load();
 	test_errors();
+	test_heap();
 	test_perm();
 	test_modadmin();
+	test_fs();
+	test_cdfs();
 	moduload(0);
 	modpath((char *)0);
 	return t_done();

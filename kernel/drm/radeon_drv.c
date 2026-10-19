@@ -48,6 +48,11 @@
 #define DRIVER_AMIX_MAPS(dev)	radeon_amix_init(dev)
 static void radeon_amix_idle(drm_device_t *dev);
 static void radeon_amix_init(drm_device_t *dev);
+#define DRIVER_AMIX_KEEP(dev, lo, hi)	radeon_amix_keep(dev, lo, hi)
+#define DRIVER_AMIX_RESTORE(dev)	radeon_amix_retex(dev)
+#define DRIVER_AMIX_TEXTOP(dev)	radeon_amix_back
+static void radeon_amix_keep(drm_device_t *dev, unsigned long *lo, unsigned long *hi);
+static void radeon_amix_retex(drm_device_t *dev);
 #endif
 
 drm_chipinfo_t DRM(devicelist)[] = {
@@ -114,6 +119,7 @@ drm_chipinfo_t DRM(devicelist)[] = {
 #endif
 
 #ifdef __AMIX__
+static unsigned long radeon_amix_back, radeon_amix_depth;
 #include "drm_amix.h"
 #include "drm_sarea.h"
 #include "radeon_amix.h"
@@ -129,7 +135,6 @@ extern unsigned long rd_aper, rd_fbsize;
 /* the shown frame, from the display backend; 0 bits: none yet */
 static unsigned long radeon_amix_shown, radeon_amix_pitch;
 static int radeon_amix_bits;
-static unsigned long radeon_amix_back, radeon_amix_depth;
 
 static int
 radeon_amix_family(int id)
@@ -195,6 +200,54 @@ radeon_amix_retarget(unsigned long shown, int bits, unsigned long pitch)
 	DRM(amix_front)();
 }
 
+/* back and depth, then the CP's ring, status and buffers when in VRAM */
+static void
+radeon_amix_keep(drm_device_t *dev, unsigned long *lo, unsigned long *hi)
+{
+	radeon_amix_layout_t *lp;
+
+	if (dev->lock.hw_lock == NULL)
+		return;
+	lp = (radeon_amix_layout_t *)((char *)dev->lock.hw_lock + RADEON_AMIX_LAYOUT);
+	if (lp->backSize == 0)
+		return;
+	*lo = lp->backOffset;
+	*hi = DRM(card).c_vram;
+}
+
+/* textures from the free VRAM up to the back buffer, at most a region each granule */
+static unsigned long
+radeon_amix_texsize(unsigned long tex, int l)
+{
+	unsigned long n = (radeon_amix_back - tex) >> l;
+
+	return (n < RADEON_NR_TEX_REGIONS ? n : RADEON_NR_TEX_REGIONS) << l;
+}
+
+/* textures where the free VRAM now starts, every region newer than any client's view */
+static void
+radeon_amix_retex(drm_device_t *dev)
+{
+	radeon_amix_layout_t *lp;
+	drm_radeon_sarea_t *sp;
+	int h, i, age;
+
+	if (dev->lock.hw_lock == NULL)
+		return;
+	lp = (radeon_amix_layout_t *)((char *)dev->lock.hw_lock + RADEON_AMIX_LAYOUT);
+	if (lp->backSize != 0) {
+		lp->textureOffset = (DRM(card).c_free + 0xffff) & ~0xffffUL;
+		lp->textureSize = radeon_amix_texsize(lp->textureOffset, lp->log2TexGran);
+	}
+	sp = (drm_radeon_sarea_t *)((char *)dev->lock.hw_lock + sizeof(drm_sarea_t));
+	for (h = 0; h < RADEON_NR_TEX_HEAPS; h++) {
+		age = ++sp->tex_age[h];
+		for (i = 0; i < RADEON_NR_TEX_REGIONS; i++)
+			sp->tex_list[h][i].age = age;
+	}
+	DRM_SAREA_SYNC();
+}
+
 static int
 radeon_amix_sgmap(dev_t kdev, unsigned long off, unsigned long size, unsigned long *where)
 {
@@ -253,8 +306,8 @@ radeon_amix_vram(drm_device_t *dev, unsigned long off, unsigned long size)
 /*
  * What the X server and its driver did: memory for the ring,
  * its read pointer and the DMA buffers (VRAM, or PCI GART memory when
- * radeon_pcigart is set); the CP started on them; back,
- * depth and texture memory laid out in the VRAM the sessions leave;
+ * radeon_pcigart is set) at the top; the CP started on them; back
+ * and depth below them, textures in the VRAM the sessions leave;
  * the interrupt.  The layout goes to clients in the shared area.  On
  * any failure clients find backSize 0 and go without 3D.
  */
@@ -267,7 +320,7 @@ radeon_amix_init(drm_device_t *dev)
 	drm_buf_desc_t bd;
 	radeon_amix_layout_t *lp;
 	drm_map_list_entry_t *le;
-	unsigned long ring, rptr, bufs, mmio = 0, status = 0, buf, tex, cp;
+	unsigned long ring, rptr, bufs, mmio = 0, status = 0, buf, tex, cp, top = c->c_vram & ~0xffffUL;
 	int id = (int)opci_attr(c->c_dev, OPCI_DEVICE), fam = radeon_amix_family(id);
 	/* an 8-bit display has no 3D clients; the buffers follow its next depth */
 	int bits = radeon_amix_bits < 16 ? 16 : radeon_amix_bits, l, e;
@@ -289,20 +342,21 @@ radeon_amix_init(drm_device_t *dev)
 			lp->registerHandle = mmio;
 			lp->registerSize = le->map->size;
 		}
-	/* back and depth for 32 bits a pixel at a pitch of 64 bytes, textures above */
+	/* back and depth for 32 bits a pixel at a pitch of 64 bytes, textures below */
 	buf = (((unsigned long)c->c_width * 4 + 63) & ~63UL) * c->c_height;
-	cp = (c->c_free + 0xffff) & ~0xffffUL;
-	radeon_amix_back = cp;
+	cp = top;
 	if (!radeon_pcigart)
-		radeon_amix_back += (RADEON_AMIX_RING + PAGE_SIZE + RADEON_AMIX_NBUFS * RADEON_AMIX_BUFSIZE +
-		    0xffff) & ~0xffffUL;
-	radeon_amix_depth = (radeon_amix_back + buf + 0xffff) & ~0xffffUL;
-	tex = (radeon_amix_depth + buf + 0xffff) & ~0xffffUL;
-	if (tex + (1 << RADEON_LOG_TEX_GRANULARITY) > c->c_vram) {
+		cp = (top - (RADEON_AMIX_RING + PAGE_SIZE + RADEON_AMIX_NBUFS * RADEON_AMIX_BUFSIZE)) &
+		    ~0xffffUL;
+	radeon_amix_depth = (cp - buf) & ~0xffffUL;
+	radeon_amix_back = (radeon_amix_depth - buf) & ~0xffffUL;
+	tex = (c->c_free + 0xffff) & ~0xffffUL;
+	if (cp < 2 * buf + 0x20000 || tex + (1 << RADEON_LOG_TEX_GRANULARITY) > radeon_amix_back) {
 		DRM_ERROR("no VRAM left for 3D\n");
+		radeon_amix_back = 0;
 		goto out;
 	}
-	for (l = 0; (c->c_vram - tex) / RADEON_NR_TEX_REGIONS >> (l + 1); l++)
+	for (l = 0; (radeon_amix_back - tex) / RADEON_NR_TEX_REGIONS >> (l + 1); l++)
 		;
 	if (l < RADEON_LOG_TEX_GRANULARITY)
 		l = RADEON_LOG_TEX_GRANULARITY;
@@ -362,7 +416,7 @@ radeon_amix_init(drm_device_t *dev)
 	lp->depthOffset = radeon_amix_depth;
 	lp->depthSize = buf;
 	lp->textureOffset = tex;
-	lp->textureSize = (c->c_vram - tex) >> l << l;
+	lp->textureSize = radeon_amix_texsize(tex, l);
 	lp->log2TexGran = l;
 	lp->statusHandle = status;
 	lp->statusSize = PAGE_SIZE;

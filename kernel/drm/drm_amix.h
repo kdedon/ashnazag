@@ -236,6 +236,87 @@ DRM(amix_front)(void)
 #ifndef DRIVER_IDLE
 #define DRIVER_IDLE(dev)
 #endif
+#ifndef DRIVER_AMIX_TEXTOP
+#define DRIVER_AMIX_TEXTOP(dev)	DRM(card).c_vram
+#endif
+
+/*
+ * The 3D driver's VRAM goes back to the display service before each
+ * switch, so the session coming in may use it: DRIVER_AMIX_KEEP's range
+ * (back and depth buffers) waits in RAM, textures are dropped and the
+ * clients load them again.  The first lock in front takes the VRAM back,
+ * at the same offset if it is free, else above the session in front;
+ * the kept range sits at the top, so only the texture memory moves.
+ */
+static caddr_t DRM(vsave);
+static unsigned long DRM(vkeep), DRM(vkeepn), DRM(vat);
+
+static void
+DRM(amix_vcopy)(__volatile__ u32 *to, __volatile__ u32 *from, unsigned long n)
+{
+	for (n /= 4; n; n--)
+		*to++ = *from++;
+}
+
+static void
+DRM(amix_unsave)(void)
+{
+	if (DRM(vsave))
+		kmem_free(DRM(vsave), DRM(vkeepn));
+	DRM(vsave) = 0;
+	DRM(vat) = 0;
+}
+
+static void
+DRM(amix_evict)(drm_device_t *dev)
+{
+	struct drm_amixcard *c = &DRM(card);
+	unsigned long lo = 0, hi = 0;
+
+	DRIVER_IDLE(dev);
+	if (DRM(vat) || !c->c_vtake || c->c_free >= c->c_vram)
+		return;
+#ifdef DRIVER_AMIX_KEEP
+	DRIVER_AMIX_KEEP(dev, &lo, &hi);
+#endif
+	/* without RAM for them the clients redraw them */
+	if (hi > lo && (DRM(vsave) = kmem_alloc(hi - lo, KM_NOSLEEP)) != 0) {
+		DRM(vkeep) = lo;
+		DRM(vkeepn) = hi - lo;
+		DRM(amix_vcopy)((u32 *)DRM(vsave), (u32 *)(c->c_fb + lo), hi - lo);
+	}
+#ifdef DRIVER_AMIX_EVICT
+	DRIVER_AMIX_EVICT(dev);
+#endif
+	DRM(vat) = c->c_free;
+	(void)(*c->c_vtake)(0);
+}
+
+/* under the lock: the VRAM back for a client in front; EBUSY while held */
+int
+DRM(amix_restore)(drm_device_t *dev)
+{
+	struct drm_amixcard *c = &DRM(card);
+	unsigned long at, top = DRIVER_AMIX_TEXTOP(dev);
+
+	if (!DRM(vat))
+		return 0;
+	if ((at = (*c->c_vtake)(DRM(vat))) == 0 && (at = (*c->c_vtake)(1)) == 0)
+		return EBUSY;
+	/* 64 KB of textures at least below the fixed buffers */
+	if (top && at + 0x10000 > top) {
+		(void)(*c->c_vtake)(0);
+		return EBUSY;
+	}
+	c->c_free = at;
+	if (DRM(vsave))
+		DRM(amix_vcopy)((u32 *)(c->c_fb + DRM(vkeep)), (u32 *)DRM(vsave), DRM(vkeepn));
+	DRM(amix_unsave)();
+#ifdef DRIVER_AMIX_RESTORE
+	DRIVER_AMIX_RESTORE(dev);
+#endif
+	return 0;
+}
 
 /*
  * Around a session switch (ds_leavefn): before it, the kernel takes the
@@ -266,13 +347,13 @@ DRM(amix_leave)(struct dssess *from, int done)
 		if (lbolt - dev->lock.leave < HZ)
 			return EBUSY;
 		dev->lock.leave = 0;
-		DRIVER_IDLE(dev);
+		DRM(amix_evict)(dev);
 		return 0;
 	}
 	dev->lock.leave = 0;
 	dev->lock.pid = 0;
 	dev->lock.filp = 0;
-	DRIVER_IDLE(dev);
+	DRM(amix_evict)(dev);
 	return 0;
 }
 
@@ -315,6 +396,9 @@ DRM(amix_mkmaps)(dev_t kdev)
 		    FREAD | FWRITE, DRM_CURPROC)) != 0)
 			return e;
 	}
+	/* VRAM from the display service until the last close */
+	if (c->c_vtake && (c->c_free = (*c->c_vtake)(1)) == 0)
+		c->c_free = c->c_vram;
 #ifdef DRIVER_AMIX_MAPS
 	DRIVER_AMIX_MAPS(dev);
 #endif

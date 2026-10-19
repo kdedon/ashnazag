@@ -22,9 +22,11 @@
 #define FBIOGVBL	FBIOC(11)	/* out unsigned long: VBL count */
 #define FBIOBLANK	FBIOC(12)	/* value: 1 blank, 0 unblank */
 #define FBIOCACHE	FBIOC(13)	/* value: FBC_WT or FBC_CI, for the next mmap */
-#define FBIOVIDEL	FBIOC(14)	/* value: where the caller maps a FBA_VIDEL session */
 #define FBIOPAN		FBIOC(15)	/* value: FBF_OWNV, where in its VRAM the screen starts */
 #define FBIOSYNC	FBIOC(16)	/* the CPU next reads what the card drew in VRAM */
+#define FBIOVSIZE	FBIOC(17)	/* value: FBF_OWNV, bytes of VRAM the region grows to */
+#define FBIOREQMODE	FBIOC(18)	/* in/out struct fbreq */
+#define FBIOMODEOK	FBIOC(19)	/* value: 0 keeps the mode on trial; a mode id (root): known to show */
 
 #define EVIOC(n)	(('E' << 8) | (n))
 #define EVIOCGINFO	EVIOC(1)	/* out struct evinfo */
@@ -80,9 +82,34 @@ struct fbmodeinfo {
 	unsigned long	mi_depth;
 	unsigned long	mi_rowbytes;
 	unsigned long	mi_offset;	/* first pixel from the device base */
-	unsigned long	mi_flags;	/* FBM_CURRENT */
+	unsigned long	mi_flags;	/* FBM_* */
+	unsigned long	mi_hz;		/* refresh, 0 unknown */
 };
 #define FBM_CURRENT	0x01
+#define FBM_SCALE2	0x02	/* the card doubles a half-size frame */
+#define FBM_TRIED	0x04	/* shown and kept: no trial */
+
+/*
+ * FBIOREQMODE: the mode the session shows in front.  Granted, first
+ * match: the size listed; a FBM_SCALE2 mode at twice it; the smallest
+ * mode holding it, the screen centred (FBIOGINFO's fi_offset is its
+ * first pixel); else the largest, clipped.  A mode not yet FBM_TRIED is
+ * on trial for 15 s: Return or FBIOMODEOK keeps it, else the previous
+ * mode returns with a FBN_MODE note.
+ */
+struct fbreq {
+	unsigned long	rq_width, rq_height, rq_depth;
+	unsigned long	rq_flags;	/* in: FBR_* */
+	unsigned long	rq_id;		/* out: the mode */
+	unsigned long	rq_x, rq_y;	/* out: the screen's origin in it */
+	unsigned long	rq_how;		/* out: FBG_* */
+};
+#define FBR_EXACT	0x01	/* the size listed, else ENXIO */
+#define FBR_NOSCALE	0x02
+#define FBG_EXACT	1
+#define FBG_SCALE	2
+#define FBG_CENTRE	3
+#define FBG_CLIP	4
 
 struct fbmodes {
 	unsigned long	ms_count;	/* in: room in ms_modes; out: modes offered */
@@ -103,7 +130,6 @@ struct fbacq {
 };
 #define FBK_USER	1
 #define FBA_FRONT	0x01
-#define FBA_VIDEL	0x02	/* owns the video hardware; fi_size grows to the pool */
 
 struct fbstate {
 	long		st_session;	/* caller's session id, -1 none */

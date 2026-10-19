@@ -21,7 +21,7 @@
 | Assemble with m68k-elf-as -m68040; the result is position independent.
 
 BI_MAX	= 512			| boot record space above the trampoline
-CMDMAX	= 128			| command line, NUL included
+CMDMAX	= 64			| command line, NUL included
 
 | low memory
 BufPtr	= 0x10C
@@ -65,6 +65,7 @@ P_KLOAD	= 0x98			| link address of the image
 P_KEND	= 0x9C			| `end': last BSS byte + 1
 P_KENTRY = 0xA0			| entry
 P_KSUM	= 0xA4			| sum of the image's longs
+P_MODS	= 0x0C			| up to 7 boot modules: offset, length, name[8]; length 0 ends
 	.org	bb+P_MAGIC
 	.ascii	"UxBB"
 	.long	0, 0, 0, 0, 0, 0
@@ -122,28 +123,10 @@ start:
 	bhi.w	err
 
 | read the image through the boot drive's driver
-	lea	-64(%sp),%sp
-	move.l	%sp,%a0
-	moveq	#15,%d0
-5:	clr.l	(%a0)+
-	dbf	%d0,5b
-	move.l	%sp,%a0
-	move.w	BootDrive,22(%a0)	| ioVRefNum
-	move.w	BtDskRfn,24(%a0)	| ioRefNum
-	move.l	%d4,32(%a0)		| ioBuffer
-	move.l	P_KLEN(%a4),36(%a0)	| ioReqCount
-	move.w	#1,44(%a0)		| ioPosMode: fsFromStart
-	move.l	P_KOFS(%a4),46(%a0)	| ioPosOffset
-	.word	_Read
-	move.l	40(%a0),%d1		| ioActCount
-	lea	64(%sp),%sp
-	tst.w	%d0
-	bne.s	6f
-	cmp.l	P_KLEN(%a4),%d1
-	beq.s	7f
-6:	moveq	#E_READ,%d0
-	bra.w	err
-7:	move.l	%d4,%a0
+	move.l	P_KOFS(%a4),%d0
+	move.l	P_KLEN(%a4),%d1
+	bsr.w	rd
+	move.l	%d4,%a0
 	moveq	#0,%d2
 8:	add.l	(%a0)+,%d2
 	subq.l	#4,%d1
@@ -242,6 +225,39 @@ start:
 	move.l	%d0,(%a1)+
 7:
 
+| boot modules (mkbb's table), each read below the last, above `end'
+| and the record; one BI_MAC_MODULE tag each
+	move.l	P_KEND(%a4),%d6
+	add.l	#BI_MAX+4,%d6
+	lea	0x1000(%a4),%a0
+	cmp.l	%a0,%d6
+	bcc.s	1f
+	move.l	%a0,%d6
+1:	lea	P_MODS(%a4),%a3
+	move.l	%d4,%d7
+2:	move.l	4(%a3),%d1
+	beq.s	3f
+	exg	%d4,%d7
+	moveq	#E_ROOM,%d0
+	cmp.l	%d4,%d1
+	bhi.w	err
+	sub.l	%d1,%d4
+	and.w	#0xFFF0,%d4
+	cmp.l	%d6,%d4
+	bcs.w	err
+	move.l	(%a3)+,%d0
+	bsr.w	rd
+	move.l	#0x8F01001C,(%a1)+	| address, length, name[16]
+	move.l	%d4,(%a1)+
+	exg	%d4,%d7
+	move.l	(%a3)+,(%a1)+
+	move.l	(%a3)+,(%a1)+
+	move.l	(%a3)+,(%a1)+
+	clr.l	(%a1)+
+	clr.l	(%a1)+
+	bra.s	2b
+3:
+
 | command line, padded to a long
 	lea	cmdline(%pc),%a0
 	tst.b	(%a0)
@@ -314,6 +330,30 @@ vaddr:
 	rts
 6:	ori.b	#4,%ccr
 	rts
+
+| read d1 bytes at partition offset d0 into d4
+rd:	lea	-64(%sp),%sp
+	move.l	%sp,%a0
+	moveq	#15,%d2
+5:	clr.l	(%a0)+
+	dbf	%d2,5b
+	move.l	%sp,%a0
+	move.w	BootDrive,22(%a0)	| ioVRefNum
+	move.w	BtDskRfn,24(%a0)	| ioRefNum
+	move.l	%d4,32(%a0)		| ioBuffer
+	move.l	%d1,36(%a0)		| ioReqCount
+	move.w	#1,44(%a0)		| ioPosMode: fsFromStart
+	move.l	%d0,46(%a0)		| ioPosOffset
+	.word	_Read
+	move.l	40(%a0),%d1		| ioActCount
+	cmp.l	36(%a0),%d1
+	lea	64(%sp),%sp
+	bne.s	6f
+	tst.w	%d0
+	beq.s	7f
+6:	moveq	#E_READ,%d0
+	bra.s	err
+7:	rts
 
 err:
 	.word	_SysError

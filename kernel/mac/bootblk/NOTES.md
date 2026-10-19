@@ -37,18 +37,19 @@ aligned, one contiguous run) and records the offset and a checksum. Reasons:
 - The file stays visible and checkable (`hfsck`, `hcopy`). Replacing it needs `mkbb patch`
   again; a moved or changed file fails the checksum (error 104) instead of crashing.
 
-One stage: the code ends at 0x360, the command line takes 0x380–0x3FF.
+One stage: the code ends at 0x3B4, the command line takes 0x3C0–0x3FF.
 
 ## Boot-block layout
 
 | Offset | Content |
 |---|---|
 | 0x00 | 'LK', `bra.w start`, bbVersion 0x4418 (header words `4C4B 6000 00E4 4418`) |
-| 0x0A–0x8B | rest of the standard header, zero (only read if the code returns) |
+| 0x0A–0x0B | rest of the standard header, zero (only read if the code returns) |
+| 0x0C–0x8B | boot modules, up to 7: volume offset, length (multiple of 512), name (8 bytes); length 0 ends |
 | 0x8C | 'UxBB', then image offset in the partition, length (multiple of 512), load address, `end`, entry, checksum (sum of the image's longs) |
 | 0xA8 | trampoline (64 bytes, copied out) |
 | 0xE8–0x35F | loader |
-| 0x380 | command line, NUL-terminated, at most 127 bytes |
+| 0x3C0 | command line, NUL-terminated, at most 63 bytes |
 
 ## Memory during the load
 
@@ -80,7 +81,8 @@ Same Linux/m68k tag format as `auxentry.s`, plus depth, size and command line:
 | BI_MAC_MODEL | Gestalt `'mach'` (35 on a Q800), else `BoxFlag` + 6 |
 | BI_MAC_ROMBASE, BI_MAC_VIA1BASE, BI_MAC_SCCBASE | `ROMBase` $2AE, `VIA` $1D4, `SCCRd` $1D8 |
 | BI_MAC_VADDR, BI_MAC_VROW, BI_MAC_VDEPTH, BI_MAC_VDIM | main GDevice's PixMap (`MainDevice` $8A4 → gdPMap → baseAddr, rowBytes, pixelSize, bounds); else `ScrnBase`, `ScreenRow`, `ChunkyDepth`. A base must lie in 0xF9000000–0xF97FFFFF or 0xFA000000–0xFEFFFFFF; in 24-bit mode (`MMU32Bit` $CB2 = 0) a base outside them goes through `_Translate24To32` and is checked again. A PixMap base that fails is replaced by `ScrnBase`, checked the same way |
-| BI_COMMAND_LINE | boot-block offset 0x380, if not empty |
+| BI_MAC_MODULE (0x8F01) {address, length, name[16]} | each boot module, read below the image and above `end` + 516 (error 101 otherwise) |
+| BI_COMMAND_LINE | boot-block offset 0x3C0, if not empty |
 
 The video mode is the one the ROM booted with (from PRAM). `fbcons_biinit` takes all four
 video tags as given.
@@ -110,7 +112,7 @@ ROM shows its critical-error screen (Sad Mac): major code 0x0F, minor the id in 
 
 ## Image
 
-`sh images/mkboot.sh [-c cmdline] [-m MB] [kernel.elf [out.img]]` → `images/q800-unix.img`:
+`sh images/mkboot.sh [-c cmdline] [-m MB] [-k module]... [kernel.elf [out.img]]` → `images/q800-unix.img`:
 
 | Blocks | Partition |
 |---|---|

@@ -8,6 +8,7 @@
 #include "sys/errno.h"
 #include "sys/moddefs.h"
 #include "sys/opci.h"
+#include "sys/amrtg.h"
 
 #include "drmcard.h"
 
@@ -16,8 +17,9 @@ extern int tdfx_svr4ioctl(), tdfx_svr4mmap(), spec_segmap();
 extern int tdfx_amix_attach(), tdfx_amix_detach();
 extern void tdfx_amix_front();
 extern unsigned long plat_vtop();
+extern int cputype, hat_cm_fb_add();
 extern __volatile__ unsigned char *v3_reg, *v3_fb;
-extern unsigned long v3_physfb, v3_vram, v3_dsvram;
+extern unsigned long v3_physfb, v3_vram;
 extern int v3ds_width, v3ds_height;
 extern struct opci_dev *v3_dev;
 extern void (*v3_fronthook)();
@@ -44,10 +46,20 @@ tdfx_load()
 	c.c_physfb = v3_physfb;
 	c.c_fbsize = v3_vram;
 	c.c_vram = v3_vram;
-	c.c_free = v3_dsvram;
+	c.c_free = 0;
+	c.c_vtake = am_vtake;
 	c.c_width = v3ds_width;
 	c.c_height = v3ds_height;
 	c.c_dev = v3_dev;
+	/*
+	 * 68060: user register pages noncacheable but not serialised, so
+	 * FIFO writes can be buffered.  The 060 keeps reads and writes in
+	 * program order on such pages, so a status read still follows the
+	 * writes before it; the 040 lets reads pass writes there.
+	 */
+	if (cputype == 60)
+		(void)hat_cm_fb_add(c.c_physreg >> 12,
+		    (c.c_physreg + c.c_regsize + 4095) >> 12);
 	if ((e = tdfx_amix_attach(&c)) != 0)
 		return e;
 	v3_fronthook = tdfx_amix_front;

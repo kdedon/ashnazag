@@ -4,7 +4,7 @@
 #   python3 kernel/include/chkabi.py [-v]
 #
 # Every struct size, member offset, typedef size and integer macro in
-# include/sys and include/vm is compiled into one probe file, once on these
+# include/ is compiled into one probe file, once on these
 # headers and once on the AMIX ones (AMIX_KERNEL_CFLAGS from the toolchain's
 # env.sh), and the values are compared.  Members named _* are padding.
 # Needs the AMIX headers, so it runs locally, not in CI.
@@ -18,18 +18,21 @@ OWN = ['-O', '-traditional', '-fno-builtin', '-Dinline=__inline__', '-m68020',
 # the AMIX headers need their prerequisites first
 ORDER = ['types', 'param', 'sysmacros', 'signal', 'resource', 'time', 'user', 'proc',
          'cred', 'systm', 'errno', 'cmn_err', 'kmem', 'conf', 'vnode', 'uio', 'file',
-         'exec', 'poll', 'open', 'vfs', 'inline', 'fcntl', 'ioccom', 'mman']
+         'exec', 'poll', 'open', 'vfs', 'inline', 'fcntl', 'ioccom', 'mman',
+         'stream', 'stropts', 'socket', 'sockio']
+LATE = ['amiga/console/console.h']	# needs screen.h
 WORK = tempfile.mkdtemp(prefix='chkabi')
 
 def headers():
-	hs = []
-	for d in ('sys', 'vm'):
+	hs = [h for h in ('stddef.h', 'stdarg.h') if os.path.exists(os.path.join(INC, h))]
+	for d in ('sys', 'vm', 'net', 'amiga', 'fs'):
 		p = os.path.join(INC, d)
 		for root, _, files in os.walk(p):
 			for f in files:
 				if f.endswith('.h'):
 					hs.append(os.path.relpath(os.path.join(root, f), INC))
-	key = lambda h: (ORDER.index(h[4:-2]) if h[4:-2] in ORDER else len(ORDER), h)
+	key = lambda h: (ORDER.index(h[4:-2]) if h.startswith('sys/') and h[4:-2] in ORDER
+			else len(ORDER) + (not h.startswith('sys/')) + (h in LATE), h)
 	return sorted(hs, key=key)
 
 def strip(s):

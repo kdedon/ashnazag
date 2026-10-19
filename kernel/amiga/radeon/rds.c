@@ -1,17 +1,18 @@
 /*
  * A Radeon (R100, R200, RV250, RV280) behind the PCI bridge as the
  * display service's screen, on the primary CRTC and the analogue
- * output.  One mode at the size Space.c names, 8-bit CLUT, RGB565 or
- * 32 bits a pixel per session.  The front session's frame is at the
- * start of VRAM, then rds_altfb frames that hidden sessions keep;
- * bringing one of those to the front moves the CRTC start.
+ * output.  Its VESA modes up to the size Space.c names, 8-bit CLUT,
+ * RGB565 or 32 bits a pixel per session.  The display service hands out VRAM:
+ * the front session's frame at its start, up to rds_altfb frames that
+ * hidden sessions keep; bringing one of those to the front moves the
+ * CRTC start.
  * A card nothing has started (no CRTC on, no memory size) is started
  * from the init tables in its PC ROM.
  *
  * The radeon DRM shares the card with this module and takes from it:
  * - the card: held (opci_obtain) while loaded; rd_reg, rd_fb, rd_physfb;
- * - VRAM: sessions use [0, rd_dsvram); [rd_dsvram, rd_vram) is free for
- *   the CP's ring and buffers, back, depth and texture buffers;
+ * - VRAM: the CP's ring and buffers, back, depth and texture buffers go
+ *   where am_vtake() says, from its first open to its last close;
  * - the second aperture, rd_aper into the frame buffer BAR, never swaps;
  * - the shown frame: rd_fronthook, when set, gets its offset, pixel
  *   size and pitch after each pan or depth change.
@@ -42,6 +43,7 @@ extern long rds_refkhz;
 #define	 CG_EN		(1L << 25)
 #define	 CG_REQ_DIS	(1L << 26)
 #define	 CG_FMT(n)	((unsigned long)(n) << 8)	/* 2 8-bit, 4 RGB565, 6 xRGB */
+#define	CRTC_STATUS	0x005c
 #define	CRTC_EXT_CNTL	0x0054
 #define	 CE_ATI_LINEAR	(1 << 3)
 #define	 CE_SYNC_TRI	(1 << 4)
@@ -223,6 +225,7 @@ struct rdtim *t;
 }
 
 static struct rdtim *rd_tim;
+static struct am_mode rd_modes[NTIM];
 
 static void
 rd_clut(i, r, g, b)
@@ -236,7 +239,7 @@ void
 rds_tell()
 {
 	if (rd_fronthook)
-		(*rd_fronthook)(rd_shown, rd_bits, (unsigned long)rds_width * (rd_bits / 8));
+		(*rd_fronthook)(rd_shown, rd_bits, (unsigned long)rd_tim->w * (rd_bits / 8));
 }
 
 static void
@@ -250,7 +253,7 @@ int bits;
 	hss = rd_tim->hss - 8 + fudge;
 	wl(H_SYNC, (unsigned long)(hss & 0x1fff) | (unsigned long)((rd_tim->hse - rd_tim->hss) / 8 & 0x3f) << 16 |
 	    (rd_tim->nsync ? SYNC_POL : 0));
-	wl(CRTC_PITCH, (unsigned long)(rds_width / 8) | (unsigned long)(rds_width / 8) << 16);
+	wl(CRTC_PITCH, (unsigned long)(rd_tim->w / 8) | (unsigned long)(rd_tim->w / 8) << 16);
 	wmask(CRTC_GEN_CNTL, CG_EXT_DISP_EN | CG_EN | CG_FMT(bits == 32 ? 6 : bits == 16 ? 4 : 2),
 	    ~(CG_EXT_DISP_EN | CG_EN | CG_FMT(0xf) | 0x13));
 	/* the CPU's pixels land in the card's byte order */
@@ -278,6 +281,26 @@ int on;
 	/* hidden, the syncs stop: a monitor shared with the chipset switches back */
 	wl(CRTC_EXT_CNTL, CE_ATI_LINEAR | CE_XCRT_CNT_EN |
 	    (on ? CE_CRT_ON : CE_DISPLAY_DIS | CE_HSYNC_DIS | CE_VSYNC_DIS));
+}
+
+/* timing n at bits: blanked, set in the vertical blank, shown again */
+static void
+rd_setmode(n, bits)
+int n, bits;
+{
+	int i;
+
+	if (&rd_tims[n] != rd_tim) {
+		if (rd_on) {
+			for (i = 0; i < 100000 && !(rl(CRTC_STATUS) & 1); i++)
+				;
+			wl(CRTC_EXT_CNTL, CE_ATI_LINEAR | CE_XCRT_CNT_EN | CE_DISPLAY_DIS);
+		}
+		rd_tim = &rd_tims[n];
+		rd_timing(rd_tim);
+	}
+	rd_depth(bits);
+	rd_show(rd_on);
 }
 
 /* register access for the ROM table interpreter */
@@ -537,8 +560,18 @@ rds_attach()
 	rd_rtg.r_rgb[1][1] = 0x0000ff00;
 	rd_rtg.r_rgb[1][2] = 0x000000ff;
 	rd_rtg.r_setdepth = rd_depth;
+	for (i = 0; i < NTIM; i++) {
+		rd_modes[i].m_width = rd_tims[i].w;
+		rd_modes[i].m_height = rd_tims[i].h;
+		rd_modes[i].m_hz = (int)(rd_tims[i].khz * 1000L / ((long)rd_tims[i].ht * rd_tims[i].vt));
+	}
+	rd_rtg.r_modes = rd_modes;
+	rd_rtg.r_nmode = NTIM;
+	rd_rtg.r_mode = t - rd_tims;
+	rd_rtg.r_setmode = rd_setmode;
 	rd_rtg.r_pan = rd_pan;
-	rd_rtg.r_vram = rd_dsvram;
+	rd_rtg.r_vram = rd_vram;
+	rd_rtg.r_altfb = n;
 	printf("radeon: %dx%d, %d frames\n", rds_width, rds_height, (int)(rd_dsvram / frame));
 	if ((e = am_rtgattach(&rd_rtg)) != 0) {
 		rd_dev = 0;

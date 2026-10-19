@@ -53,6 +53,9 @@ python3 "$AUX/tools/auxguard.py" "$OUT/%System" > /dev/null
 "$B/hcopy" -m ":Full Install Pieces:Software Installers:System Software:Mac OS 8.1 Update:System Resources" "$W/f.bin"
 python3 "$AUX/tools/macbin2ad.py" -n sr "$W/f.bin" "$W"
 python3 "$AUX/tools/rsrcedit.py" "$OUT/%System" -d xboo -c "$W/%sr" boot 3
+# colour on the A/UX screen, as 7.6.1's
+python3 "$AUX/tools/rsrcedit.py" "$OUT/%System" -a scrn 0 \
+	0001007a000ee0000000008077fea801ffffffff0000000001e002800000
 get Finder "$OUT"
 # the Finder's AppearanceLib, named without a space for the test root
 if [ -z "$FULL" ]; then

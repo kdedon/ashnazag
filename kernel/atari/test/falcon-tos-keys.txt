@@ -1,11 +1,12 @@
 wait login:
 type root\n
 wait # 
-type if [ -d /tests ]; then /tests/auxreg /tests/mod.d 54 56; fi; echo auxreg-rc=$?\n
+type if [ -x /tests/auxreg ]; then /tests/auxreg /tests/mod.d 54 56; fi; echo auxreg-rc=$?\n
 wait auxreg-rc=
-type [ ! -d /tests ] || { /tests/modadmin -l /tests/mod.d/guestcore; /tests/modadmin -s | grep -c tosguest; }; mkdir -p /tmp/c; echo mods-done\n
+type [ ! -x /tests/modadmin ] || { /tests/modadmin -l /tests/mod.d/guestcore; /tests/modadmin -s | grep -c tosguest; }; mkdir -p /tmp/c; echo mods-done\n
 wait mods-done
-type T=/tests; [ -d /tests ] || T=/usr/bin; C=$T/tosml.img; [ -f $C ] || C=/etc/tos/tosml.img; $T/starttos -P -C /tmp/c -c $C -v 2> /tmp/st.log; echo starttos-rc=$?\n
+type (while [ `ps -e | grep -c starttos` -eq 0 ]; do sleep 1; done; while [ `ps -e | grep -c starttos` -gt 0 ]; do /tests/tosstat 10; done) > /tmp/ts.log 2>&1 &\n
+type T=/tests; [ -x $T/starttos ] || T=/usr/bin; C=$T/tosml.img; [ -f $C ] || C=/etc/tos/tosml.img; $T/starttos -C /tmp/c -c $C -v 2> /tmp/st.log; echo starttos-rc=$?\n
 shot OUT/1-desktop.png desktop
 sleep 1
 debug info videl
@@ -50,10 +51,25 @@ event keydown 0x1d
 event keypress 0x2e
 event keyup 0x1d
 wait ^C
-type cat /tmp/st.log; echo log-done\n
+type cat /tmp/st.log; sleep 12; sed "s/^/ts-/" /tmp/ts.log; echo log-done\n
 wait log-done
 type sleep 2; echo starttos-left=`ps -e | grep -c starttos`\n
 wait starttos-left=
 sleep 2
 debug screenshot OUT/4-exit.png
+type starttos -e xaaes 2> /tmp/xa.log\n
+shot OUT/5-xaaes.png desktop
+sleep 20
+event keydown 0x1d
+event keydown 0x38
+event keypress 0x01
+event keyup 0x38
+event keyup 0x1d
+sleep 5
+event keydown 0x1d
+event keypress 0x2e
+event keyup 0x1d
+sleep 5
+type echo xaaes-log=`ls $HOME/TOS/xaaes/MINT | grep -ci '^xamint.log$'`\n
+wait xaaes-log=
 debug quit 0

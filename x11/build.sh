@@ -108,6 +108,8 @@ imake() {
 		 $AUX/toolchain/bin/m68k-elf-ar rc "$X11W/libextra.a" $(ar t "$SYS/usr/ccs/lib/libc.so" | grep -v '^libc.so.1$'))
 		rm -rf "$TMPDIR/extra"
 	fi
+	# memcpy, memset and sqrt for every program amixld.sh links
+	nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -m68020 -c "$AUX/gl/src/fastmem.c" -o "$X11W/fastmem.o"
 	# libscreen's header, which the sysroot links to an absolute path
 	mkdir -p "$X11W/sysinc/amiga"
 	(cd "$X11W/sysinc" && cpio -i --quiet --to-stdout usr/amiga/include/amiga/screen.h \

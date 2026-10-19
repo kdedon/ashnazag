@@ -1,22 +1,25 @@
 	System V Release 4.0		Ash Nazag
 
  Mac    startmac        System 7.6.1; leave with Special > Log Out
-        Mac OS 8.1:  makemac -e 8.1  once, then  startmac -e 8.1
-        startmac6       System 6.0.7; leave with Special > Logout
+        startmac -e 8.1  Mac OS 8.1;  startmac -e 6  System 6.0.7
  TOS    starttos        EmuTOS and TeraDesk; -M TT mono, -m MB ST-RAM
-        XaAES:   starttos -e xaaes  (multitasking; maketos -x -e NAME for more)
+        XaAES:   starttos -e xaaes  (multitasking)
         Cubase:  starttos -C $HOME/TOS/CUBASE/CUBASE31  (or SCORE, CAF)
- Amiga  startmig        Workbench; -m MB fast RAM (or fastmb=MB in .env)
+ Amiga  startamiga      Workbench; -m MB fast RAM (or fastmb=MB in .env)
  CP/M   startcpm        Concurrent CP/M-68K; EXIT ends it, -c N joins
                         A: ~/CPM, H: home, M: temp, O: /, P: DRI's programs
- Win16  startwin        Windows 3.x programs (Program Manager); first
-                        startwin -install DISK1.IMG ... (your Windows disks)
+ Win16  startwin        Windows for Workgroups 3.11 (Program Manager)
+        Windows 3.11:  startwin -e win311
+ Lisa   startlisa       Lisa Office System from ~/Lisa (lisa.rom, profile.dc42)
+ V200   startvoyage200  Voyage 200 from ~/Voyage200/media; Cmd-Q quits
  X      startx          twm; or  xsession  for a menu of sessions, or
-        xsession twm|xview|mac|tos|amiga|win|console|cpm
+        xsession twm|xview|mac|tos|amiga|win|lisa|voyage200|
+        console|cpm
 
  Ctrl-Option-Command-0 shows the console, -1 to -9 the sessions.
  Ctrl-C on the console ends TOS or the Amiga.
  apkg update, apkg install NAME: packages, in /opt/amix/bin
- makemac, maketos, makeamiga make ~/System Folder, ~/TOS, ~/Amiga;
- -f refreshes one from the system's copy, keeping your files.
+ start* -l lists environments, -e NAME runs one, -d NAME sets the default;
+ the first start makes your copy (~/System Folder, ~/TOS, ~/Amiga ...).
+ -e NEW -b NAME makes a copy of NAME; -R refreshes yours from the system's.
  exit logs out; root shuts down with  shutdown -y -g0 -i0

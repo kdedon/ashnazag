@@ -3,7 +3,7 @@
 #
 #   sh amiga/mods.sh kernel.elf outdir [target]
 #
-# Out: outdir/mod.d/{amilib,opci,pci,ne,xsurf,zz9000,voodoo3,tdfx,radeonds,radeon,floppy,v3bars}, built for that kernel's CPU; amilib is
+# Out: outdir/mod.d/{amilib,opci,pci,ne,xsurf,zz9000,voodoo3,tdfx,radeonds,radeon,floppy,v3bars,bigram}, built for that kernel's CPU; amilib is
 # checked against the kernel's exports (it must carry DLM: dlm_cacheflush),
 # opci against those and amilib's.  Install them in /etc/conf/mod.d;
 # /etc/conf/pci gets openpci.library (the openpci archive's

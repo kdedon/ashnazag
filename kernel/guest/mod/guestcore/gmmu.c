@@ -271,6 +271,8 @@ gmu_dup(seg, nseg)
 {
 	nseg->s_ops = &gmu_ops;
 	nseg->s_data = 0;
+	/* the caller adds the size back */
+	nseg->s_as->a_size -= nseg->s_size;
 	return 0;
 }
 
@@ -294,6 +296,8 @@ gmu_unmap(seg, addr, len)
 {
 	if (addr != seg->s_base || len != seg->s_size)
 		return EINVAL;
+	/* the caller takes len off the size, which never counted it */
+	seg->s_as->a_size += len;
 	hat_unload(seg, addr, len, HAT_NOFLAGS);
 	seg_free(seg);
 	return 0;
@@ -391,13 +395,14 @@ window(m)
 		gmu_opsinit();
 	if ((e = as_unmap(as, (addr_t)m->lo, (u_int)(m->hi - m->lo))) != 0)
 		return e;
-	/* the window is address space, not memory: outside the process's limit */
+	/* the window is address space, not memory: outside the process's limit and size */
 	lim = u.u_rlimit[RLIMIT_VMEM].rlim_cur;
-	u.u_rlimit[RLIMIT_VMEM].rlim_cur = RLIM_INFINITY;
+	u.u_rlimit[RLIMIT_VMEM].rlim_cur = ~(rlim_t)0;
 	e = as_map(as, (addr_t)m->lo, (u_int)(m->hi - m->lo), gmu_create, (caddr_t)m);
 	u.u_rlimit[RLIMIT_VMEM].rlim_cur = lim;
 	if (e)
 		return e;
+	as->a_size -= m->hi - m->lo;
 	m->gp->gp_flags &= ~(GPF_FTRAP | GPF_FTRAP13);
 	/* a core file of the window would read the whole guest space */
 	u.u_rlimit[RLIMIT_CORE].rlim_cur = 0;

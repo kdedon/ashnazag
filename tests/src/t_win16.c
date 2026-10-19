@@ -313,17 +313,18 @@ prog(name, want)
 static void
 install()
 {
-	char *argv[12], *d[] = { "1", "2", "3", "4", "5", "6" };
-	char path[6][40];
+	char *argv[16];
+	char path[12][40];
 	pid_t p;
 	int st = -1, i, n = 0;
 	long t0;
 
 	argv[n++] = "startwin";
 	argv[n++] = "-install";
-	for (i = 0; i < 6; i++) {
-		sprintf(path[i], W "/disks/DISK%s.IMG", d[i]);
-		argv[n++] = path[i];
+	for (i = 1; i <= 12; i++) {
+		sprintf(path[i - 1], W "/disks/DISK%d.IMG", i);
+		if (access(path[i - 1], 0) == 0)
+			argv[n++] = path[i - 1];
 	}
 	argv[n++] = W "/wabi";
 	argv[n] = 0;
@@ -409,6 +410,164 @@ again()
 	exitwin(p, "progman_restart_exit");
 }
 
+/*
+ * D pixels along one axis.  Moves over 6 steps count double: those go
+ * in single reports of 7 to 60 steps, an odd pixel as one step after.
+ */
+static void
+axis(d, isx)
+	int d, isx;
+{
+	char req[40];
+	int m, k, n;
+
+	m = d >= 14 ? d / 2 : 0;
+	for (k = (m + 59) / 60; m > 0; k--) {
+		n = m / k;
+		sprintf(req, "move %d %d", isx ? n : 0, isx ? 0 : n);
+		host(req);
+		m -= n;
+	}
+	for (d = d >= 14 ? d & 1 : d; d > 0; d -= n) {
+		n = d > 6 ? 6 : d;
+		sprintf(req, "move %d %d", isx ? n : 0, isx ? 0 : n);
+		host(req);
+	}
+}
+
+/* the pointer to (x, y) from the top left corner */
+static void
+pointer(x, y)
+	int x, y;
+{
+	host("move -2000 -2000 50");
+	axis(x, 1);
+	axis(y, 0);
+}
+
+/* a screen dump with the pointer parked in the bottom right corner */
+static void
+pshot(name)
+	char *name;
+{
+	host("move 2000 2000 50");
+	nap(300);
+	shot(name);
+}
+
+/* the screen differs from shot NAME (as it was before a step) */
+static int
+changed(name, now)
+	char *name, *now;
+{
+	char req[64];
+
+	pshot(now);
+	sprintf(req, "cmp win16_%s win16_%s", name, now);
+	return host(req) != 0 && strncmp(hrep, "diff", 4) == 0;
+}
+
+static int
+same(name, now)
+	char *name, *now;
+{
+	char req[64];
+
+	pshot(now);
+	sprintf(req, "cmp win16_%s win16_%s", name, now);
+	return host(req) != 0 && strcmp(hrep, "same") == 0;
+}
+
+/*
+ * Program Manager's groups at 640x480 (small fonts): the active group is
+ * Main at its first start, its system box at (31, 70); a minimised
+ * group's icon goes to the MDI client's first free place, (57, 325).
+ */
+static void
+groups(p)
+	pid_t p;
+{
+	pointer(100, 100);
+	shot("pointer100");
+	pshot("groups0");
+	/* the system box: its menu, then a second click closes (minimises) the group */
+	pointer(31, 70);
+	host("click 2");
+	settle(60);
+	t_check("group_sysbox_close", kill(p, 0) == 0 && changed("groups0", "groups1"), "startwin ended or nothing changed");
+	relay();
+	/* the icon's double click restores it */
+	pointer(57, 325);
+	host("click 2");
+	settle(60);
+	t_check("group_icon_restore", kill(p, 0) == 0 && same("groups0", "groups2"), "startwin ended or not restored");
+	/* Ctrl+F4 minimises, the Window menu's first entry restores */
+	host("key ctrl+f4");
+	settle(60);
+	t_check("group_ctrlf4", kill(p, 0) == 0 && changed("groups0", "groups3"), "startwin ended or nothing changed");
+	host("key alt+w");
+	nap(500);
+	host("key 1");
+	settle(60);
+	t_check("group_window_menu", kill(p, 0) == 0 && same("groups0", "groups4"), "startwin ended or not restored");
+	/* the system menu by mouse: Minimize, then the icon's menu: Restore */
+	pointer(31, 70);
+	host("click 1");
+	nap(800);
+	host("key n");
+	settle(60);
+	pointer(57, 325);
+	host("click 1");
+	nap(800);
+	host("key r");
+	settle(60);
+	t_check("group_sysmenu", kill(p, 0) == 0 && same("groups0", "groups5"), "startwin ended or not restored");
+}
+
+/* a program from File Run, used and quit; Program Manager's screen as before */
+static void
+use(p, name, keys, save)
+	pid_t p;
+	char *name, *keys;
+	int save;
+{
+	char a[24], b[24], q[24];
+	long c0 = cpums(p);
+
+	sprintf(a, "%s0", name);
+	sprintf(b, "%s1", name);
+	pshot(a);
+	host("key alt+f");
+	nap(500);
+	host("key r");
+	nap(1500);
+	type(name);
+	host("key ret");
+	settle(300);
+	if (keys)
+		type(keys);
+	/* minimised and back */
+	host("key alt+spc");
+	nap(500);
+	host("key n");
+	settle(60);
+	host("key alt+spc");
+	nap(500);
+	host("key r");
+	settle(60);
+	shot(name);
+	t_check(name, kill(p, 0) == 0, "startwin ended");
+	host("key alt+f4");
+	settle(60);
+	if (save) {
+		host("key n");		/* its changes not saved */
+		settle(60);
+	}
+	t_info(name, "%ld ms CPU", cpums(p) - c0);
+	sprintf(q, "%s_quit", name);
+	t_check(q, kill(p, 0) == 0 && same(a, b), "startwin ended or a window left");
+}
+
 /* Program Manager: start, redraw, File Run, exit */
 static void
 progman()
@@ -466,6 +625,16 @@ progman()
 		settle(60);
 	}
 	shot("progman_end");
+	if (host("shot win16_size") != 0 && strcmp(hrep, "640 480") == 0) {
+		groups(p);
+		use(p, "notepad", "hello", 1);
+		use(p, "write", "hello", 1);
+		use(p, "pbrush", (char *)0, 0);
+		use(p, "calc", (char *)0, 0);
+		use(p, "winfile", (char *)0, 0);
+		use(p, "control", (char *)0, 0);
+	} else
+		t_skip("groups", "screen not 640x480");
 	exitwin(p, "progman_exit");
 }
 

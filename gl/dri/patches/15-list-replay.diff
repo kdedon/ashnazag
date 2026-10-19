@@ -1,0 +1,216 @@
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tris.c
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tris.c
+@@ -1291,6 +1291,203 @@
+ }
+ 
+ 
++#if defined(__AMIX__) && defined(__m68k__)
++#include "m68k_asm.h"
++
++/* Display-list replay: the cassette's vertices are transformed once into
++ * fifo records, then each fan copies its records into the fifo.
++ */
++extern FxI32 grEmitParams( const int **list );
++extern void grDrawEmitFans( FxI32 nfan, FxI32 nv,
++			    FxU32 *(*emit)(void *, FxU32 *, FxI32, FxI32, FxU32),
++			    void *arg );
++extern void grDrawEmitFansC( FxI32 nfan, FxI32 nv,
++			     FxU32 *(*emit)(void *, FxU32 *, FxI32, FxI32, FxU32),
++			     void *arg );
++extern void grDrawEmitStrips( FxI32 nstrip, FxI32 nv,
++			      FxU32 *(*emit)(void *, FxU32 *, FxI32, FxI32, FxU32),
++			      void *arg );
++extern FxU32 grColor0Hdr( void );
++
++struct tdfx_list_arg {
++   const struct m68k_cas *c;
++   const unsigned short *fan;
++   GLint nv, words, flat;
++};
++
++static FxU32 *list_fans( void *arg, FxU32 *fifo, FxI32 first, FxI32 n,
++			 FxU32 hdr )
++{
++   const struct tdfx_list_arg *a = (const struct tdfx_list_arg *)arg;
++
++   return (FxU32 *)m68k_lfan_p( (unsigned long *)fifo,
++				a->fan + first * (a->nv + 1), n, a->nv,
++				hdr << 16 | hdr >> 16, a->c->rec, a->words,
++				a->flat );
++}
++
++static FxU32 *list_strip( void *arg, FxU32 *fifo, FxI32 first, FxI32 n,
++			  FxU32 hdr )
++{
++   const struct tdfx_list_arg *a = (const struct tdfx_list_arg *)arg;
++
++   return (FxU32 *)m68k_lstrip( (unsigned long *)fifo,
++				a->fan + first / a->nv * (a->nv + 1),
++				first % a->nv, n, hdr << 16 | hdr >> 16,
++				a->c->rec, a->words, a->flat );
++}
++
++/* fifo words per vertex for x, y, argb, z and maybe q; 0 for other layouts */
++static GLint list_words( tdfxContextPtr fxMesa )
++{
++   const int *l;
++   GLint n;
++
++   if (fxMesa->Fallback || (fxMesa->RenderWanted & ~TDFX_FLAT_BIT) ||
++       !(fxMesa->SetupIndex & TDFX_RGBA_BIT) ||
++       (fxMesa->SetupIndex & (TDFX_TEX0_BIT|TDFX_TEX1_BIT|TDFX_PTEX_BIT)))
++      return 0;
++   n = grEmitParams( &l );
++   if (n == 2 && l[0] == TDFX_Q_OFFSET && l[1] == TDFX_Z_OFFSET)
++      return 4;
++   if (n == 3 && l[0] == TDFX_ARGB_OFFSET && l[1] == TDFX_Z_OFFSET &&
++       l[2] == TDFX_Q_OFFSET)
++      return 5;
++   return 0;
++}
++
++/* NDC range [lo, hi] within [-2, 2] that maps to window coordinates the
++ * setup unit takes (+-2048, 12.4 fixed point).
++ */
++static void ndc_range( GLfloat s, GLfloat t, GLfloat *b )
++{
++   GLfloat lo = (-2040.0F - t) / s, hi = (2040.0F - t) / s, x;
++
++   if (lo > hi) {
++      x = lo;
++      lo = hi;
++      hi = x;
++   }
++   b[0] = lo < -2.0F ? -2.0F : lo;
++   b[1] = hi > 2.0F ? 2.0F : hi;
++}
++
++static GLboolean tdfxReplayFans( GLcontext *ctx, struct m68k_cas *c )
++{
++   tdfxContextPtr fxMesa = TDFX_CONTEXT(ctx);
++   const GLfloat *s = fxMesa->hw_viewport, *m = ctx->_ModelProjectMatrix.m;
++   struct tdfx_list_arg a;
++   GLfloat f[16];
++   GLuint reg[2];
++   GLint i, j, r, cc;
++
++   if (!c) {
++      static int off = -1;
++
++      if (off < 0)
++	 off = getenv( "TDFX_NOREPLAY" ) != NULL;
++      if (off)
++	 return GL_FALSE;
++      if (fxMesa->new_state)
++	 tdfxDDUpdateHwState( ctx );
++      if (!fxMesa->Fallback && fxMesa->new_gl_state) {
++	 if (fxMesa->new_gl_state & _TDFX_NEW_RASTERSETUP)
++	    tdfxChooseVertexState( ctx );
++	 if (fxMesa->new_gl_state & _TDFX_NEW_RENDERSTATE)
++	    tdfxChooseRenderState( ctx );
++	 fxMesa->new_gl_state = 0;
++      }
++      LOCK_HARDWARE( fxMesa );
++      if (fxMesa->dirty)
++	 tdfxEmitHwStateLocked( fxMesa );
++      i = list_words( fxMesa );
++      UNLOCK_HARDWARE( fxMesa );
++      ndc_range( s[0], s[12], TNL_CONTEXT(ctx)->ReplayBox );
++      ndc_range( s[5], s[13], TNL_CONTEXT(ctx)->ReplayBox + 2 );
++      return i != 0;
++   }
++
++   /* viewport folded into the matrix: window = (s * clip) / w */
++   for (j = 0; j < 16; j += 4) {
++      f[j] = s[0] * m[j] + s[12] * m[j + 3];
++      f[j + 1] = s[5] * m[j + 1] + s[13] * m[j + 3];
++      f[j + 2] = s[10] * m[j + 2] + s[14] * m[j + 3];
++      f[j + 3] = m[j + 3];
++   }
++   for (i = 0; i < c->nn; i++) {
++      const GLubyte *b = (const GLubyte *)&c->col[i];
++      union { GLuint ui; GLubyte ub[4]; } u;
++
++      u.ub[TDFX_CB] = b[2];
++      u.ub[TDFX_CG] = b[1];
++      u.ub[TDFX_CR] = b[0];
++      u.ub[TDFX_CA] = b[3];
++      c->col[i] = u.ui << 16 | u.ui >> 16;
++   }
++   m68k_lxf_p( f, (const float (*)[3])c->pos, c->nv, c->rec, c->col, c->vn );
++
++   LOCK_HARDWARE( fxMesa );
++   if (fxMesa->dirty)
++      tdfxEmitHwStateLocked( fxMesa );
++   a.c = c;
++   a.words = list_words( fxMesa );
++   a.flat = ctx->Light.ShadeModel == GL_FLAT;
++   if (a.words)
++      tdfxRenderPrimitive( ctx, GL_TRIANGLES );
++   /* flat: each fan's colour goes once to the constant colour register,
++    * and only when it changes; vertices carry x, y and z
++    */
++   cc = a.words == 4 && a.flat && !TDFX_IS_NAPALM(fxMesa) &&
++	fxMesa->ColorCombine.Local == GR_COMBINE_LOCAL_ITERATED &&
++	fxMesa->ColorCombine.Other != GR_COMBINE_OTHER_ITERATED &&
++	fxMesa->AlphaCombine.Local == GR_COMBINE_LOCAL_ITERATED &&
++	fxMesa->AlphaCombine.Other != GR_COMBINE_OTHER_ITERATED;
++   if (cc) {
++      fxMesa->Glide.grColorCombine( fxMesa->ColorCombine.Function,
++				    fxMesa->ColorCombine.Factor,
++				    GR_COMBINE_LOCAL_CONSTANT,
++				    fxMesa->ColorCombine.Other,
++				    fxMesa->ColorCombine.Invert );
++      fxMesa->Glide.grAlphaCombine( fxMesa->AlphaCombine.Function,
++				    fxMesa->AlphaCombine.Factor,
++				    GR_COMBINE_LOCAL_CONSTANT,
++				    fxMesa->AlphaCombine.Other,
++				    fxMesa->AlphaCombine.Invert );
++      fxMesa->Glide.grReset( GR_VERTEX_PARAMETER );
++      fxMesa->Glide.grCoordinateSpace( GR_WINDOW_COORDS );
++      fxMesa->Glide.grVertexLayout( GR_PARAM_XY, TDFX_XY_OFFSET, GR_PARAM_ENABLE );
++      fxMesa->Glide.grVertexLayout( GR_PARAM_Z, TDFX_Z_OFFSET, GR_PARAM_ENABLE );
++      fxMesa->dirty |= TDFX_UPLOAD_COLOR_COMBINE | TDFX_UPLOAD_ALPHA_COMBINE |
++		       TDFX_UPLOAD_VERTEX_LAYOUT;
++      reg[0] = grColor0Hdr();
++      reg[0] = reg[0] << 16 | reg[0] >> 16;
++      reg[1] = ~((const GLuint *)((const char *)c->rec + c->fan[0]))[2];
++      a.words = 3;
++      a.flat = (GLint)reg;
++   }
++   for (r = 0; a.words && r < fxMesa->numClipRects; r++) {
++      fxMesa->Glide.grClipWindow( fxMesa->pClipRects[r].x1,
++				  fxMesa->pClipRects[r].y1,
++				  fxMesa->pClipRects[r].x2,
++				  fxMesa->pClipRects[r].y2 );
++      a.fan = c->fan;
++      for (i = 0; i < c->nrun; i++) {
++	 a.nv = c->run[i].nv & ~M68K_STRIP;
++	 if (c->run[i].nv & M68K_STRIP)
++	    grDrawEmitStrips( c->run[i].nfan, a.nv, list_strip, &a );
++	 else if (cc)
++	    grDrawEmitFansC( c->run[i].nfan, a.nv, list_fans, &a );
++	 else
++	    grDrawEmitFans( c->run[i].nfan, a.nv, list_fans, &a );
++	 a.fan += c->run[i].nfan * (a.nv + 1);
++      }
++   }
++   UNLOCK_HARDWARE( fxMesa );
++   return GL_TRUE;
++}
++#endif
++
++
+ void tdfxDDInitTriFuncs( GLcontext *ctx )
+ {
+    TNLcontext *tnl = TNL_CONTEXT(ctx);
+@@ -1311,6 +1508,9 @@
+    tnl->Driver.Render.ResetLineStipple  = _swrast_ResetLineStipple;
+    tnl->Driver.Render.BuildVertices     = tdfxBuildVertices;
+    tnl->Driver.Render.Multipass		= NULL;
++#if defined(__AMIX__) && defined(__m68k__)
++   tnl->Driver.Render.ReplayFans	= tdfxReplayFans;
++#endif
+ 
+    (void) tdfx_print_vertex;
+ }

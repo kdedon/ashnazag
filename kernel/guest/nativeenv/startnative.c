@@ -42,10 +42,10 @@ publish(char *key, char *value)
 int
 main(int argc, char **argv)
 {
-    char *prog = strrchr(argv[0], '/'), *family, *id = 0;
+    char *prog = strrchr(argv[0], '/'), *family, *id = 0, *def = 0, *from = 0, *base, *envs[2];
     char *executable = 0, *media = 0, root[1100], bin[1200], image[1200];
     struct stat st;
-    int i = 1, lock, check = 0;
+    int i = 1, lock, check = 0, list = 0;
 
     prog = prog ? prog + 1 : argv[0];
     if (!strcmp(prog, "startlisa"))
@@ -60,8 +60,9 @@ main(int argc, char **argv)
     else
         goto usage;
     while (i < argc && strcmp(argv[i], "--")) {
-        if (!strcmp(argv[i], "-q")) {
-            check = 1;
+        if (!strcmp(argv[i], "-q") || !strcmp(argv[i], "-l")) {
+            check |= argv[i][1] == 'q';
+            list |= argv[i][1] == 'l';
             i++;
             continue;
         }
@@ -69,6 +70,10 @@ main(int argc, char **argv)
             goto usage;
         if (!strcmp(argv[i], "-e"))
             id = argv[i + 1];
+        else if (!strcmp(argv[i], "-d"))
+            def = argv[i + 1];
+        else if (!strcmp(argv[i], "-b"))
+            from = argv[i + 1];
         else if (!strcmp(argv[i], "-x"))
             executable = argv[i + 1];
         else if (!strcmp(argv[i], "-m"))
@@ -79,9 +84,33 @@ main(int argc, char **argv)
     }
     if (i < argc)
         i++;
-    if (envroot(family, id, getenv("HOME"), root, sizeof root) < 0) {
+    /* the environment in the family's own folder */
+    base = !strcmp(family, "lisa") ? "office" : !strcmp(family, "next") ? "openstep" : "ams";
+    envs[0] = base;
+    envs[1] = 0;
+    if (list) {
+        envlist(family, getenv("HOME"), base, envs);
+        return 0;
+    }
+    if (def && envsetdefault(prog, family, getenv("HOME"), def) < 0)
+        return 1;
+    if (def && !id)
+        return 0;
+    if (from && !id)
+        goto usage;
+    id = envchoose(family, id, getenv("HOME"), base);
+    if (envhome(family, id, base, getenv("HOME"), root, sizeof root) < 0) {
         fprintf(stderr, "%s: invalid environment root or name\n", prog);
         return 2;
+    }
+    /* -b: a new environment starts as a copy of from's */
+    if (from) {
+        if (envin(id, envs) || (envmeta(family, root, bin, sizeof bin) == 0 && stat(bin, &st) == 0)) {
+            fprintf(stderr, "%s: %s exists; -b makes a new environment\n", prog, id);
+            return 1;
+        }
+        if (envclone(prog, family, id, from, getenv("HOME"), base, root) < 0)
+            return 1;
     }
     sprintf(bin, "%s/native", root);
     sprintf(image, "%s/media", root);
@@ -127,8 +156,9 @@ main(int argc, char **argv)
     perror(executable);
     return 127;
 usage:
-    fprintf(stderr, "usage: %s %s[-q] [-e NAME] [-x /executable] [-m /media] [-- args...]\n",
+    fprintf(stderr, "usage: %s %s[-q] [-e NAME [-b BASE]] [-d NAME] [-x /executable] [-m /media] [-- args...]\n"
+        "       %s -d NAME | -l\n",
         prog, !strcmp(prog, "startlisa") || !strcmp(prog, "startvoyage200") ||
-        !strcmp(prog, "startnext") ? "" : "lisa|voyage200|next ");
+        !strcmp(prog, "startnext") ? "" : "lisa|voyage200|next ", prog);
     return 2;
 }

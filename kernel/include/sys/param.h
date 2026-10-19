@@ -13,17 +13,35 @@
 #define BPCSHIFT	11
 #define NCPS		64		/* clicks per segment */
 #define CPSSHIFT	6
+#define NBPS		0x20000		/* bytes per segment */
+#define NBPW		sizeof(int)
+#define NBPSCTR		512		/* bytes per disk sector */
+#define SCTRSHFT	9
+#define DEV_BSIZE	512
+#define DEV_BSHIFT	9
+#define NOFILE		20
+#define USIZE		4		/* u-area pages */
+#define MAXSYMLINKS	20
 
 /* sleep() priorities; above PZERO a signal wakes the sleeper */
+#define PSWP		0
+#define PMEM		0
+#define PINOD		10
 #define PRIBIO		20
 #define PZERO		25
 #define PWAIT		30
 #define PSLEP		39
+#define PUSER		60
+#define PIDLE		127
 #define PMASK		0177
 #define PCATCH		0400
 #define PNOSTOP		01000
 
 /* pages are 2 KB, as in the kernel the headers describe */
+#define MMU_PAGESIZE	0x800
+#define MMU_PAGESHIFT	11
+#define MMU_PAGEOFFSET	(MMU_PAGESIZE-1)
+#define MMU_PAGEMASK	(~MMU_PAGEOFFSET)
 #define PAGESIZE	0x800
 #define PAGESHIFT	11
 #define PAGEOFFSET	(PAGESIZE - 1)

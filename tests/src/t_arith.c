@@ -12,6 +12,8 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <sys/mman.h>
 #include "t.h"
 
 extern int _fp_hw;
@@ -252,11 +254,97 @@ test_fp()
 	test_awk(present);
 }
 
+/* cas.l d0,d1,(p): memory's old value */
+static long
+cas_l(p, c, u)
+	long *p, c, u;
+{
+	long r;
+
+	__asm__ __volatile__("mov.l %1,%%a0\n\tmov.l %2,%%d0\n\tmov.l %3,%%d1\n\t"
+	    ".short 0x0ed0,0x0040\n\tmov.l %%d0,%0"
+	    : "=g" (r) : "g" (p), "g" (c), "g" (u) : "d0", "d1", "a0", "memory", "cc");
+	return r;
+}
+
+/* cas2.l d0:d1,d2:d3,(p1):(p2); c gets the compare registers back */
+static void
+cas2_l(p1, p2, c, u)
+	long *p1, *p2, *c, *u;
+{
+	__asm__ __volatile__("mov.l %0,%%a0\n\tmov.l %1,%%a1\n\tmov.l %2,%%a2\n\t"
+	    "mov.l (%%a2),%%d0\n\tmov.l 4(%%a2),%%d1\n\tmov.l %3,%%a2\n\t"
+	    "mov.l (%%a2),%%d2\n\tmov.l 4(%%a2),%%d3\n\t"
+	    ".short 0x0efc,0x8080,0x90c1\n\t"
+	    "mov.l %2,%%a2\n\tmov.l %%d0,(%%a2)\n\tmov.l %%d1,4(%%a2)"
+	    : : "g" (p1), "g" (p2), "g" (c), "g" (u)
+	    : "d0", "d1", "d2", "d3", "a0", "a1", "a2", "memory", "cc");
+}
+
+/*
+ * The 68060 leaves cas2 and a misaligned cas to the kernel, which must
+ * fault their pages in first: here pages never touched, and a read-only
+ * one that must end in a signal.
+ */
+static void
+test_cas()
+{
+	long *m, *p1, *p2, c[2], u[2], v;
+	unsigned char *b;
+	int fd, st;
+	pid_t pid;
+	long pg = 8192;
+
+	if (t_kmem("cputype") != 60) {
+		t_skip("cas", "not a 68060");
+		return;
+	}
+	if ((fd = open("/dev/zero", O_RDWR)) < 0 ||
+	    (m = (long *)mmap((caddr_t)0, 4 * pg, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd,
+	    (off_t)0)) == (long *)-1) {
+		t_fail("cas_map", "%s", T_ERR);
+		return;
+	}
+	close(fd);
+	b = (unsigned char *)m;
+	v = cas_l((long *)(b + pg - 2), 0L, 0x12345678L);
+	t_check("cas_page_cross", v == 0 && b[pg - 2] == 0x12 && b[pg + 1] == 0x78,
+	    "old %#lx, bytes %02x..%02x", v, b[pg - 2], b[pg + 1]);
+	v = cas_l((long *)(b + pg - 2), 0L, 0L);
+	t_check("cas_page_cross_differ", v == 0x12345678L && b[pg - 2] == 0x12,
+	    "old %#lx, byte %02x", v, b[pg - 2]);
+	p1 = (long *)(b + 2 * pg);
+	p2 = (long *)(b + 3 * pg);
+	c[0] = c[1] = 0;
+	u[0] = 0x11111111L;
+	u[1] = 0x22222222L;
+	cas2_l(p1, p2, c, u);
+	t_check("cas2", *p1 == u[0] && *p2 == u[1] && c[0] == 0 && c[1] == 0,
+	    "memory %#lx %#lx, compare %#lx %#lx", *p1, *p2, c[0], c[1]);
+	c[0] = c[1] = 0;
+	cas2_l(p1, p2, c, c);
+	t_check("cas2_differ", c[0] == u[0] && c[1] == u[1] && *p1 == u[0],
+	    "compare %#lx %#lx", c[0], c[1]);
+	mprotect((caddr_t)p1, pg, PROT_READ);
+	if ((pid = fork()) == 0) {
+		c[0] = u[0];
+		c[1] = u[1];
+		cas2_l(p1, p2, c, u);
+		_exit(0);
+	}
+	st = 0;
+	t_check("cas2_readonly", pid > 0 && t_waitchild(pid, &st, 20) == pid &&
+	    WIFSIGNALED(st) && (WTERMSIG(st) == SIGSEGV || WTERMSIG(st) == SIGBUS),
+	    "status %#x", st);
+	munmap((caddr_t)m, 4 * pg);
+}
+
 int
 main()
 {
 	t_init("arith", 55);
 	test_int();
 	test_fp();
+	test_cas();
 	return t_done();
 }

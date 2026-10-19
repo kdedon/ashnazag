@@ -25,6 +25,7 @@ extern char rootfstype[];
 extern struct bootobj swapfile;
 extern int biowait();
 extern char *strcpy();
+extern void dlm_bootlink();
 
 static struct buf probebuf;
 static long probedata[2048 / sizeof (long)];
@@ -82,6 +83,7 @@ mac_diskprobe()
 	char *fs;
 	int n;
 
+	dlm_bootlink();		/* the disk controller may be a boot module */
 	if (getmajor(r) != DD_BMAJ)
 		return;
 	if (r == s)

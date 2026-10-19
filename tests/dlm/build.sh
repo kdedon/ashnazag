@@ -13,6 +13,11 @@
 #   dlmtu   undefined symbol                       ERELOC
 #   dlmtv   wrapper revision 2                     EBADVER
 #   dlmtw   wrapper word 0xfffffff0 (32-bit wrap)  ERELOC
+#   dlmtf   filesystem type dlmtf, loaded by its first mount
+#   dlmtn   3 MB image                         ENOMEM
+#   dlmth   holds kernel memory until unloaded
+#   dlmtk   4 MB sleeping kmem_alloc, waits for dlmth
+#   cdfs    kernel/mods.sh's, when its sources are there
 set -e
 
 T=$(cd "$(dirname "$0")/.." && pwd)
@@ -53,6 +58,10 @@ mk dlmtd
 mk dlmtl
 mk dlmtv
 mk dlmtu "$OUT/exports.u"
+mk dlmtf
+mk dlmtn
+mk dlmth
+mk dlmtk
 
 # dlmtw by hand: mkmod refuses a word 0 without its relocation
 d=$OUT/src/dlmtw
@@ -74,4 +83,10 @@ for i in range(shnum):
         d[h + 4:h + 8] = struct.pack('>I', 13)
 open(p, 'wb').write(d)
 EOF
+if sh "$KDIR/mods.sh" TARGET=$(sh "$KDIR/mods.sh" -t "$KERNEL") "$OUT/fs" KERNEL="$KERNEL" fs > "$OUT/fs.log" 2>&1 &&
+    [ -f "$OUT/fs/mod.d/cdfs" ]; then
+	cp "$OUT/fs/mod.d/cdfs" "$OUT/mod.d/"
+else
+	echo "[skip] cdfs: $(tail -1 "$OUT/fs.log")"
+fi
 ls "$OUT/mod.d"

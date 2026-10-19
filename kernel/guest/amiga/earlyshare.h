@@ -1,7 +1,7 @@
 #ifndef MIG_EARLYSHARE_H
 #define MIG_EARLYSHARE_H
 /*
- * Files startmig copies from SYS: into the boot extension, so the board
+ * Files startamiga copies from SYS: into the boot extension, so the board
  * binds before DOS.  Names are SYS: paths in lower case; offsets are from
  * MIG_EARLY_BASE.
  */

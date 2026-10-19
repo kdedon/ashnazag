@@ -21,10 +21,10 @@ Direct boot also runs `display/hostio.py`: `t_display` sends it requests on SCC 
 | Group | Programs |
 |---|---|
 | `smoke` | t_sys t_file t_proc t_pipe t_dlm t_guestdlm t_envram t_gate t_vtop |
-| `core` | smoke plus t_arith t_mem t_sig t_streams t_time t_prof t_tty t_page t_moddemo t_stress t_env t_ufs |
+| `core` | smoke plus t_arith t_fpimm t_mem t_sig t_streams t_time t_prof t_tty t_page t_moddemo t_stress t_env t_ufs |
 | `mac` | t_aux t_mac t_mac6 t_mac76 t_mac81 t_env |
 | `tos` | t_tos t_xaaes t_env |
-| `mint`, `cpm`, `amiga`, `display`, `sound`, `win16`, `gl` | t_mint; t_cpm; t_amiga t_radeon t_env; t_display; t_sound; t_win16; t_gl |
+| `mint`, `cpm`, `amiga`, `display`, `sound`, `win16`, `gl` | t_mint; t_cpm; t_amiga t_radeon t_env; t_display; t_sound; t_win16; t_gl t_dlopen |
 | `stable` | t_stable: each environment started and stopped five ways, leaks and idle CPU (`STABLE="mac76 cpm idle=30 cycles=1"` narrows it) |
 
 Exit status: 0 all PASS, 1 any FAIL, 2 timeout, panic or no `TESTS DONE`.
@@ -65,7 +65,8 @@ INFO time.clk_tck: 60
 | `t_time` | time, gettimeofday and times() against sleep(2) and a 5 s poll (tick rate), monotonic time, CPU time |
 | `t_prof` | profil(2): two profiled and one plain CPU-bound child for 8 s keep identical FP and integer results, profiled histograms fill |
 | `t_tty` | console isatty, TCGETA/TCSETA and TCGETS/tcsetattr round trips (same values written back), ldterm on the stream |
-| `t_arith` | 32/64-bit multiply, divide, shifts; FP and libm in a child; FP state across context switches |
+| `t_arith` | 32/64-bit multiply, divide, shifts; FP and libm in a child; FP state across context switches; on a 68060, cas2 and a page-crossing cas on untouched pages, and cas2 on a read-only page ending in a signal |
+| `t_fpimm` | FP immediates and the instructions a 68060 leaves to the kernel; fp2-fp7 kept |
 | `t_sys` | uname, sysinfo, getppid, limits, EMFILE, environment through exec, `/proc` readdir/PIOCPSINFO/PIOCSTATUS/memory read, kernel counters via `/dev/kmem` |
 | `t_streams` | `/dev/null`, `/dev/zero`, sad autopush query and module validation, clone open, I_PUSH/I_LOOK/I_POP, pseudo-terminal pair |
 | `t_net` (`--net` only) | DLPI on `/dev/aen0` (info, address, SNAP bind, multicast limit, bad offset), slink/ifconfig/route, ping 10.0.2.2, 64 KB TCP echo via guestfwd, refused connect, ifconfig down/up, CA1 interrupt count |
@@ -73,7 +74,7 @@ INFO time.clk_tck: 60
 | `t_ufs` | a ufs volume (SCSI disk 2, from `mkufs.py`) mounted, used (read, write, chown, shared mmap, directories) and unmounted 10 times, then remounted read-only; after each unmount, s5 I/O and exec, and writes at the end of fresh file-window slots must not fault on the next slot |
 | `t_page` | 4 processes, 2 generations, touch twice free memory (within what swap can reserve) and verify every page forwards, backwards and after fork (copy on write); `swapctl` free space drops while held and recovers; a holder stuck 300 s fails with its wait channel. Pages out only when swap exceeds free memory: on the RAM-disk root boot with `rdswap=MB`, e.g. `MEM=48 CMDLINE=rdswap=28` |
 | `t_moddemo` | a write to a shared file mapping right after a read of the same page reaches the file after `msync`: the MMU must set the page's modified bit on that first write |
-| `t_dlm` | loadable modules from `/tests/mod.d` (`dlm/`): load, dependent load calling into its dependency, `modstat`, `getksym` both ways, unload order, `moduload(0)`, the loader's errnos, `EPERM` for non-root, `modadmin`; skipped on a kernel without module support |
+| `t_dlm` | loadable modules from `/tests/mod.d` (`dlm/`): load, dependent load calling into its dependency, `modstat`, `getksym` both ways, unload order, `moduload(0)`, the loader's errnos, `EPERM` for non-root, `modadmin`, `ENOMEM` for an oversized image, a sleeping `kmem_alloc` waking when memory frees; skipped on a kernel without module support |
 | `t_aux` | A/UX COFF programs as guest processes (modules built by `aux/build.sh`, programs and files from a local A/UX root `AUXROOT`, never committed): `sh` scripts and signals, `ls -l`, file tools; with shared-library support, `abi` (BSD signals, itimers, select, wait3/waitpid, locks, statfs, truncate, utimes, shm, TIOCPKT), `.lib` failure paths, `sleep` (libc1_s, SVR3 frame), `more` and `vi` on a pty; each part skips on a kernel without it |
 | `t_mac` | the Mac environment (modules and files as for `t_aux`, plus `startmac`, `libmac1_s`, `Patch.067C`, the System file and a Mac ROM image `AUXROM`, all local only): `/dev/uinter0` from a native process (auto-load, version, refusal); `macabi`, an A/UX program that makes itself a Mac task (layer ioctls, low memory at 0, ui page, ROM mapping and ProductInfo, PRAM, A-line frames, privileged instructions on the virtual SR, signals held by the virtual IPL, the SIGIOT tick); `startmac` with `TBVERBOSE`/`TBWARN`: output relayed as `mac|` lines, the kernel trace of its opens and uinter commands as `ktrace|` lines, checks that it passed `doDispatch` and opened the System file after `UI_SET`; each part skips without what it needs |
 | `t_mac76` | `t_mac`'s `startmac` run (`t_mac.c` built with `SYS76`) on Mac OS 7.6.1: the System Folder `/mac/sys/S761` made from the CD image (`CD761`, local only) by `images/macenv/mksys76.sh`, the model set to a Quadra 800 (`uinter_boxflag` 29); checks `'boot'` 3's `_AUXDispatch(36, 0)` (it makes `/tmp/.mac/unix`), the Finder desktop, `SysVersion` `$0761`, the model, About This Computer, SimpleText (linked into `/Desktop Folder`) opened by keyboard and quit, the disk window and the Special menu; skips without the CD |
@@ -91,8 +92,9 @@ INFO time.clk_tck: 60
 | `t_win16` | `startwin` and the Win16 test programs on SCSI disk 3; with your Windows and Wabi, install and Program Manager |
 | `t_gate` | cost of the guest vector gates on native system calls |
 | `t_gl` | software GL (`gl/build.sh`'s OSMesa): clear, smooth shading, depth test and read-back, diffuse lighting, nearest and modulated texturing checked pixel by pixel; frame time of a lit, textured sphere. Skips without the library |
+| `t_dlopen` | shared objects from our binutils: a library the program links against (data copied into the program) and one loaded with `dlopen` that calls the program and that library; `dlsym`, `dlclose`, reopen |
 | `t_guestdlm`, `t_envram` | guest modules under DLM; environment RAM allocation and return |
-| `t_env` | guest environments: record locks on s5 and ufs released by `SIGKILL`; `maketos -e` makes distinct roots, refuses reserved and bad names and existing ones, `--import` copies `~/TOS` without its environments and leaves it unchanged; `starttos -e`, `startmig -e` (on the ufs volume) hold the lock on `.env`, and `envlock` on the legacy System Folder's `.stamp`, while running, a second session is refused, other environments and the legacy tree lock separately, and the lock goes on `SIGKILL` and on exit |
+| `t_env` | guest environments: record locks on s5 and ufs released by `SIGKILL`; `starttos` makes `~/TOS` at first start, `-e NAME -b BASE` a new copy and refuses an existing name, `-d` sets the default and refuses bad names; `starttos -e`, `startamiga -e` (on the ufs volume) hold the lock on `.env`, and `envlock` on the legacy System Folder's `.stamp`, while running, a second session is refused, other environments and the legacy tree lock separately, and the lock goes on `SIGKILL` and on exit |
 
 Floating point: when the kernel reports no FPU (`fpu_present` 0), FP failures are SKIPs, not FAILs.
 

@@ -142,13 +142,13 @@ all(verbose)
 	int id = 1;
 
 	if (!verbose)
-		printf("ID\tREFS\tDEPS\tNAME\n");
+		printf("ID\tREFS\tDEPS\tBASE\t\tSIZE\tNAME\n");
 	while (modstat(id, &st, 1) == 0) {
 		if (verbose)
 			full(&st);
 		else
-			printf("%d\t%d\t%d\t%s\n", st.ms_id, st.ms_refcnt,
-			    st.ms_depcnt, st.ms_name);
+			printf("%d\t%d\t%d\t0x%08lx\t%u\t%s\n", st.ms_id, st.ms_refcnt,
+			    st.ms_depcnt, (unsigned long)st.ms_base, st.ms_size, st.ms_name);
 		id = st.ms_id + 1;
 	}
 }

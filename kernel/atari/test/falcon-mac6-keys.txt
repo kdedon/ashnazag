@@ -1,7 +1,7 @@
 wait login:
 type root\n
 wait # 
-type TBWARN=1 startmac6 2> /tmp/m6.log; echo m6-rc=$?\n
+type TBWARN=1 startmac -e 6 2> /tmp/m6.log; echo m6-rc=$?\n
 sleep 100
 debug screenshot OUT/1-desktop.png
 event keydown 0x38

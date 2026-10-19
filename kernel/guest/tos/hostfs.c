@@ -490,14 +490,15 @@ dostime(t, w)
 	unsigned short *w;
 {
 	static char md[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+	static long k[] = { 86400, 3600, 60 };	/* divisors in memory: a 68060 lacks gcc's 64-bit multiply */
 	long d, s;
 	int y = 1970, m = 0, n;
 
 	t += p_tz;
 	if (t < 315532800L)
 		t = 315532800L;		/* 1980 */
-	d = t / 86400;
-	s = t % 86400;
+	d = t / k[0];
+	s = t % k[0];
 	for (;; y++) {
 		n = y % 4 == 0 ? 366 : 365;
 		if (d < n)
@@ -510,7 +511,7 @@ dostime(t, w)
 			break;
 		d -= n;
 	}
-	w[0] = (s / 3600) << 11 | (s / 60 % 60) << 5 | (s % 60) / 2;
+	w[0] = (s / k[1]) << 11 | (s / k[2] % k[2]) << 5 | (s % k[2]) / 2;
 	w[1] = (y - 1980) << 9 | (m + 1) << 5 | (d + 1);
 }
 

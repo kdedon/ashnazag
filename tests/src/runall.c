@@ -37,8 +37,10 @@ static struct {
 	{ "t_prof", 90 },
 	{ "t_tty", 30 },
 	{ "t_arith", 60 },
+	{ "t_fpimm", 30 },
 	{ "t_cc295", 120 },
 	{ "t_gl", 300 },
+	{ "t_dlopen", 60 },
 	{ "t_sys", 60 },
 	{ "t_streams", 60 },
 	{ "t_stress", 90 },
@@ -54,6 +56,7 @@ static struct {
 	{ "t_aux", 300 },
 	{ "t_mac", 330 },
 	{ "t_mac76", 600 },
+	{ "t_coff76", 600 },
 	{ "t_mac81", 600 },
 	{ "t_mac6", 330 },
 	/* a second run in the same boot: nothing of the first may linger */
@@ -77,7 +80,8 @@ static struct {
 	{ "t_nativecall", 60 },
 	{ "t_natenv", 90 },
 	{ "t_v200", 900 },
-	{ "t_next", 1500 },
+	{ "t_next", 1800 },
+	{ "t_lisa", 600 },
 	{ "t_quake", 7200 },
 	{ "t_stable", 14400 },
 	{ 0, 0 }

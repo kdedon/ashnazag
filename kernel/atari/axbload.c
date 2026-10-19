@@ -4,14 +4,20 @@
  * Linux/m68k boot record and enters the kernel with MMU and caches off.
  *
  * AXB layout (512-byte sectors): 0-14 this loader, 15 the command line
- * (text, NUL-terminated), 16 on the kernel ELF.  In the command line,
- * "root=c?" gets the IDE unit of the boot disk.
+ * (text, NUL-terminated) and from byte 256 the boot module table, 16 on
+ * the kernel ELF, then the modules.  In the command line, "root=c?" gets
+ * the IDE unit of the boot disk.
+ *
+ * Module table: 'BMOD', count, then per module its first sector in
+ * AXB, its size in bytes and its name (16 bytes, NUL-padded).
  */
 
 #define CMDSEC	15
 #define KERNSEC	16
 #define CHUNK	64		/* sectors per DMAread */
 #define BIMAX	1024
+#define MODMAX	8
+#define MODTAB	256
 
 #define PHYSTOP	(*(__volatile__ unsigned long *)0x42e)
 #define HZ200	(*(__volatile__ unsigned long *)0x4ba)
@@ -151,6 +157,10 @@ be32(unsigned char *p)
 static unsigned char bi[BIMAX];
 static int nbi;
 
+/* per module: address, size, name */
+static unsigned long mods[MODMAX][6];
+static int nmods;
+
 static void
 birec(int tag, const void *d, int len)
 {
@@ -242,7 +252,7 @@ loader(long dev, unsigned long axb, unsigned char *root)
 	static struct go gk;
 	unsigned char *ph;
 	unsigned long cpu, fpu, kend, fend, fsz, n, i, blk, size, buf, mem[2];
-	unsigned long off, va, fs, ms, sum, osoff;
+	unsigned long off, va, fs, ms, sum, osoff, mtop, msec;
 	int ent = 0;
 	struct go *g;
 	char *p, *base;
@@ -325,6 +335,37 @@ loader(long dev, unsigned long axb, unsigned char *root)
 		return fail("kernel checksum");
 	}
 
+	/* boot modules below the hand-off area, clear of the kernel's page tables */
+	mtop = buf - 2048;
+	nmods = 0;
+	ph = cmd + MODTAB;
+	for (i = 0; be32(ph) == 0x424d4f44 && i < be32(ph + 4) && i < MODMAX; i++) {
+		p = (char *)ph + 8 + 24 * i;
+		size = be32((unsigned char *)p + 4);
+		msec = (size + 511) / 512;
+		mtop -= msec * 512;
+		if (size == 0 || size > 0x400000 || mtop < blk ||
+		    mtop < kend + BIMAX + 0x100000) {
+			mfree(blk);
+			return fail("no room for the boot modules");
+		}
+		p[8 + 15] = 0;
+		puts_("Loading module ");
+		puts_(p + 8);
+		putc_('\n');
+		for (n = 0; n < msec; n += CHUNK)
+			if (dmaread(axb + be32((unsigned char *)p) + n, msec - n < CHUNK ? msec - n : CHUNK,
+			    (char *)mtop + n * 512, dev)) {
+				mfree(blk);
+				return fail("read error");
+			}
+		mods[nmods][0] = mtop;
+		mods[nmods][1] = size;
+		for (n = 0; n < 16; n++)
+			((char *)&mods[nmods][2])[n] = p[8 + n];
+		nmods++;
+	}
+
 	/* boot record, as the Linux/m68k bootstrap builds it */
 	cpu = cookie(0x5f435055, 30);			/* _CPU */
 	fpu = cookie(0x5f465055, 0) >> 16;		/* _FPU */
@@ -347,6 +388,8 @@ loader(long dev, unsigned long axb, unsigned char *root)
 	for (n = 0; cmd[n]; n++)
 		;
 	birec(7, cmd, n + 1);
+	for (i = 0; i < (unsigned long)nmods; i++)
+		birec(0x8f02, mods[i], 24);
 	bilong(0x8000, cookie(0x5f4d4348, 0));		/* _MCH */
 	bilong(0x8001, 0);
 	/* the running TOS image, logical here: go() makes it physical */

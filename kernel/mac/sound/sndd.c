@@ -194,10 +194,10 @@ unsigned long bits;
 			playing = 0;
 		return;
 	}
-	if (bits & ASC_IRQEMPTY) {
+	if (bits & ASC_IRQSTOP) {
 		if (cur && cur->c_n > 0) {
 			under++;
-			push(cur, PRIME);
+			start();	/* the interrupt turned the chip off */
 		} else
 			stop();
 	} else if ((bits & ASC_IRQHALF) && cur && cur->c_n > 0)

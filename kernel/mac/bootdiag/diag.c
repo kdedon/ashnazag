@@ -36,6 +36,7 @@ extern long ncr_nchunk, ncr_ncmd;
 extern unsigned long mac_ticks, mac_spurious[8];
 extern unsigned long sn_nintr, sn_nslot, ds_nhwvbl;
 extern int __amix_vfs_mountroot(), __amix_swapconf(), __amix_exece();
+extern void dlm_bootlink();
 extern int __amix_fpuinit();
 extern long fpu_present;
 extern char u[];
@@ -374,6 +375,7 @@ long a, b, c, d;
 
 	diag_vecinit();
 	diag_step('M');
+	dlm_bootlink();
 	r = __amix_vfs_mountroot(a, b, c, d);
 	diag_step(r ? '!' : 'm');
 	return r;

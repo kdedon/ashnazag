@@ -122,7 +122,44 @@ nvsum(b)
 	b[31] = sum;
 }
 
-/* one host service: 0 done, -1 not one */
+/*
+ * The kernel's copyin and copyout: a page at a time through the guest's
+ * user map.  A page not mapped for the access, or a kernel address that
+ * faults, runs the routine's own code from the start, which faults as it
+ * would on the machine.  1: the PC is set.
+ */
+static int
+nx_copy(gp, r, out, a)
+	struct guest_proc *gp;
+	char *r;
+	int out;
+	unsigned long *a;
+{
+	static char b[4096];	/* one machine at a time */
+	unsigned long u = out ? a[1] : a[0], k = out ? a[0] : a[1], len = a[2], n, ret;
+	caddr_t h;
+
+	if ((long)len < 0 || !inguest(k, len))
+		goto slow;
+	for (; len; u += n, k += n, len -= n) {
+		n = 4096 - (u & 4095);
+		n = n < len ? n : len;
+		if ((h = guest_mmu_user(gp, u, (int)n, out)) == 0 ||
+		    (out ? copyin((caddr_t)k, b, n) || copyout(b, h, n) : copyin(h, b, n) || copyout(b, (caddr_t)k, n)))
+			goto slow;
+	}
+	if (!inguest((unsigned long)GR_USP(r), 4UL) || copyin((caddr_t)GR_USP(r), (caddr_t)&ret, 4))
+		goto slow;
+	GR_USP(r) += 4;
+	GR_PC(r) = ret;
+	GR_D(r, 0) = 0;
+	return 1;
+slow:
+	GR_PC(r) = HF_TRAMP + 16 * out;
+	return 1;
+}
+
+/* one host service: 0 done, 1 done and the PC set, -1 not one */
 int
 nx_service(gp, r)
 	struct guest_proc *gp;
@@ -169,6 +206,9 @@ nx_service(gp, r)
 	case HC_STAT:
 		GR_D(r, 0) = nx.istat;
 		return 0;
+	case HC_COPYIN:
+	case HC_COPYOUT:
+		return nx_copy(gp, r, svc == HC_COPYOUT, a);
 	case HC_TACK:
 		s = nx_splhi();
 		nx.istat &= ~INT_TIMER;

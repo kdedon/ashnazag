@@ -118,6 +118,8 @@ gc_exec(p)
 		gp->gp_vsr = 0;
 		gp->gp_vusp = gp->gp_vvbr = gp->gp_vcacr = 0;
 		gp->gp_vsfc = gp->gp_vdfc = 0;
+		gp->gp_space = 0;
+		gp->gp_ualine = 0;
 		if (pf->gpf_exec)
 			(*pf->gpf_exec)(gp);
 	}
@@ -256,11 +258,18 @@ gc_trap(r)
 	struct guest_proc *gp = GUESTP(curproc);
 	int v = GR_VEC(r);
 	struct guest_disp *d = &gp->gp_prof->gpf_disp[v];
+	unsigned long fa;
+	int ssw;
 
 	if ((u_long)GR_PC(r) - gp->gp_hostlo < gp->gp_hosthi - gp->gp_hostlo)
 		return 1;
 	if ((gp->gp_flags & GPF_NCALL) && v != GNC_VECTOR)
 		return gc_host(gp, r, v);
+	if (v == 61 && d->gd_fn == 0 && guest_movep(gp, r, &fa, &ssw) == 0) {
+		u.u_ar0 = (struct pcb *)r;
+		guest_trapret();	/* to RAM only: a fault goes to the host */
+		return 0;
+	}
 	if (d->gd_kind == GD_NATIVE || d->gd_fn == 0)
 		return gc_host(gp, r, v);
 	if ((d->gd_flags & GDF_USER) && (GR_SR(r) & 0x2000))

@@ -23,7 +23,11 @@
 #include "amixdrirec.h"
 #include "drihost.h"
 
-extern void grDRIFront(int offset, int stride);
+extern void *_dlsym(void *, const char *);
+extern void *__driHandle;
+
+/* Glide's front buffer, when the driver draws with Glide */
+static void (*front)(int offset, int stride);
 
 #define DRAWABLE 1
 #define VISUAL 1
@@ -251,6 +255,59 @@ findmaps(void)
     return H.hSAREA && H.hFB;
 }
 
+static __DRIdriverEntry *entry;
+static const char *loaderr;
+
+/*
+ * Binds fbfd's session and loads the card's driver, running the dynamic
+ * linker: call it outside guest context.  Returns the driver's name, or 0
+ * with the reason in err.
+ */
+const char *
+drihost_load(int fbfd, const char **err)
+{
+    __DRIdriverEntry *e;
+    drmVersionPtr v;
+    drmDSBindRec b;
+    int i;
+
+    if (entry || loaderr) {
+	*err = loaderr;
+	return entry ? H.name : 0;
+    }
+    loaderr = "no DRM for the display";
+    if ((H.fd = drmOpenSession(fbfd, &b)) < 0)
+	goto fail;
+    (void) fcntl(H.fd, F_SETFD, 1);
+    H.base = b.offset;
+    H.info.session = b.session;
+    H.info.vramOffset = b.vram;
+    H.info.vramSize = b.vramsize;
+    loaderr = "no DRM version";
+    if ((v = drmGetVersion(H.fd)) == 0)
+	goto fail;
+    strncpy(H.name, v->name, sizeof H.name - 1);
+    drmFreeVersion(v);
+    for (e = __driDrivers; e->name && strcmp(e->name, H.name); e++)
+	;
+    loaderr = "no driver for the card";
+    if (!e->name && !(e = __driLoadDriver(H.name)))
+	goto fail;
+    if (__driHandle)
+	front = (void (*)(int, int)) _dlsym(__driHandle, "grDRIFront");
+    loaderr = 0;
+    entry = e;
+    return H.name;
+fail:
+    *err = loaderr;
+    i = errno;
+    if (H.fd >= 0)
+	close(H.fd);
+    H.fd = -1;
+    errno = i;
+    return 0;
+}
+
 /*
  * The session of fbfd, its frame at frame bytes into the session's
  * memory, width x height pixels of depth bits, stride bytes a row.
@@ -261,27 +318,14 @@ drihost_open(int fbfd, unsigned long frame, int width, int height, int stride, i
 	     const char **err)
 {
     __DRIdriverEntry *e;
-    drmVersionPtr v;
-    drmDSBindRec b;
     drmAddress a;
     int i;
 
     if (H.sc.driScreen.private)
 	return H.name;
-    *err = "no DRM for the display";
-    if ((H.fd = drmOpenSession(fbfd, &b)) < 0)
+    if (!drihost_load(fbfd, err))
 	return 0;
-    (void) fcntl(H.fd, F_SETFD, 1);
-    *err = "no DRM version";
-    if ((v = drmGetVersion(H.fd)) == 0)
-	goto fail;
-    strncpy(H.name, v->name, sizeof H.name - 1);
-    drmFreeVersion(v);
-    for (e = __driDrivers; e->name && strcmp(e->name, H.name); e++)
-	;
-    *err = "no driver for the card";
-    if (!e->name)
-	goto fail;
+    e = entry;
     *err = "no maps or drawable";
     if (!findmaps() ||
 	drmMap(H.fd, H.hSAREA, SAREA_MAX, &a) < 0 || drmCreateDrawable(H.fd, &H.hw) < 0)
@@ -294,16 +338,12 @@ drihost_open(int fbfd, unsigned long frame, int width, int height, int stride, i
     H.slot = H.hw % SAREA_MAX_DRAWABLES;
     H.sarea->drawableTable[H.slot].flags = 0;
     H.sarea->drawableTable[H.slot].stamp++;
-    H.base = b.offset;
-    H.info.session = b.session;
     H.info.width = width;
     H.info.height = height;
     H.info.depth = depth;
     H.info.cpp = (depth + 7) / 8;
     H.info.stride = stride;
-    H.info.frontOffset = b.offset + frame;
-    H.info.vramOffset = b.vram;
-    H.info.vramSize = b.vramsize;
+    H.info.frontOffset = H.base + frame;
     H.w = width;
     H.h = height;
 
@@ -396,10 +436,18 @@ drihost_bind(void *ctx, unsigned long offset, int stride, int w, int h)
 	H.sarea->drawableTable[H.slot].stamp++;
     }
     /* before: a new Glide context starts from it; after: an open one moves */
-    grDRIFront(H.base + offset, stride);
+    if (front)
+	front(H.base + offset, stride);
     if (!(*gc->driContext.bindContext)(&H.dpy, 0, DRAWABLE, gc))
 	return 0;
-    grDRIFront(H.base + offset, stride);
+    if (front)
+	front(H.base + offset, stride);
     glDrawBuffer(GL_FRONT);
     return 1;
+}
+
+unsigned long
+drihost_textend(void)
+{
+    return __driHandle ? (unsigned long) _dlsym(__driHandle, "__dri_end") : 0;
 }

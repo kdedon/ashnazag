@@ -5,7 +5,7 @@
 #define MIG_RTG_HEADER_SIZE 8192UL
 #define MIG_RTG_MAP_SIZE MIG_RTG_HEADER_SIZE
 #define MIG_RTG_MAGIC 0x4d525447U
-#define MIG_RTG_VERSION 4U
+#define MIG_RTG_VERSION 5U
 /* the display session's memory: the card's video RAM */
 #define MIG_RTG_VRAM 0x30000000UL
 #define MIG_RTG_VRAM_MAX (16UL * 1024 * 1024)
@@ -80,6 +80,8 @@ struct mig_rtg {
     volatile unsigned int shows;
     /* nonzero while the display session is not in front */
     volatile unsigned int hidden;
+    /* modes smaller than the display, width and height, 0 at the end; their bitmaps get the display's rows */
+    unsigned int small[4][2];
 };
 typedef char mig_rtg_fits[sizeof(struct mig_rtg) <= MIG_RTG_HEADER_SIZE - 256 ? 1 : -1];
 

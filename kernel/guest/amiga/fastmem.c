@@ -1,5 +1,5 @@
 /*
- * fastmem.c -- memcpy and memset for startmig.  The system's move a byte
+ * fastmem.c -- memcpy and memset for startamiga.  The system's move a byte
  * at a time; Mesa and Warp3D's back buffer move megabytes a frame.
  * 68020 and later read and write longs at any address.
  */

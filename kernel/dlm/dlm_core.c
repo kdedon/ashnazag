@@ -14,6 +14,7 @@
  */
 
 #include "dlm.h"
+#include "sys/bootmod.h"
 
 struct dlm_lf {				/* one load in progress */
 	struct dlm_lf	*lf_next;
@@ -27,6 +28,7 @@ struct dlm_lf {				/* one load in progress */
 	char		**lf_deptab;
 	int		lf_depsz;
 	char		*lf_pbuf;	/* path being tried */
+	struct bootmod	*lf_bm;		/* or a boot module in memory */
 };
 #define	LF_OPEN		0
 #define	LF_INLOAD	1	/* inside mw_load */
@@ -45,6 +47,7 @@ static struct cred *dlm_syscred;
 extern char dlm_ksym[];
 extern int nosys();
 extern void dlm_cacheflush();
+extern struct vnode *rootdir;
 
 static int dlm_modload(), dlm_moduload(), dlm_modpath(), dlm_modstat();
 static int dlm_modadm(), dlm_getksym();
@@ -222,7 +225,11 @@ busy(m)
 	struct dlm_mod *m;
 {
 	return m->m_refs || m->m_deps || m->m_incall ||
-	    (m->m_flags & (DM_LOCKED | DM_TRANS));
+	    (m->m_flags & (DM_LOCKED | DM_TRANS))
+#ifndef DLM_HOST
+	    || dlm_fsbusy(m)
+#endif
+	    ;
 }
 
 /* ---- linkages ---- */
@@ -244,6 +251,8 @@ knownops(a)
 #ifndef DLM_HOST
 	if (a == DLM_KADDR(&mod_strops, "mod_strops"))
 		return &mod_strops;
+	if (a == DLM_KADDR(&mod_fsops, "mod_fsops"))
+		return &mod_fsops;
 #endif
 	return 0;
 }
@@ -351,6 +360,12 @@ lf_read(ld, off, buf, len)
 	struct dlm_lf *lf = (struct dlm_lf *)ld->ld_rh;
 	int resid = 0, e;
 
+	if (lf->lf_bm) {
+		if (off > lf->lf_bm->bm_size || len > lf->lf_bm->bm_size - off)
+			return DLM_ESHORT;
+		bcopy((char *)lf->lf_bm->bm_addr + off, buf, len);
+		return 0;
+	}
 	e = vn_rdwr(UIO_READ, lf->lf_vp, (caddr_t)buf, (int)len, (off_t)off,
 	    UIO_SYSSPACE, 0, 0x7fffffffL, u.u_cred, &resid);
 	if (e)
@@ -461,7 +476,13 @@ lf_find(lf, path, m)
 
 	/* in lf so that an interrupted open does not leak it */
 	buf = lf->lf_pbuf = dlm_zalloc((long)MAXPATHLEN);
-	if (path[0] == '/') {
+	if ((lf->lf_bm = dlm_bootfind(lastcomp(path))) != 0) {
+		e = 0;
+		strcpy(buf, "boot:");
+		strcpy(buf + 5, lf->lf_bm->bm_name);
+	} else if (rootdir == 0)
+		e = ENOENT;
+	else if (path[0] == '/') {
 		e = lf_open(lf, path);
 		strcpy(buf, path);
 	} else
@@ -1096,14 +1117,30 @@ static struct {
 };
 #define	NCALLS	(sizeof dlm_calls / sizeof dlm_calls[0])
 
+#ifndef DLM_HOST
+/* sysinfo(SI_ARCHITECTURE): the stock "m68k" made "m68030", "m68040" or "m68060" */
+char architecture[8] = "m68030";
+__asm__(".weak cputype");
+extern long dlm_cputype __asm__("cputype");	/* 30, 40 or 60 */
+#endif
+
 void
 dlm_init()
 {
 	int i;
 
+#ifndef DLM_HOST
+	{
+		long *__volatile__ cpu = &dlm_cputype;
+
+		if (cpu && (*cpu == 40 || *cpu == 60))
+			architecture[4] = '0' + *cpu / 10;
+	}
+#endif
 	dlm_slot_init();
 #ifndef DLM_HOST
 	dlm_str_init();
+	dlm_fs_init();
 #endif
 	if (dlm_blkcheck(dlm_ksym, (long)KSYM_SPACE) != 0 ||
 	    G32(dlm_ksym + KH_LO) != DLM_KLO || G32(dlm_ksym + KH_HI) != DLM_KHI) {

@@ -1133,6 +1133,133 @@ long ms;
 	poll((struct pollfd *)0, 0L, ms);
 }
 
+#ifdef SYS76
+#define	COFFOUT	"/tmp/coffout"
+
+/* CommandShell's console window takes console output while it runs: results go to a file */
+static int
+coffcapture()
+{
+	int save = dup(1), fd = open(COFFOUT, O_RDWR | O_CREAT | O_TRUNC, 0644);
+
+	if (save >= 0 && fd >= 0)
+		dup2(fd, 1);
+	if (fd >= 0)
+		close(fd);
+	return save;
+}
+
+static void
+coffrelease(save)
+int save;
+{
+	char buf[512];
+	int fd, n;
+
+	if (save < 0)
+		return;
+	dup2(save, 1);
+	close(save);
+	if ((fd = open(COFFOUT, O_RDONLY)) >= 0) {
+		while ((n = read(fd, buf, sizeof buf)) > 0)
+			write(1, buf, n);
+		close(fd);
+	}
+	unlink(COFFOUT);
+}
+
+/* the screen entries of a System's scrn resources, found by their header; 1 if one is the A/UX screen's */
+static int
+scrnstate(path)
+char *path;
+{
+	static unsigned char b[1 << 16];
+	char hex[61];
+	int fd, n, i, j, aux = 0;
+
+	t_info("scrn_fb", "%d", (fd = open("/dev/fb0", O_RDONLY)) >= 0 ? 0 : errno);
+	if (fd >= 0)
+		close(fd);
+	if ((fd = open(path, O_RDWR)) < 0) {
+		t_info("scrn_open", "%d", errno);
+		return 1;
+	}
+	while ((n = read(fd, (char *)b, sizeof b)) > 0)
+		for (i = 0; i + 30 <= n; i++)
+			if (b[i] == 0 && b[i + 1] < 4 && b[i + 3] == 0x7a && b[i + 2] == 0) {
+				for (j = 0; j < 30; j++)
+					sprintf(hex + 2 * j, "%02x", b[i + j]);
+				t_info("scrn_entry", "%s", hex);
+				aux |= b[i + 1] && b[i + 5] == 0xe;
+			}
+	close(fd);
+	return aux;
+}
+
+/* where the Mac, its children and the blocked writer sleep */
+static void
+coffwchans(writer)
+pid_t writer;
+{
+	char path[40];
+	prpsinfo_t ps;
+	prstatus_t st;
+	struct dirent *de;
+	DIR *d;
+	int fd;
+
+	if ((d = opendir("/proc")) == 0)
+		return;
+	while ((de = readdir(d)) != 0) {
+		sprintf(path, "/proc/%.20s", de->d_name);
+		if (de->d_name[0] == '.' || (fd = open(path, O_RDONLY)) < 0)
+			continue;
+		if (ioctl(fd, PIOCPSINFO, &ps) == 0 && ioctl(fd, PIOCSTATUS, &st) == 0 &&
+		    (ps.pr_pid == macpid || ps.pr_ppid == macpid || ps.pr_pid == writer))
+			t_info("coff_wchan", "pid %d %s %c wchan %lx pc %lx sp %lx flags %lx time %ld.%03ld",
+			    (int)ps.pr_pid, ps.pr_fname, ps.pr_sname, (long)ps.pr_wchan,
+			    (long)st.pr_reg[16], (long)st.pr_reg[15], (long)st.pr_flags,
+			    (long)ps.pr_time.tv_sec, (long)ps.pr_time.tv_nsec / 1000000);
+		close(fd);
+	}
+	closedir(d);
+	t_info("coff_console_counts", "out %ld in %ld read %ld notify %ld",
+	    getsym("aux_conout"), getsym("aux_conin"), getsym("aux_conread"), getsym("aux_connotify"));
+}
+
+/* another process's console write completes while CommandShell owns the console */
+static int
+coffconsprobe(lines)
+int lines;
+{
+	int i, st;
+	pid_t p = fork();
+
+	if (p == 0) {
+		if ((st = open("/dev/console", O_WRONLY | O_NOCTTY)) >= 0)
+			for (i = 0; i < lines; i++)
+				write(st, "coff console probe: 64 bytes a line, enough to fill the pty....\n", 64);
+		_exit(0);
+	}
+	if (p < 0)
+		return 0;
+	for (i = 0; i < 300; i++) {
+		if (waitpid(p, &st, WNOHANG) == p)
+			return 1;
+		pause_ms(100L);
+	}
+	setsym("aux_trace", 7L | 16L);
+	for (i = 0; i < 4; i++) {
+		coffwchans(p);
+		pause_ms(700L);
+	}
+	setsym("aux_trace", 16L);
+	kill(p, SIGKILL);
+	waitpid(p, &st, 0);
+	return 0;
+}
+#endif
+
 #define	L32(a)	((long)lm[a] << 24 | (long)lm[(a) + 1] << 16 | lm[(a) + 2] << 8 | lm[(a) + 3])
 
 /* the running Mac: Ticks, Time, mouse, cursor and keys from the host */
@@ -1696,6 +1823,7 @@ envmake()
 	system("[ -f '" ENVSTAMP "' ] || echo test > '" ENVSTAMP "'");
 	system("/usr/bin/cp '" ENVSTAMP "' '/tmp/Mac/r1/System Folder/.stamp'");
 	system("echo > '/tmp/Mac/r1/System Folder/System'");
+	system("[ -f " ENVF " ] || echo id=r1 > " ENVF);
 }
 
 /* startmac -e r1 to completion; its exit status */
@@ -2400,6 +2528,10 @@ char *sys, *pfx;
 		if (uid) {
 			/* with the dialog's resources Special > Log Out still logs out */
 			link(AUXRES, AUXRESSP);
+#if SYSVER == 0x0761
+			sprintf(req, "%s/Apple Menu Items/\245 Shut Down", sys);
+			t_check("no_shutdown_da", access(req, F_OK) != 0, "%s", req);
+#endif
 			sprintf(req, "%s%s_speciallogout", SHOT, pfx);
 			menuitem(SPECIALH, 9, SHUTH, SHUTV - 16, req);
 		} else {
@@ -2756,9 +2888,10 @@ int fd;
     if (!t_check("monitors_initial_device",monitorstate81(fd,initial),"unreadable main GDevice")) return;
     if (!t_check("monitors_device_shape",initial[0]==0xff && initial[1]==0xcd &&
         !initial[34] && !initial[35] && !initial[36] && !initial[37] &&
-        ((initial[38]<<8)|initial[39])==600 && ((initial[40]<<8)|initial[41])==800 &&
+        ((initial[38]<<8)|initial[39])==scrh && ((initial[40]<<8)|initial[41])==scrw &&
         g32(initial+42)==128 && !initial[46] && initial[47]==8,
-        "expected hosted800x6008-bit ref-51")) return;
+        "expected hosted %dx%d 8-bit ref-51",scrw,scrh)) return;
+    t_check("monitors_initial_colour",initial[21]&1,"the main GDevice starts in greys");
     if (!t_check("monitors_front",windowtitle81(fd,"Monitors"),"Monitors must remain front")) return;
     if (rdmac(fd,0x9d6L,(char *)b,4)) {
         w=g32(b);
@@ -2769,9 +2902,10 @@ int fd;
             w=g32(b+144);
         }
     }
-    if (!t_check("monitors_radio_geometry",origin && x[0]>=0 && x[0]<800 && y[0]>=0 && y[0]<600 &&
-        x[1]>=0 && x[1]<800 && y[1]>=0 && y[1]<600,"radio controls unavailable or outside display")) return;
-    for(i=0;i<2;i++) {
+    if (!t_check("monitors_radio_geometry",origin && x[0]>=0 && x[0]<scrw && y[0]>=0 && y[0]<scrh &&
+        x[1]>=0 && x[1]<scrw && y[1]>=0 && y[1]<scrh,"radio controls unavailable or outside display")) return;
+    /* greys first: the session ends in colour */
+    for(i=1;i>=0;i--) {
         if (!windowtitle81(fd,"Monitors")) {t_check("monitors_switch_front",0,"Monitors lost front");return;}
         count=getsym("uinter_video_graysets");
         if (count<0 || !moveto(x[i],y[i])) {t_check("monitors_switch_input",0,"driver diagnostic or pointer unavailable");return;}
@@ -2866,7 +3000,7 @@ commandpid81()
 }
 
 static void
-command81()
+command81run()
 {
     int i, n, pid=0; char cmd[32], *q="commandshell";
     t_rearm(120);
@@ -2883,14 +3017,39 @@ command81()
         t_check("coff_failure_restored",n>=0 && n<2000,"%d pixels changed",n);
         return;
     }
+    t_check("coff_console_early",coffconsprobe(1),"conout %ld",getsym("aux_conout"));
     n=waitshot(SHOT "coff_open",SHOT "coff_desktop",10000,1 << 30,40);
     if (!t_check("coff_window",n>=10000,"%d pixels changed",n)) return;
+    t_check("coff_console_drained",coffconsprobe(256),"conout %ld",getsym("aux_conout"));
+    /* late output shows with no input to wake the Mac */
+    unlink("/tmp/coffio");
+    for (q="sleep 3;touch /tmp/coffio;ls /";*q;q++) {
+        sprintf(cmd,*q==' ' ? "key spc" : *q=='/' ? "key slash" :
+            *q==';' ? "key semicolon" : "key %c",*q);
+        host(cmd);
+    }
+    host("key ret");
+    pause_ms(1000L);
+    host("shot " SHOT "coff_typed");
+    for (i=0;i<150 && access("/tmp/coffio",F_OK)!=0;i++) pause_ms(100L);
+    t_check("coff_typed_command",access("/tmp/coffio",F_OK)==0,"CommandShell must execute the typed command");
+    n=waitshot(SHOT "coff_output",SHOT "coff_typed",500,1 << 30,20);
+    t_check("coff_late_output",n>=500,"%d pixels changed",n);
+    unlink("/tmp/coffio");
     host("key meta_l+q");
     for (i=0;i<100 && commandpid81();i++) pause_ms(100L);
     t_check("coff_quit",!commandpid81(),"CommandShell still running");
     n=waitshot(SHOT "coff_closed",SHOT "coff_desktop",0,1999,40);
     t_check("coff_desktop",n>=0 && n<2000,"%d pixels changed",n);
     t_check("coff_finder_alive",alive76(),"");
+}
+
+static void
+command81()
+{
+    int save=coffcapture();
+    command81run();
+    coffrelease(save);
 }
 
 static void
@@ -3245,7 +3404,7 @@ recover81()
 	t_info("forcequit_publish", "published %ld refused %ld",
 	    getsym("uin_forcepublish"), getsym("uin_forcefailed"));
 	if (!t_check("forcequit_dialog", n >= 1000, "%d pixels changed", n)) return;
-	if (!t_check("forcequit_cancel_button", moveto(581, 212), "")) return;
+	if (!t_check("forcequit_cancel_button", moveto(scrw / 2 + 181, scrh / 5 + 92), "")) return;
 	host("button 1"); host("button 0");
 	n = waitshot(SHOT "forcequit_cancelled", SHOT "before_forcequit", 0, 1999, 20);
 	t_info("forcequit_modal", "poll %ld restored %ld", getsym("uin_forcepoll"), getsym("uin_forceunpoll"));
@@ -3307,7 +3466,7 @@ recover81()
 	host("up esc"); host("up meta_l"); host("up alt");
 	n = waitshot(SHOT "forcequit_reopened", SHOT "before_forcequit", 1000, 1 << 30, 20);
 	if (!t_check("forcequit_reopened", n >= 1000, "%d pixels changed", n)) return;
-	if (!t_check("forcequit_quit_button", moveto(505, 212), "")) return;
+	if (!t_check("forcequit_quit_button", moveto(scrw / 2 + 105, scrh / 5 + 92), "")) return;
 	host("button 1"); host("button 0");
 	n = waitshot(SHOT "finder_relaunched", SHOT "before_forcequit", 0, 1999, 60);
 	t_check("finder_desktop_restored", n >= 0 && n < 2000, "%d pixels changed", n);
@@ -3324,7 +3483,7 @@ recover81()
 	    getsym("uin_forcepublish"), getsym("uin_forcefailed"),
 	    getsym("uin_forceentry"), getsym("uin_forceword"));
 	if (!t_check("repeat_forcequit_dialog", n >= 1000, "%d pixels changed", n)) return;
-	if (!t_check("repeat_forcequit_cancel_button", moveto(581, 212), "")) return;
+	if (!t_check("repeat_forcequit_cancel_button", moveto(scrw / 2 + 181, scrh / 5 + 92), "")) return;
 	host("button 1"); host("button 0");
 	n = waitshot(SHOT "repeat_forcequit_cancelled", SHOT "before_repeat_forcequit", 0, 1999, 20);
 	t_check("repeat_forcequit_cancel_restored", n >= 0 && n < 2000, "%d pixels changed", n);
@@ -3551,6 +3710,7 @@ command76once()
     setsym("uin_coffdiag",0L);setsym("aux_filediag",0L);
         return;
     }
+    t_check("coff_console_early",coffconsprobe(1),"conout %ld",getsym("aux_conout"));
     setsym("aux_trace",16L);
     n=waitshot(SHOT "coff_open",SHOT "coff_desktop",10000,1 << 30,40);
     t_info("coff_window_pixels","%d pixels changed",n);
@@ -3569,6 +3729,7 @@ command76once()
     for(i=0;i<100 && access("/tmp/coffio",F_OK)!=0;i++) pause_ms(100L);
     io=access("/tmp/coffio",F_OK)==0;
     t_check("coff_visible_output",coffvisible(pid),"terminal must render command output");
+    t_check("coff_console_drained",coffconsprobe(256),"conout %ld",getsym("aux_conout"));
     t_check("coff_window",n>=10000 && io,"%d pixels changed; typed command %d",n,io);
     t_check("coff_original_io",io,
         "CommandShell must execute the typed command");
@@ -3610,11 +3771,13 @@ command76()
 {
     char *opt=getenv("COFFNATIVE47");
     long saved=getsym("uinter_coffnative47");
-    int i,native47=opt ? !strcmp(opt,"1") : saved;
+    int i,save,native47=opt ? !strcmp(opt,"1") : saved;
     t_check("coff_native47_mode",setsym("uinter_coffnative47",native47)==0,"");
     for(i=0;i<2;i++) {
         t_info("coff_launch_iteration","%d",i+1);
+        save=coffcapture();
         command76once();
+        coffrelease(save);
     }
     setsym("uinter_coffnative47",saved);
 }
@@ -4002,7 +4165,9 @@ screen76()
 	/* Wait for the Finder menu bar to appear. */
 	for (n = 0; n < 8; n++) {
 		t_rearm(120);
-		host("shot " SHOT "desktop");
+		r = host("shot " SHOT "desktop");
+		if (r)
+			sscanf(r, "%d %d", &scrw, &scrh);
 		r = host("mac " SHOT "desktop");
 		tilex = tiley = 0; dominant = 1000;
 		if (r)
@@ -4123,6 +4288,23 @@ screen6()
 		shmdt((char *)lm);
 	} else
 		t_check("sysversion", 0, "no low memory");
+	/* MainDevice's gdFlags: colour from the fitted 'scrn' */
+	{
+		unsigned char b[24];
+		char path[32];
+		long h;
+
+#define	B32	((long)b[0] << 24 | (long)b[1] << 16 | b[2] << 8 | b[3])
+		sprintf(path, "/proc/%05d", (int)macpid);
+		n = open(path, O_RDONLY);
+		t_check("main_device_colour", n >= 0 && lseek(n, 0x8a4L, 0) != -1 &&
+		    read(n, (char *)b, 4) == 4 && (h = B32) && !(h & 1) &&
+		    lseek(n, h, 0) != -1 && read(n, (char *)b, 4) == 4 && (h = B32) &&
+		    !(h & 1) && lseek(n, h, 0) != -1 && read(n, (char *)b, 22) == 22 && (b[21] & 1),
+		    "the main GDevice is in greys");
+		if (n >= 0)
+			close(n);
+	}
 	/* the Apple and Special menus held open */
 	if (t_check("mouse", moveto(20, 9), "mouse %#lx", getsym("uin_mouse"))) {
 		host("button 1");
@@ -4286,6 +4468,7 @@ char **argv;
 		e = open("/dev/uinter0", O_RDWR);
 		t_check("boxflag", setsym("uinter_boxflag", 5L) == 0, "no uinter_boxflag");
 		t_check("sysfolder", rename(SYSDIR, SYS6DIR) == 0, "%s", T_ERR);
+		t_check("macscrn", system("/usr/bin/macscrn '" SYS6DIR "/System'") == 0, "unfitted");
 		sys6links(1);
 		startmac();
 		sys6links(0);
@@ -4344,6 +4527,9 @@ char **argv;
 #ifdef OT81
 		copyf("/mac/lib/OTProbe/OTProbe", "/Desktop Folder/OTProbe");
 #endif
+		/* a Mac that rewrote scrn keeps its own settings */
+		t_check("macscrn", system("/usr/bin/macscrn '" SYSDIR "/%System'") == 0 ||
+		    !scrnstate(SYSDIR "/%System"), "unfitted");
 #endif
 		startmac();
 #ifdef COFF76

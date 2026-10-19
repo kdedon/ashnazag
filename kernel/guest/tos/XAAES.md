@@ -81,7 +81,7 @@ the MiNT calls and XaAES's module interface (kentry).
 
 ## Use
 
-`starttos -e xaaes` (guest's image has it); `maketos -x -e NAME` makes
+`starttos -e xaaes` (guest's image has it); `starttos -e NAME -b xaaes` makes
 another.  TeraDesk is XaAES's shell (`XAAES.CNF`).  Plain EmuTOS
 environments are unchanged.  `XAAES=deb` at build time gives XaAES's
 diagnostics in the layer's log.

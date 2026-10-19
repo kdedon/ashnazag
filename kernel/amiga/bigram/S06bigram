@@ -1,0 +1,28 @@
+#!/sbin/sh
+# S06bigram -- Zorro III RAM that Unix does not use (a BigRamPlus above
+# 1 GB) as swap, through the bigram module's block device.
+# Quiet when there is no such board or no module.
+PATH=/sbin:/usr/sbin:/usr/bin:/etc; export PATH
+case "$1" in
+start)
+	[ -f /etc/conf/mod.d/bigram ] || exit 0
+	modadmin -s 2>/dev/null | grep bigram >/dev/null ||
+		modadmin -l bigram >/dev/null 2>&1 || exit 0
+	[ -b /dev/dsk/bigram ] || mknod /dev/dsk/bigram b 21 0
+	chown root /dev/dsk/bigram; chgrp sys /dev/dsk/bigram; chmod 600 /dev/dsk/bigram
+	swap -l 2>/dev/null | grep bigram >/dev/null && exit 0
+	# the size in blocks: no block can be read past the end
+	lo=0 hi=8388608
+	while [ `expr $hi - $lo` -gt 1 ]; do
+		mid=`expr \( $lo + $hi \) / 2`
+		if dd if=/dev/dsk/bigram of=/dev/null bs=512 iseek=$mid count=1 2>&1 |
+		    grep '^1+0 records in' >/dev/null; then
+			lo=$mid
+		else
+			hi=$mid
+		fi
+	done
+	swap -a /dev/dsk/bigram 0 $hi
+	;;
+esac
+exit 0

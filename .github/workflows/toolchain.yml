@@ -1,19 +1,27 @@
 name: AMIX cross toolchain
 on:
   pull_request:
-    paths: ['toolchain/build-amix-cross.sh', 'toolchain/build-gcc295.sh', '.github/workflows/toolchain.yml']
+    paths: ['toolchain/build-amix-cross.sh', 'toolchain/build-gcc295.sh', '.github/workflows/toolchain.yml',
+            'kernel/mods.sh', 'kernel/include/**', 'kernel/dlm/**', 'kernel/guest/**', 'kernel/mac/**',
+            'kernel/atari/**', 'kernel/amiga/**', 'kernel/drm/**']
   push:
-    paths: ['toolchain/build-amix-cross.sh', 'toolchain/build-gcc295.sh', '.github/workflows/toolchain.yml']
+    branches-ignore: [main]  # main: unstable.yml
+    paths: ['toolchain/build-amix-cross.sh', 'toolchain/build-gcc295.sh', '.github/workflows/toolchain.yml',
+            'kernel/mods.sh', 'kernel/include/**', 'kernel/dlm/**', 'kernel/guest/**', 'kernel/mac/**',
+            'kernel/atari/**', 'kernel/amiga/**', 'kernel/drm/**']
   workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
 concurrency:
-  group: toolchain-${{ github.ref }}
+  group: toolchain-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   toolchain:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    outputs:
+      rev: ${{ steps.key.outputs.rev }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -43,3 +51,45 @@ jobs:
             toolchain/$g/bin/m68k-cbm-sysv4-gcc -O -traditional -m68040 -c t.c -o t.o
             toolchain/$g/bin/m68k-cbm-sysv4-objdump -d t.o | grep -q 'rts'
           done
+
+  # every module of a target, on the compile-only toolchain and no kernel
+  modules:
+    needs: toolchain
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [mac, amiga, atari030, atari060]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            toolchain/amix
+            toolchain/amix-gcc295
+            toolchain/src/gcc-cross-amix/build/env.sh
+          key: amix-cross-${{ runner.os }}-${{ needs.toolchain.outputs.rev }}
+          fail-on-cache-miss: true
+      - run: sudo apt-get update && sudo apt-get install -y binutils-m68k-linux-gnu
+      - name: m68k-elf binutils
+        run: |
+          mkdir -p toolchain/bin
+          for t in ar nm objdump; do ln -s /usr/bin/m68k-linux-gnu-$t toolchain/bin/m68k-elf-$t; done
+      - name: Pinned sources of the cdfs and amigaide modules
+        run: |
+          eval "$(grep -E '^(IDE|CDFS)_(URL|PIN)=' tools/setup.sh)"
+          mkdir -p ref
+          for p in "amix-gayle-ide $IDE_URL $IDE_PIN" "amix-cdfs $CDFS_URL $CDFS_PIN"; do
+            set -- $p
+            git clone -q "$2" "ref/$1"
+            git -C "ref/$1" checkout -q "$3"
+          done
+      # undefined symbols against kernel/include/kabi.<target>; 64-bit operations on atari060
+      - run: sh kernel/mods.sh TARGET=${{ matrix.target }} "$RUNNER_TEMP/mods"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mod.d-${{ matrix.target }}
+          path: ${{ runner.temp }}/mods/mod.d

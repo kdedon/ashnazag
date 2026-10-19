@@ -1,9 +1,7 @@
 # Amiga package
 
-Run `makeamiga` once to copy `/amiga/sys` into `~/Amiga`, then run
-`startmig`. The launcher selects `~/Amiga`; without it, `/amiga/sys` is
-used read-only, following the TOS convention. No directory argument is
-required. `makeamiga -f` refreshes template files while retaining other files.
+Run `startamiga`. Its first start copies `/amiga/sys` into `~/Amiga`; without
+a writable home, `/amiga/sys` is used read-only.
 
 The package prepares the system directory from the supplied AmigaOS 3.2
 floppies. A native extension ROM registers our directory handler before DOS
@@ -12,12 +10,12 @@ bridge and Workbench; the original vendor startup is preserved alongside it.
 
 While Kickstart and the Startup-Sequence run, the screen shows "Starting
 the Amiga environment" with the seconds elapsed and the file being read.
-startmig logs its progress, each file opened and the handler's request
-counts to `.startmig.log` in a writable SYS: (`~/Amiga`), otherwise to
-`/tmp/startmig.<uid>.log`. After the hot key, the console shows startmig's
+startamiga logs its progress, each file opened and the handler's request
+counts to `.startamiga.log` in a writable SYS: (`~/Amiga`), otherwise to
+`/tmp/startamiga.<uid>.log`. After the hot key, the console shows startamiga's
 messages; errors (ROM, `/dev/amigaguest`, module, display) go there too.
 
-`startmig`, `makeamiga`, `amigareg` and the drivers are the `amigaenv`
+`startamiga`, `amigareg` and the drivers are the `amigaenv`
 package (`images/envpkg/mkenvpkgs.sh`). Kickstart, the floppies and the
 `SYS:` template come from your AmigaOS 3.2 CD, in a new private staging
 directory:
@@ -71,8 +69,7 @@ cd amiga-stage/root && find etc/amiga/kicka*.rom amiga/media amiga/sys | cpio -p
 As the intended display-group user:
 
 ```sh
-makeamiga
-startmig
+startamiga
 ```
 
 The current execution path requires a 68040 or 68060 and a packed 8-bit display.
@@ -81,7 +78,7 @@ them the machine's own ROM is used, otherwise `/etc/amiga/kicka4000.rom`
 (or `kicka3000.rom`), or `-r FILE`.
 Fast RAM is 64 MB unless `-m MB` (0 to 128), `fastmb=MB` in an
 environment's `.env` or `FAST_MB=MB` in `/etc/default/amiga` says
-otherwise; startmig exits if it cannot reserve that much.
+otherwise; startamiga exits if it cannot reserve that much.
 `--readonly` protects the selected tree. `--check` validates Kickstart without
 opening a device; `--probe` exercises guest attachment without ROM execution.
 

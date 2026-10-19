@@ -3,7 +3,7 @@
  *
  * Each host platform finds its ROM through a hook with one contract:
  * romva(n) is the kernel address of the first n bytes of the machine's
- * ROM, 0 if it has none or n is beyond it (mac_romva, ata_romva,
+ * ROM, 0 if it has none or n is beyond it (mac_romva,
  * amiga_romva).  An environment module checks the ROM through its hook,
  * then guest_rommap() maps the ROM's own pages at the same address in
  * the caller, read and execute only.  Without a usable host ROM the

@@ -10,10 +10,12 @@ The repository is MIT (`LICENSE`). Components below keep their own licences and 
 | XFree86 / Mesa / Glide3 patches | `gl/`, `x11/` patches | Patches against MIT/X11 (XFree86 3.3.6 and 4.3 DRI, X11R6.3, Mesa 5 MIT) code, fetched at build. Our new files: MIT. Glide3: see below |
 | asokero `amix-040-060-port` | `kernel/port-*.diff`, `kernel/port-tree.sh`, derived `pstart*.s` | MIT, Copyright asokero. Derived files say so |
 | hmlio `amix-gayle-ide` | `kernel/amiga/ide` | MIT, Copyright (c) 2026 Emre Bastuz (`kernel/amiga/ide/LICENSE`) |
+| jusii `amix-cdfs` | fetched at a pinned commit; glue `kernel/fs/cdfs` | BSD 2-clause, Copyright (c) 2026 Stefan Reinauer, Jussi Alanärä. Built as a loadable module only |
 | ZZ9000 driver | `kernel/amiga/zz9000` | MIT, Copyright (c) 2026 Ignacio Soriano (`LICENSE`) |
 | Radeon init tables | `kernel/amiga/radeon/rdsinit.c` | MIT. Copyright 2004 ATI Technologies, 2007-8 Advanced Micro Devices, 2008 Red Hat. Notice in the file |
 | NetBSD m68k FPE | fetched at build from a pinned NetBSD tarball; glue `fpe_glue.c`, `fpe040.s` | BSD, see below |
-| NetBSD `ncr53cxxx` SCRIPTS assembler | output of `kernel/amiga/csppc/script.sh` | BSD (NetBSD notice kept with the generated source) |
+| Motorola M68040/M68060 software packages (FPSP, ISP) | fetched at build from the pinned NetBSD tarball; glue in the port and `kernel/port-isp060.diff` | Copyright Motorola Inc., see below |
+| NetBSD `ncr53cxxx` SCRIPTS assembler | output of `kernel/amiga/ncr770/script.sh` | BSD (NetBSD notice kept with the generated source) |
 | Sony font | `kernel/mac/video/fbfont.c`, `mkfont.py` | HPND: Copyright (c) 1987, 1988 Sony Corp. Permission notice kept in the file |
 | Adobe / DEC 100dpi fonts | `kernel/guest/win16/fonts.c`, `mkfonts.py` | Copyright 1984-1989, 1994 Adobe Systems Incorporated; 1988, 1994 Digital Equipment Corporation. Permission notice in `NOTES.md` |
 | P96 SDK board offsets | `kernel/guest/amiga/rtg/p96offsets.inc` | CC-BY-4.0, attribution in `NOTICE` |
@@ -31,6 +33,43 @@ Copyright holders: The Regents of the University of California (Lawrence Berkele
   - "This product includes software developed by Gordon Ross."
 - The rest are BSD 3-clause or 2-clause. Each file's notice stays with the source.
 - Binary releases of the Falcon030 kernel, whose image contains this code, must carry the notices above in their documentation. Advertising material mentioning features of the kernel must carry them too.
+
+### Motorola M68060 Software Package (`sys/arch/m68k/060sp`, checked in the pinned tarball)
+
+The ISP is linked into the kernel modified: its call-outs are ours (`isp060_head.s`, `isp060_glue.s`). Its notice, verbatim:
+
+```
+MOTOROLA MICROPROCESSOR & MEMORY TECHNOLOGY GROUP
+M68000 Hi-Performance Microprocessor Division
+M68060 Software Package Production Release 
+
+M68060 Software Package Copyright (C) 1993, 1994, 1995, 1996 Motorola Inc.
+All rights reserved.
+
+THE SOFTWARE is provided on an "AS IS" basis and without warranty.
+To the maximum extent permitted by applicable law,
+MOTOROLA DISCLAIMS ALL WARRANTIES WHETHER EXPRESS OR IMPLIED,
+INCLUDING IMPLIED WARRANTIES OF MERCHANTABILITY OR FITNESS
+FOR A PARTICULAR PURPOSE and any warranty against infringement with
+regard to the SOFTWARE (INCLUDING ANY MODIFIED VERSIONS THEREOF)
+and any accompanying written materials. 
+
+To the maximum extent permitted by applicable law,
+IN NO EVENT SHALL MOTOROLA BE LIABLE FOR ANY DAMAGES WHATSOEVER
+(INCLUDING WITHOUT LIMITATION, DAMAGES FOR LOSS OF BUSINESS PROFITS,
+BUSINESS INTERRUPTION, LOSS OF BUSINESS INFORMATION, OR OTHER PECUNIARY LOSS)
+ARISING OF THE USE OR INABILITY TO USE THE SOFTWARE.
+
+Motorola assumes no responsibility for the maintenance and support
+of the SOFTWARE.  
+
+You are hereby granted a copyright license to use, modify, and distribute the
+SOFTWARE so long as this entire notice is retained without alteration
+in any modified and/or redistributed versions, and that such modified
+versions are clearly identified as such.
+No licenses are granted by implication, estoppel or otherwise under any
+patents or trademarks of Motorola, Inc.
+```
 
 ### Glide3
 

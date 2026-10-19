@@ -9,16 +9,23 @@ Radeon (part B).
 
 ## What changed in this build
 
-- Mediator 4000: the window register is set from the memory board's physical
-  address; BARs stay inside it.
-- Zorro III window addresses translate to physical (`plat_vtop`).
-- Unassigned I/O BARs get a port; drivers see the I/O space at bridge + 0xC00000.
-- Unix sizes memory with an alias check: a mirrored upper half is trimmed.
-- The Zorro bridge is named Mediator PCI 4000.
-- X defaults to 16 bits on a Voodoo3.
+Since build 68060-261017-16:
 
-Please check: the Voodoo3 attaches with no patch (`drmtest`), X and GL work
-(A1, A2), and `top`/boot memory shows the alias trimmed on a cold start.
+- One start command per environment: `startamiga` (was `startmig`),
+  `startmac`, `starttos`. `-e name` picks an environment (e.g.
+  `starttos -e xaaes`), `-d name` makes it the default, `-l` lists them.
+- The loader loads the disk drivers (IDE, CyberStorm SCSI) as boot modules;
+  the root is still the CyberStorm's SCSI ID 0.
+- glxgears sends about a third fewer words to the Voodoo3 per frame (7566 to
+  5170): its display lists replay straight to the card. Step A9 compares.
+- Windows 3.1 programs: fixes to Program Manager groups and double clicks.
+- Still open: BlitzQuake stops with "no context" (A4, issue #211).
+
+Earlier: 68060 caches on (A8), 16-bit Workbench, IBrowse can save to SYS:,
+`bigram` swap, faster GL, Quake and X.
+
+Please check: `glxgears -info` names the Voodoo3 (A2), and each environment
+starts.
 
 ## What you need
 
@@ -122,27 +129,57 @@ A2. **X and 3D.** Type `startx`. In the window that opens, type `glxgears -info`
     scroll). A real Voodoo3 should show `lm lum = 150 90 30` and
     `mip bias 0 q 1: 0 1 2 3 4 5 6`; send the photo whatever it shows. Leave X:
     click the background, choose Exit.
-A3. **Amiga environment.** Type `startmig`. Workbench comes up inside Unix (this
-    can take a few minutes). Open a Shell there and type `w3dtest`. Photo the
-    picture and the text. Ctrl + Left Alt + Left Amiga + 0 goes back to the Unix console; Ctrl-C there
-    stops it.
-A4. **Quake.** Type `/usr/games/quake +timedemo demo1` and photo the frames per
+A3. **Amiga environment.** Type `startamiga`.
+    Workbench comes up inside Unix (this can take a few minutes), in 16-bit
+    colour (Prefs > ScreenMode shows the depth). Open a Shell there and type
+    `w3dtest`. Photo the picture and the text.
+A4. **Amiga programs.** In the Workbench Shell of A3, type
+    `execute SYS:Quake/quake +timedemo demo1` (BlitzQuake on Warp3D). Photo the
+    error: it still stops with "no context", as its double-buffered screen does
+    not yet fit the card memory a session has (issue #211); type `quit` to
+    leave. Then open
+    the IBrowse drawer and start IBrowse (the demo; close its reminder). Photo it.
+    Ctrl + Left Alt + Left Amiga + 0, then Ctrl-C, ends Workbench.
+A5. **Mac.** Type `startmac`. System 7.6.1 comes up (the first start takes a few
+    minutes). Photo the desktop, open a few folders, photo again. Leave with the
+    Apple menu, Log Out.
+A6. **TOS.** Type `starttos`: the TeraDesk desktop. Photo it. Ctrl + Left Alt + Left Amiga + 0, then
+    Ctrl-C ends it. Then `starttos -e xaaes` (XaAES): photo it and end it the
+    same way. Then `starttos -C /TOS/CUBASE/CUBASE31`: Cubase 3.1 starts with no
+    dongle question. Photo it and end it the same way. `SCORE` and `CAF`
+    in place of `CUBASE31` start Score and Audio Falcon.
+A7. **Quake.** Type `/usr/games/quake +timedemo demo1` and photo the frames per
     second at the end. Then run `/usr/games/glquake +timedemo demo1` inside X
     (A2) and photo that too.
-A5. **Shut down** with `shutdown -y -g0 -i0`, switch off, and swap the Voodoo3 for
+A8. **68060 caches.** This build turns on the 68060's store buffer (ESB) and
+    branch cache (EBC). Please compare both on (the default) with both off:
+    run the GLQuake timedemo (A7), `/usr/games/quake -scale 1 +timedemo demo1`
+    and `fbbench` each way, and photo the numbers. To turn them off, either
+    set the long `cacr060` in the kernel file (SYS:unix) from 0x20800000 to 0
+    (0x20000000 is ESB alone, 0x00800000 EBC alone) and reboot, or, live,
+    write the full CACR value without those bits to both `sup_cacr` and
+    `cacr` in kernel memory; the next interrupt loads it.
+A9. **GL fast path.** Inside X (A2), run `glxgears` and
+    `/usr/games/glquake +timedemo demo1` three ways and photo the picture and
+    numbers each time: as they are; with `MESA_M68K=c` in front (the C code);
+    with `TDFX_NOREPLAY=1` in front (no display-list replay). For example
+    `MESA_M68K=c glxgears`. The pictures should look the same.
+    Then `FX_FIFOCOUNT=60 glxgears` prints the words sent to the card per
+    frame every 60 frames; photo a few lines.
+A10. **Shut down** with `shutdown -y -g0 -i0`, switch off, and swap the Voodoo3 for
     the Radeon.
 
 ## Part B: Radeon
 
 Boot as in Setup steps 2 and 3. With both cards in, first type
-`echo 'CARDS="radeonds zz9000 voodoo3"' > /etc/default/display` and reboot, so the
+`echo 'CARDS="radeonds zz9000 voodoo3"' >> /etc/default/display` and reboot, so the
 Radeon drives the screen.
 
 B1. **Card check.** Type `radeontest 10`. Photo the whole output (two photos if it
     scrolls). During the test a red band appears at the top and a green rectangle
     in the middle.
-B2. to B4. As A2 to A4.
-B5. Shut down as A5.
+B2. to B4. As A2, A3 and A7.
+B5. Shut down as A10.
 
 ## What the screen tells you
 
@@ -168,6 +205,8 @@ B5. Shut down as A5.
    notches.
 2. The photos from every step, in order, each named by its step (A2, B1, ...).
    Sharp, straight-on photos of the whole screen read best.
-3. The frames-per-second numbers: glxgears card and software, Quake, glquake.
+3. The frames-per-second numbers: glxgears card (default, `MESA_M68K=c`,
+   `TDFX_NOREPLAY=1`) and software, the `FX_FIFOCOUNT` words per frame, Quake and
+   glquake timedemo demo1.
 4. Anything odd: wrong colours, a hang, a step that did not do what this sheet
    says.

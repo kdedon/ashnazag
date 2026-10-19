@@ -384,24 +384,9 @@ short accel_s = 0;
 short accel_c = A_SET_PAL | A_GET_COL | A_SET_PIX | A_GET_PIX | A_BLIT | A_FILL | A_EXPAND | A_LINE | A_MOUSE;
 const Mode *graphics_mode = &mode[0];
 
-/*
- * The least pixels a blitter fill or copy takes, by drawops kind.  Off
- * by default: a Falcon's blitter is no faster than its 68030.
- */
-static long hwlim[5] = { 0x7fffffff, 0x7fffffff, 0x7fffffff, 0x7fffffff, 0x7fffffff };
-
-/* options: hwfill N, hwblit N */
 long check_token(char *token, const char **ptr)
 {
-	long k = access->funcs.equal(token, "hwfill") ? DO_FILL :
-	    access->funcs.equal(token, "hwblit") ? DO_BLIT : 0;
-	char n[16];
-
-	if (!k || !(*ptr = access->funcs.skip_space(*ptr)))
-		return 0;
-	*ptr = access->funcs.get_token(*ptr, n, sizeof n);
-	hwlim[k] = access->funcs.atol(n);
-	return 1;
+	return 0;
 }
 
 /* the ROM's screen */
@@ -478,8 +463,6 @@ long CDECL initialize(Virtual *vwk)
 		graphics_mode = &planes;
 		setup_scrninfo(&device, graphics_mode);
 		pfb_init(wk, fc);
-		if (fc == &rom)
-			hw_init(hwlim);
 	} else {
 		/* packed pixels: palette calls stay here instead of going to the ROM's VDI */
 		device.format = 2;

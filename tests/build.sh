@@ -77,7 +77,7 @@ nice -n 19 "$TC/bin/m68k-cbm-sysv4-as" -o "$O/nativecall.o" "$NH/nativecall.s"
 nice -n 19 "$TC/bin/m68k-cbm-sysv4-as" -o "$O/ncprobe.o" "$T/nativecall/probe.s"
 for s in ${ONLY:-"$T"/src/t_*.c "$T/src/runall.c"}; do
 	n=$(basename "$s" .c)
-	[ -n "$ONLY" ] || [ $n != t_stable ] || continue
+	[ -n "$ONLY" ] || case $n in t_stable|t_smsqe) continue ;; esac
 	if [ $n = t_cc295 ]; then
 		cc "$s" "$O/$n.o"
 		cc295 "$T/src/cc295abi.c" "$O/cc295abi.o"
@@ -88,10 +88,21 @@ for s in ${ONLY:-"$T"/src/t_*.c "$T/src/runall.c"}; do
 		echo "[ok] $n"
 		continue
 	fi
+	if [ $n = t_dlopen ]; then
+		cc295 "$T/src/dlso_a.c" "$O/dlso_a.o" -fPIC
+		cc295 "$T/src/dlso_b.c" "$O/dlso_b.o" -fPIC
+		cc295 "$T/src/dlso_c.c" "$O/dlso_c.o"
+		nice -n 19 "$LD" -shared -soname /tests/libdla.so -o "$BIN/libdla.so" "$O/dlso_a.o"
+		nice -n 19 "$LD" -shared -o "$BIN/libdlb.so" "$O/dlso_b.o" "$O/dlso_c.o"
+		cc "$s" "$O/$n.o"
+		link "$BIN/$n" -E "$O/$n.o" "$O/t.o" "$BIN/libdla.so" "$SYS/usr/ccs/lib/libdl.so"
+		echo "[ok] $n"
+		continue
+	fi
 	if [ $n = t_gl ]; then
 		if [ -f "$GLW/lib/libOSMesa.a" ] && [ "$CC295" != "$CC" ]; then
-			cc295 "$s" "$O/$n.o" -m68040 -D_XOPEN_SOURCE -I"$GLW/include"
-			link "$BIN/$n" "$O/$n.o" "$O/t.o" "$GLW/lib/libOSMesa.a" $LIBGCC295
+			cc295 "$s" "$O/$n.o" -m68020-60 -D_XOPEN_SOURCE -I"$GLW/include"
+			link "$BIN/$n" "$O/$n.o" "$O/t.o" "$GLW/lib/libOSMesa.a" "$GLW/lib/libfastmem.a" $LIBGCC295
 		else
 			cc "$s" "$O/$n.o" -DNOGL
 			link "$BIN/$n" "$O/$n.o" "$O/t.o"
@@ -108,7 +119,11 @@ for s in ${ONLY:-"$T"/src/t_*.c "$T/src/runall.c"}; do
 	t_nativehost) extra="$O/nativehost.o $MODO" ;;
 	t_nhplat) extra=$O/nativehost_platform.o ;;
 	t_nativecall) extra="$O/nativecall.o $O/ncprobe.o $O/nativehost.o $MODO" ;;
-	t_v200|t_next|t_gmmu) extra=$MODO ;;
+	t_v200|t_next|t_lisa) extra=$MODO ;;
+	# a NeXT guest: linked above the guest's space
+	t_gmmu) HOST=$(sed -n 's/^#define NX_HOST *\(0x[0-9a-f]*\)UL.*/\1/p' "$KDIR/guest/next/profile.h")
+		"$LD" --verbose | sed -e '1,/^=====/d' -e '/^=====/,$d' -e "s/0x80000000/$HOST/" > "$O/next.ld"
+		extra="-T $O/next.ld $MODO" ;;
 	t_radeon) cc "$KDIR/amiga/radeon/rdsinit.c" "$O/rdsinit.o"; extra=$O/rdsinit.o ;;
 	esac
 	link "$BIN/$n" "$O/$n.o" "$O/t.o" $extra
@@ -119,9 +134,17 @@ cc "$KDIR/guest/nativeenv/startnative.c" "$O/startnative.o" $XA -I"$KDIR/guest/i
 link "$BIN/startnative" "$O/startnative.o"
 cc "$T/src/natpayload.c" "$O/natpayload.o" $XA
 link "$BIN/natpayload" "$O/natpayload.o"
+# startlisa: Lisa OS from the user's volume, run natively
+cc "$KDIR/guest/lisaboot/startlisa.c" "$O/startlisa.o" $XA -I"$NH" -I"$KDIR/mac/display" -I"$KDIR/guest/include"
+link "$BIN/startlisa" "$O/startlisa.o" "$O/nativehost.o"
 # t_env runs startmac's lock helper
 cc "$AUX/images/macenv/envlock.c" "$O/envlock.o" $XA -w
 link "$BIN/envlock" "$O/envlock.o"
+# the TOS environment's counters
+cc "$T/src/tosstat.c" "$O/tosstat.o" $XA -I"$KDIR/guest/mod/tosguest"
+link "$BIN/tosstat" "$O/tosstat.o"
+cc "$AUX/images/macenv/macscrn.c" "$O/macscrn.o" $XA -I"$KDIR/mac/display"
+link "$BIN/macscrn" "$O/macscrn.o"
 if [ -n "$MODO" ]; then
 	cc "$KDIR/dlm/modadmin.c" "$O/modadmin.o" $XA -w -I"$KDIR/dlm/include"
 	link "$BIN/modadmin" "$O/modadmin.o" $MODO

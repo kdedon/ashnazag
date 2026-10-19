@@ -138,7 +138,7 @@ The files it uses:
 | 96– | Apple_HFS "MacOS", volume "Unix" (4 MB): our boot blocks and the kernel as file `unix` |
 
 ```sh
-sh images/mkboot.sh [-c cmdline] [-m MB] [kernel.elf [out.img]]
+sh images/mkboot.sh [-c cmdline] [-m MB] [-k module]... [kernel.elf [out.img]]
 ```
 
 The default kernel is `kernel/build/unix-mac.elf`. `-c` stores a kernel command line in the boot blocks, for example `-c root=c0d0s1`. The map and driver come from `q800-test-small.img`, so build that first. Write the image to the disk as above (SCSI ID 0, at least 8288 blocks) and make that disk the startup disk, or attach no other bootable disk: the ROM tries the PRAM startup disk first. To change the kernel, rebuild the image; the boot blocks hold the file's position and checksum. Details and the error ids (101–105, shown on a Sad Mac as 0x65–0x69) are in `kernel/mac/bootblk/NOTES.md`.
@@ -199,13 +199,14 @@ Each environment is an SVR4 package, built from source by `images/envpkg/mkenvpk
 | Package | Contents |
 |---|---|
 | `envcore` | the guest module, the module path (`/etc/rc2.d/S04envcore`) |
-| `macenv` | `startmac`, `makemac`, `startmac6`, the A/UX modules, `/dev/uinter0` (`S05aux`) |
+| `macenv` | `startmac`, the A/UX modules, `/dev/uinter0` (`S05aux`) |
 | `macnet` | the Open Transport bridge, `/dev/otbridge` (`S06macnet`) |
 | `tosenv` | `starttos`, EmuTOS, fVDI, TeraDesk, XaAES, `/tos`, `/dev/tos` (`S05tos`) |
-| `amigaenv` | `startmig`, `makeamiga`, the Workbench drivers, `/dev/amigaguest` (`S05amiga`) |
+| `amigaenv` | `startamiga`, the Workbench drivers, `/dev/amigaguest` (`S05amiga`) |
 | `cpmenv` | `startcpm`, `/dev/cpm` |
-| `smsqenv` | `startsmsq`, SMSQ/E |
+| `smsqenv` | `startsmsq`, SMSQ/E; not in the release images |
 | `win16env` | `startwin` |
+| `lisaenv` | `startlisa`, the native Lisa host, `/dev/lisa` (`S05lisa`) |
 | `v200env` | `startvoyage200`, the native Voyage 200 host, `/dev/tiplatform` (`S05v200`) |
 
 Install scripts register the modules at once; the rc2 scripts do it at each boot. `pkgrm` unloads them; a registration lasts until the next boot. `pkgadd -n -a envpkg` and `pkgrm -n -a envpkg` (`envcore`'s admin file, which apkg uses too) run without questions. `pkgrm` refuses a package another one needs: remove `smsqenv` before `tosenv`. Images carry the datastreams in `/var/spool/pkg`; `images/envpkg/roundtrip.sh` checks the refusal, a removal and a reinstall. Modules built for the Mac kernel serve every host, except those `mod.atari` and `mod.amiga` replace. The image builders pre-install the packages. ROMs, OS media and other files of yours never go in a package: the image builders add them, or you copy them in.
@@ -220,11 +221,11 @@ startmac
 
 The Finder desktop appears in about a minute; the image carries the Finder's desktop database, so there is no rebuild.  Ctrl-Option-Command-0 shows the console, Ctrl-Option-Command-1 the Mac again.  Special > Log Out (root: the Apple menu) leaves the Mac and goes back to the shell; root's Shut Down halts Unix.  Keys typed while the Mac runs do not reach the shell.  Faults the Mac handles itself print nothing; `macdiag` counts them (`quiet`).
 
-The A/UX modules are registered at run level 2 (`/etc/rc2.d/S05aux`), which also starts the File ID daemon (`/etc/aux/fidd`).  The template is `/mac/lib/System Folder`. root's System Folder is `/mac/sys/System Folder`; other users (group `display`) get `$HOME/System Folder` from `makemac` on their first `startmac`. Both are refreshed when the template changes (`makemac -f`, which keeps Preferences, the desktop database, MacTCP settings and added files); guest already has one; the Mac's PRAM is kept in `/etc/aux/pram`.
+The A/UX modules are registered at run level 2 (`/etc/rc2.d/S05aux`), which also starts the File ID daemon (`/etc/aux/fidd`).  The template is `/mac/lib/System Folder`. root's System Folder is `/mac/sys/System Folder`; other users (group `display`) get `$HOME/System Folder` on their first `startmac`. Both are refreshed when the template changes, keeping Preferences, the desktop database, MacTCP settings and added files); guest already has one; the Mac's PRAM is kept in `/etc/aux/pram`.
 
-Mac OS 8.1 is a separate environment with its own template, `/mac/lib/env/8.1/System Folder`, from the 8.1 CD (`CD81`): `makemac -e 8.1` once, then `startmac -e 8.1`.
+Mac OS 8.1 is a separate environment with its own template, `/mac/lib/env/8.1/System Folder`, from the 8.1 CD (`CD81`): `startmac -e 8.1`. A new name makes another copy, e.g. `startmac -e work -b 8.1`; `startmac -R` copies the template over yours again.
 
-`startmac6` runs System 6.0.7 with MultiFinder instead: A/UX 2.0.1's Mac environment in its own root, `/a201`, on the IIci's ROM in 4 MB (`TBMEMORY`), from the A/UX 2.0.1 CD (`media/AUX_2.0.1_CD_Image.iso`, `CD201`) and the IIci ROM beside the repository (`AUXROM6`); without them the image has no System 6.  root's System Folder is `/a201/mac/sys/System Folder`, guest's `/a201/home/guest/System Folder`; other users need a copy there.  Special > Logout leaves it.
+`startmac -e 6` runs System 6.0.7 with MultiFinder instead: A/UX 2.0.1's Mac environment in its own root, `/a201`, on the IIci's ROM in 4 MB (`TBMEMORY`), from the A/UX 2.0.1 CD (`media/AUX_2.0.1_CD_Image.iso`, `CD201`) and the IIci ROM beside the repository (`AUXROM6`); without them the image has no System 6.  root's System Folder is `/a201/mac/sys/System Folder`, guest's `/a201/home/guest/System Folder`; other users need a copy there.  Special > Logout leaves it.
 
 The Mac reports the model that fits the host and the ROM (a Quadra 800 on a Quadra 800) and gets a quarter of physical memory, 8 to 32 MB, as free swap allows.  `/etc/aux/macenv.conf` or the environment of `startmac` may set `TBMEMORY` (e.g. `16M`) and, for root, `MACMODEL` (a Gestalt machine ID, e.g. `22` for a Quadra 700).
 
@@ -234,7 +235,7 @@ Rebuild (needs the A/UX root in `tests/aux/auxroot`, the Quadra 700 ROM beside t
 sh images/macenv/mkmacimage.sh [kernel.elf [out.img]]
 ```
 
-The default image adds `XPKGS="xview gl"` (XView, and `glxgears` in `/usr/x11r6/bin`). `sh images/macenv/check-image.sh [image]` checks it in QEMU: X and glxgears from `startx`, then each environment.
+The default image adds `XPKGS="xview gl"` (XView, and `libGL.so` with `glxgears`; no DRI drivers). `sh images/macenv/check-image.sh [image]` checks it in QEMU: X and glxgears from `startx`, then each environment.
 
 ## The TOS environment
 
@@ -246,7 +247,7 @@ starttos
 
 EmuTOS 1.4 (GPL-2) starts in its own display session; the TeraDesk desktop appears in a few seconds. Quitting TeraDesk leaves EmuTOS's own desktop, where text files open in Qed. Ctrl-Option-Command plus a digit switches display sessions: 0 is the console, 1 the first session started. End EmuTOS from the console with `kill`.
 
-Drive C: is your folder `~/TOS` (AUTO, accessories, the saved desktop); `maketos` makes it from `/tos/sys`, and guest already has one. Without it C: is `/tos/sys`, read-only. G: holds the system's games (`/usr/games/tos`), U: the Unix tree; files are reached with your own permissions. `/tos/sys/drives` and `~/TOS/drives` name more drives (`G /usr/games/tos ro`), `tosdrive` edits yours, `starttos -D H=dir` adds one for a run, `-C dir` picks another C: folder, `-d FILE` a FAT image as C:. The sample apps are in `images/tosenv/APPS.md`.
+Drive C: is your folder `~/TOS` (AUTO, accessories, the saved desktop); the first `starttos` makes it from `/tos/sys`, and guest already has one. G: holds the system's games (`/usr/games/tos`), U: the Unix tree; files are reached with your own permissions. `/tos/sys/drives` and `~/TOS/drives` name more drives (`G /usr/games/tos ro`), `tosdrive` edits yours, `starttos -D H=dir` adds one for a run, `-C dir` picks another C: folder, `-i FILE` a FAT image as C:. The sample apps are in `images/tosenv/APPS.md`.
 
 A `-C` folder without its own AUTO boots with the system's fVDI (`/tos/fvdi`), at the screen's full size; `-M` or `-S` keep the ST screen. Cubase, when `images/tosenv/mkcubase.sh` added your copies: `starttos -C $HOME/TOS/CUBASE/CUBASE31` (or `SCORE`, `CAF`).
 
@@ -262,14 +263,14 @@ The Quadra image, and the Falcon image built with `TOSENV=1`, also run Concurren
 startcpm
 ```
 
-or pick "CP/M-68K environment" at the xdm session chooser (last in the list) or in the twm and XView menus, which open it in an xterm. Each drive is a directory of plain files: A: is `~/CPM` (user areas 1-15 are subdirectories `1` to `15`), H: your home, M: a private scratch directory emptied at each start, O: `/`, and P: the nine distribution disks' files (`/cpm/dist`, read-only; `X.REL` programs also as `X.68K`). Programs not on the current drive run from P:. Add drives with `X=path` lines in `~/CPM/DRIVES`, `startcpm -d X=path`, or `MOUNT X: path` inside CP/M (`MOUNT` alone lists them). Unix names that don't fit 8.3 show shortened, e.g. `MAKEFI~7.LIN`. CP/M-80 `.COM` and CP/M-86 `.CMD` programs run too, interpreted (no GSX graphics). `EXIT` ends the session, as does end of input. `startcpm -e NAME` uses `~/CPM/NAME/` for A:. The console is your terminal; `startcpm -c 1` (to 3) in another terminal joins the running session as another console, with its own command line. Programs can start others that run beside them (MP/M function 144) and share memory, flags, queues and record locks. `startcpm -m MB` sets the memory (16 MB).
+or pick "CP/M-68K environment" at the xdm session chooser (last in the list) or in the twm and XView menus, which open it in an xterm. Each drive is a directory of plain files: A: is `~/CPM` (user areas 1-15 are subdirectories `1` to `15`), H: your home, M: a private scratch directory emptied at each start, O: `/`, and P: the nine distribution disks' files (`/cpm/dist`, read-only; `X.REL` programs also as `X.68K`). Programs not on the current drive run from P:. Add drives with `X=path` lines in `~/CPM/DRIVES`, `startcpm -D X=path`, or `MOUNT X: path` inside CP/M (`MOUNT` alone lists them). Unix names that don't fit 8.3 show shortened, e.g. `MAKEFI~7.LIN`. CP/M-80 `.COM` and CP/M-86 `.CMD` programs run too, interpreted (no GSX graphics). `EXIT` ends the session, as does end of input. `startcpm -e NAME` uses `~/CPM/NAME/` for A:. The console is your terminal; `startcpm -c 1` (to 3) in another terminal joins the running session as another console, with its own command line. Programs can start others that run beside them (MP/M function 144) and share memory, flags, queues and record locks. `startcpm -m MB` sets the memory (16 MB).
 
 The image builds put in the files from DRI's release zip (`media/cpm68k/68kv1_3.zip`, `CPMZIP`); without it there is no CP/M. `images/cpmenv/mkcpm.sh` makes the `cpmenv` package's files; drive layout in `kernel/guest/cpm/LAYOUT-PLAN.md`.
 
 
 ## The Amiga environment
 
-`startmig` boots Kickstart 3.2 to Workbench from `~/Amiga` (`makeamiga`). `mkmacimage.sh` installs it from `AMIGASTAGE`, the output of `images/amigaenv/mkamiga.sh` run on your AmigaOS 3.2 CD and Picasso96; see `images/amigaenv/README.md`.
+`startamiga` boots Kickstart 3.2 to Workbench from `~/Amiga`, which the first start copies from `/amiga/sys`. `mkmacimage.sh` installs it from `AMIGASTAGE`, the output of `images/amigaenv/mkamiga.sh` run on your AmigaOS 3.2 CD and Picasso96; see `images/amigaenv/README.md`.
 
 ## The Windows 3.x environment (Win16)
 
@@ -281,4 +282,4 @@ startwin -install DISK1.IMG DISK2.IMG DISK3.IMG DISK4.IMG DISK5.IMG DISK6.IMG /c
 
 Then `startwin` alone starts Program Manager (its groups are made on the first run, as Setup made them, and Wabi's "Wabi Tools" group with them), `startwin notepad.exe` one program; or pick "Windows 3.x programs (Win16)" at the xdm session chooser. C: is `~/WIN16`, H: your home directory, R: `/`; with Wabi, W: is Wabi's home (`~/WIN16/wabihome`) and WABI.INI's drive settings apply, changed in Wabi's Configuration Manager (Control Panel, "Wabi Config"). `-D X=dir` adds a drive for one run, `-C dir` uses another C: folder; on a screen more than 640 pixels wide Windows' large fonts are used, as under Wabi (`-SF` small, `-LF` large). Printing goes through Wabi's LaserJet and Epson drivers (installed from Control Panel's Printers) to `lp`, or to the command WABI.INI's `Printers.command_lptN` names. Closing Program Manager ends the session.
 
-No Windows or Wabi files are in the image; `images/winenv/mkwin.sh` makes the `win16env` package's `startwin`. Details in `docs/win16-design.md`.
+`images/macenv/mkmacimage.sh` installs Windows for Workgroups 3.11 and Wabi 2.2 this way into guest's `~/WIN16` when `WINMEDIA` (default `media/`) holds their disks and package; `images/winenv/mkwin.sh` makes the `win16env` package's `startwin`. Details in `docs/win16-design.md`.

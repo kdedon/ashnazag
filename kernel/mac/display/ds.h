@@ -70,26 +70,6 @@ struct dsvid {
 	unsigned char	v_reg[0xC4];
 	unsigned long	v_pal[256];
 	int		v_st;		/* the ST shift mode was set last */
-	unsigned char	v_blt[0x3E];	/* blitter registers $FF8A00-$FF8A3D */
-	unsigned char	v_snd[0x44];	/* sound, codec and matrix registers $FF8900-$FF8943 as written */
-	unsigned char	v_sw[0x44];	/* which of them were written */
-	unsigned long	v_spb;		/* physical start of the buffer the hardware plays */
-	unsigned long	v_spos;		/* where to resume after a switch, 0 none */
-	int		v_sedge;	/* the guest's AER bits 7 and 4: edges for input 7 and Timer A */
-	int		v_scur;		/* the edge the host's input 7 is set to */
-};
-
-/* one blitter run: whole lines or part of one, at physical addresses */
-struct dsbrun {
-	unsigned short	r_ht[16];	/* halftone */
-	short		r_sxi, r_syi, r_dxi, r_dyi;
-	unsigned long	r_sa, r_da;
-	unsigned short	r_em[3];	/* end masks */
-	unsigned short	r_xn;
-	unsigned short	r_yn;		/* lines; 0 is one */
-	unsigned char	r_hop, r_op;
-	unsigned char	r_ctl;		/* smudge and line number */
-	unsigned char	r_skew;		/* FXSR, NFSR, skew */
 };
 #endif
 
@@ -113,14 +93,11 @@ struct dssess {
 	int		s_nput, s_nget;
 	struct pollhead	s_ph;
 	void		(*s_kin)();	/* in-kernel reader: (s, type, code, value) */
+	unsigned long	s_rqw, s_rqh;	/* FBIOREQMODE's size in its mode, 0 the mode's */
+	unsigned long	s_vorg;		/* bytes from the mode's first pixel to the screen's */
 #ifdef DS_ATARI
-	struct dsvid	*s_vid;		/* owns the Videl: its state */
-	struct proc	*s_vproc;	/* passes the guest's Videl writes */
-	pid_t		s_vpid;
-	unsigned long	s_vwin;		/* where s_vproc maps the region */
-	unsigned long	s_vgbase;	/* screen address the guest set */
-	unsigned long	s_gpa, s_gtop;	/* s_gtop bounds guest DMA addresses */
-	int		s_vmode;	/* FBIOSMODE's mode, index + 1; 0 a guest's or none */
+	struct dsvid	*s_vid;		/* the Videl state of its mode */
+	int		s_vmode;	/* FBIOSMODE's mode, index + 1; 0 none */
 #endif
 #ifdef DS_AMIGA
 	int		s_vmode;	/* FBIOSMODE's mode, index + 1; 0 the display's */
@@ -167,7 +144,6 @@ extern int (*ds_leavefn)();	/* (s, 0): s may leave the front, else EBUSY; (s, 1)
 /* ds.c */
 int	ds_init();		/* () -> errno */
 struct dssess *ds_newsess();	/* (uid, name, errp) */
-struct dssess *ds_mksess();	/* (uid, name, errp, videl) */
 void	ds_endsess();		/* (s) */
 void	ds_sessgc();		/* (s) */
 int	ds_switch();		/* (s) -> errno; safe context only */
@@ -179,23 +155,29 @@ void	ds_now();		/* (sec, usec) */
 void	ds_vblintr();
 void	ds_sinfo();		/* (s, fi): what FBIOGINFO reports for s */
 int	ds_ncmap();		/* (s) -> its colour table's entries */
+int	ds_reqmode();		/* (s, struct fbreq *) -> errno */
+int	ds_modeok();		/* (s, id) -> errno */
 #if defined(DS_ATARI) || defined(DS_AMIGA)
 int	ds_setmode();		/* (s, id) -> errno */
 #endif
 #ifdef DS_AMIGA
 int	ds_setpan();		/* (s, offset) -> errno */
+int	ds_vsize();		/* (s, bytes) -> errno */
 /*
  * On a card with panning a user session keeps its whole region at full
  * depth (DS_FULL): in front at d_page, hidden in VRAM of its own while
  * a frame is spare (DS_OWNV: mapped there, shown or not, no copy), else
  * in its shadow.
  */
-extern unsigned long am_dsphys, am_dsvram, am_vslot();
+extern unsigned long am_dsphys, am_dsvram, am_vslot(), am_vheld();
 #define DS_PHYS(va)	((va) + am_dsphys)
 #define DS_VOFF(s)	((s)->s_voff)
 #define DS_OWNV(s)	((s)->s_voff != 0)
 #define DS_FULL(s)	(am_dsvram != 0 && (s) != &ds_sess[0])
 #define DS_VSPAN	(am_dsvram > ds_disp.d_vsize ? am_dsvram : ds_disp.d_vsize)
+/* panned p bytes, the whole mode fi stays within size bytes */
+#define DS_PANOK(p, fi, size)	(!((p) & 15) && (p) <= (size) && \
+	(fi)->fi_offset + (fi)->fi_rowbytes * (fi)->fi_height <= (size) - (p))
 #else
 #define DS_PHYS(va)	(va)
 #define DS_VOFF(s)	0
@@ -205,22 +187,6 @@ extern unsigned long am_dsphys, am_dsvram, am_vslot();
 #endif
 #ifdef DS_ATARI
 void	ds_relmouse();		/* (buttons, dx, dy) */
-int	ds_vidpass();		/* (s, window) -> errno */
-/* a guest's Videl session: its own mode and palette, IKBD key codes */
-#define DS_GUEST(s)	((s)->s_vid && !(s)->s_vmode)
-void	ds_vidput();		/* (addr, size, value) */
-void	ds_sndput();		/* (addr, size, value) */
-int	ds_sndget();		/* (addr) -> the hardware's byte, or -1 */
-void	ds_sndedge();		/* (aer): the guest's MFP edges */
-void	ds_sndexit();		/* (proc): the owner exits: DMA off */
-void	ds_sndintr();		/* the DMA sound end, from the MFP */
-extern void (*ds_sndcb)();	/* (events): bit 0 input 7, bit 2 Timer A */
-extern void (*ds_sndhw)();	/* the DMA sound end with no guest in front */
-extern void (*ds_sndown)();	/* (on): a passthrough guest takes (1) or leaves (0) the sound */
-void	ds_bltgo();		/* (registers) */
-extern unsigned long (*ds_ramsize_hook)();
-extern int (*ds_ramphys_hook)();
-void ds_ramdetach();
 #endif
 
 /* dsseg.c */

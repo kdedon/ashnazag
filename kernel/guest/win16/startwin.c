@@ -3,12 +3,15 @@
  * KERNEL, USER and GDI in native code, the program's x86 code
  * interpreted, on a Windows 3.1 style desktop of our own.
  *
- *	startwin [-C dir] [-D X=dir]... [-m MB] [-g WxH] [-LF|-SF] [-v]
+ *	startwin [-e env [-b base] | -C dir] [-d env] [-D X=dir]... [-m MB] [-g WxH] [-LF|-SF] [-v]
  *		 [-S script] [-o shot.ppm] [program [arguments]]
+ *	startwin -d env | -l
  *
- * Drive C: is dir (default ~/WIN16, made with WINDOWS, WINDOWS\SYSTEM
- * and TEMP in it), H: the home directory, R: the root and W: Wabi's
- * home as `-install' put it (dir/wabihome), as Wabi had them; with
+ * Drive C: is dir, else the environment's folder: ~/WIN16 for wfw311,
+ * ~/WIN16/env for others (made with WINDOWS, WINDOWS\SYSTEM and TEMP
+ * in it, or with -b a copy of environment base's).  Without -e it is
+ * the default, which -d sets; -l lists them.  H: the home directory,
+ * R: the root and W: Wabi's home as `-install' put it (dir/wabihome), as Wabi had them; with
  * Wabi's configuration, WABI.INI, its Drives.X name the drives (E: the
  * current directory); -D adds others.  The current directory is the
  * deepest drive's it is under, but the root's.  A program named without
@@ -26,8 +29,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <pwd.h>
 #include "win.h"
 #include "scr.h"
+#include "../include/envroot.h"
 
 static struct x86 thecpu;
 #ifdef X86ASM
@@ -374,8 +379,9 @@ setupreg()
 static void
 usage()
 {
-	fprintf(stderr, "usage: startwin [-C dir] [-D X=dir]... [-m MB] [-g WxH] [-LF|-SF] [-v] [-S script] [-o shot.ppm] [program [args]]\n"
-	    "       startwin [-C dir] -install disk.img... | disks-directory | windows-directory\n");
+	fprintf(stderr, "usage: startwin [-e env [-b base] | -C dir] [-d env] [-D X=dir]... [-m MB] [-g WxH] [-LF|-SF] [-v] [-S script] [-o shot.ppm] [program [args]]\n"
+	    "       startwin [-e env | -C dir] -install disk.img... | disks-directory | windows-directory\n"
+	    "       startwin -d env | -l\n");
 	exit(2);
 }
 
@@ -387,13 +393,29 @@ main(argc, argv)
 	char *home = getenv("HOME"), *cdir = 0, cmd[128], dos[300], prog[300], *p;
 	int i, k, w = 640, h = 480, mb = 8, err, code, len;
 	struct module *m;
-	char cwd[1024], *inst = 0, given[26];
+	char cwd[1024], *inst = 0, given[26], *env = 0, *def = 0, *base = 0;
+	struct passwd *pw;
+	struct stat sb;
+	static char *envs[] = { "wfw311", 0 };
+	FILE *fp;
 	int fontsize = 0;	/* -LF, -SF: Wabi's large or small system fonts */
 
 	memset(given, 0, sizeof given);
+	if ((home == 0 || *home == 0) && (pw = getpwuid(getuid())) != 0)
+		home = pw->pw_dir;
 	for (i = 1; i < argc && argv[i][0] == '-'; i++) {
 		if (strcmp(argv[i], "-C") == 0 && i + 1 < argc)
 			cdir = argv[++i];
+		else if (strcmp(argv[i], "-e") == 0 && i + 1 < argc)
+			env = argv[++i];
+		else if (strcmp(argv[i], "-d") == 0 && i + 1 < argc)
+			def = argv[++i];
+		else if (strcmp(argv[i], "-b") == 0 && i + 1 < argc)
+			base = argv[++i];
+		else if (strcmp(argv[i], "-l") == 0) {
+			envlist("win16", home, "wfw311", envs);
+			return 0;
+		}
 		else if (strcmp(argv[i], "-D") == 0 && i + 1 < argc) {
 			p = argv[++i];
 			if (!((p[0] | 0x20) >= 'a' && (p[0] | 0x20) <= 'z') || p[1] != '=')
@@ -426,15 +448,40 @@ main(argc, argv)
 		else
 			usage();
 	}
-	if (mb < 2 || mb > 64)
+	if (mb < 2 || mb > 64 || (env && cdir) || (base && !env))
 		usage();
+	if (def && envsetdefault("startwin", "win16", home, def) < 0)
+		return 1;
+	if (def && !env && !cdir)
+		return 0;
 	if (!cdir) {
 		static char buf[1024];
 
-		sprintf(buf, "%s/WIN16", home ? home : ".");
+		env = envchoose("win16", env, home, "wfw311");
+		if (envhome("win16", env, "wfw311", home ? home : ".", buf, sizeof buf) < 0) {
+			fprintf(stderr, "startwin: %s: not an environment name\n", env);
+			return 1;
+		}
 		cdir = buf;
+		if (base) {
+			sprintf(cwd, "%.1000s/.env", cdir);
+			if (strcmp(env, "wfw311") == 0 || stat(cwd, &sb) == 0) {
+				fprintf(stderr, "startwin: %s exists; -b makes a new environment\n", env);
+				return 1;
+			}
+			if (envclone("startwin", "win16", env, base, home, "wfw311", cdir) < 0)
+				return 1;
+		}
 	}
 	mkdirs(cdir);
+	if (env && strcmp(env, "wfw311") != 0) {
+		/* named, so -l lists it */
+		sprintf(cwd, "%.1000s/.env", cdir);
+		if (access(cwd, 0) < 0 && (fp = fopen(cwd, "w")) != 0) {
+			fprintf(fp, "id=%s\n", env);
+			fclose(fp);
+		}
+	}
 	if (inst) {
 		extern int win_install();
 

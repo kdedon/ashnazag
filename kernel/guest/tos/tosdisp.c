@@ -1,8 +1,8 @@
 /*
  * tosdisp.c -- the container's display session: the TOS screen
- * (shifter/TT video state from /dev/tos, pixels from the shared ST-RAM)
- * converted to an 8-bit frame buffer, and /dev/kbd and /dev/mouse
- * turned into IKBD packets.
+ * (the screen TOS set through its XBIOS, pixels from the shared
+ * ST-RAM) converted to an 8-bit frame buffer, and /dev/kbd and
+ * /dev/mouse posted to the cartridge.
  */
 
 #include <sys/types.h>
@@ -22,7 +22,6 @@
 #include <stropts.h>
 
 #define	REFRESH	40		/* ms between screen updates */
-#define	STALE	15		/* guest VBLs without the cartridge's: input takes the IKBD */
 
 /* ADB key code -> IKBD scan code (US layout), 0 none */
 static unsigned char adb2ikbd[128] = {
@@ -51,125 +50,67 @@ static unsigned char *fb;
 static unsigned char *shadow;
 static unsigned long exl[256][2];	/* a byte of one plane as 8 pixels of 0/1 */
 static unsigned char line[1280], line2[1280];
+static unsigned char even[256];		/* bits 6, 4, 2, 0 of a byte as 3-0 */
 
 struct geom {
 	int	w, h, planes, rowb, sx, sy, step;
 };
 
 int fbpipe = -1;		/* the launcher gets the session through it */
-int vpass;			/* the session owns the video hardware */
 static int native;		/* key codes are IKBD scancodes */
-static struct tosinput in;
-static int mbtn, kbtn, mdx, mdy;
+static int mbtn;
 static volatile struct tospv *pv = (struct tospv *)TOSPV;
 static unsigned short px, py;		/* motion posted to the cartridge */
 static unsigned char kdown[128];	/* scan codes held */
 static int hidden;			/* in the background: input is dropped */
 static int planar;			/* bitplanes: only fVDI draws */
 static unsigned char dark[256];		/* 1-bit host: colour index shown black */
-static int pvs;				/* PV_* in use */
-static unsigned long lvbl;		/* the cartridge's VBL count */
-static unsigned long lvg;		/* gvbl() when it last changed */
-static long tkey, tmove;		/* -v: when the last key and motion came */
-static unsigned long *scr;		/* -v: the session's screen, read-only */
-static unsigned long scrlast;		/* -v: its sum, sampled while timing a redraw */
-static struct tosstat st0;		/* -v: the counters when the key came */
+static struct {
+	unsigned short	ev;
+	unsigned long	xy;
+} bl[PV_NEV];				/* events waiting for room in the cartridge's queue */
+static int nbl;
 static long now();
-static unsigned long scrsum();
 
-/* keys, motion and buttons to the kernel, which makes the mouse packets */
+/* the shifter and TT video state */
+struct shifter {
+	unsigned long	tv_base;
+	unsigned short	tv_stmode;	/* $FF8260 */
+	unsigned short	tv_ttmode;	/* $FF8262 */
+	unsigned short	tv_stpal[16];	/* $FF8240 */
+	unsigned short	tv_ttpal[256];	/* $FF8400 */
+};
+
+/* waiting events into the cartridge's queue while it has room, then the motion after them */
 static void
-flush()
+drain()
 {
-	if (in.ti_n == 0 && mdx == 0 && mdy == 0 && in.ti_btn == kbtn)
-		return;
-	in.ti_dx = mdx > 32767 ? 32767 : mdx < -32767 ? -32767 : mdx;
-	in.ti_dy = mdy > 32767 ? 32767 : mdy < -32767 ? -32767 : mdy;
-	in.ti_btn = kbtn;
-	ioctl(tfd, TOSIOC_INPUT, &in);
-	in.ti_n = 0;
-	mdx -= in.ti_dx;
-	mdy -= in.ti_dy;
+	unsigned long h = pv->pv_head;
+	int i = 0;
+
+	for (; i < nbl && h - pv->pv_tail < PV_NEV; i++, h++) {
+		pv->pv_xy = bl[i].xy;
+		pv->pv_ev[h % PV_NEV].e_ev = bl[i].ev;
+		pv->pv_ev[h % PV_NEV].e_xy = bl[i].xy;
+		pv->pv_head = h + 1;
+	}
+	nbl -= i;
+	memmove((char *)bl, (char *)(bl + i), nbl * sizeof bl[0]);
+	if (nbl == 0)
+		pv->pv_xy = (unsigned long)px << 16 | py;
 }
 
+/* an event for the cartridge, after the motion before it */
 static void
-put(b)
-	int b;
-{
-	if (in.ti_n >= sizeof in.ti_b)
-		flush();
-	in.ti_b[in.ti_n++] = b;
-}
-
-/* an event for the cartridge, after the motion before it; 0 if its queue is full */
-static int
 post(ev)
 	int ev;
 {
-	unsigned long h = pv->pv_head;
-
-	pv->pv_xy = (unsigned long)px << 16 | py;
-	if (h - pv->pv_tail >= PV_NEV)
-		return 0;
-	pv->pv_ev[h % PV_NEV].e_ev = ev;
-	pv->pv_ev[h % PV_NEV].e_xy = pv->pv_xy;
-	pv->pv_head = h + 1;
-	return 1;
-}
-
-/*
- * VBLs the guest took or held off by its IPL: the guest's own clock.  A
- * guest the host is not running gets none, so its input waits for it.
- */
-static unsigned long
-gvbl()
-{
-	struct tosvideo tv;
-
-	return ioctl(tfd, TOSIOC_VIDEO, &tv) < 0 ? lvg : tv.tv_vbl + tv.tv_vblheld;
-}
-
-/* when the cartridge's VBL routine last ran; guest VBLs since then */
-static unsigned long
-pvbeat()
-{
-	unsigned long g = gvbl();
-
-	if (pv->pv_vbl != lvbl) {
-		lvbl = pv->pv_vbl;
-		lvg = g;
+	if (nbl < PV_NEV) {
+		bl[nbl].ev = ev;
+		bl[nbl].xy = (unsigned long)px << 16 | py;
+		nbl++;
 	}
-	return g - lvg;
-}
-
-/*
- * The paths the cartridge takes now: none while its VBL routine does
- * not run.  Events it has not taken when a path closes go by the IKBD,
- * key releases only; buttons are resent on either path when it changes.
- */
-static void
-pvpoll()
-{
-	unsigned long h, t;
-	int on, e;
-
-	on = pvbeat() < STALE ? pv->pv_on & (PV_MOUSE | PV_KEYS) : 0;
-	if (pvs & ~on) {
-		h = pv->pv_head;
-		t = pv->pv_tail;
-		if (h - t > PV_NEV)
-			t = h - PV_NEV;
-		pv->pv_drop = h;
-		for (; t != h; t++)
-			if (pvs & ~on & PV_KEYS && (e = pv->pv_ev[t % PV_NEV].e_ev) >> 8 == PE_KEY &&
-			    (e & 0x80))
-				put(e & 0xff);
-		if (pvs & ~on & PV_MOUSE)
-			kbtn = mbtn;
-	}
-	if (on & ~pvs & PV_MOUSE)
-		post(PE_BTN << 8 | mbtn);
-	pvs = on;
+	drain();
 }
 
 static void
@@ -177,18 +118,14 @@ key(k)
 	int k;
 {
 	kdown[k & 0x7f] = !(k & 0x80);
-	if (!(pvs & PV_KEYS) || !post(PE_KEY << 8 | k))
-		put(k);
+	post(PE_KEY << 8 | k);
 }
 
 /* each button change is a packet of its own */
 static void
 button()
 {
-	if (!(pvs & PV_MOUSE) || !post(PE_BTN << 8 | mbtn)) {
-		kbtn = mbtn;
-		flush();
-	}
+	post(PE_BTN << 8 | mbtn);
 }
 
 static void
@@ -196,18 +133,12 @@ motion(axis, v)
 	int axis;
 	long v;
 {
-	if (!(pvs & PV_MOUSE)) {
-		if (axis == IE_RELX)
-			mdx += v;
-		else
-			mdy += v;
-		return;
-	}
 	if (axis == IE_RELX)
 		px += v;
 	else
 		py += v;
-	pv->pv_xy = (unsigned long)px << 16 | py;
+	if (nbl == 0)
+		pv->pv_xy = (unsigned long)px << 16 | py;
 }
 
 /* to the background: TOS sees every key and button released, then sleeps */
@@ -216,8 +147,6 @@ hide()
 {
 	int k;
 
-	tkey = 0;
-	pvpoll();
 	for (k = 1; k < 128; k++)
 		if (kdown[k])
 			key(k | 0x80);
@@ -225,8 +154,6 @@ hide()
 		mbtn = 0;
 		button();
 	}
-	mdx = mdy = 0;
-	flush();
 	ioctl(tfd, TOSIOC_PAUSE, 1);
 }
 
@@ -239,15 +166,9 @@ events(fd)
 
 	if ((n = read(fd, (char *)ev, sizeof ev)) <= 0 || hidden)
 		return;
-	pvpoll();
 	for (i = 0; i < n / (int)sizeof ev[0]; i++)
 		switch (ev[i].ie_type) {
 		case IE_KEY:
-			if (scr && ev[i].ie_value) {
-				tkey = now();
-				scrlast = scrsum();
-				ioctl(tfd, TOSIOC_STAT, &st0);
-			}
 			if (ev[i].ie_code >= 128 ||
 			    (k = native ? ev[i].ie_code : adb2ikbd[ev[i].ie_code]) == 0)
 				break;
@@ -258,8 +179,6 @@ events(fd)
 				key(ev[i].ie_value ? k : k | 0x80);
 			break;
 		case IE_REL:
-			if (scr)
-				tmove = now();
 			motion(ev[i].ie_code, ev[i].ie_value);
 			break;
 		case IE_BTN:
@@ -268,13 +187,12 @@ events(fd)
 			button();
 			break;
 		}
-	flush();
 }
 
 /* the displayed mode, 0 if not one we show */
 static int
 geom(tv, g)
-	struct tosvideo *tv;
+	struct shifter *tv;
 	struct geom *g;
 {
 	g->sx = g->sy = g->step = 1;
@@ -301,7 +219,7 @@ comp(v)
 /* the guest palette into the session's CLUT */
 static void
 palette(tv, g)
-	struct tosvideo *tv;
+	struct shifter *tv;
 	struct geom *g;
 {
 	static unsigned short r[256], gr[256], b[256];
@@ -375,10 +293,29 @@ same(a, b, n)
 	return 1;
 }
 
+/*
+ * Two TT high rows halved onto n bytes of a 1-bit screen: a pixel is
+ * dark when 2 of its 4 are set, as the grey palette makes it.
+ */
+static void
+halve(d, a, b, n)
+	unsigned char *d, *a, *b;
+	int n;
+{
+	unsigned int x, y, m;
+
+	for (; n > 0; n--, a += 2, b += 2) {
+		x = a[0] << 8 | a[1];
+		y = b[0] << 8 | b[1];
+		m = (x & x >> 1) | (y & y >> 1) | ((x | x >> 1) & (y | y >> 1));
+		*d++ = even[m >> 8 & 0xff] << 4 | even[m & 0xff];
+	}
+}
+
 /* redraw the rows that changed (all when full) */
 static void
 refresh(tv, g, full)
-	struct tosvideo *tv;
+	struct shifter *tv;
 	struct geom *g;
 	int full;
 {
@@ -399,6 +336,13 @@ refresh(tv, g, full)
 		if (!full && same((unsigned long *)src, (unsigned long *)sh, g->rowb * g->step))
 			continue;
 		memcpy(sh, src, g->rowb * g->step);
+		if (g->step == 2 && fi.fi_depth == 1) {
+			k = oy + y / 2;
+			if (k < (int)fi.fi_height)
+				halve(fb + fi.fi_offset + k * fi.fi_rowbytes + ox / 8, src,
+				    src + g->rowb, ((ow < (int)fi.fi_width - ox ? ow : (int)fi.fi_width - ox)) / 8);
+			continue;
+		}
 		if (g->step == 2) {
 			chunky(src + g->rowb, g);
 			memcpy(line2, line, g->w);
@@ -448,7 +392,7 @@ refresh(tv, g, full)
  */
 static int
 fvdi(tv)
-	struct tosvideo *tv;
+	struct shifter *tv;
 {
 	static unsigned long seq, base;
 	static unsigned short stm, ttm;
@@ -517,94 +461,6 @@ now()
 	return (tv.tv_sec - t0) * 1000L + tv.tv_usec / 1000;
 }
 
-/* -v with the session owning the video: where the guest is, now and then */
-static void
-vtrace()
-{
-	struct tosstat st;
-	struct tosvideo tv;
-	static int n;
-
-	if (n >= 60 || ioctl(tfd, TOSIOC_STAT, &st) < 0 || ioctl(tfd, TOSIOC_VIDEO, &tv) < 0)
-		return;
-	n++;
-	fprintf(stderr, "starttos: pc %lx vbl %lu held %lu io %lu absent %lu last %lx at %lx, screen %lx mode %x\n",
-	    st.ts_lastpc, st.ts_vbl, st.ts_held, st.ts_io, st.ts_absent, st.ts_lastio,
-	    st.ts_lastiopc, tv.tv_base, tv.tv_stmode);
-}
-
-/* -v: a sum of every other long of the guest's screen, at most the host's size */
-static unsigned long
-scrsum()
-{
-	struct tosvideo tv;
-	unsigned long s = 0, o, n, i;
-
-	if (ioctl(tfd, TOSIOC_VIDEO, &tv) < 0 || tv.tv_base < ramsize - fi.fi_size ||
-	    tv.tv_base >= ramsize)
-		return 0;
-	o = (tv.tv_base - (ramsize - fi.fi_size)) / 4;
-	n = fi.fi_rowbytes * fi.fi_height / 4;
-	if (n > fi.fi_size / 4 - o)
-		n = fi.fi_size / 4 - o;
-	for (i = 0; i < n; i += 2)
-		s = s * 31 + scr[o + i];
-	return s;
-}
-
-/* -v: what the guest cost the kernel since the key */
-static void
-stdelta()
-{
-	struct tosstat st;
-	unsigned long r = 0;
-	int i;
-
-	if (ioctl(tfd, TOSIOC_STAT, &st) < 0)
-		return;
-	for (i = 0; i < 64; i++)
-		r += st.ts_refl[i] - st0.ts_refl[i];
-	fprintf(stderr, "starttos: timer C %lu (%lu without the guest) vbl %lu io %lu priv %lu+%lu fast trap %lu refl %lu\n",
-	    st.ts_ints[5] - st0.ts_ints[5], st.ts_tcskip - st0.ts_tcskip, st.ts_vbl - st0.ts_vbl,
-	    st.ts_io - st0.ts_io, st.ts_priv - st0.ts_priv, st.ts_fpriv - st0.ts_fpriv,
-	    st.ts_ftrap - st0.ts_ftrap, r);
-}
-
-/*
- * -v with the session owning the video: how long the guest drew after a
- * key, to the last change before two seconds without one; where GEM has
- * the mouse once motion stops and the guest has taken all of it.
- */
-static void
-measure()
-{
-	static long tdraw, tsum;
-	unsigned long v, la = pv->pv_la;
-	long t = now();
-
-	/* sampled, as summing the screen costs the guest */
-	if (tkey && t - tsum >= 100) {
-		tsum = t;
-		if ((v = scrsum()) != scrlast) {
-			scrlast = v;
-			tdraw = t;
-		}
-	}
-	if (tkey && t - (tdraw ? tdraw : tkey) > 2000) {
-		if (tdraw) {
-			fprintf(stderr, "starttos: redraw %ld ms\n", tdraw - tkey);
-			stdelta();
-		}
-		tkey = tdraw = 0;
-	}
-	if (tmove && t - tmove > 500 && pv->pv_cxy == pv->pv_xy) {
-		tmove = 0;
-		if (la > 0x25a && la < ramsize && !(la & 1))
-			fprintf(stderr, "starttos: mouse at %d,%d, sent %d,%d\n", *(short *)(la - 0x25a),
-			    *(short *)(la - 0x258), (short)px, (short)py);
-	}
-}
-
 /* the deepest bitplane mode; 1 if set */
 static int
 planes()
@@ -626,13 +482,42 @@ planes()
 	    ioctl(fbfd, FBIOGINFO, &fi) == 0 && fi.fi_layout == FBL_PLANES;
 }
 
+static unsigned short
+tt2st(v)
+	int v;
+{
+	return (v & 0xeee) >> 1 | (v & 0x111) << 3;
+}
+
+/* the screen as TOS set it; 0 before it set one */
+static int
+video(v)
+	struct shifter *v;
+{
+	volatile struct tosvid *vd = (struct tosvid *)TOSVID;
+	int i, bank;
+
+	if (vd->vd_seq == 0)
+		return 0;
+	v->tv_base = vd->vd_base;
+	v->tv_ttmode = vd->vd_mode & 0x70f;
+	v->tv_stmode = v->tv_ttmode >> 8 & 3;
+	bank = (v->tv_ttmode & 15) * 16;
+	for (i = 0; i < 256; i++)
+		v->tv_ttpal[i] = vd->vd_pal[i];
+	for (i = 0; i < 16; i++)
+		v->tv_stpal[i] = tt2st(v->tv_ttpal[bank + i]);
+	return 1;
+}
+
 void
 disp(fd, verbose, ram)
 	int fd, verbose;
 	unsigned long ram;
 {
 	struct fbacq acq;
-	struct tosvideo tv, last;
+	struct tosvideo kv;
+	struct shifter tv, last;
 	struct geom g;
 	struct pollfd p[3];
 	struct fbnote fn;
@@ -646,24 +531,25 @@ disp(fd, verbose, ram)
 		for (k = 0; k < 8; k++)
 			if (i & (0x80 >> k))
 				exl[i][k / 4] |= 1L << (8 * (3 - k % 4));
+	for (i = 0; i < 256; i++)
+		for (k = 0; k < 4; k++)
+			if (i & 1 << 2 * k)
+				even[i] |= 1 << k;
 	if ((fbfd = open("/dev/fb0", O_RDWR)) < 0) {
 		perror("starttos: /dev/fb0");
 		return;
 	}
 	memset((char *)&acq, 0, sizeof acq);
 	acq.fa_kind = FBK_USER;
-	acq.fa_flags = FBA_FRONT | (vpass ? FBA_VIDEL : 0);
+	acq.fa_flags = FBA_FRONT;
 	strcpy(acq.fa_name, "tos");
 	if (ioctl(fbfd, FBIOACQUIRE, &acq) < 0 || ioctl(fbfd, FBIOGINFO, &fi) < 0) {
 		perror("starttos: display session");
 		return;
 	}
-	if (!vpass && fi.fi_type == FBT_AMIGA && fi.fi_depth != 8)
+	if (fi.fi_type == FBT_AMIGA && fi.fi_depth != 8)
 		planar = planes();
-	if (vpass || planar) {
-		if (vpass && verbose && (scr = (unsigned long *)mmap((caddr_t)0, fi.fi_size, PROT_READ,
-		    MAP_SHARED, fbfd, 0)) == (unsigned long *)-1)
-			scr = 0;
+	if (planar) {
 		if (fbpipe >= 0) {
 			ioctl(fbpipe, I_SENDFD, fbfd);
 			close(fbpipe);
@@ -701,7 +587,7 @@ input:
 	p[0].events = p[1].events = p[2].events = POLLIN;
 	for (;;) {
 		i = t + REFRESH - now();
-		if (poll(p, 3L, hidden ? 1000 : vpass ? REFRESH : i > 0 ? i : 0) > 0) {
+		if (poll(p, 3L, hidden ? 1000 : i > 0 ? i : 0) > 0) {
 			for (i = 0; i < 2; i++)
 				if (p[i].revents & POLLIN)
 					events(p[i].fd);
@@ -710,7 +596,6 @@ input:
 					hide();
 				else if (fn.fn_type == FBN_SHOWN && hidden) {
 					ioctl(tfd, TOSIOC_PAUSE, 0);
-					lvg = gvbl();	/* its VBLs resume */
 				}
 				hidden = fn.fn_type == FBN_HIDDEN ? 1 : fn.fn_type == FBN_SHOWN ? 0 : hidden;
 				have = have && !hidden;
@@ -718,23 +603,17 @@ input:
 		}
 		if (getppid() == 1)
 			return;
-		pvbeat();
-		if (vpass && verbose && !hidden && now() - t >= 10000) {
-			t = now();
-			vtrace();
-		}
-		if (scr && !hidden)
-			measure();
-		if (vpass || hidden || now() - t < REFRESH)
+		drain();
+		if (hidden || now() - t < REFRESH)
 			continue;
 		/* a fixed cadence: the clock moves in ticks, not ms */
 		t = now() - t < 2 * REFRESH ? t + REFRESH : now();
-		if (ioctl(tfd, TOSIOC_VIDEO, &tv) < 0) {
+		if (ioctl(tfd, TOSIOC_VIDEO, &kv) < 0) {
 			if (errno == ENXIO)	/* the guest has not started yet */
 				continue;
 			return;
 		}
-		if (fvdi(&tv) || planar || !geom(&tv, &g)) {
+		if (!video(&tv) || fvdi(&tv) || planar || !geom(&tv, &g)) {
 			have = 0;
 			continue;
 		}

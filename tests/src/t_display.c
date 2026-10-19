@@ -317,6 +317,53 @@ t_ioctls(int fd)
 	t_info("vbl", "%s VBL, 6 VBLs in %ld ms", (fi.fi_flags & FBF_VBL) ? "DAFB" : "tick", dt);
 }
 
+/* FBIOREQMODE on a hidden session: the display's one mode, screens centred or clipped */
+static void
+t_reqmode()
+{
+	struct fbreq rq;
+	struct fbinfo f;
+	unsigned long w = fi.fi_width / 2, h = fi.fi_height / 2, x;
+	int fd = fbopen(), k;
+
+	memset(&rq, 0, sizeof rq);
+	t_check("req_needs_session", fd >= 0 && ioctl(fd, FBIOREQMODE, &rq) < 0 && errno == EINVAL,
+	    "%s", T_ERR);
+	if (fd < 0 || acquire(fd, 0, "t_reqmode") < 0) {
+		t_skip("req", "no session: %s", T_ERR);
+		if (fd >= 0)
+			close(fd);
+		return;
+	}
+	rq.rq_width = w; rq.rq_height = h; rq.rq_depth = fi.fi_depth + 1;
+	t_check("req_depth", ioctl(fd, FBIOREQMODE, &rq) < 0 && errno == ENXIO, "%s", T_ERR);
+	rq.rq_depth = fi.fi_depth; rq.rq_flags = FBR_EXACT;
+	t_check("req_exact_enxio", ioctl(fd, FBIOREQMODE, &rq) < 0 && errno == ENXIO, "%s", T_ERR);
+	rq.rq_flags = 0x80;
+	t_check("req_flags", ioctl(fd, FBIOREQMODE, &rq) < 0 && errno == EINVAL, "%s", T_ERR);
+	rq.rq_flags = 0;
+	k = ioctl(fd, FBIOREQMODE, &rq);
+	x = (fi.fi_width - w) / 2;
+	x -= x % (fi.fi_depth >= 32 ? 1 : 32 / fi.fi_depth);
+	t_check("req_centre", k == 0 && rq.rq_how == FBG_CENTRE && rq.rq_id == fi.fi_mode &&
+	    rq.rq_x == x && rq.rq_y == (fi.fi_height - h) / 2 && ioctl(fd, FBIOGINFO, &f) == 0 &&
+	    f.fi_width == w && f.fi_height == h && f.fi_rowbytes == fi.fi_rowbytes &&
+	    f.fi_offset == fi.fi_offset + rq.rq_y * fi.fi_rowbytes + x * fi.fi_depth / 8,
+	    "ioctl %d how %lu at %lu,%lu: %lux%lu offset 0x%lx", k, rq.rq_how, rq.rq_x, rq.rq_y,
+	    f.fi_width, f.fi_height, f.fi_offset);
+	rq.rq_width = 2 * fi.fi_width;
+	k = ioctl(fd, FBIOREQMODE, &rq);
+	t_check("req_clip", k == 0 && rq.rq_how == FBG_CLIP && ioctl(fd, FBIOGINFO, &f) == 0 &&
+	    f.fi_width == fi.fi_width && f.fi_offset == fi.fi_offset, "ioctl %d how %lu", k, rq.rq_how);
+	rq.rq_width = fi.fi_width; rq.rq_height = fi.fi_height; rq.rq_flags = FBR_EXACT;
+	k = ioctl(fd, FBIOREQMODE, &rq);
+	t_check("req_exact", k == 0 && rq.rq_how == FBG_EXACT && rq.rq_x == 0 && rq.rq_y == 0,
+	    "ioctl %d how %lu", k, rq.rq_how);
+	t_check("modeok", ioctl(fd, FBIOMODEOK, 0) < 0 && errno == EINVAL &&
+	    ioctl(fd, FBIOMODEOK, fi.fi_mode) == 0, "%s", T_ERR);
+	close(fd);
+}
+
 static void
 t_session(int fd, long *ida, unsigned char **fbp)
 {
@@ -1159,6 +1206,7 @@ main()
 	t_pass("open");
 	hostopen();
 	t_ioctls(fd);
+	t_reqmode();
 	t_session(fd, &ida, &fba);
 	if (fba != 0 && fba != (unsigned char *)-1) {
 		t_input(fd, ida, fba);

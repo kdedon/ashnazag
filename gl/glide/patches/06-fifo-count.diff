@@ -1,0 +1,56 @@
+--- a/fifo.c
++++ b/fifo.c
+@@ -175,6 +175,11 @@
+ #include "fxcmd.h"
+ 
+ 
++#ifdef __m68k__
++/* fifo words written since the last frame was counted */
++FxU32 _grFifoWords, *_grFifoMark;
++#endif
++
+ #if GDBG_INFO_ON
+ 
+ static const char* h3SstRegNames[] = {
+@@ -984,6 +989,11 @@
+         gc->stats.fifoWrapDepth += GR_GET(hw->cmdFifoDepth);
+ #endif /* GLIDE_USE_DEBUG_FIFO */
+           
++#ifdef __m68k__
++        if (_grFifoMark && gc->cmdTransportInfo.fifoPtr >= _grFifoMark)
++          _grFifoWords += gc->cmdTransportInfo.fifoPtr - _grFifoMark;
++        _grFifoMark = gc->cmdTransportInfo.fifoStart;
++#endif
+         /* Reset fifo ptr to start */ 
+         gc->cmdTransportInfo.fifoPtr = gc->cmdTransportInfo.fifoStart;
+           
+--- a/gglide.c
++++ b/gglide.c
+@@ -1170,6 +1170,27 @@
+ #define FN_NAME "grBufferSwap"
+   GR_BEGIN_NOFIFOCHECK(FN_NAME,86);
+   GDBG_INFO_MORE(gc->myLevel,"(%d)\n",swapInterval);
++#ifdef __m68k__
++  /* FX_FIFOCOUNT=n: fifo words per frame, averaged over n frames */
++  {
++    extern FxU32 _grFifoWords, *_grFifoMark;
++    static int every = -1, frames;
++    FxU32 *p = gc->cmdTransportInfo.fifoPtr;
++
++    if (every < 0)
++      every = getenv("FX_FIFOCOUNT") ? atoi(getenv("FX_FIFOCOUNT")) : 0;
++    if (every > 0) {
++      if (_grFifoMark && p >= _grFifoMark)
++        _grFifoWords += p - _grFifoMark;
++      _grFifoMark = p;
++      if (++frames == every) {
++        fprintf(stderr, "fifo %lu words/frame\n", _grFifoWords / every);
++        frames = 0;
++        _grFifoWords = 0;
++      }
++    }
++  }
++#endif
+ 
+   /* optionally display the 3Dfx powerfield logo overlay */
+   if (_GlideRoot.environment.shamelessPlug) _grShamelessPlug();

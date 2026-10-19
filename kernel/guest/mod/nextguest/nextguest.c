@@ -164,6 +164,20 @@ nx_sendsig(gp, sig, sip, hdlr)
 	return 1;
 }
 
+/* the guest's space spans quadrants 0 to 2, which the stock rule refuses */
+static int
+nx_vur(gp, a, len)
+	struct guest_proc *gp;
+	caddr_t a;
+	u_int len;
+{
+	u_long s = (u_long)a;
+
+	if (s < NX_TOP && len <= NX_TOP - s)
+		return len != 0;
+	return __amix_valid_usr_range(a, len);
+}
+
 /* an exception through the guest's own vector */
 static int
 refl(gp, r, v)
@@ -212,11 +226,12 @@ hcall(gp, r, v)
 	char *r;
 	int v;
 {
-	int s;
+	int s, e;
 
-	if ((unsigned long)GR_PC(r) != HF_HCALL + 4 || !(gp->gp_vsr & SR_S) || nx_service(gp, r) < 0)
+	if ((unsigned long)GR_PC(r) != HF_HCALL + 4 || !(gp->gp_vsr & SR_S) || (e = nx_service(gp, r)) < 0)
 		return refl(gp, r, v);
-	GR_PC(r) += 2;
+	if (e == 0)
+		GR_PC(r) += 2;
 	s = nx_splhi();
 	gp->gp_vpend = nx_level() << 8;
 	nx_splx(s);
@@ -491,6 +506,7 @@ load()
 	profile.gpf_fork = nx_fork;
 	profile.gpf_fsig = nx_fsig;
 	profile.gpf_sendsig = nx_sendsig;
+	profile.gpf_vur = nx_vur;
 	profile.gpf_intr = nx_intr;
 	for (v = 2; v < 48; v++) {
 		if (v > 11 && v < 32)

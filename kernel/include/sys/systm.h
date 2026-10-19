@@ -5,6 +5,7 @@
 extern struct vnode *rootdir;
 extern clock_t lbolt;		/* ticks since boot */
 extern short cputype;
+extern int physmem;		/* pages */
 
 #ifdef __STDC__
 extern void wakeup(caddr_t);

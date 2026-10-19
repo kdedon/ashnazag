@@ -1,6 +1,6 @@
 # container.card
 
-An AmigaOS P96 board driver for the `startmig` shared framebuffer. It builds
+An AmigaOS P96 board driver for the `startamiga` shared framebuffer. It builds
 as an Amiga HUNK library with `FindCard` and `InitCard` at -30 and -36.
 
 ```sh
@@ -49,14 +49,14 @@ mode in AmigaOS ScreenMode preferences. For example, 640x480 at 8 bits uses
 25.175 MHz where the host display is at least 640x480.
 
 This library accesses the container's fixed shared-memory address and must
-only be loaded inside `startmig`. It requires the RTG mapping supplied by
+only be loaded inside `startamiga`. It requires the RTG mapping supplied by
 the matching launcher. P96 and AmigaOS are user-supplied dependencies.
 
 ## Behavior
 
 - The display session's own memory as video RAM, mapped by the launcher,
   when the Workbench mode is display-sized (the template's
-  `Container:Display`, which startmig sizes to the display): the screen is
+  `Container:Display`, which startamiga sizes to the display): the screen is
   drawn in place, with no copy. Display-wide bitmaps use the display's row
   length; 4 MiB of RAM after it hold other bitmaps. Other modes draw into
   RAM, which the launcher copies to the display when the card rings.

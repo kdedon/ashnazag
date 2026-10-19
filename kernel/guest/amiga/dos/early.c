@@ -1,5 +1,5 @@
 /*
- * Binds the Picasso96 board before DOS, from the files startmig copied
+ * Binds the Picasso96 board before DOS, from the files startamiga copied
  * out of SYS: into the boot extension.  rtg.library's initialization
  * needs dos.library and icon.library, so stand-ins answer from those
  * files until the real libraries exist and pass every call on after.
@@ -33,10 +33,6 @@ extern void fake_vectors(void), osl_stub(void), os_stub(void), sp_stub(void), al
 #define SA_LikeWorkbench 0x80000047U
 #define SA_Title 0x80000028U
 #define WBENCHSCREEN 1
-/* rtg.library 40.3945: the ENV handler's table of setting readers */
-#define RTG_ENVREADERS 0x36bc
-#define RTG_DISABLEBLITTER 7
-#define RTG_HANDLER 816
 /* a write here wakes the host's helpers */
 #define MIG_FS_RING 0x00f7fffcUL
 
@@ -59,6 +55,7 @@ struct state {
     B *renamed[2];
     U nrenamed;
     const char *romname[2];
+    U hfield;
 };
 /* the stand-ins' fields after struct Library */
 #define F_REAL 34
@@ -131,8 +128,8 @@ static B *hunk(U seg, U n)
     for (; seg && n; n--) seg = *(U *)BADDR(seg);
     return seg ? BADDR(seg) + 4 : 0;
 }
-/* a load file in memory as a segment list, as LoadSeg would */
-static U loadseg(const B *f, U size)
+/* a load file in memory as a segment list, as LoadSeg would; code, if set, gets a bit per code hunk */
+static U loadseg(const B *f, U size, U *code)
 {
     const U *w = (const U *)f, *e = (const U *)(f + size);
     U n, first, last, i, k, h, cur, type, seg = 0, *link = &seg;
@@ -152,10 +149,12 @@ static U loadseg(const B *f, U size)
         link = (U *)(hk[i] + 4);
     }
     *link = 0;
+    if (code) *code = 0;
     for (cur = 0; w < e && cur < n; ) {
         type = *w++ & 0x3fffffff;
         switch (type) {
         case 0x3e9: case 0x3ea:
+            if (code && type == 0x3e9 && cur < 32) *code |= 1U << cur;
             k = *w++;
             memcpy(hk[cur] + 8, w, k * 4);
             w += k;
@@ -211,13 +210,72 @@ static B *resident(U seg)
     }
     return 0;
 }
-/* load and initialize a library; its base, or 0 */
-static B *initlib(struct state *s, const char *path, const char *rename, U *segp)
+static U hsize(U seg) { return *(U *)(BADDR(seg) - 4) - 8; }
+/* nonzero when [a, a+n) lies in one of the segment's hunks */
+static int inseg(U seg, U a, U n)
 {
-    U size, seg, r[14];
-    const B *f = pfile(s, path, &size);
+    U b;
+    for (; seg; seg = *(U *)BADDR(seg)) {
+        b = P(BADDR(seg) + 4);
+        if (a >= b && n <= hsize(seg) && a - b <= hsize(seg) - n) return 1;
+    }
+    return 0;
+}
+/* nonzero when [a, a+n) lies in a code hunk */
+static int incode(U seg, U code, U a, U n)
+{
+    U b, i;
+    for (i = 0; seg; seg = *(U *)BADDR(seg), i++) {
+        b = P(BADDR(seg) + 4);
+        if (a >= b && n <= hsize(seg) && a - b <= hsize(seg) - n) return i < 32 && code >> i & 1;
+    }
+    return 0;
+}
+static int envname(U seg, U a)
+{
+    const char *p = "ENV:Picasso96/";
+    U i;
+    if (!inseg(seg, a, 15)) return 0;
+    for (i = 0; p[i]; i++)
+        if (((B *)a)[i] != p[i]) return 0;
+    return 1;
+}
+/*
+ * The ENV handler keeps its setting names, "ENV:Picasso96/<name>", in a
+ * table followed by one of their readers.  The reader of name, or 0.
+ */
+static U envreader(U seg, U code, const char *name)
+{
+    U h, a, e, k, i, fn;
+    for (h = seg; h; h = *(U *)BADDR(h))
+        for (a = P(BADDR(h) + 4), e = a + hsize(h); a + 8 <= e; a += 2) {
+            for (k = 0; a + 4 * k + 4 <= e && envname(seg, *(U *)(a + 4 * k)); k++)
+                ;
+            if (k < 2 || a + 8 * k > e) continue;
+            for (i = 0; i < k; i++)
+                if (ieq(*(const char **)(a + 4 * i) + 14, name)) {
+                    fn = *(U *)(a + 4 * (k + i));
+                    return incode(seg, code, fn, 2) ? fn : 0;
+                }
+            a += 4 * k - 2;
+        }
+    return 0;
+}
+/* where the library keeps the ENV handler: the one move.l d0,x(a5) after CreateNewProc */
+static U handlerfield(U seg)
+{
+    U h, a, e, f = 0, n = 0;
+    for (h = seg; h; h = *(U *)BADDR(h))
+        for (a = P(BADDR(h) + 4), e = a + hsize(h); a + 8 <= e; a += 2)
+            if (*(U *)a == 0x4eaefe0eU && *(W *)(a + 4) == 0x2b40)
+                f = *(W *)(a + 6), n++;
+    return n == 1 ? f : 0;
+}
+/* initialize a library from its segment list; its base, or 0 */
+static B *initseg(struct state *s, U seg, const char *rename)
+{
+    U r[14];
     B *res, *base;
-    if (!f || !(seg = loadseg(f, size))) return 0;
     if (!(res = resident(seg))) { unloadseg(seg); return 0; }
     memset(r, 0, sizeof r);
     r[A1] = P(res); r[D1] = seg;
@@ -227,8 +285,14 @@ static B *initlib(struct state *s, const char *path, const char *rename, U *segp
         s->romname[s->nrenamed++] = *(const char **)(base + 10);
         *(const char **)(base + 10) = rename;
     }
-    if (segp) *segp = seg;
     return base;
+}
+static B *initlib(struct state *s, const char *path, const char *rename)
+{
+    U size, seg;
+    const B *f = pfile(s, path, &size);
+    if (!f || !(seg = loadseg(f, size, 0))) return 0;
+    return initseg(s, seg, rename);
 }
 
 static B *fake(struct state *s, const char *name, W kind)
@@ -356,7 +420,7 @@ void early_emulate(B *base, L off, U *r)
         for (i = 0; i < s->dir->count && i < MIG_EARLY_FILES; i++)
             if (ieq(name, filepart(s->dir->file[i].name))) {
                 f = (B *)s->dir + s->dir->file[i].offset;
-                if ((seg = loadseg(f, s->dir->file[i].size)) != 0) v = seg;
+                if ((seg = loadseg(f, s->dir->file[i].size, 0)) != 0) v = seg;
                 break;
             }
         if (!v) s->ioerr = 205;
@@ -569,7 +633,7 @@ static void bridge(struct state *s)
     U size, seg, r[14];
     const B *f = pfile(s, "c/container-input", &size);
     B *t, *stack;
-    if (!f || !(seg = loadseg(f, size))) return;
+    if (!f || !(seg = loadseg(f, size, 0))) return;
     t = AllocMem(92);
     stack = AllocMem(4096);
     if (!t || !stack) {
@@ -605,26 +669,28 @@ static int bind(struct state *s)
     const B *tt = pfile(s, MIG_EARLY_TOOLTYPES, &size), *e;
     const B *env, *p;
     char **list;
-    B *rtg, *board, *h2;
-    U seg = 0, fn;
+    B *rtg, *board;
+    U seg, fn, code;
     if (!tt) return 0;
     for (p = tt, e = tt + size; p < e; p++) n += !*p;
     if (!(list = (char **)AllocMem((n + 1) * 4))) return 0;
     for (n = 0, p = tt; p < e; p += slen((const char *)p) + 1) list[n++] = (char *)p;
     list[n] = 0;
+    if (!(p = pfile(s, "libs/picasso96/rtg.library", &size)) || !(seg = loadseg(p, size, &code)))
+        return 0;
+    fn = envreader(seg, code, "DisableAmigaBlitter");
+    s->hfield = handlerfield(seg);
     status()->step = 1;
-    if (!initlib(s, "libs/iffparse.library", 0, 0)) return 0;
+    if (!fn || !s->hfield || !initlib(s, "libs/iffparse.library", 0)) { unloadseg(seg); return 0; }
     status()->step = 2;
-    initlib(s, "libs/picasso96/fastlayers.library", "Picasso96/fastlayers.library", 0);
+    initlib(s, "libs/picasso96/fastlayers.library", "Picasso96/fastlayers.library");
     status()->step = 3;
-    if (!(s->rtg = initlib(s, "libs/picasso96/rtg.library", "Picasso96/rtg.library", &seg)))
+    if (!(s->rtg = initseg(s, seg, "Picasso96/rtg.library")))
         return 0;
     status()->step = 4;
-    /* what P96's ENV handler would read first: the native blitter is not there */
+    /* what the ENV handler would read first: the native blitter is not there */
     env = pfile(s, "prefs/env-archive/picasso96/disableamigablitter", &size);
-    h2 = hunk(seg, 2);
-    if (env && h2) {
-        fn = *(U *)(h2 + RTG_ENVREADERS + 4 * RTG_DISABLEBLITTER);
+    if (env) {
         memset(r, 0, sizeof r);
         r[A0] = P(env); r[D0] = size;
         xcall(EXEC, (void *)fn, r);
@@ -775,7 +841,8 @@ U early_late(B *dos)
         memset(r, 0, sizeof r);
         r[D1] = s->procs[i];
         p = lcall(dos, -498, r);
-        if (!i && s->rtg) *(U *)(s->rtg + RTG_HANDLER) = p;
+        if (!i && s->rtg && s->hfield + 4 <= *(W *)(s->rtg + 36))
+            *(U *)(s->rtg + s->hfield) = p;
     }
     s->nprocs = 0;
     /*

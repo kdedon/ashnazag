@@ -10,7 +10,7 @@ Recommended rule: select applications per persistent OS environment; deduplicate
 - `webapp/rootfs` imports layered cpio archives; `webapp/ufs` writes UFS; `webapp/recipes` applies the fixed Quadra recipe. These are useful execution primitives, not a generic package manager.
 - `kernel/mac/diskroot/fstree.py` defines archive, removal, file, directory, link and device operations. `root.manifest` uses them to assemble an installation.
 - `kernel/mac/diskroot/pkg/pkginst.py` imports a restricted SVR4 datastream: one package, class `none`, absolute paths, no installation scripts. It emits filesystem entries and package database records. Preserve this compatibility rather than replacing apkg's database with an unrelated one.
-- Amiga currently uses `/amiga/sys` as the root-owned template and `~/Amiga` as the writable user installation. `makeamiga` and `startmig` implement that convention; `-e env` selects `~/Amiga/env` instead. See [Amiga package instructions](../images/amigaenv/README.md) and [guest volume design](guest-container-design.md#9-real-installs).
+- Amiga currently uses `/amiga/sys` as the root-owned template and `~/Amiga` as the writable user installation. `startamiga` implements that convention; `-e env` selects `~/Amiga/env` instead, `-b base` makes a new one from base, `-R` refreshes one from the template. See [Amiga package instructions](../images/amigaenv/README.md) and [guest volume design](guest-container-design.md#9-real-installs).
 
 ## Identities and sharing boundaries
 
@@ -54,7 +54,7 @@ Mac recipes must preserve resource forks, Finder metadata and appropriate HFS se
 
 ## Migration from current Amiga paths
 
-Add environment selection to `makeamiga` and `startmig` before changing their defaults. Keep existing `~/Amiga` as the legacy default when no environment is selected. Offer an explicit import/copy into a new environment; never silently merge it with another OS installation. Version `/amiga/sys` templates so refreshes do not replace an environment's pinned base or user modifications.
+Add environment selection to `startamiga` before changing its defaults. Keep existing `~/Amiga` as the legacy default when no environment is selected. Offer an explicit import/copy into a new environment; never silently merge it with another OS installation. Version `/amiga/sys` templates so refreshes do not replace an environment's pinned base or user modifications.
 
 Image generation needs a first-login provisioning policy because the eventual Unix user may not be known at build time. Proposed approach: stage a template and environment definition in the image, then instantiate the private root for the selected user. Do not bake the developer's home directory or UID into guest recipes.
 

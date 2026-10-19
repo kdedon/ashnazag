@@ -199,6 +199,7 @@ child(dvp, nm, vpp)
 }
 
 static void hf_keys();
+void snd_init();
 
 /* the filesystem type's operations */
 static long
@@ -229,15 +230,64 @@ hf_mountroot(vfsp, vpp, name)
 	return 0;
 }
 
+/* the frame buffer driver's retrace interrupt enable and disable */
+static void
+hf_retrace()
+{
+	struct hf_keys *k = (struct hf_keys *)HF_KEYS;
+
+	if (!(k->running = k->retrace != 0))
+		return;
+	k->retrace(k->rarg);
+	k->timeout(hf_retrace, 0, 1);
+}
+
+static long
+hf_vidon(fn, arg)
+	long (*fn)();
+	unsigned long arg;
+{
+	struct hf_keys *k = (struct hf_keys *)HF_KEYS;
+
+	k->rarg = arg;
+	k->retrace = fn;
+	if (!k->running) {
+		k->running = 1;
+		k->timeout(hf_retrace, 0, 1);
+	}
+	return 0;
+}
+
+static long
+hf_vidoff()
+{
+	((struct hf_keys *)HF_KEYS)->retrace = 0;
+	return 0;
+}
+
 /* hand typed characters to the console's input */
 static void
 hf_keys()
 {
 	struct hf_keys *k = (struct hf_keys *)HF_KEYS;
+	int events = k->open && *(long *)k->open;
+	unsigned long w;
 
 	while (k->tail != k->head) {
-		k->input(k->buf[k->tail & 255]);
+		if (!events)
+			k->input(k->buf[k->tail & 255]);
 		k->tail++;
+	}
+	while (k->etail != k->ehead) {
+		w = k->ev[k->etail & 63];
+		k->etail++;
+		if (!events)
+			continue;
+		if (w & HF_MOUSE) {
+			w &= 0xffff;
+			k->mintr(&w);
+		} else
+			k->kintr(&w);
 	}
 	k->timeout(hf_keys, 0, k->ticks);
 }
@@ -647,11 +697,22 @@ hf_cmp(a, b)
 	return a == b;
 }
 
+/* the kernel's statfs: type, block size, blocks, free, available, files, free files */
 static long
 hf_statfs(vfsp, sbp)
 	unsigned char *vfsp, *sbp;
 {
-	return host(HF_STATFS) ? 5 : 0;
+	struct hf_box *b = B;
+
+	if (host(HF_STATFS))
+		return 5;
+	W32(sbp, 4) = b->bsize;
+	W32(sbp, 8) = b->fblocks;
+	W32(sbp, 12) = b->ffree;
+	W32(sbp, 16) = b->ffree;
+	W32(sbp, 20) = b->files;
+	W32(sbp, 24) = b->nfree;
+	return 0;
 }
 
 /* the first function: startnext calls it with the table of kernel routines in the context */
@@ -660,6 +721,7 @@ hf_init()
 {
 	struct hctx *c = C;
 
+	snd_init();
 	c->vfsops[0] = (unsigned long)hf_inval;		/* mount */
 	c->vfsops[1] = (unsigned long)hf_zero;		/* unmount */
 	c->vfsops[2] = (unsigned long)hf_root;
@@ -700,5 +762,7 @@ hf_init()
 	c->vnodeops[30] = (unsigned long)hf_pageout;
 	c->vnodeops[31] = (unsigned long)hf_inval;
 	c->vnodeops[32] = (unsigned long)hf_zero;
+	((struct hf_keys *)HF_KEYS)->vidon = (unsigned long)hf_vidon;
+	((struct hf_keys *)HF_KEYS)->vidoff = (unsigned long)hf_vidoff;
 	return 0;
 }

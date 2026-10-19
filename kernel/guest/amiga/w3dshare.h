@@ -2,7 +2,7 @@
 #define AMIGA_W3DSHARE_H
 
 /*
- * Warp3D.library's way into startmig: the host functions it calls, one
+ * Warp3D.library's way into startamiga: the host functions it calls, one
  * per library vector, on the host stack, under the library's semaphore.
  */
 #define MIG_W3D_BASE 0x25000000UL
@@ -34,6 +34,7 @@ typedef char mig_w3d_fits[(sizeof(struct mig_w3d) <= MIG_W3D_MAP_SIZE) ? 1 : -1]
 void w3d_init(struct mig_w3d *);
 extern int w3d_fbfd;
 void w3d_text(void);
+extern unsigned long w3d_textend;
 void fill32(void *, unsigned long, unsigned long);
 
 #endif

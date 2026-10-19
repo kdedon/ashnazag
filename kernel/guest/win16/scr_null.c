@@ -124,6 +124,7 @@ add(type, x, y, down, vk, btn)
 	e->down = down;
 	e->vk = vk;
 	e->btn = btn;
+	e->ms = w16_ticks();
 }
 
 static int

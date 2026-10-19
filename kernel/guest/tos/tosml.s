@@ -174,13 +174,10 @@ vm:	movem.l	d0-d2/a0-a2,-(sp)
 	.set	pv_ev, 32
 	.set	PV_NEV, 256
 	.set	pv_vbl, pv_ev+PV_NEV*8
-	.set	pv_drop, pv_vbl+4
-	.set	pv_la, pv_drop+4
+	.set	pv_la, pv_vbl+4
 
 kbv:	.long	0			| Kbdvbase()
 kio:	.long	0			| the keyboard's Iorec
-ikv:	.long	0			| $118 and ikbdsys as TOS set them
-iks:	.long	0
 pvk:	.long	0			| PV_KEYS when TOS has kbdvec
 pkt:	.byte	0, 0, 0, 0		| relative mouse packet
 
@@ -191,9 +188,6 @@ pvinit:	.word	0xa000			| Line A base: where GEM keeps the mouse
 	trap	#14
 	addq.l	#2,sp
 	move.l	d0,kbv
-	move.l	d0,a0
-	move.l	32(a0),iks
-	move.l	0x118,ikv
 	move.w	#1,-(sp)		| Iorec(1)
 	move.w	#14,-(sp)
 	trap	#14
@@ -219,45 +213,23 @@ vblslot: move.w	0x454,d0		| nvbls
 3:	dbra	d0,2b
 	rts
 
-| each VBL: while TOS owns the IKBD vectors, events reach its handlers
-| here; when a program takes them, the IKBD carries everything
+| each VBL: events reach TOS's handlers here
 pv:	move.l	sp,pvsp			| on a stack of our own: the interrupted
 	lea	pvstke,sp		| one may be AUTO's, inside its basepage
 	movem.l	d0-d7/a0-a6,-(sp)
 	lea	PV,a5
 	move.l	kbv,a4
 	addq.l	#1,pv_vbl(a5)
-	move.l	pv_tail(a5),d2
-	move.l	pv_drop(a5),d0
-	sub.l	d2,d0
-	ble.s	0f
-	move.l	pv_head(a5),d1
-	sub.l	d2,d1
-	cmp.l	d1,d0
-	bhi.s	0f
-	add.l	d0,pv_tail(a5)		| sent by the IKBD instead
-0:	moveq	#0,d7
-	move.l	0x118,d0
-	cmp.l	ikv,d0
-	bne.s	1f
-	move.l	32(a4),d0
-	cmp.l	iks,d0
-	bne.s	1f
 	moveq	#1,d7
 	or.l	pvk,d7
-1:	move.l	d7,pv_on(a5)
+	move.l	d7,pv_on(a5)
 	move.l	pv_tail(a5),d6
 	move.l	pv_xy(a5),d5
 	cmp.l	pv_head(a5),d6
 	bne.s	2f
 	cmp.l	pv_cxy(a5),d5
 	beq	9f
-2:	tst.l	d7
-	bne.s	3f
-	move.l	pv_head(a5),pv_tail(a5)	| the IKBD's now: drop these
-	move.l	d5,pv_cxy(a5)
-	bra.s	9f
-3:	move.w	sr,-(sp)		| as from the IKBD interrupt
+2:	move.w	sr,-(sp)		| as from the IKBD interrupt
 	move.w	(sp),d0
 	and.w	#0xf8ff,d0
 	or.w	#0x0600,d0

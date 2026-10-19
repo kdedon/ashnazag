@@ -1,0 +1,16 @@
+diff -ruN a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_lock.c b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_lock.c
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_lock.c	2026-10-18 13:11:56.586749853 -0500
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_lock.c	2026-10-18 13:11:56.598749905 -0500
+@@ -75,11 +75,10 @@
+         free( state );
+     }
+ 
+-#if 0
+     if ( saPriv->texOwner != fxMesa->hHWContext ) {
+         tdfxTMRestoreTextures_NoLock( fxMesa );
++        saPriv->texOwner = fxMesa->hHWContext;
+     }
+-#endif
+ 
+     if ( *dPriv->pStamp != stamp || saPriv->ctxOwner != fxMesa->hHWContext ) {
+        tdfxUpdateClipping(fxMesa->glCtx);

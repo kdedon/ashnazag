@@ -55,11 +55,21 @@ readlast(path, buf, size)
 	buf[n > 0 ? n : 0] = 0;
 }
 
+/* the launcher's first lines, which a long run's host-call lines push out of the tail */
+static char errhead[262144];
+
 static void
 logread()
 {
+	int fd, n = 0;
+
 	readlast(LOG, logbuf, (int)sizeof logbuf);
 	readlast(ERRLOG, errbuf, (int)sizeof errbuf);
+	if ((fd = open(ERRLOG, O_RDONLY)) >= 0) {
+		n = read(fd, errhead, sizeof errhead - 1);
+		close(fd);
+	}
+	errhead[n > 0 ? n : 0] = 0;
 }
 
 /* the last lines of the log, without the register census and host calls; host calls without loops */
@@ -89,12 +99,69 @@ logtail(hfs)
 		t_info("log", "%s", l[i % 100]);
 }
 
+static off_t errmark;		/* the launcher's log size at the logout */
+static off_t sndmark;		/* and before the console's commands */
+
+/* whether the launcher's lines since the logout hold the text */
+static int
+errsince(text)
+	char *text;
+{
+	static char b[65536 + 64];
+	int fd, n, k = 0, found = 0;
+
+	if ((fd = open(ERRLOG, O_RDONLY)) < 0)
+		return 0;
+	lseek(fd, errmark, 0);
+	while (!found && (n = read(fd, b + k, sizeof b - 1 - k)) > 0) {
+		b[k + n] = 0;
+		found = strstr(b, text) != 0;
+		/* keep a tail so the text may span two reads */
+		k = k + n > 63 ? 63 : k + n;
+		memmove(b, b + strlen(b) - k, k);
+	}
+	close(fd);
+	return found;
+}
+
+/* the names the guest looked up since the mark, a line of them at a time */
+static void
+lookups()
+{
+	static char b[4096];
+	char line[200], *p, *e, *n;
+	FILE *f;
+	int k = 0;
+
+	if ((f = fopen(ERRLOG, "r")) == 0)
+		return;
+	fseek(f, (long)errmark, 0);
+	line[0] = 0;
+	while (k < 60 && fgets(b, sizeof b, f)) {
+		if (!strstr(b, "hfs op 2 ") || !strstr(b, "error 0 ") || (p = strstr(b, "result 0 ")) == 0)
+			continue;
+		n = p + 9;
+		if ((e = strchr(n, 10)) != 0)
+			*e = 0;
+		if (strlen(line) + strlen(n) > 150) {
+			t_info("lookups", "%s", line);
+			line[0] = 0;
+			k++;
+		}
+		strcat(line, " ");
+		strcat(line, n);
+	}
+	if (line[0])
+		t_info("lookups", "%s", line);
+	fclose(f);
+}
+
 /* whether the host console log holds the text */
 static int
 logfind(text)
 	char *text;
 {
-	return strstr(logbuf, text) != 0 || strstr(errbuf, text) != 0;
+	return strstr(logbuf, text) != 0 || strstr(errbuf, text) != 0 || strstr(errhead, text) != 0;
 }
 
 
@@ -179,6 +246,114 @@ shot(name)
 		t_info("shot", "%s %s", name, hrep);
 }
 
+static void
+nap(ms)
+	int ms;
+{
+	poll((struct pollfd *)0, 0, ms);
+}
+
+/* the pointer's top left on the host screen: what changes when it moves 2 right and down, alone */
+static int
+pointer(x, y)
+	int *x, *y;
+{
+	int x1, y1, k;
+
+	for (k = 0; k < 10; k++) {
+		host("shot np0");
+		host("move 1 1");
+		nap(700);
+		host("shot np1");
+		if (host("box np0 np1") && sscanf(hrep, "%d %d %d %d", x, y, &x1, &y1) == 4 && x1 - *x < 48 &&
+		    y1 - *y < 48)
+			return 1;
+		nap(2000);
+	}
+	return 0;
+}
+
+/* the pointer from the screen's top left to x, y, never moving back: half the way at a time, whatever the scaling */
+/* half of d, at least 1 unless d is within 3 */
+static int
+step(d)
+	int d;
+{
+	if (d >= -3 && d <= 3)
+		return 0;
+	return d > 0 ? (d + 1) / 2 : -((1 - d) / 2);
+}
+
+static int
+moveto(x, y)
+	int x, y;
+{
+	char req[40];
+	int k, px, py;
+
+	host("move -2000 -2000 20");
+	nap(1000);
+	for (k = 0; k < 40 && pointer(&px, &py); k++) {
+		if (abs(x - px) <= 3 && abs(y - py) <= 3)
+			return 1;
+		/* half the way, a pixel an event: the event driver speeds up larger moves */
+		sprintf(req, "move %d %d 40 1", step(x - px), step(y - py));
+		host(req);
+		nap(500);
+	}
+	return 0;
+}
+
+/* a pixel of the last named shot, -1 off the screen */
+static long
+pix(name, x, y)
+	char *name;
+	int x, y;
+{
+	char req[40];
+
+	sprintf(req, "pix %s %d %d", name, x, y);
+	return host(req) && strcmp(hrep, "none") != 0 ? strtol(hrep, (char **)0, 16) : -1;
+}
+
+/*
+ * Log out the stock way: Log Out, the last item of the Workspace menu at the screen's top left,
+ * and confirm.  Without the menu, double-click the Workspace's dock tile first.  Return first
+ * for an alert (the first login warns of low disk space).
+ */
+static int
+logout()
+{
+	long desk, c;
+	int x0 = 0, y0 = 0, y, run = 0;
+
+	host("key ret");
+	nap(5000);
+	shot("next_menu");
+	desk = pix("next_menu", x0 + 600, y0 + 700);
+	if (pix("next_menu", x0 + 4, y0 + 4) == desk) {
+		if (!moveto(1152 - 32, 30))
+			return 0;
+		host("click 2");
+		nap(30000);
+		shot("next_menu");
+	}
+	if (pix("next_menu", x0 + 4, y0 + 4) == desk)
+		return 0;
+	/* the menu's end: two samples of desktop, 4 apart, below the title */
+	for (y = y0 + 30; y < y0 + 500 && run < 2; y += 4)
+		run = (c = pix("next_menu", x0 + 4, y)) == desk ? run + 1 : c < 0 ? 2 : 0;
+	t_info("menu", "ends at %d", y - 4 * run);
+	if (y >= y0 + 500 || !moveto(x0 + 30, y - 4 * run - 10))
+		return 0;
+	host("click 1");
+	/* the confirmation panel takes a while: the Workspace is busy */
+	nap(30000);
+	shot("next_logout");
+	host("key ret");
+	return 1;
+}
+
 /* type a line on the host keyboard */
 static void
 typeline(text)
@@ -187,11 +362,20 @@ typeline(text)
 	char req[20];
 
 	for (; *text; text++) {
-		sprintf(req, *text == ' ' ? "key spc" : *text == '.' ? "key dot" : *text == '/' ? "key slash" :
-		    *text == '-' ? "key minus" : "key %c", *text);
+		sprintf(req, *text >= 'A' && *text <= 'Z' ? "key shift+%c" : *text == ' ' ? "key spc" : *text == '.' ?
+		    "key dot" : *text == '/' ? "key slash" : *text == '-' ? "key minus" : *text == '>' ? "key shift+dot" :
+		    "key %c", *text | 040);
 		host(req);
 	}
 	host("key ret");
+}
+
+/* "console" as the panel's name: the login window exits to the text console */
+static void
+console()
+{
+	typeline("console");
+	shot("next_console");
 }
 
 /* shell prompts on the console so far */
@@ -211,7 +395,7 @@ static void
 escape()
 {
 	static char *cmd[] = { "mkdir /d", "cd /d", "rmdir /d", "ln -s /tmp /d", "mkdir next.esc", "ln -s /bin /b",
-	    "/b/echo linkok", 0 };
+	    "/b/echo linkok", "sndplay /NextLibrary/Sounds/Basso.snd", 0 };
 	char **c;
 	int n, i;
 
@@ -238,6 +422,17 @@ rootfile(name)
 	return path;
 }
 
+/* a file beside the root folder: ROOT.name */
+static char *
+sidefile(name)
+	char *name;
+{
+	static char path[64];
+
+	sprintf(path, "%s.%s", root, name);
+	return path;
+}
+
 /* bytes of the screen memory that are not zero */
 static int
 vramset()
@@ -245,13 +440,30 @@ vramset()
 	static unsigned char b[NX_VRAM_SIZE];
 	int fd, n = 0, i;
 
-	if ((fd = open(rootfile("vram"), O_RDONLY)) < 0)
+	if ((fd = open(sidefile("vram"), O_RDONLY)) < 0)
 		return -1;
 	i = read(fd, b, sizeof b);
 	close(fd);
 	while (i-- > 0)
 		n += b[i] != 0;
 	return n;
+}
+
+/* light grey pixels: loginwindow's panel on the dark grey desktop */
+static int
+panel()
+{
+	static unsigned char b[NX_VRAM_SIZE];
+	int fd, n = 0, i, k;
+
+	if ((fd = open(sidefile("vram"), O_RDONLY)) < 0)
+		return 0;
+	i = read(fd, b, sizeof b);
+	close(fd);
+	while (i-- > 0)
+		for (k = 0; k < 8; k += 2)
+			n += (b[i] >> k & 3) == 1;
+	return n > 20000;
 }
 
 /* hardware-page faults so far: accesses to addresses nothing backs */
@@ -267,9 +479,11 @@ static void
 kernel()
 {
 	static struct nx_info info, now;
-	unsigned long io0 = 0;
+	struct stat st;
+	unsigned long io0 = 0, priv0 = 0;
 	pid_t pid;
-	int i, k, gone = 0, status, banner, typed = 0, after = 0;
+	int i, k, gone = 0, status, banner, typed = 0, after = 0, nopanel = 0, panelkeys = 0, held = 0, again = 0;
+	char *q;
 	long t0 = t_now_ms(), login = 0;
 
 	if (access(DEV, 0) != 0 || system("/sbin/mount -F ufs " DEV " " MNT) != 0) {
@@ -288,8 +502,8 @@ kernel()
 		mkdir(ROOT, 0700);
 		system("cp -r " MNT "/fs/etc " MNT "/fs/usr " MNT "/fs/bin " ROOT "; cp " MNT "/fs/.meta " ROOT ".meta");
 	}
-	unlink(rootfile("vram"));
-	unlink(rootfile("nvram"));
+	unlink(sidefile("vram"));
+	unlink(sidefile("nvram"));
 	unlink(rootfile("d"));
 	rmdir(rootfile("d"));
 	unlink(rootfile("b"));
@@ -312,29 +526,121 @@ kernel()
 		execl(MNT "/native", "native", "-k", full ? FULLROOT "/mach_kernel" : MNT "/mach_kernel", (char *)0);
 		_exit(127);
 	}
-	/* the module forgets the machine when it ends: keep the last look */
-	for (i = 0; i < (full ? 12000 : 300) && !gone && after < 50; i++) {
-		after += typed == (full ? 3 : 2);
+	/*
+	 * The module forgets the machine when it ends: keep the last look.
+	 * The whole tree: the first boot's language panel and its confirmation take a return each; at
+	 * loginwindow's panel "console" gives the text console; log in there, run the commands, exit; back
+	 * at the panel log in as root and wait for the Workspace Manager.  A boot that logs in by itself
+	 * logs out through the Workspace menu first.
+	 */
+	/* ends before the runner's limit so the log is shown */
+	for (i = 0; i < (full ? 18000 : 300) && !gone && after < (full ? 900 : 50) && t_now_ms() - t0 < 1700000; i++) {
+		after += typed == (full ? 6 : 2);
 		poll((struct pollfd *)0, 0, 100);
-		/* at the console's login or shell prompt, type a name, then a command */
-		if (typed < 3 && i % 20 == 19) {
+		/*
+		 * loginwindow skips the automatic login while the button is down.  The window server
+		 * restarts after a logout or the console's exit and learns the button from events: hold it
+		 * and drag a pixel each second until the panel shows.
+		 */
+		if ((typed == 4 || (typed == 11 && strstr(logbuf, "exiting in window server"))) && held >= 0 &&
+		    i % 10 == 0)
+			host(held++ == 0 ? "button 1 30" : held & 1 ? "move 1 0" : "move -1 0");
+		if (i % 20 == 19) {
 			logread();
-			if (!typed && strstr(logbuf, "login: ")) {
+			if (full && (!typed || typed == 7 || typed == 8) && strstr(errbuf, "result 0 Workspace\n")) {
+				/* the first boot, and later ones, log in by themselves */
+				t_info("workspace", "after %ld s", (t_now_ms() - t0) / 1000);
+				typed = 9;
+				nopanel = i;
+			} else if (typed == 9 && i > nopanel + 600) {
+				t_rearm(900);
+				errmark = stat(ERRLOG, &st) == 0 ? st.st_size : 0;
+				typed = logout() ? 10 : 6;
+				t_info("logout", "%s", typed == 10 ? "done" : "no Workspace menu");
+				nopanel = i;
+			} else if (typed == 11 && errsince("result 0 Workspace\n")) {
+				host("button 0 100");
+				t_info("logout", "logged in again by itself");
+				typed = 6;
+				again = 1;
+			} else if (typed == 10 && !panel()) {
+				/* the Workspace's windows are gone: the panel comes next */
+				typed = 11;
+				nopanel = i;
+			} else if (typed == 11 && i > nopanel + 50 && panel()) {
+				t_rearm(900);
+				host("button 0 100");
+				held = -1;
+				shot("next_panel");
+				console();
+				typed = 1;
+				nopanel = i;
+			} else if (full && !typed && panel()) {
+				/* the first boot's language and keyboard panel: English, USA */
+				shot("next_language");
+				host("key ret");
+				typed = 7;
+				nopanel = i;
+			} else if (typed == 7 && i > nopanel + 100) {
+				shot("next_confirm");
+				host("key ret");
+				typed = 8;
+				nopanel = i;
+			} else if (typed == 8 && i > nopanel + 100 && panel()) {
+				shot("next_panel");
+				console();
+				typed = 1;
+				nopanel = i;
+			} else if (full && typed == 1 && i > nopanel + 3000 && !strstr(logbuf, "login: ")) {
+				shot("next_noconsole");
+				break;
+			} else if ((full ? typed == 1 : !typed) && strstr(logbuf, "login: ")) {
 				login = (t_now_ms() - t0) / 1000;
 				typeline("root");
-				typed = 1;
-			} else if (typed < 2 && (typed ? strchr(strstr(logbuf, "login: "), '#') != 0 : logfind("\n#"))) {
+				typed = full ? 2 : 1;
+			} else if ((full ? typed == 2 : typed == 1) ? strchr(strstr(logbuf, "login: "), '#') != 0 :
+			    !full && !typed && logfind("\n#")) {
+				/* a shell after the login, or the small root's single-user one */
 				typeline("echo kbd");
-				typed = 2;
-			} else if (typed == 2 && full && logfind("\r\nkbd\r\n")) {
+				typed = full ? 3 : 2;
+			} else if (typed == 3 && logfind("\r\nkbd\r\n")) {
+				sndmark = stat(ERRLOG, &st) == 0 ? st.st_size : 0;
 				escape();
-				typed = 3;
+				typeline("exit");
+				typed = 4;
+				nopanel = i;
+				held = 0;
+				errmark = stat(ERRLOG, &st) == 0 ? st.st_size : 0;
+			} else if (typed == 4 && i > nopanel + 3000) {
+				shot("next_nopanel");
+				break;
+			} else if (typed == 4 && errsince("result 0 Workspace\n")) {
+				host("button 0 100");
+				t_info("exit", "logged in again by itself");
+				typed = 6;
+				again = 1;
+			} else if (typed == 4 && i > nopanel + 100 && panel() && host("shot next_panel2") &&
+			    host("box next_language next_panel2") && strcmp(hrep, "none") != 0) {
+				host("button 0 100");
+				held = -1;
+				typeline("root");
+				shot("next_name");
+				panelkeys = host("box next_panel2 next_name") && strcmp(hrep, "none") != 0;
+				host("key ret");
+				typed = 5;
+			} else if (typed == 5 && errsince("result 0 Workspace\n")) {
+				t_info("workspace", "after %ld s", (t_now_ms() - t0) / 1000);
+				typed = 6;
 			}
 		}
 		if (ioctl(dev, NX_INFO, &now) == 0 && now.ncensus >= info.ncensus)
 			info = now;
-		if (after == 1)
+		if (after == 1) {
 			io0 = iofaults(&info);
+			priv0 = info.mmu[4];
+		}
+		if (after == 899)
+			shot("next_workspace");
 		if (full ? i % 1200 == 1199 : i == 60 || i == 190) {
 			char name[20];
 
@@ -348,10 +654,17 @@ kernel()
 	logread();
 	logtail(0);
 	logtail(1);
+	if (typed == 4)
+		lookups();
+	/* the launcher's own complaint when it ends early */
+	if (gone && i < 50)
+		for (q = errbuf; q && *q && q - errbuf < 2000; q = strchr(q, 10) ? strchr(q, 10) + 1 : 0)
+			t_info("err", "%.100s", q);
 	t_info("kernel", "gone %d ticks %lu ints %lu io %lu last %lx pc %lx level %lu stat %lx mask %lx", gone, info.ticks,
 	    info.ints, info.io, info.lasta, info.lastpc, info.level, info.stat, info.mask);
 	t_info("mmu", "fills %lu faults %lu space switches %lu flushes %lu, privileged %lu, ticks %lu",
 	    info.mmu[0], info.mmu[1], info.mmu[2], info.mmu[3], info.mmu[4], info.ticks);
+	t_info("space", "above the guest's space %lu, last %lx pc %lx", info.high, info.higha, info.highpc);
 	for (i = 0; i < (int)info.ncensus && i < NX_NCENSUS; i++)
 		t_info("io", "%s %lx x%lu pc %lx last pc %lx", info.census[i].write ? "write" : "read",
 		    info.census[i].addr, info.census[i].count, info.census[i].pc, info.census[i].lastpc);
@@ -372,17 +685,28 @@ kernel()
 		t_check("rc_boot", logfind("error 0 result 0 sh\n") && logfind("error 0 result 0 rc.boot\n"),
 		    "init did not start the shell on /etc/rc.boot");
 	t_check("kernel_stays_up", !logfind("panic:"), "the kernel panicked");
-	if (full)
-		t_check("login_prompt", logfind("login: "), "no login prompt on the console");
+	if (full) {
+		t_check("login_panel", typed >= 1 && typed <= 6, "no login panel");
+		t_check("login_prompt", logfind("login: "), "no login prompt on the console after console");
+	}
 	t_check("keys_reach_shell", logfind("echo kbd\r\n"), "typed keys did not reach the console's shell");
 	t_check("keys_run", logfind("\r\nkbd\r\n"), "the typed command did not run");
-	if (typed == 3) {
+	if (typed >= 3 && typed <= 6 && full) {
 		t_check("host_confined", access("/tmp/next.esc", 0) != 0, "a guest directory made a host link reached the host");
 		t_check("guest_symlink", logfind("\r\nlinkok\r\n"), "a link made in the guest did not lead to its target");
 	}
-	if (after > 1)
-		t_check("io_steady", iofaults(&info) == io0, "%lu hardware-page faults in the %d s after the command",
-		    iofaults(&info) - io0, (after - 1) / 10);
+	if (full) {
+		t_check("panel_returns", typed >= 5 && typed <= 6 && !again, "no login panel after the console's exit");
+		t_check("panel_keys", panelkeys, "typed keys did not reach the login panel");
+	}
+	if (full) {
+		t_check("workspace", typed == 6 && !again, "no Workspace Manager after root's login");
+	}
+	if (after > 1) {
+		t_check("io_steady", iofaults(&info) == io0, "%lu hardware-page faults in the %d s after %s",
+		    iofaults(&info) - io0, (after - 1) / 10, full ? "the login" : "the command");
+		t_info("privileged_emulated", "%lu", info.mmu[4] - priv0);
+	}
 	if (full) {
 		/* rc.boot's text with today's date, then init starts /etc/rc */
 		time_t now = time((time_t *)0);
@@ -402,8 +726,17 @@ kernel()
 
 		t_info("utrap", "vector %lu d0 %lx pc %lx urp %lx d5 %lx calls %lx %lx %lx", t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7]);
 	}
+	t_check("guest_space", info.high == 0, "%lu guest accesses above its space, last %lx pc %lx", info.high,
+	    info.higha, info.highpc);
 	t_check("host_alive", !gone || !WIFSIGNALED(status), "the host died of signal %d", WTERMSIG(status));
 	t_check("host_services", logfind("next: the board's routines are host calls"), "a board routine was not patched");
+	t_check("sound_hook", !logfind("next: no sound out"), "the kernel's server calls could not be hooked");
+	if ((q = strstr(errhead, "next: sound out at")) != 0 || (q = strstr(errbuf, "next: sound out at")) != 0)
+		t_info("sound", "%.*s", (int)strcspn(q, "\n"), q);
+	if (typed >= 3 && typed <= 6 && full) {
+		errmark = sndmark;
+		t_check("sound_rate", errsince("next: sound out at 22050 Hz"), "a 22050 Hz sound did not play at 22050 Hz");
+	}
 	t_check("timer_ints", info.ints > 0 && info.hcalls[5] > 0, "no timer interrupts");
 	t_info("vram", "%d bytes set", vramset());
 	if (!gone)
@@ -411,8 +744,8 @@ kernel()
 	waitpid(pid, &status, 0);
 	for (i = 0; i < 100 && kill(-pid, 0) == 0; i++)
 		poll((struct pollfd *)0, 0, 100);
-	unlink(rootfile("vram"));
-	unlink(rootfile("nvram"));
+	unlink(sidefile("vram"));
+	unlink(sidefile("nvram"));
 	unlink(rootfile("d"));
 	rmdir(rootfile("d"));
 	unlink(rootfile("b"));

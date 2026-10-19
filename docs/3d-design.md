@@ -20,13 +20,13 @@ Mesa 5.0 itself carries no DRI drivers: they live in the XFree86 4.3 tree, built
 | DRM | BSD flavour of the 4.3 DRM (OS macros, no Linux-isms) + shared radeon files, ported to a `drm_os_amix.h`. ~14k lines, ~1k new. PCI GART only, on memory from `opci_dmaalloc` |
 | Card owner | the display service. A new Radeon backend (POST, modes, VRAM per session) holds the DRM; the kernel does the CP init that the X driver did on XFree86 |
 | X server | **keep Xamix (X11R6.3)** and add direct-only GLX + the DRI extension: ~7k lines ported, ~1k new. XFree86 4.3's server is ~300k lines plus a new os-support port and a second owner for the card |
-| Mesa | 5.0.2 core static, no threads, no dlopen at first. OSMesa on AMIX is the first build |
-| Warp3D | our Warp3D.library (84 LVOs), register glue to ELF functions in startmig, Mesa behind it. Trap #0 already reaches AMIX from guest code; add a PC-range check so faults and FP emulation in Mesa go to the host, not the guest |
+| Mesa | 5.0.2, no threads. Core in `libGL.so` (X) or static (`libOSMesa.a`, Warp3D host); both load the card's `<card>_dri.so` |
+| Warp3D | our Warp3D.library (84 LVOs), register glue to ELF functions in startamiga, Mesa behind it. Trap #0 already reaches AMIX from guest code; add a PC-range check so faults and FP emulation in Mesa go to the host, not the guest |
 | Output | the Amiga environment's display-service session; on the card the session's VRAM, else OSMesa into a host back buffer copied to the session memory |
 | Card-free work | compiler, Mesa software, libGL/GLX, Warp3D.library on swrast, DRM core, opci DMA/IRQ (Amiberry). Card needed: Radeon backend, radeon DRM, r200 |
 
 ```
- Amiga environment (one AMIX process: startmig + guest)        X clients
+ Amiga environment (one AMIX process: startamiga + guest)        X clients
    game / MiniGL / StormMesa                                    glxgears
    Warp3D.library (hunk) --register glue--> w3d_*() (ELF)      libGL + r200 (direct)
                                              Mesa 5.0 + r200       |
@@ -109,6 +109,8 @@ PowerPC Linux ran this code because `readl`/`writel` swap and a few `#ifdef __BI
 
 A Voodoo3 (WinUAE's Prometheus, 68060) stands in for the Radeon: same templates, a driver with no DMA. Code in `kernel/drm` (templates with `__AMIX__` branches, `drm_os_amix.h`, glue `drm_amix.h`, `drmcard.h`), module `kernel/amiga/mod/tdfx`.
 
+Voodoo3 tests run in Amiberry: `GFX=VOODOO3 sh kernel/amiga/test/amiberry.sh` puts the card on the Prometheus (or the Mediator with `MEDWIN`), its BIOS from `VOODOO3` (default `media/amiga/voodoo3.rom`). WinUAE (`winuae.sh`) is retired. An A3000/060 with the card gets through Kickstart; an A4000/060 with it stops in the Kickstart checksum loop on either bridge, while the same A4000 boots AMIX with no card or an S3 ViRGE.
+
 | Item | As built |
 |---|---|
 | Module | `tdfx` (`$depend opci voodoo3`), `/dev/dri/card0` major 63, autoloaded on open. Compiled ANSI (`-D__STDC__=0` keeps the SVR4 header extensions), not `-traditional` |
@@ -130,7 +132,7 @@ A Voodoo3 (WinUAE's Prometheus, 68060) stands in for the Radeon: same templates,
 
 | Part | As built |
 |---|---|
-| Glide | Glide 3 for h3 (Banshee/Voodoo3), DRI build (`-D__linux__`), from the 2002.04.10 tarball (`tools/setup.sh --gl`); `gl/glide/glide.sh` flattens it into one directory and applies `gl/glide/patches`; linked statically into libGL |
+| Glide | Glide 3 for h3 (Banshee/Voodoo3), DRI build (`-D__linux__`), from the 2002.04.10 tarball (`tools/setup.sh --gl`); `gl/glide/glide.sh` flattens it into one directory and applies `gl/glide/patches`; linked into `tdfx_dri.so` |
 | Byte order | registers: full byte swap (the bridge passes addresses unchanged). Command fifo, written through the FB aperture in 16-bit swizzle mode: halfword swap. 16-bit texels and LFB pixels raw; 8-bit texels swapped in pairs. Mesa's texture conversion keeps texels in host order (its little-endian packing is off on big-endian). Vertex colours in big-endian byte order |
 | Fifo | jump and flush packets go through the fifo write macro (a plain register write let the fifo run away) |
 | Swap | the swap blit sets clip, destination base and format itself. Gamma DAC writes are off: the display owns the DAC |
@@ -147,7 +149,11 @@ Vertex work: Quake draws one multitextured polygon per surface, binding a textur
 
 Vertex arrays: tdfx and r200 offer `GL_EXT_multi_draw_arrays`, drawing adjacent primitives of one call as one vertex buffer through one pipeline run. Quake, when the extension is there, copies each texture chain's polygons, grouped by lightmap, into an array and draws each group with one call, and an alias model's strips, then its fans, each with one call, instead of a GL call per vertex attribute (5.7 to 6.6 fps). In a clipped buffer, runs of unclipped independent triangles go to tdfx whole; Quake skips particles before the near plane, which the clipper would drop (6.6 to 6.8 fps). A guard band (x and y clipped at up to 3 w, the hardware clipping the rest) gained under 0.5% and was left out. Left per frame: transform and clip test 13% (floating point bound), filling Quake's arrays 8%, vertex emit to buffer or fifo 8%, alias strips and fans with a clipped vertex drawn a triangle each about 4%. Alias models put strips before fans and keep s/t at load, so a frame converts only positions and light (demo1 143.3 to 141.2 s, within noise). Start-up: the 15-to-8-bit colour table, searched per cube of 4x4x4 colours against only the palette entries that can be nearest, takes about 2.6 s instead of 12.
 
-Profiling: glxgears and GL Quake link `sampler.o`; run with `QPROF=file` and read the histogram with `python3 gl/tools/prof.py program file libGL.a [lib.a...]` (share by library part and function; `BYPART=1` adds the top functions per part).
+68060: Mesa, Glide, Quake and the GL tests build with `-m68020-60`, which emits no FScc; with `-m68040` gcc stores float compares with FScc, which the 68060 traps to its FPSP at about 1,500 cycles each (software Quake demo1: 632 a frame, about the 9% system time measured on a 50 MHz 060). Programs we link (GL, Quake, X through `amixld.sh`) carry `fastmem.c`: memcpy, memmove, memset, bcopy and bzero by aligned longs (libc's move bytes: 2 MB/s to a Voodoo3 behind a Mediator against 8) and sqrt by `fsqrt` (libm's is software).
+
+Assembly: vertex routines in `gl/src/m68k_*.s`, chosen at start-up by CPU (`m68k_asm.c`: `MESA_M68K=30|40|60|c`, else `sysinfo(SI_ARCHITECTURE)` `m68030`/`m68040`/`m68060`, else C), as Mesa picks its x86 code. Transform, clip test and divide of 3-component positions. Display lists: at compile, a cassette holding only positions and normals is packed as fans (a primitive spanning cassettes goes with the one it ends in; the cassettes it links replay together or not at all). On replay, when the driver takes them (tdfx: flat or smooth, untextured, no fallback), state allows (one infinite light, no fog, texture or clip planes) and the chain's bounding box is inside the clip volume, each normal is lit once in object space, each vertex is transformed once by the viewport-projection-modelview product into fifo words, and each fan copies its vertices' words into the fifo. Transform schedules for the 68030+6888x (rows in turn), 68040 (rows interleaved) and 68060 (rows interleaved, integer work beside the FPU). `t_gl` checks each CPU's routines against the C bit for bit, checks the packed fans against the geometry given, and times glxgears' scene (`gears.time`, `gears.asm`, `list.time*`).
+
+Profiling: glxgears and GL Quake link `sampler.o`; with `QPROF=file` it takes the user PC each tick, in the program and its shared objects, and writes the samples and the objects' addresses. Read them with `python3 gl/tools/prof.py program file $GLW/lib/libGL.so $GLW/lib/tdfx_dri.so $GLW/pic/*.o [lib.a...]` (share by part and function; `BYPART=1` adds the top functions per part).
 
 WinUAE's Voodoo3 ignores the Y-origin bit in `miscInit0`, so lower-left-origin drawing (all of GL) lands at the wrong rows there: colour below the back buffer, depth in the next tile, never cleared. The picture is wrong in WinUAE only; the real card honours the bit. With the origin forced off as a check the gears draw correctly, upside down.
 
@@ -185,8 +191,8 @@ Card-independent; a card's Mesa driver plugs in as below.
 | GLX | `x11/src/dri/glxamix.c` (new, ~400): `QueryVersion` 1.2, `GetVisualConfigs` (one per X visual, see below), `CreateContext` (direct only, else `BadMatch`), `DestroyContext`, `IsDirect`, `MakeCurrent` (release only), strings, `ClientInfo`, `WaitGL`/`WaitX`. Rendering, GLX pixmaps, vendor requests: `BadRequest`. GLX and XF86DRI appear only where a screen has a DRM |
 | libdrm | 4.3's `xf86drm*.c`: `drmOpen` tries `/dev/dri/card0` and `card1` for the name or bus id; `drmDSBind`; `drmOpenSession` the card that binds a session; m68k `DRM_CAS` (`cas.l`) |
 | libGL | Mesa 5.0.2's dispatcher (`X/glxapi.c`) picks 4.3's GLX client (`glxcmds`, `glxext`, `xfont`, `dri_glx`, `XF86dri`, `dri_util`, built `GLX_BUILT_IN_XMESA`) when the server has GLX and a driver took the default screen; else Mesa's Xlib renderer, as before. Contexts are always direct |
-| Drivers | linked in: `__driDrivers[]` (`{name, __driCreateScreen, __driRegisterExtensions}`) replaces dlopen. binutils 2.8.1 here builds no shared objects, and AMIX's `dlopen` has no `RTLD_GLOBAL`, so a driver `.so` could not see libGL's `_glapi_*` |
-| Sources | `gl/dri/x43.sh` extracts the 4.3 files and applies `gl/dri/patches`; `gl/build.sh` builds `libdrm.a` and `libGL.a`, `x11/build.sh dri` puts the server side in `hw/amix/dri` (`x11/patches/07-dri.diff`) |
+| Drivers | libGL loads `<dir>/<file>_dri.so` for the screen's DRM name (`radeon` → `r200`), dir from `LIBGL_DRIVERS_PATH` or `/usr/x11r6/lib/modules/dri`, entry points `<file>_driCreateScreen`/`_driRegisterExtensions`. Drivers take Mesa, GLX and libdrm from libGL: no `RTLD_GLOBAL`, but the program's libraries are global. The Warp3D host (startamiga, linked `-E` with all of `libOSMesa.a`) loads the same files through `drihost.c` |
+| Sources | `gl/dri/x43.sh` extracts the 4.3 files and applies `gl/dri/patches`; `gl/build.sh` builds `libdrm.a`, `libGL.so` and the drivers, `x11/build.sh dri` puts the server side in `hw/amix/dri` (`x11/patches/07-dri.diff`) |
 | Screen depths | the `fb` card draws 8-bit PseudoColor (`cfb`) and 16/32-bit TrueColor (`cfb16`, `cfb32`) with the display service's masks; `-depth` or `DEPTH=` in `/etc/default/x` picks the session mode. `AMIXDRIRec.depth` is bits a pixel |
 | GL visuals | a config per X visual; on a DRM screen each TrueColor visual is repeated with a new id for each further buffer set, since a client finds its config by visual. 16 bpp: double + depth 16 (the visual itself), double without depth, single + depth 16. 32 bpp: double + depth 24 + stencil 8 + alpha 8 (itself), the same without alpha, double + alpha without depth, single + depth 24 + stencil 8 + alpha 8. Alpha lives in the pixel's spare byte. PseudoColor: double + depth 16 |
 | Card drivers | `tdfx` (§1.6); a card's own config list where it differs needs a hook in `AmixGLXInitVisuals` |
@@ -224,7 +230,7 @@ Recommendation: **A**. X is one client of the display service like the Amiga env
 
 | Fact | Consequence |
 |---|---|
-| `libdl.so` with `dlopen(RTLD_LAZY/RTLD_NOW)`, no `RTLD_GLOBAL` | the loader works as is with `RTLD_GLOBAL` defined 0: each `*_dri.so` carries its own Mesa core and needs only `_glapi_*` from libGL, which the executable's scope provides. First builds link `r200` statically into libGL / the Warp3D host: no `.so` building with binutils 2.8.1 needed until the new toolchain is in |
+| `libdl.so` with `dlopen(RTLD_LAZY/RTLD_NOW)`, no `RTLD_GLOBAL` | binutils 2.8.1 `ld -shared` objects load (`t_dlopen`): PLT, GOT, copy and text relocations. A `dlopen`ed object sees the program and its libraries, so a driver `.so` resolves Mesa from `libGL.so`. gcc 2.95.3 `-fPIC` needs the wrapper's label and `bsr.l` fixes and saving the GOT register in every function that loads it (`toolchain/build-gcc295.sh`) |
 | No threads | build without `THREADS`; `glthread.c` uses its single-thread path |
 | No `snprintf` | Mesa's `vsnprintf.c`; 2 `snprintf` in `dri_glx.c` |
 | `libm.a` only | static libm; Mesa uses double functions only |
@@ -282,7 +288,7 @@ Texture formats (Warp3D bytes are big-endian; GL packed types are in host order,
 ### 4.2 Calling Mesa from guest code
 
 ```
- Amiga task (user mode)                        same process, ELF side (startmig)
+ Amiga task (user mode)                        same process, ELF side (startamiga)
    jsr -LVO(a6)
    Warp3D.library stub: args d0-d4/a0-a4 -> stack (as bsdsocket.library's lvo macro)
      ObtainSemaphore(lib lock)        one caller in Mesa at a time
@@ -294,10 +300,10 @@ Texture formats (Warp3D bytes are big-endian; GL packed types are in host order,
      restore FPCR, usp; ReleaseSemaphore; rts
 ```
 
-- **Finding the ELF side**: startmig writes a table `{magic, version, count, fn[84], calls[84]}` at `MIG_W3D_BASE`, as it does for the RTG share (`MIG_RTG_BASE`). Warp3D.library checks magic and version at open; without them `OpenLibrary` fails and titles fall back as on a machine without 3D.
+- **Finding the ELF side**: startamiga writes a table `{magic, version, count, fn[84], calls[84]}` at `MIG_W3D_BASE`, as it does for the RTG share (`MIG_RTG_BASE`). Warp3D.library checks magic and version at open; without them `OpenLibrary` fails and titles fall back as on a machine without 3D.
 - **ABI**: AmigaOS and SVR4 m68k agree on scratch registers (d0-d1/a0-a1, fp0-fp1) and saved ones (d2-d7/a2-a6, fp2-fp7). Arguments are copied to the stack in C order. Floats only travel in structures. Pointer results go back in d0 and a0.
 - **Reentrancy**: Mesa, libc malloc and libdrm are not reentrant. The semaphore covers them. A task switch inside Mesa (a guest interrupt, then `Schedule`) is safe: the next Warp3D caller waits on the semaphore; exec saves the usp that points into the Mesa stack.
-- **Memory**: Mesa's `malloc` uses the process's `brk`, above startmig's data and clear of the guest's fixed ranges. Textures and vertex arrays are read in place in guest memory: same address space, same byte order.
+- **Memory**: Mesa's `malloc` uses the process's `brk`, above startamiga's data and clear of the guest's fixed ranges. Textures and vertex arrays are read in place in guest memory: same address space, same byte order.
 - **Blocking**: an ioctl that sleeps (lock contention, wait idle) stops the whole environment. Waits are short (a frame at most) and interruptible: a host signal ends the sleep with `EINTR`, the guest interrupt is delivered on the way out, libdrm retries.
 
 ### 4.3 Mesa's system calls and exceptions
@@ -315,7 +321,7 @@ What the guest path does today (`guestcore`, `amigaguest`, `mkgates.py`):
 
 Change (~25 lines + one ioctl): a host PC range per guest process.
 
-- `struct guest_proc` gets `gp_hostlo`, `gp_hosthi`; `AMIGAIOC_HOSTPC {lo, hi}` right after `AMIGAIOC_ENTER`, set by startmig to the Warp3D host code and Mesa, linked last (and any later `dlopen`ed object). The startmig code before them reaches guest registers through the guest's faults, as the guest does.
+- `struct guest_proc` gets `gp_hostlo`, `gp_hosthi`; `AMIGAIOC_HOSTPC {lo, hi}` right after `AMIGAIOC_ENTER`, set by startamiga to the Warp3D host code and Mesa, linked last; once `drihost.c` loads the card's driver, `hi` moves to its `__dri_end`, linked last (`_etext` there is absolute, not relocated). The shared libc, mapped below the driver, then counts as host too: only Warp3D calls run host code in guest context, and their libc calls touch host memory; copies into guest memory use startamiga's `memcpy`/`memset`, below `lo`. The startamiga code before them reaches guest registers through the guest's faults, as the guest does.
 - `gc_trap`: `if ((u_long)GR_PC(r) - gp->gp_hostlo < gp->gp_hosthi - gp->gp_hostlo) return 1;` before the profile dispatch. Declining sends the exception to the stock handler (`guest_chain`), exactly as for a native process. The asm fast paths need no check: Mesa never raises those vectors.
 - A flag set by the glue was considered and rejected: a signal or fault taken between setting and clearing it misroutes, and the flag would have to nest.
 
@@ -326,15 +332,17 @@ Signals stay as now: a host signal while in Mesa becomes a guest interrupt throu
 | Host | Warp3D renders into | How |
 |---|---|---|
 | Radeon session in front | the BitMap's place in the session's VRAM | `SetDrawRegion`: BitMap address − `MIG_RTG_VRAM` + the session's VRAM offset (backend) → colour offset and pitch of the r200 drawable; Z/stencil and back buffers in the same session's VRAM allocation |
-| Voodoo3 session (tdfx DRI) | the BitMap in the session's VRAM | X-less DRI host: the tdfx driver's front buffer is moved to the BitMap (`grDRIFront`); 16-bit BitMaps only. A display-sized 16-bit screen anywhere in the session's VRAM is shown by moving the display start there (`FBIOPAN`), not copied. `W3D_SOFT` in startmig's environment forces software |
+| Voodoo3 session (tdfx DRI) | the BitMap in the session's VRAM | X-less DRI host: the tdfx driver's front buffer is moved to the BitMap (`grDRIFront`); 16-bit BitMaps only. A display-sized 16-bit screen anywhere in the session's VRAM is shown by moving the display start there (`FBIOPAN`), not copied. `W3D_SOFT` in startamiga's environment forces software |
 | Any other host, or no card | the BitMap's memory | OSMesa into a back buffer in host memory, copied to the BitMap the environment's RTG card maps (below); the same code on Mac, Atari and stock Amigas |
+
+When the environment's display is a card session, startamiga opens its DRM session and loads the card's driver at start-up.
 
 Back buffer (software path): Mesa reads and writes pixels one at a time, and display memory behind Zorro or an emulated card is slow at that. Mesa draws into host memory of the BitMap's size and format instead:
 - Each primitive marks the rows it covers. `Flush`, `FlushFrame`, `WaitIdle`, `UnLockHardware` and `SetDrawRegion` copy those rows to the BitMap (not while the session is hidden).
 - After `UnLockHardware` (or a flush while unlocked) the guest may draw into the BitMap: rows are read back before Mesa next draws over them. A `ClearDrawRegion` without scissor or colour mask reads nothing: it refills only the back buffer rows drawn since the last clear to that colour, and the copy fills the BitMap's other rows with the colour instead of reading them. `ClearZBuffer` likewise refills only the Z rows drawn since a clear to the same value.
 - Without memory for it (1024x768x32: 3 MB beside Mesa's 0.7 MB and the 3 MB Z buffer), Mesa draws into the BitMap as before.
 - The Z buffer is as deep as the cards': 16 bits on 16-bit BitMaps, 24 on 32-bit ones. The DRI host asks the same of the card's driver: 16 bits on the Voodoo3, 24 + 8 stencil on the R200 at 32 bits.
-- AMIX's libc `memcpy` and `memset` move a byte at a time; startmig links word and `movem` versions, which Mesa's clears and span copies use too.
+- AMIX's libc `memcpy` and `memset` move a byte at a time; startamiga links word and `movem` versions, which Mesa's clears and span copies use too.
 - A triangle whose vertices share one w is drawn with affine texturing (`GL_FASTEST`): no divide per pixel. Vertex arrays keep perspective.
 - OSMesa's own span loops (`gl/patches/04`) also cover triangles without depth test and RGB 565; before, those took swrast's general span path.
 - Cost on Amiberry (A3000/040 interpretive, about 2 MIPS), w3dtest at 1024x768: 6.6 s a frame at 32 bits and 9.5-12.4 s at 16 bits drawing into the BitMap; 1.8-2.2 s (0.2-0.3 s of it copying) and 1.2-1.3 s (0.1-0.2 s) with the above, with host load moving them by up to 40%. What is left is Mesa's per-pixel work on 65k pixels a frame, about 160 ms per 16k-pixel triangle even on the fast paths.
@@ -354,7 +362,7 @@ Rules from the display service:
 |---|---|
 | Warp3D.library hunk: romtag, 84 LVO stubs, stack/semaphore/FPCR glue | ~400 asm |
 | ELF host side: state, textures, arrays, drawable, mode queries | ~3,500 C (Wazp3D's full replacement is 6.4k with its own rasteriser; its GL path is 1.6k) |
-| startmig: table, Mesa link, `AMIGAIOC_HOSTPC` | ~100 |
+| startamiga: table, Mesa link, `AMIGAIOC_HOSTPC` | ~100 |
 | guestcore / amigaguest: PC range | ~40 |
 | DRI host without X (screen, one drawable per session, cliprect = session) | ~800 + `dri_util.c` 1.1k reused |
 

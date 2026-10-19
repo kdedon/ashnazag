@@ -22,8 +22,10 @@ CC="nice -n 19 $TC/bin/m68k-cbm-sysv4-gcc -O -Wall -Wno-comment -D__STDC__=0 -fn
 objs=
 # the guest's filesystem routines, linked for their region, as data for the host
 HFS_CODE=$(sed -n 's/^#define HF_BASE *\(0x[0-9a-f]*\)UL.*/\1/p' "$V/hfswire.h")
-$TC/bin/m68k-cbm-sysv4-gcc -O -Wall -Wno-implicit -fno-builtin -m68040 -I"$V" -c "$V/hfsguest.c" -o "$O/obj/hfsguest.o"
-$TC/bin/m68k-cbm-sysv4-ld -o "$O/hfsguest.elf" -Ttext=$(printf '0x%x' $((HFS_CODE + 0x8000))) -e hf_init "$O/obj/hfsguest.o"
+for c in hfsguest sndguest; do
+	$TC/bin/m68k-cbm-sysv4-gcc -O -Wall -Wno-implicit -fno-builtin -m68040 -I"$V" -c "$V/$c.c" -o "$O/obj/$c.o"
+done
+$TC/bin/m68k-cbm-sysv4-ld -o "$O/hfsguest.elf" -Ttext=$(printf '0x%x' $((HFS_CODE + 0x8000))) -e hf_init "$O/obj/hfsguest.o" "$O/obj/sndguest.o"
 $TC/bin/m68k-cbm-sysv4-objcopy -O binary "$O/hfsguest.elf" "$O/hfsguest.bin"
 ENTRY=$($TC/bin/m68k-cbm-sysv4-nm "$O/hfsguest.elf" | sed -n 's/^\([0-9a-f]*\) T hf_init$/\1/p')
 {
@@ -33,13 +35,16 @@ ENTRY=$($TC/bin/m68k-cbm-sysv4-nm "$O/hfsguest.elf" | sed -n 's/^\([0-9a-f]*\) T
 	echo "unsigned long hfs_blob_len = $(wc -c < "$O/hfsguest.bin");"
 	echo "unsigned long hfs_entry = $((0x$ENTRY - HFS_CODE - 0x8000));"
 } > "$O/hfsblob.c"
-for c in "$V"/next.c "$V"/hfshost.c "$O"/hfsblob.c "$NH"/nativehost.c; do
+for c in "$V"/next.c "$V"/hfshost.c "$O"/hfsblob.c "$NH"/nativehost.c "$G"/sndout.c; do
 	$CC -c "$c" -o "$O/obj/$(basename "$c" .c).o"
 	objs="$objs $O/obj/$(basename "$c" .c).o"
 done
 # libc's nonshared members
 (cd "$O/extra" && ar x "$LIB/libc.so" && rm -f libc.so.1 && ar rc "$O/libextra.a" ./*.o)
 LIBGCC=$(ls "$TC"/lib/gcc-lib/m68k-cbm-sysv4/*/libgcc.a | tail -1)
-nice -n 19 "$TC/bin/m68k-cbm-sysv4-ld" -o "$O/native" "$LIB/crt1.o" "$LIB/crti.o" $objs \
+# linked above the guest's space
+HOST=$(sed -n 's/^#define NX_HOST *\(0x[0-9a-f]*\)UL.*/\1/p' "$V/profile.h")
+"$TC/bin/m68k-cbm-sysv4-ld" --verbose | sed -e '1,/^=====/d' -e '/^=====/,$d' -e "s/0x80000000/$HOST/" > "$O/native.ld"
+nice -n 19 "$TC/bin/m68k-cbm-sysv4-ld" -T "$O/native.ld" -o "$O/native" "$LIB/crt1.o" "$LIB/crti.o" $objs \
 	"$SYS/usr/lib/libc.so.1" "$O/libextra.a" "$LIBGCC" "$LIB/crtn.o"
 echo "[ok] $O/native"

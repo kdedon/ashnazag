@@ -1,0 +1,138 @@
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tris.c
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_tris.c
+@@ -576,6 +576,113 @@
+ #define EMIT_FIFO( mode )
+ #endif
+ 
++#if defined(__AMIX__) && defined(__m68k__)
++extern FxI32 grEmitParams( const int **list );
++extern void grDrawEmitFans( FxI32 nfan, FxI32 nv,
++			    FxU32 *(*emit)(void *, FxU32 *, FxI32, FxI32, FxU32),
++			    void *arg );
++
++/* Built vertices straight into the fifo, which takes each word with its
++ * halves swapped: x, y, then the layout's parameters.
++ */
++struct tdfx_copy_arg {
++   const GLubyte *v;
++   GLuint shift;
++   const int *l;
++   GLint nl, n;
++};
++
++static __inline__ GLuint copy_swap( GLuint u )
++{
++   __asm__("swap %0" : "=d" (u) : "0" (u));
++   return u;
++}
++
++static __inline__ volatile GLuint *copy_vert( volatile GLuint *f,
++					      const GLubyte *v,
++					      const int *l, GLint nl )
++{
++   GLint k;
++
++   f[0] = copy_swap(((const GLuint *)v)[0]);
++   f[1] = copy_swap(((const GLuint *)v)[1]);
++   for (k = 0; k < nl; k++)
++      f[2 + k] = copy_swap(*(const GLuint *)(v + l[k]));
++   return f + 2 + nl;
++}
++
++/* quad a,b,c,d as fan d,a,b,c: triangles (d,a,b), (d,b,c) */
++static FxU32 *copy_quads( void *arg, FxU32 *fifo, FxI32 first, FxI32 n,
++			  FxU32 hdr )
++{
++   struct tdfx_copy_arg *a = (struct tdfx_copy_arg *)arg;
++   volatile GLuint *f = (volatile GLuint *)fifo;
++   const GLuint s = a->shift;
++   const GLubyte *v = a->v + ((4 * first) << s);
++
++   hdr = copy_swap(hdr);
++   for ( ; n > 0; n--, v += 4 << s) {
++      *f++ = hdr;
++      f = copy_vert(f, v + (3 << s), a->l, a->nl);
++      f = copy_vert(f, v, a->l, a->nl);
++      f = copy_vert(f, v + (1 << s), a->l, a->nl);
++      f = copy_vert(f, v + (2 << s), a->l, a->nl);
++   }
++   return (FxU32 *)f;
++}
++
++/* Packets of up to 15 vertices, every three a triangle: the fan header
++ * turned independent (strip setup, command 0) with the packet's count.
++ */
++#define PKT3_FAN	(1 << 22)
++#define PKT3_CMD	(7 << 3)
++#define PKT3_NV_SHIFT	6
++
++static FxU32 *copy_tris( void *arg, FxU32 *fifo, FxI32 first, FxI32 n,
++			 FxU32 hdr )
++{
++   struct tdfx_copy_arg *a = (struct tdfx_copy_arg *)arg;
++   volatile GLuint *f = (volatile GLuint *)fifo;
++   const GLuint s = a->shift;
++   GLint i = 15 * first, end = 15 * (first + n), k;
++
++   hdr &= ~(PKT3_FAN | PKT3_CMD | (15 << PKT3_NV_SHIFT));
++   if (end > a->n)
++      end = a->n;
++   while (i < end) {
++      k = end - i >= 15 ? 15 : end - i;
++      *f++ = copy_swap(hdr | k << PKT3_NV_SHIFT);
++      for ( ; k > 0; k--, i++)
++	 f = copy_vert(f, a->v + (i << s), a->l, a->nl);
++   }
++   return (FxU32 *)f;
++}
++
++/* Draws n vertices from start as quads or triangles; false when the
++ * layout is not in window coordinates.
++ */
++static GLboolean copy_prims( tdfxContextPtr fxMesa, GLuint start, GLint n,
++			     GLboolean quads )
++{
++   struct tdfx_copy_arg a;
++
++   a.nl = grEmitParams(&a.l);
++   if (a.nl < 0)
++      return GL_FALSE;
++   a.shift = fxMesa->vertex_stride_shift;
++   a.v = (const GLubyte *)fxMesa->verts + (start << a.shift);
++   if (quads) {
++      if (n >= 4)
++	 grDrawEmitFans(n / 4, 4, copy_quads, &a);
++   } else {
++      a.n = n - n % 3;
++      if (a.n)
++	 grDrawEmitFans((a.n + 14) / 15, 15, copy_tris, &a);
++   }
++   return GL_TRUE;
++}
++#endif
++
+ static void tdfx_render_vb_points( GLcontext *ctx,
+ 				      GLuint start,
+ 				      GLuint count,
+@@ -711,6 +818,10 @@
+    char *fxVB = fxMesa->verts + (start << shift);
+    (void) flags;
+ 
++#if defined(__AMIX__) && defined(__m68k__)
++   if (copy_prims( fxMesa, start, count - start, GL_FALSE ))
++      return;
++#endif
+    fxMesa->Glide.grDrawVertexArrayContiguous( GR_TRIANGLES, count-start,
+                                               fxVB, 1<<shift);
+ }
+@@ -769,6 +880,10 @@
+    GLuint i;
+    (void) flags;
+    
++#if defined(__AMIX__) && defined(__m68k__)
++   if (copy_prims( fxMesa, start, count - start, GL_TRUE ))
++      return;
++#endif
+    for (i = start ; i < count-3 ; i += 4 ) {
+ #define VERT(x) (fxVB + ((x)<<shift))
+       fxMesa->Glide.grDrawTriangle( VERT(i),   VERT(i+1), VERT(i+3) );

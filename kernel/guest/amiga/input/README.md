@@ -1,7 +1,7 @@
 container-input is an AmigaDOS background command for this container.
 It feeds session keyboard and mouse events to input.device with IND_WRITEEVENT.
 Events carry the system time from timer.device.
-Requires AmigaOS 2.04 or newer and the startmig shared input mapping.
+Requires AmigaOS 2.04 or newer and the startamiga shared input mapping.
 
 Build on the host:
     sh kernel/guest/amiga/input/build.sh images/work/amiga-input

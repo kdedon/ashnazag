@@ -26,16 +26,25 @@ typedef struct file {
 #define FEXCL		0x0400
 #define FNOCTTY		0x0800
 
+/* per-descriptor flags */
+#define FCLOSEXEC	001
+
 #ifdef __STDC__
 extern int getf(int, file_t **);
 extern int closef(file_t *);
 extern int falloc(struct vnode *, int, file_t **, int *);
 extern void setf(int, file_t *);
+extern int ufalloc(int, int *);
+extern char getpof(int);
+extern void setpof(int, char);
 #else
 extern int getf();
 extern int closef();
 extern int falloc();
 extern void setf();
+extern int ufalloc();
+extern char getpof();
+extern void setpof();
 #endif
 
 #endif

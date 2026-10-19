@@ -8,7 +8,7 @@
 # outdir/root/etc/amiga/kicka4000.rom.  AMIGAROM names the ROM (default:
 # the local staging package's); proprietary, never in the repository.
 # Without the ROM the guest tests still run and the ROM census skips.
-# With the ROM, also startmig and the boot extension; with a prepared
+# With the ROM, also startamiga and the boot extension; with a prepared
 # SYS: (AMIGASYS) and Picasso96 archive (AMIGAP96), outdir/sys.img: a
 # ufs volume holding SYS: with the Picasso96 runtime and container.card.
 # With IBrowse in SYS:, User-Startup also runs ibrowse/ibtest, which opens
@@ -43,7 +43,7 @@ if [ -f "$AMIGAROM" ]; then
 	cp "$AMIGAROM" "$R/etc/amiga/kicka4000.rom"
 	sh "$KDIR/guest/amiga/build.sh" "$O/mig" > /dev/null
 	sh "$KDIR/guest/amiga/dos/build.sh" "$O/dos" > /dev/null
-	cp "$O/mig/startmig" "$R/tests/amiga/startmig"
+	cp "$O/mig/startamiga" "$R/tests/amiga/startamiga"
 	cp "$O/dos/container-boot.rom" "$R/etc/amiga/boot.rom"
 fi
 AMIGASYS=${AMIGASYS:-$AUX/images/work/amiga-stage/root/amiga/sys}

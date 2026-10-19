@@ -40,6 +40,8 @@ get() {
 	done
 }
 get ":System Folder" "$OUT"
+# the CD's Shut Down desk accessory can't open here; Special > Shut Down and Log Out do its job
+rm -f "$OUT/Apple Menu Items/"*"Shut Down"
 # patches that would run over A/UX's Memory Manager
 python3 "$AUX/tools/auxguard.py" "$OUT/%System" > /dev/null
 # Monitors' settings for the A/UX screen (slot $E, mode $80, colour);

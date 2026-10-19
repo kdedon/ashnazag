@@ -12,7 +12,7 @@ case $# in
 	done
 	exit 0 ;;
 esac
-[ -d "$HOME/TOS" ] || { echo "tosdrive: no $HOME/TOS; run maketos" >&2; exit 1; }
+[ -d "$HOME/TOS" ] || { echo "tosdrive: no $HOME/TOS; run starttos" >&2; exit 1; }
 if [ "$1" = -r ]; then
 	L=$2
 else

@@ -18,8 +18,8 @@ index ea5a308..68c3a33 100644
   */
 +#ifdef __AMIX__
 +/*
-+ * Drivers are linked in, listed in __driDrivers: no shared objects to
-+ * open, and a dlopened object could not see libGL's symbols anyway.
++ * Drivers linked in, listed in __driDrivers, or loaded by
++ * __driLoadDriver.
 + */
 +static __DRIdriver *OpenDriver(const char *driverName)
 +{
@@ -32,8 +32,8 @@ index ea5a308..68c3a33 100644
 +   for (e = __driDrivers; e->name; e++)
 +      if (strcmp(e->name, driverName) == 0)
 +         break;
-+   if (!e->name) {
-+      ErrorMessageF("no driver %s linked in\n", driverName);
++   if (!e->name && !(e = __driLoadDriver(driverName))) {
++      ErrorMessageF("unable to find driver: %s_dri.so\n", __driFileName(driverName));
 +      return NULL;
 +   }
 +   driver = (__DRIdriver *) Xmalloc(sizeof(__DRIdriver));
@@ -74,12 +74,12 @@ diff --git a/xc/lib/GL/glx/glxclient.h b/xc/lib/GL/glx/glxclient.h
 index c43cc1c..b137cae 100644
 --- a/xc/lib/GL/glx/glxclient.h
 +++ b/xc/lib/GL/glx/glxclient.h
-@@ -689,6 +689,18 @@ extern void _XSend(Display*, const void*, long);
+@@ -689,6 +689,20 @@ extern void _XSend(Display*, const void*, long);
  #endif
  
  
 +#if defined(__AMIX__) && defined(GLX_DIRECT_RENDERING)
-+/* a DRI driver linked into libGL; the list ends with a null name */
++/* a DRI driver; the list ends with a null name */
 +typedef struct {
 +    const char *name;
 +    void *(*createScreen)(Display *dpy, int scrn, __DRIscreen *psc,
@@ -88,6 +88,8 @@ index c43cc1c..b137cae 100644
 +} __DRIdriverEntry;
 +
 +extern __DRIdriverEntry __driDrivers[];
++extern __DRIdriverEntry *__driLoadDriver(const char *name);
++extern const char *__driFileName(const char *name);
 +#endif
 +
  /*

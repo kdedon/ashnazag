@@ -74,7 +74,11 @@ p2int:
 	btst	&3,%d0			| CB2: 53C96 SCSI
 	beq.w	Lp2snd
 	moveb	&0x08,%a0@(0x1a00)	| ack the edge, then service the chip
-	jsr	ncr96intr
+	movel	scsi_intrfn,%d0		| the SCSI module's handler, once it is in
+	beq.w	Lp2scsi0
+	movel	%d0,%a0
+	jsr	%a0@
+Lp2scsi0:
 	jmp	intret
 Lp2snd:
 	btst	&4,%d0			| CB1: sound chip
@@ -229,6 +233,8 @@ Lpsout:
 mac_slotstuck:	.long	0
 	.globl	snd_intrfn
 snd_intrfn:	.long	0
+	.globl	scsi_intrfn
+scsi_intrfn:	.long	0
 mac_storm:	.long	0, 0, 0, 0, 0, 0, 0, 0
 Lpsmsg:	.asciz	"mac: stray level-%d interrupt\n"
 Lpspanic:	.asciz	"mac: level-%d interrupt storm"

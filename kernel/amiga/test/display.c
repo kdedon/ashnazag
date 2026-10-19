@@ -3,13 +3,18 @@ extern void *malloc();
 extern void free();
 extern int printf();
 unsigned int displaytype;
-struct dssess ds_sess[1 + DS_NSESS];
+struct dssess ds_sess[1 + DS_NSESS], *ds_front;
 struct dsdisp ds_disp;
 void (*ds_frontfn)();
 static struct screen native, service;
 struct screen *activescreen = &native;
 static int allocno, failat, live, openfail, selected, displayed, frames;
 static int mx, my, packets, bounds;
+static int setn, sett, setb;
+static void tset(n, bits) int n, bits; { setn++; sett = n; setb = bits; }
+static void tnop() { }
+static struct am_mode tmodes[] = { { 640, 480, 60 }, { 800, 600, 60 }, { 1024, 768, 60 }, { 1280, 1024, 60 } };
+static struct am_rtg trtg;
 static int sext(v) int v; { return (v & 64) ? (v & 127) - 128 : v & 127; }
 static void mouse(unit, kind, r0, changed) int unit, kind, changed; unsigned long r0;
 {
@@ -91,6 +96,34 @@ int main()
 			am_input(&service, 0x02ff0000UL | ((unsigned long)(x & 255) << 8) | (y & 255), 0);
 			CHECK(mx == x && my == y && packets <= 3 && bounds == 0);
 		}
+	/* card modes: the timings up to the attach size, each depth */
+	trtg.r_width = 1024; trtg.r_height = 768; trtg.r_row = 1024; trtg.r_depths = 7;
+	trtg.r_setdepth = tnop; trtg.r_show = tnop;
+	trtg.r_modes = tmodes; trtg.r_nmode = 4; trtg.r_mode = 2; trtg.r_setmode = tset;
+	am_rtg = &trtg; am_dsfull = 1; am_tims(); am_curt = 2; am_curbits = 8;
+	ds_disp.d_info.fi_width = 1024; ds_disp.d_info.fi_height = 768;
+	CHECK(am_nvmode() == 9);
+	{
+		struct fbinfo fi;
+		unsigned long hz;
+		am_vminfo(0, &fi);
+		CHECK(fi.fi_width == 640 && fi.fi_height == 480 && fi.fi_depth == 8 && fi.fi_rowbytes == 640 &&
+		    fi.fi_mode == 0x1a8);
+		am_vminfo(5, &fi);
+		CHECK(fi.fi_width == 1024 && fi.fi_depth == 16 && fi.fi_rowbytes == 2048 && fi.fi_mode == 0xb0);
+		CHECK(am_vmfind(0xa8UL) == 2 && am_vmfind(0x1c0UL) == 6 && am_vmfind(0x4a8UL) < 0);
+		CHECK(am_vmflags(2, &hz) == FBM_TRIED && hz == 60 && am_vmflags(3, &hz) == 0);
+		/* a pan keeps the whole mode inside two frames, not just a centred screen */
+		hz = fi.fi_rowbytes * fi.fi_height;
+		CHECK(DS_PANOK(hz, &fi, 2 * hz) && !DS_PANOK(hz + 2048, &fi, 2 * hz) &&
+		    !DS_PANOK(8UL, &fi, 2 * hz) && !DS_PANOK(3 * hz, &fi, 2 * hz));
+	}
+	ds_sess[1].s_vmode = 4; setn = 0; am_planes(&ds_sess[1]);
+	CHECK(setn == 1 && sett == 0 && setb == 16);
+	am_planes(&ds_sess[1]); CHECK(setn == 1);
+	ds_sess[1].s_vmode = 0; am_planes(&ds_sess[1]); CHECK(setn == 2 && sett == 2 && setb == 8);
+	am_rtgpanic(); CHECK(setn == 2);
+	am_rtg = 0;
 	printf("PASS %d display adapter checks\n", checks);
 	return 0;
 }

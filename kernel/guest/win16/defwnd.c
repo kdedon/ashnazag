@@ -344,6 +344,133 @@ draw_capbutton(dc, x, y, s, kind, pressed)
 
 static int capbtnpressed;	/* while tracking: 1 min, 2 max */
 
+/* what an icon of w stands on: its parent's background, or the desktop */
+static void
+iconbg(dc, r, w)
+	struct dc *dc;
+	struct rect *r;
+	struct wnd *w;
+{
+	u16 br = (w->style & WS_CHILD) && w->parent && w->parent->cls ? w->parent->cls->bg : 0;
+
+	if (br >= 1 && br <= NSYSCOLOR + 1)
+		br = sys_brush(br - 1);
+	if (br)
+		d_fill(dc, r, br, 0xf0);
+	else
+		fillc(dc, r->l, r->t, r->r, r->b, COLOR_BACKGROUND);
+}
+
+/* the title under an icon, in its own window (class #32772) as Windows has it */
+static u32 titlecls;
+
+void
+user_icontitle(w, on)
+	struct wnd *w;
+	int on;
+{
+	struct wnd *t = wnd_get(w->ititle);
+	struct bfont *f = gobj(stockobj[ANSI_VAR_FONT], OBJ_FONT)->u.font.bf;
+	struct rect r;
+	int x, y, cx, cy, n = strlen(w->text), max = sys_metric(SM_CXICONSPACING);
+
+	if (t && (t->owner != w || !t->cls || t->cls->proc != user_titlethunk))
+		t = 0;
+	if (!on || !(w->style & WS_MINIMIZE) || !(w->style & WS_VISIBLE)) {
+		if (t) {
+			w->ititle = 0;
+			wnd_destroy(t);
+		}
+		return;
+	}
+	r_set(&r, 0, 0, max - 4, 0);
+	cy = f->f_height;
+	if (n) {
+		u16 hdc = user_dc(w, DCK_WINDOWNC, (struct rgn *)0);
+		struct dc *dc = dc_get(hdc);
+		int keepf = dc->st.font;
+
+		dc->st.font = stockobj[ANSI_VAR_FONT];
+		cy = draw_text(dc, w->text, n, &r, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+		dc->st.font = keepf;
+		user_releasedc(hdc);
+	}
+	cx = r.r + 4;
+	if (cx > max)
+		cx = max;
+	x = (w->wr.l + w->wr.r) / 2 - cx / 2;
+	y = w->wr.b + 1;
+	if (w->style & WS_CHILD) {
+		x -= w->parent->cr.l;
+		y -= w->parent->cr.t;
+	}
+	if (!t) {
+		if (!titlecls)
+			titlecls = ustr("#32772");
+		t = wnd_create(0, titlecls, 0, (w->style & WS_CHILD) | WS_CLIPSIBLINGS | (w->style & WS_CHILD ? 0 : WS_POPUP),
+		    x, y, cx, cy + 2, (w->style & WS_CHILD) ? w->parent->h : 0, 0, 0, 0);
+		if (!t)
+			return;
+		t->owner = w;
+		w->ititle = t->h;
+		wnd_setpos(t, w, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+		return;
+	}
+	if (x != t->wr.l || y != t->wr.t || cx != t->wr.r - t->wr.l || cy + 2 != t->wr.b - t->wr.t)
+		wnd_setpos(t, (struct wnd *)0, x, y, cx, cy + 2, SWP_NOZORDER | SWP_NOACTIVATE);
+	wnd_invalidate(t, (struct rect *)0, 0);
+}
+
+u32
+user_titleproc(a)
+	u32 *a;
+{
+	struct wnd *t = wnd_get(a[0]), *w;
+	extern u16 user_beginpaint();
+	extern void user_endpaint();
+
+	if (!t)
+		return 0;
+	w = t->owner;
+	switch (a[1]) {
+	case WM_PAINT:
+		user_releasedc(user_beginpaint(t, 0));
+		user_endpaint(t, 0);
+		if (w && wnd_get(w->h)) {
+			u16 hdc = user_dc(t, DCK_WINDOWNC, (struct rgn *)0);
+			struct dc *dc = dc_get(hdc);
+			int on = (w->flags & WF_ACTIVE) != 0, keepf = dc->st.font, km = dc->st.bkmode;
+			COLORREF kt = dc->st.text;
+			struct rect r;
+
+			r = t->wr;
+			if (on)
+				fillc(dc, r.l, r.t, r.r, r.b, COLOR_ACTIVECAPTION);
+			else
+				iconbg(dc, &r, w);
+			dc->st.font = stockobj[ANSI_VAR_FONT];
+			dc->st.text = sys_color(on ? COLOR_CAPTIONTEXT : COLOR_WINDOWTEXT);
+			dc->st.bkmode = TRANSPARENT;
+			r.t++;
+			draw_text(dc, w->text, strlen(w->text), &r, DT_CENTER | DT_WORDBREAK | DT_NOPREFIX);
+			dc->st.font = keepf;
+			dc->st.text = kt;
+			dc->st.bkmode = km;
+			user_releasedc(hdc);
+		}
+		return 0;
+	case WM_ERASEBKGND:
+		return 1;
+	case WM_NCHITTEST:
+		return HTCAPTION;
+	case WM_NCDESTROY:
+		if (w && w->ititle == t->h)
+			w->ititle = 0;
+		break;
+	}
+	return user_defproc(t, a[1], a[2], a[3]);
+}
+
 void
 user_drawnc(w)
 	struct wnd *w;
@@ -363,7 +490,7 @@ user_drawnc(w)
 	dc->effok = 0;
 	r = w->wr;
 	if (w->style & WS_MINIMIZE) {
-		fillc(dc, r.l, r.t, r.r, r.b, COLOR_BACKGROUND);
+		iconbg(dc, &r, w);
 		icon_draw(dc, w->hicon ? w->hicon : w->cls->icon, r.l + 2, r.t + 2);
 		user_releasedc(hdc);
 		return;
@@ -737,6 +864,8 @@ user_defproc(w, msg, wp, lp)
 			w->flags &= ~WF_ACTIVE;
 		if (wnd_visible(w))
 			user_drawnc(w);
+		if (w->ititle)
+			user_icontitle(w, 1);
 		return 1;
 	case WM_ACTIVATE:
 		if (LO16(wp) != WA_INACTIVE && !(w->style & WS_MINIMIZE))
@@ -747,6 +876,8 @@ user_defproc(w, msg, wp, lp)
 		w->text = strdup(lp ? STR(lp) : "");
 		if (hascaption(w))
 			wnd_redrawframe(w);
+		if (w->ititle)
+			user_icontitle(w, 1);
 		return 1;
 	case WM_GETTEXT:
 		if ((a = lin(FPSEL(lp), FPOFF(lp))) == 0 || (short)wp <= 0)
@@ -816,8 +947,12 @@ user_defproc(w, msg, wp, lp)
 		case HTCAPTION:
 			if (wnd_toplevel(w) != wnd_active)
 				wnd_activate(w, WA_CLICKACTIVE);
-			if (w->style & WS_MINIMIZE)
+			/* a click on an icon: its system menu */
+			if (w->style & WS_MINIMIZE) {
+				if (w->style & WS_SYSMENU)
+					menu_track(w->sysmenu ? w->sysmenu : sysmenu_of(w), 0x0100, w->wr.l, w->wr.b + 1, w, -1);
 				return 0;
+			}
 			movesize(w, HTCAPTION, (short)LO16(lp), (short)HI16(lp));
 			return 0;
 		case HTSYSMENU:

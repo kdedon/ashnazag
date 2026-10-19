@@ -1,7 +1,11 @@
 #!/bin/sh
 # Default session: clock, terminal, window manager.  Exit from twm's
-# root menu ends the session.
+# root menu ends the session.  Without a ~/.twmrc, twm places new
+# windows itself instead of waiting for the mouse.
 [ -f $HOME/.Xresources ] && xrdb -merge $HOME/.Xresources
 xclock -geometry 120x120-8+8 &
 xterm -geometry 80x24+16+40 &
-exec twm
+[ -f $HOME/.twmrc ] && exec twm
+m=$HOME/.xinit-twmrc
+{ echo RandomPlacement; cat /usr/X/lib/twm/system.twmrc; } > $m
+exec twm -f $m

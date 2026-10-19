@@ -9,11 +9,12 @@
 # UNIX_Root ufs = c6d0s1, UNIX_Swap = c6d0s2) and outdir/boot/, the
 # AmigaDOS volume: S/Startup-Sequence runs unix_boot040 on the kernel.
 # A login runs on the serial port.  The root holds the amilib, opci, pci
-# ne, xsurf, zz9000, voodoo3, tdfx, radeonds, radeon, floppy and v3bars modules (floppy loaded at boot, the first of zz9000, voodoo3 and radeonds found, order in /etc/default/display), modadmin, lspci and pci.ids, fltool, tcpcat, drmtest, drmkill, radeontest, /dev/pci, /dev/ne0, /dev/dri/card0 (tdfx) and card1 (radeon), registered at
+# ne, xsurf, zz9000, voodoo3, tdfx, radeonds, radeon, floppy, v3bars and bigram modules (floppy loaded at boot, bigram as swap when there is Zorro III RAM above 1 GB, the first of zz9000, voodoo3 and radeonds found, order in /etc/default/display), modadmin, lspci and pci.ids, fltool, tcpcat, drmtest, fbbench, fbmode, memhog, drmkill, radeontest, /dev/pci, /dev/ne0, /dev/dri/card0 (tdfx) and card1 (radeon), registered at
 # run level 2; ne0 comes up as 10.0.2.15 (Amiberry's user-mode network).
 # AMIX_TAPE: tape segments (default media/amix-tape).  UNIXBOOT: the
 # unix_boot040 executable.  OPENPCI: openpci's unpacked archive (Libs/
-# openpci.library, ENVARC/PCI-Configuration).  ROOTMB (default 128).
+# openpci.library, ENVARC/PCI-Configuration).  ROOTMB (default 128),
+# SWAPMB (default 32).
 # LOADBASE: where the loader puts the kernel (default 0x08000000, the
 # A3000's accelerator RAM); /stand/unix is linked there.
 # PKG: stage.sh's outdir, for the display module and the environment
@@ -22,7 +23,8 @@
 # mkamiga.sh's outdir, for Kickstart, the floppies and SYS:.  X11PKG:
 # x11/package.sh's pkg directory; X and the tape's clients are installed.
 # GLBIN: gl/build.sh's bin directory; its dritest, glprobe, glxgears, miptest
-# and swaptest go to /usr/x11r6/bin (with X11PKG).
+# and swaptest go to /usr/x11r6/bin (with X11PKG), libGL.so to /usr/x11r6/lib
+# and the DRI drivers to /usr/x11r6/lib/modules/dri.
 # QUAKE: gl/quake/build.sh's quake, installed as /usr/games/quake; with
 # QUAKEPAK (the user's id1/pak0.pak) the game data goes to /usr/games/id1.
 # GLQUAKE: its glquake (GL=yes), installed as /usr/games/glquake.
@@ -33,9 +35,12 @@
 # a4000 (IDE master, which also answers as unit 6; the AmigaDOS volume is
 # a bootable FFS partition AmigaBoot after the AMIX ones, s3).
 # ROOTBUS: empty (default; root on the host's own controller, c6d0) or
-# csppc: a CyberStorm PPC or MK III's SCSI, target CSPPCID (default 0),
+# ncr770: a CyberStorm PPC or MK III's SCSI, target CSPPCID (default 0),
 # root c<8+id>d0s1 (c8d0s1), swap s2; outdir/boot/ is made as for an a3000 and both boot volumes
 # run p5cfg before the loader.
+# BOOTMODS: the disk controller modules the loader reads (S/Modules beside it),
+# from relink-amiga.sh's build/amiga/boot/mod.d; default amigaide on an
+# a4000, ncr770 with ROOTBUS=ncr770, none on an a3000.
 set -e
 A=$(cd "$(dirname "$0")/.." && pwd)
 K=$(cd "$A/.." && pwd)
@@ -52,14 +57,22 @@ a3000|a4000) ;;
 esac
 case ${ROOTBUS:=} in
 '') D=c6 ;;
-csppc) CSPPCID=${CSPPCID:-0}; D=c$(printf %x $((8 + CSPPCID))) ;;
-*) echo "[FAIL] ROOTBUS: empty or csppc"; exit 1 ;;
+ncr770) CSPPCID=${CSPPCID:-0}; D=c$(printf %x $((8 + CSPPCID))) ;;
+*) echo "[FAIL] ROOTBUS: empty or ncr770"; exit 1 ;;
 esac
+if [ -z "${BOOTMODS+x}" ]; then
+	BOOTMODS=
+	[ "$HOST" = a3000 ] || BOOTMODS=amigaide
+	[ -z "$ROOTBUS" ] || BOOTMODS="$BOOTMODS ncr770"
+fi
+BM=$(cd "$(dirname "$KERNEL")" && pwd)/amiga/boot/mod.d
 PY="nice -n 19 python3"
 . "$AUX/toolchain/src/gcc-cross-amix/build/env.sh"
 PATH="$AUX/toolchain/linux/bin:$AUX/toolchain/bin:$PATH"
 [ -f "$KERNEL" ] && [ -f "$KERNEL.elf" ] || { echo "[FAIL] no kernel $KERNEL(.elf)"; exit 1; }
 [ -f "$UNIXBOOT" ] || { echo "[FAIL] UNIXBOOT: no unix_boot040"; exit 1; }
+[ -z "$BOOTMODS" ] || grep -q 'PROGDIR:S/Modules' "$UNIXBOOT" ||
+	{ echo "[FAIL] UNIXBOOT: $UNIXBOOT loads no boot modules ($BOOTMODS)"; exit 1; }
 [ -f "$OPENPCI/Libs/openpci.library" ] || { echo "[FAIL] OPENPCI: no Libs/openpci.library"; exit 1; }
 mkdir -p "$O/src/tape" "$O/src/bin"
 S=$O/src
@@ -96,6 +109,9 @@ DLM
 cat > "$S/display" <<'DSP'
 # Display cards by preference: the first found drives the screen.
 CARDS="zz9000 voodoo3 radeonds"
+# The Amiga Workbench's depth where the card has it: 8, 16 or 32;
+# empty keeps its ScreenMode preferences.
+DEPTH=16
 DSP
 cat > "$S/network-config" <<'NC'
 /usr/sbin/slink addaen /dev/ne0 ne0 &&
@@ -113,7 +129,10 @@ $CC -I"$DLM/include" -o "$S/bin/modadmin" "$DLM/modadmin.c" "$S/bin"/mod*.o "$S/
 $CC -I"$A/include" -o "$S/bin/lspci" "$A/pci/lspci.c"
 $CC -I"$K/guest/include" -o "$S/bin/fltool" "$A/floppy/fltool.c"
 $CC -o "$S/bin/kread" "$A/test/kread.c"
+$CC -o "$S/bin/memhog" "$A/test/memhog.c"
 $CC -I"$K/mac/display" -I"$K/drm" -o "$S/bin/drmtest" "$A/test/drmtest.c"
+$CC -I"$K/mac/display" -o "$S/bin/fbbench" "$A/test/fbbench.c"
+$CC -I"$K/mac/display" -o "$S/bin/fbmode" "$A/test/fbmode.c"
 $CC -I"$K/mac/display" -I"$K/drm" -o "$S/bin/radeontest" "$A/test/radeontest.c"
 $CC -I"$K/mac/display" -I"$K/drm" -o "$S/bin/drmkill" "$A/test/drmkill.c"
 # libc.so is an archive: the shared part and the static rest
@@ -135,6 +154,7 @@ sed -e "s/^	\\. = 0;/	. = $LOADBASE;/" "$A/amiga.ld" > "$S/unix.ld"
 m68k-elf-ld -T "$S/unix.ld" -o "$S/unix.linked" "$KERNEL"
 $PY "$A/test/namelist.py" "$KERNEL" "$S/unix.linked" "$S/unix"
 [ -z "$ROOTBUS" ] || $PY "$A/test/rootdev.py" "$S/unix" 1 $CSPPCID
+$PY "$A/test/swaplen.py" "$S/unix" ${SWAPMB:-32}
 { x etc/group; echo "display::25:root"; } > "$S/group"
 ENV=
 if [ -n "$PKG" ]; then
@@ -151,6 +171,9 @@ if [ -n "$AMIGAENV" ]; then
 	rm -rf "$S/amigasys"
 	cp -R "$AE/amiga/sys" "$S/amigasys"
 	chmod -R a+rX,go-w,u+w "$S/amigasys"
+	# the card must match this tree's startamiga
+	sh "$K/guest/amiga/rtg/build.sh" "$S/rtg" > /dev/null
+	cp "$S/rtg/container.card" "$S/amigasys/LIBS/Picasso96/container.card"
 	ENV="$ENV
 f /etc/amiga/kicka4000.rom 640 0 25 $AE/etc/amiga/kicka4000.rom
 `for f in "$AE"/amiga/media/*; do echo "f ${f#$AE} 640 0 25 $f"; done`
@@ -181,6 +204,16 @@ if [ -n "$X11PKG" ]; then
 a tape/13
 a tape/14
 `grep -v '^f /etc/inittab ' "$XP/x11.manifest" | sed -e "s, x11pkg/, $XP/,"`"
+	if [ -n "$GLBIN" ] && [ -f "$GLBIN/../lib/libGL.so" ]; then
+		ENV="$ENV
+d /usr/x11r6/lib/modules 755 2 2
+d /usr/x11r6/lib/modules/dri 755 2 2"
+		for l in libGL.so modules/dri/tdfx_dri.so modules/dri/r200_dri.so; do
+			m68k-elf-strip -o "$S/bin/$(basename $l)" "$GLBIN/../lib/$(basename $l)"
+			ENV="$ENV
+f /usr/x11r6/lib/$l 555 2 2 bin/$(basename $l)"
+		done
+	fi
 	for p in dritest glprobe glxgears miptest swaptest; do
 		[ -n "$GLBIN" ] && [ -f "$GLBIN/$p" ] || continue
 		m68k-elf-strip -o "$S/bin/$p" "$GLBIN/$p"
@@ -213,10 +246,14 @@ f /usr/share/lib/pci.ids 444 2 2 $A/pci/pci.ids
 f /usr/bin/fltool 555 2 2 bin/fltool
 f /usr/bin/tcpcat 555 2 2 bin/tcpcat
 f /usr/bin/kread 555 2 2 bin/kread
+f /usr/bin/memhog 555 2 2 bin/memhog
 f /usr/bin/drmtest 555 2 2 bin/drmtest
+f /usr/bin/fbbench 555 2 2 bin/fbbench
+f /usr/bin/fbmode 555 2 2 bin/fbmode
 f /usr/bin/radeontest 555 2 2 bin/radeontest
 f /usr/bin/drmkill 555 2 2 bin/drmkill
 f /etc/rc2.d/S05dlm 744 0 3 S05dlm
+f /etc/rc2.d/S06bigram 744 0 3 $A/bigram/S06bigram
 f /etc/default/display 644 0 3 display
 f /etc/inet/network-config 444 0 3 network-config
 c /dev/pci 444 0 3 60 0
@@ -235,6 +272,9 @@ f /etc/conf/mod.d/radeonds 644 0 3 mods/mod.d/radeonds
 f /etc/conf/mod.d/radeon 644 0 3 mods/mod.d/radeon
 f /etc/conf/mod.d/floppy 644 0 3 mods/mod.d/floppy
 f /etc/conf/mod.d/v3bars 644 0 3 mods/mod.d/v3bars
+f /etc/conf/mod.d/bigram 644 0 3 mods/mod.d/bigram
+f /etc/conf/mod.d/amigaide 644 0 3 $BM/amigaide
+f /etc/conf/mod.d/ncr770 644 0 3 $BM/ncr770
 c /dev/floppy0 666 0 3 62 0
 c /dev/floppy1 666 0 3 62 1
 c /dev/floppy2 666 0 3 62 2
@@ -253,6 +293,7 @@ $PY "$DR/ufscheck.py" "$S/root.img" -l > "$S/root.lst" || { tail -20 "$S/root.ls
 mkdir -p "$S/amigaboot/S"
 cp "$UNIXBOOT" "$S/amigaboot/unix_boot040"
 cp "$KERNEL" "$S/amigaboot/unix"
+$PY "$A/test/swaplen.py" "$S/amigaboot/unix" ${SWAPMB:-32}
 cat > "$S/amigaboot/amxmarks.rexx" <<'REXX'
 /* the kernel's boot marks in chip RAM, after a reset: rx amxmarks.rexx */
 DO i = 1 TO 2
@@ -268,9 +309,15 @@ BOOTPART=
 V=DH0
 [ "$HOST" = a3000 ] || V=SYS
 : > "$S/amigaboot/S/Startup-Sequence"
+mkdir -p "$S/amigaboot/modules"
+: > "$S/amigaboot/S/Modules"
+for m in $BOOTMODS; do
+	cp "$BM/$m" "$S/amigaboot/modules/$m"
+	echo "modules/$m" >> "$S/amigaboot/S/Modules"
+done
 if [ -n "$ROOTBUS" ]; then
 	$PY "$A/test/rootdev.py" "$S/amigaboot/unix" 1 $CSPPCID
-	m68k-linux-gnu-as -m68020 -o "$S/p5cfg.o" "$A/csppc/p5cfg.s"
+	m68k-linux-gnu-as -m68020 -o "$S/p5cfg.o" "$A/ncr770/p5cfg.s"
 	m68k-linux-gnu-objcopy -O binary -j .text "$S/p5cfg.o" "$S/p5cfg.bin"
 	$PY "$A/test/hunk.py" "$S/p5cfg.bin" "$S/amigaboot/p5cfg"
 	echo "$V:p5cfg" > "$S/amigaboot/S/Startup-Sequence"
@@ -279,7 +326,7 @@ printf '%s:unix_boot040 %s:unix %s\n' $V $V "$LOADBASE" >> "$S/amigaboot/S/Start
 [ "$HOST" = a3000 ] || BOOTPART="AmigaBoot:DOS\\1:8:@$S/amigaboot"
 [ "$HOST" = a4000 ] && [ -z "$ROOTBUS" ] || cp -R "$S/amigaboot" "$O/boot"
 # a new file: an emulator still running keeps writing to the old one
-$PY "$A/test/rdb.py" "$O/amix.hdf.new" "UNIX_Root:UNI\\1:$ROOTMB:$S/root.img" "UNIX_Swap:resv:32" $BOOTPART
+$PY "$A/test/rdb.py" "$O/amix.hdf.new" "UNIX_Root:UNI\\1:$ROOTMB:$S/root.img" "UNIX_Swap:resv:${SWAPMB:-32}" $BOOTPART
 mv "$O/amix.hdf.new" "$O/amix.hdf"
 rm -f "$S/root.img"
 echo "[OK] $O/amix.hdf ($HOST)"

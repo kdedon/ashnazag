@@ -62,7 +62,7 @@ for c in "$K/mac/display/ds.c" "$A/atads.c"; do
 done
 
 # the disk layer runs only after main() has cleared BSS
-for c in ataide ahdi atartc atafsflush; do
+for c in atadisk ahdi atartc atafsflush atavpfree; do
 	$CC $CFLAGS -I"$AMIX_ROOT/usr/sys/amiga/alien" -c "$A/$c.c" -o "$W/$c.o" 2> "$W/$c.o.warn" || {
 		cat "$W/$c.o.warn"; exit 1; }
 	[ -s "$W/$c.o.warn" ] && { cat "$W/$c.o.warn"; echo "[FAIL] $c.c: warnings"; exit 1; }
@@ -115,8 +115,8 @@ echo "[*] loadable modules and guest processes"
 sh "$K/dlm/build.sh" -k "$W/dlm"
 sh "$K/guest/build.sh" -k "$BASE" "$W/guest"
 
-OBJS="$W/dlm/dlm.o $W/guest/guest.o $W/ataentry.o $W/ataintr.o $W/ataconf.o $W/vmrgn.o $W/ikbd.o $W/fbcons.o $W/fbfont.o
-$W/atadevsw.o $W/atacons.o $W/ds.o $W/atads.o $W/ataide.o $W/ahdi.o $W/atartc.o $W/atafsflush.o $W/rd.o $RDB/rdimage.o
+OBJS="$W/dlm/dlm.o $W/dlm/dlm_root.o $W/dlm/dlm_sd.o $W/guest/guest.o $W/ataentry.o $W/ataintr.o $W/ataconf.o $W/vmrgn.o $W/ikbd.o $W/fbcons.o $W/fbfont.o
+$W/atadevsw.o $W/atacons.o $W/ds.o $W/atads.o $W/atadisk.o $W/ahdi.o $W/atartc.o $W/atafsflush.o $W/atavpfree.o $W/rd.o $RDB/rdimage.o
 $W/fpe030.o $FPEOBJS $W/fpe-obj/fpe_glue.o $W/fpe040.o"
 
 OVR="config putchar getchar callrom sysdump haltsys rtnfirm hw_clkstart clkreld
@@ -124,12 +124,14 @@ p1int p2int p3int p4int p5int p6int parinit qlintr slpoll autocon delayus
 ramopen ramclose ramstrategy ramprint ramsize backtrace fpu_setup inituname
 sdopen sdqueue sdhardwarename sdpartition sdvalid sdblkno sddevsize
 prhasfp fpuinit fpu_save fpu_restore setregs clkset
-dmainit ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig mdboot fsflush memialloc"
+dmainit ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig mdboot fsflush memialloc free_vp_pages
+vfs_getvfssw vfs_mountroot"
 # Amiga data replaced: the console streamtab, the device switches and the
-# exec and STREAMS module switches.
-OVRD="coinfo cdevsw bdevsw execsw fmodsw"
+# exec, STREAMS module and filesystem switches.
+OVRD="coinfo cdevsw bdevsw execsw fmodsw vfssw architecture"
 # Stock bodies kept under __amix_<name> for the wrappers.
-ALIAS="fpu_setup:T inituname:T sendsig:T valid_usr_range:T fsig:T execsw:D fmodsw:D memialloc:T"
+ALIAS="fpu_setup:T inituname:T sendsig:T valid_usr_range:T fsig:T execsw:D fmodsw:D memialloc:T
+vfssw:D vfs_getvfssw:T vfs_mountroot:T"
 # Stock bodies the emulator chains to, as <name>_fpe_orig.
 FPEORIG="fpuinit fpu_save fpu_restore setregs"
 
@@ -170,6 +172,11 @@ done
 off=$(m68k-linux-gnu-nm "$BASE" | awk '$3=="cmn_err" && $2=="T"{print $1}')
 WEAK="$WEAK --add-symbol __amix_unt_latch=.text:0x$off,function,global"
 WEAK="$WEAK --globalize-symbol trapsig"
+# the free_vp_pages override uses these
+for s in freemem_wait free_pages pagecnt page_cachelist page_cachelist_size page_add; do WEAK="$WEAK --globalize-symbol $s"; done
+# anonymous memory reserved against RAM plus swap
+WEAK="$WEAK $(sh "$K/vm/build.sh" "$BASE" "$W")"
+OBJS="$OBJS $W/vm.o"
 m68k-linux-gnu-objcopy $WEAK "$BASE" "$W/base.weak"
 python3 "$A/patch_spl.py" -p "$W/base.weak" $SPL_SITES
 

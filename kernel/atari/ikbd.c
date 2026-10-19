@@ -10,6 +10,7 @@
 #define ACIA_DAT	(*(VOL unsigned char *)0xFFFFFC02)
 #define ACIA_RDRF	0x01
 #define ACIA_TDRE	0x02
+#define ACIA_OVRN	0x20
 #define ACIA_IRQ	0x80
 #define MIDI_CTL	(*(VOL unsigned char *)0xFFFFFC04)
 
@@ -33,6 +34,10 @@ static int kb_ds = 1;		/* keys to the display service */
 static int kb_mhdr = 1;		/* header of the mouse packet being read */
 static unsigned char kb_mb[2] = { 1 };
 unsigned long ikbd_nbytes = 1;
+unsigned long ikbd_nlost = 1;	/* overruns */
+
+static unsigned char kb_mods[] = { K_CTRL, K_LSHIFT, K_RSHIFT, K_ALT };
+static int kb_down = 1;		/* kb_mods held, by bit */
 
 static char kb_lo[0x73] =
 	"\0\0331234567890-=\b\tqwertyuiop[]\r\0asdfghjkl;'`\0\\zxcvbnm,./\0\0\0 ";
@@ -102,11 +107,24 @@ register int b;
 	kb_in(c);
 }
 
+static void
+kb_key(b)
+int b;
+{
+	/* after a panic getchar polls with the tick stopped */
+	if (kb_ds && panicstr == 0)
+		ata_dsrec(0, b, 0);
+	else
+		kb_scan(b);
+}
+
 /* One byte from the IKBD: a key, or part of a status/mouse/clock packet. */
 static void
 kb_byte(b)
 register int b;
 {
+	register int n;
+
 	ikbd_nbytes++;
 	if (kb_skip > 0) {
 		kb_skip--;
@@ -133,11 +151,23 @@ register int b;
 		}
 		return;
 	}
-	/* after a panic getchar polls with the tick stopped */
-	if (kb_ds && panicstr == 0)
-		ata_dsrec(0, b, 0);
-	else
-		kb_scan(b);
+	for (n = 0; n < sizeof kb_mods; n++)
+		if ((b & 0x7F) == kb_mods[n])
+			kb_down = b & 0x80 ? kb_down & ~(1 << n) : kb_down | 1 << n;
+	kb_key(b);
+}
+
+/* A byte was lost, perhaps a release: release the modifiers held. */
+static void
+kb_lost()
+{
+	register int n;
+
+	ikbd_nlost++;
+	for (n = 0; n < sizeof kb_mods; n++)
+		if (kb_down & 1 << n)
+			kb_key(kb_mods[n] | 0x80);
+	kb_down = 0;
 }
 
 static void
@@ -158,8 +188,9 @@ ikbd_init()
 {
 	kb_put = kb_get = 0;
 	kb_shift = kb_ctrl = kb_caps = kb_skip = 0;
+	kb_down = 0;
 	kb_ds = kb_mhdr = 0;
-	ikbd_nbytes = 0;
+	ikbd_nbytes = ikbd_nlost = 0;
 	ACIA_CTL = 0x03;
 	ACIA_CTL = 0x96;
 	MIDI_CTL = 0x03;	/* MIDI shares GPIP4: reset, no interrupts */
@@ -172,10 +203,12 @@ ikbd_init()
 void
 ikbd_intr()
 {
-	register int n;
+	register int n, c;
 
-	for (n = 0; n < 64 && (ACIA_CTL & ACIA_IRQ); n++) {
-		if (ACIA_CTL & ACIA_RDRF)
+	for (n = 0; n < 64 && ((c = ACIA_CTL) & ACIA_IRQ); n++) {
+		if (c & ACIA_OVRN)
+			kb_lost();
+		if (c & ACIA_RDRF)
 			kb_byte(ACIA_DAT);
 		else
 			(void)ACIA_DAT;		/* overrun: clear */

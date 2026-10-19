@@ -23,6 +23,7 @@ irqtest:
 	addq.l	#6,sp
 	move.l	d0,a6
 	move.w	sr,d6
+	bsr	calib
 	move.w	#0x2700,sr
 	move.l	0x70,oldvbl
 	move.l	0x114,oldtc
@@ -30,9 +31,6 @@ irqtest:
 	move.l	#mytc,0x114
 	clr.w	nest
 	bsr	waittc
-	move.l	#1,d0
-	tst.l	d5
-	beq	out			| timer C never pending
 	clr.l	nlog
 	cmp.l	#1,d7
 	beq	k1
@@ -181,13 +179,24 @@ logged:	move.l	nlog,d3
 9:	rts
 
 | d5: 0 when timer C never became pending
-waittc:	move.l	#200000,d5
-	lea	0xfffffa0d,a1		| IPRB
-1:	btst	#5,(a1)
-	bne	9f
+| d5: four times the loops of waittc's body in 5 ticks of _hz_200
+calib:	move.l	0x4ba,d0
+1:	cmp.l	0x4ba,d0
+	beq	1b
+	move.l	0x4ba,d0
+	addq.l	#5,d0
+	moveq	#0,d5
+2:	addq.l	#1,d5
+	cmp.l	0x4ba,d0
+	bhi	2b
+	lsl.l	#2,d5
+	rts
+
+| 100 ms with the IPL at 7: timer C and the VBL are pending after it
+waittc:	cmp.l	0x4ba,d0
 	subq.l	#1,d5
-	bne	1b
-9:	rts
+	bne	waittc
+	rts
 
 out:	move.w	#0x2700,sr
 	move.l	oldvbl,0x70

@@ -44,6 +44,7 @@ images. The last four packages are only for building QEMU.
 | `toolchain/dl/syssrc.tgz` | NetBSD 10.1 kernel sources (68040/060 support packages) | archive.netbsd.org, sha256 pinned |
 | `toolchain/qemu-local` | QEMU 8.2.2 with `toolchain/qemu-patches` | `setup.sh --qemu` (runs `toolchain/build-qemu.sh`) |
 | `toolchain/src/freetype-2.13.3` | FreeType 2.13.3 sources: the Win16 environment's TrueType (its TrueType driver, bytecode interpreter and black-and-white rasterizer only), used under its GPLv2 option | SourceForge, sha256 pinned; `kernel/guest/win16/ft/freetype.sh` (also run by the Win16 builds when missing) |
+| `ref/amix-cdfs` | CD filesystem, built as the `cdfs` module by `kernel/mods.sh` | [amix-cdfs](https://github.com/jusii/amix-cdfs) at `34447c2` |
 | `kernel/amix-040-060-port` | 68040/68060 port | [amix-040-060-port](https://github.com/asokero/amix-040-060-port) at `54fba4d` plus the diffs in `kernel/port-tree.sh`; setup writes its `config.sh` |
 
 The patched QEMU is required for the tests: stock QEMU 8.2 loses 68040 page writes under
@@ -54,6 +55,16 @@ work. Unpacked with `dpkg-deb -x`, binutils' own libraries need
 5 minutes, each binutils about 10, gcc 13.3.0 about an hour, QEMU about 40 minutes;
 `JOBS=4` shortens them. `--amix-cross DIR` copies an existing gcc-cross-amix install
 instead of building it.
+
+## Unstable packages (CI)
+
+Every push to main builds all kernel modules for mac, amiga, atari030 and atari060 on the
+compile-only toolchain (`kernel/mods.sh`, no AMIX headers or libraries), packs them as SVR4
+datastreams (`images/envpkg/mkmodpkgs.sh`: per target, plus per-card, disk-driver, cdfs and
+environment-module packages), moves the `unstable` tag to the commit and replaces the
+`unstable` prerelease's assets. Run it by hand on another branch (Actions, "Unstable
+packages") to get the packages as a workflow artifact instead. Userland and environment
+packages that link the AMIX libraries are built locally with `images/envpkg/mkenvpkgs.sh`.
 
 ## Your media
 
@@ -97,7 +108,7 @@ Optional open-source downloads: `--tos-src` (EmuTOS 1.4, fVDI), `--x11` (X11R6.3
 | tos | `tests/run-qemu.sh` (t_tos) | suite + `--tos-src` |
 | v200 | `tests/run-qemu.sh` (t_v200, `GROUP=v200`); `v200env` from `images/envpkg/mkenvpkgs.sh` | suite; a Voyage 200 image of yours to run it |
 | amiga | `tests/run-qemu.sh` (t_amiga), `images/amigaenv/mkamiga.sh` | suite + AmigaOS 3.2 CD |
-| falcon | `PLATFORM=atari sh kernel/build.sh` (`atari060` for a CT60), `kernel/atari/mkdisk.sh` | kernel + tape 02, 03, 10, `--tos-src`; Hatari for tests (`kernel/atari/build-hatari.sh`); TOS 4.04 for `starttos -P` |
+| falcon | `PLATFORM=atari sh kernel/build.sh` (`atari060` for a CT60), `kernel/atari/mkdisk.sh` | kernel + tape 02, 03, 10, `--tos-src`; Hatari for tests (`kernel/atari/build-hatari.sh`); TOS 4.04 for `falcon-check.sh` |
 | amiga host | `PLATFORM=amiga sh kernel/build.sh`, `kernel/amiga/stage.sh`, `kernel/amiga/test/mkhdf.sh` | kernel + tape; `unix_boot040`, openpci.library; Amiberry and an A3000 Kickstart for tests (`kernel/amiga/test/amiberry.sh`) |
 | win16 | `sh tests/win16/run.sh` (on the host), `sh tests/win16/build.sh out`, `images/winenv/mkwin.sh` | the host's C compiler; Open Watcom 2 (`WATCOM`, default `toolchain/watcom`; not built by setup.sh) for the test programs; the AMIX toolchain for the AMIX binary. No Windows or Wabi files: each user installs theirs at run time (`startwin -install`, `docs/win16-design.md`) |
 

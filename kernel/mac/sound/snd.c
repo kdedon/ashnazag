@@ -44,7 +44,17 @@ snd_wake()
 void
 snd_intr()
 {
-	snd_ev.se_irq |= ASC(ASC_FIFOIRQ);
+	register int b = ASC(ASC_FIFOIRQ);
+
+	/*
+	 * An empty FIFO would replay stale data until the service refills
+	 * it.  The empty bit also means full; empty is also below half.
+	 */
+	if ((b & ASC_IRQEMPTY) && (b & ASC_IRQHALF)) {
+		ASC(ASC_MODE) = 0;
+		b |= ASC_IRQSTOP;
+	}
+	snd_ev.se_irq |= b;
 	snd_ev.se_nirq++;
 	if (snd_busy)
 		snd_wake();

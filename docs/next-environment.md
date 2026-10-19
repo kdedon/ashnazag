@@ -3,7 +3,8 @@
 Design for `startnext`: the user's installed NeXTSTEP / OPENSTEP runs natively on a
 68040/060 host, unmodified. No SCSI, ethernet, DMA or desktop-bus chip is modelled:
 those devices reach Mach through our own drivers that call host services. Status:
-reader (`tools/nextcd.py`), kernel load and entry (`native -k`) done; no board register is modelled (§2).
+reader (`tools/nextcd.py`), kernel load and entry (`native -k`), root over host folders, login window,
+Workspace and sound done; no board register is modelled (§2).
 
 ## Shape
 
@@ -88,7 +89,7 @@ arguments on the stack):
 | status read in the level 6 dispatcher (`ipl6`) | pending interrupt status |
 | `callout_dispatch` setting SCR2 soft bits | software interrupt 1 or 2 request |
 | `rtc_get`, `rtc_set`, `startrtclock` | host time; setting and start ignored |
-| `nvram_check`, `nvram_set` | `~/NeXT/<env>/nvram` |
+| `nvram_check`, `nvram_set` | `~/NeXT/<env>.nvram` |
 | `rtc_power_down`, monitor trap | the machine ends |
 | `km_send`, `adb_initialize`, `mon_reset` | absent units: time out, return |
 | drivers `fc`, `sc`, `oc`, `np`, `sound`, `dsp`, `en` (probes, controller setup); `zsintsetup`, `enintsetup` | absent: the probes find nothing |

@@ -1,0 +1,568 @@
+--- a/src/tnl/t_context.h
++++ b/src/tnl/t_context.h
+@@ -375,6 +375,24 @@
+ 			    GLuint new_inputs);
+ 
+ 
++#ifdef __m68k__
++struct m68k_cas;
++
++/* display-list cassettes being packed for replay */
++struct tnl_fast_build {
++   struct m68k_cas *head;	/* first cassette of the chain */
++   GLuint open;			/* mode + 1 of the primitive left open */
++   GLboolean ok, have_normal;
++   GLfloat normal[3];
++   GLuint n, size;		/* the open primitive's vertices */
++   GLfloat (*v)[6];		/* position, normal */
++   GLuint nc, csize;		/* the cassette's finished primitives */
++   GLfloat (*cv)[6];
++   GLuint np, psize;
++   GLuint (*prim)[3];		/* mode, first, count */
++};
++#endif
++
+ struct tnl_device_driver {
+    /***
+     *** TNL Pipeline
+@@ -408,6 +426,12 @@
+        */
+ 
+       void (*PrimitiveNotify)(GLcontext *ctx, GLenum mode);
++#ifdef __m68k__
++      GLboolean (*ReplayFans)(GLcontext *ctx, struct m68k_cas *c);
++      /* Draws a packed cassette's fans, its colours lit; with c NULL,
++       * says whether it can now.
++       */
++#endif
+       /* Called between RenderStart() and RenderFinish() to indicate the
+        * type of primitive we're about to draw.  Mode will be one of the
+        * modes accepted by glBegin().
+@@ -538,6 +562,11 @@
+    GLboolean NeedNdcCoords;
+    GLboolean LoopbackDListCassettes;
+    GLboolean CalcDListNormalLengths;
++#ifdef __m68k__
++   struct tnl_fast_build FastBuild;
++   GLboolean FastChain;		/* this chain goes to ReplayFans */
++   GLfloat ReplayBox[4];	/* NDC x, y bounds, set by ReplayFans( ctx, NULL ) */
++#endif
+    GLboolean IsolateMaterials;
+ 
+    /* Derived state and storage for _tnl_eval_vb:
+--- a/src/tnl/t_imm_dlist.c
+--- a/src/tnl/t_imm_dlist.c
++++ b/src/tnl/t_imm_dlist.c
+@@ -59,11 +59,450 @@
+    GLuint LastMaterial;
+    GLuint MaterialOrMask;
+    GLuint MaterialAndMask;
++#ifdef __m68k__
++   struct m68k_cas *Fast;
++#endif
+ } TNLvertexcassette;
+ 
+ static void execute_compiled_cassette( GLcontext *ctx, void *data );
+ static void loopback_compiled_cassette( GLcontext *ctx, struct immediate *IM );
+ 
++#ifdef __m68k__
++#include "colormac.h"
++#include "light.h"
++#include "m68k_asm.h"
++
++/* A cassette holding only positions and normals is packed as fans for the
++ * driver to replay.  A primitive spanning cassettes goes with the one it
++ * ends in; the cassettes it links make a chain, replayed as a whole or not
++ * at all.
++ */
++static GLboolean fast_grow( void **p, GLuint *size, GLuint n, GLuint elt )
++{
++   void *q;
++
++   if (n < *size)
++      return GL_TRUE;
++   q = _mesa_malloc( (*size ? 2 * *size : 256) * elt );
++   if (!q)
++      return GL_FALSE;
++   if (*p) {
++      MEMCPY( q, *p, *size * elt );
++      _mesa_free( *p );
++   }
++   *p = q;
++   *size = *size ? 2 * *size : 256;
++   return GL_TRUE;
++}
++
++/* the open primitive ends: its vertices join the cassette's */
++static void fast_end( struct tnl_fast_build *b )
++{
++   GLuint i;
++
++   if (!fast_grow( (void **)&b->prim, &b->psize, b->np, sizeof *b->prim )) {
++      b->ok = GL_FALSE;
++      return;
++   }
++   for (i = 0; i < b->n; i++) {
++      if (!fast_grow( (void **)&b->cv, &b->csize, b->nc, sizeof *b->cv )) {
++	 b->ok = GL_FALSE;
++	 return;
++      }
++      MEMCPY( b->cv[b->nc++], b->v[i], sizeof *b->cv );
++   }
++   b->prim[b->np][0] = b->open - 1;
++   b->prim[b->np][1] = b->nc - b->n;
++   b->prim[b->np][2] = b->n;
++   b->np++;
++   b->open = 0;
++   b->n = 0;
++}
++
++/* fans of prim p: count, and with f the provoking and drawn vertices */
++static GLuint fast_fans( const GLuint *p, GLuint *nv, GLushort *f )
++{
++   const GLuint s = p[1], n = p[2];
++   GLuint j, k, nf;
++
++   switch (p[0]) {
++   case GL_TRIANGLES:		nf = n / 3;	*nv = 3; break;
++   case GL_TRIANGLE_STRIP:
++   case GL_TRIANGLE_FAN:	nf = n >= 3 ? n - 2 : 0; *nv = 3; break;
++   case GL_QUADS:		nf = n / 4;	*nv = 4; break;
++   case GL_QUAD_STRIP:		nf = n >= 4 ? n / 2 - 1 : 0; *nv = 4; break;
++   case GL_POLYGON:		nf = n >= 3;	*nv = n; break;
++   default:			return 0;
++   }
++   if (!f)
++      return nf;
++   for (j = 0; j < nf; j++, f += *nv + 1) {
++      switch (p[0]) {
++      case GL_TRIANGLES:
++	 f[1] = s + 3 * j; f[2] = f[1] + 1; f[3] = f[0] = f[1] + 2;
++	 break;
++      case GL_TRIANGLE_STRIP:
++	 f[1 + (j & 1)] = s + j; f[2 - (j & 1)] = s + j + 1;
++	 f[3] = f[0] = s + j + 2;
++	 break;
++      case GL_TRIANGLE_FAN:
++	 f[1] = s; f[2] = s + j + 1; f[3] = f[0] = s + j + 2;
++	 break;
++      case GL_QUADS:
++	 f[1] = s + 4 * j; f[2] = f[1] + 1; f[3] = f[1] + 2; f[4] = f[0] = f[1] + 3;
++	 break;
++      case GL_QUAD_STRIP:
++	 f[1] = s + 2 * j; f[2] = f[1] + 1; f[3] = f[0] = f[1] + 3; f[4] = f[1] + 2;
++	 break;
++      default:
++	 for (k = 0; k < n; k++)
++	    f[k + 1] = s + k;
++	 f[0] = s;
++      }
++      for (k = 0; k <= *nv; k++)
++	 f[k] *= 20;
++   }
++   return nf;
++}
++
++/* prim p from its fan j: all its fans, or for a quad strip one quad, or
++ * two or more quads with one provoking normal as a single strip
++ * (nv M68K_STRIP | its length).  Returns the fans used; with f, entries
++ * as from fast_fans: the provoking vertex, then the strip's vertices,
++ * pairs swapped and the first doubled so its triangles are the fans'.
++ */
++static GLuint fast_piece( const GLuint *p, GLfloat (*cv)[6], GLuint j,
++			  GLuint *nv, GLushort *f )
++{
++   const GLuint nf = fast_fans( p, nv, NULL ), s = p[1] + 2 * j;
++   GLuint k, m;
++
++   if (p[0] != GL_QUAD_STRIP) {
++      if (f)
++	 fast_fans( p, nv, f );
++      return nf;
++   }
++   for (k = 1; j + k < nf && !memcmp( cv[s + 2 * k + 3] + 3, cv[s + 3] + 3,
++				      3 * sizeof(GLfloat) ); k++)
++      ;
++   if (k == 1) {
++      if (f) {
++	 f[0] = (s + 3) * 20;
++	 f[1] = s * 20;
++	 f[2] = (s + 1) * 20;
++	 f[3] = (s + 3) * 20;
++	 f[4] = (s + 2) * 20;
++      }
++      return 1;
++   }
++   *nv = M68K_STRIP | (2 * k + 3);
++   if (f) {
++      f[0] = (s + 3) * 20;
++      f[1] = (s + 1) * 20;
++      for (m = 0; m <= k; m++) {
++	 f[2 + 2 * m] = (s + 2 * m + 1) * 20;
++	 f[3 + 2 * m] = (s + 2 * m) * 20;
++      }
++   }
++   return k;
++}
++
++static struct m68k_cas *fast_pack( struct tnl_fast_build *b, GLboolean cont )
++{
++   struct m68k_cas *c;
++   GLuint i, j, k, n, nn = 0, nr = 0, nfi = 0, nv, lastnv = 0, nf;
++   GLubyte *m;
++
++   for (i = 0; i < b->nc; i++)
++      if (i == 0 || memcmp( b->cv[i] + 3, b->cv[i - 1] + 3, 3 * sizeof(GLfloat) ))
++	 nn++;
++   for (i = 0; i < b->np; i++) {
++      nf = fast_fans( b->prim[i], &nv, NULL );
++      for (j = 0; j < nf; j += k) {
++	 k = fast_piece( b->prim[i], b->cv, j, &nv, NULL );
++	 n = nv & M68K_STRIP ? 1 : k;
++	 if (nv != lastnv)
++	    nr++;
++	 lastnv = nv;
++	 nfi += n * ((nv & ~M68K_STRIP) + 1);
++      }
++   }
++   m = (GLubyte *)_mesa_malloc( sizeof *c + b->nc * (12 + 2 + 20) +
++				nn * (12 + 12 + 4) + nr * sizeof(struct m68k_run) +
++				nfi * 2 + 8 );
++   if (!m)
++      return NULL;
++   c = (struct m68k_cas *)m;
++   _mesa_bzero( c, sizeof *c );
++   m += sizeof *c;
++   c->rec = (unsigned long *)m;		m += b->nc * 20;
++   c->pos = (float (*)[3])m;		m += b->nc * 12;
++   c->nrm = (float (*)[3])m;		m += nn * 12;
++   c->unit = (float (*)[3])m;		m += nn * 12;
++   c->col = (unsigned long *)m;		m += nn * 4;
++   c->run = (struct m68k_run *)m;	m += nr * sizeof(struct m68k_run);
++   c->vn = (unsigned short *)m;		m += b->nc * 2;
++   c->fan = (unsigned short *)m;
++   c->nv = b->nc;
++   c->cont = cont;
++   for (k = 0; k < 3; k++) {
++      c->box[k] = 1e30F;
++      c->box[k + 3] = -1e30F;
++   }
++   for (i = 0; i < b->nc; i++) {
++      COPY_3V( c->pos[i], b->cv[i] );
++      if (i == 0 || memcmp( b->cv[i] + 3, b->cv[i - 1] + 3, 3 * sizeof(GLfloat) )) {
++	 GLfloat len;
++
++	 COPY_3V( c->nrm[c->nn], b->cv[i] + 3 );
++	 len = (GLfloat) LEN_3FV( c->nrm[c->nn] );
++	 if (len > 0.0F)
++	    len = 1.0F / len;
++	 SCALE_SCALAR_3V( c->unit[c->nn], len, c->nrm[c->nn] );
++	 c->nn++;
++      }
++      c->vn[i] = c->nn - 1;
++      for (k = 0; k < 3; k++) {
++	 if (c->pos[i][k] < c->box[k]) c->box[k] = c->pos[i][k];
++	 if (c->pos[i][k] > c->box[k + 3]) c->box[k + 3] = c->pos[i][k];
++      }
++   }
++   lastnv = 0;
++   nfi = 0;
++   for (i = 0; i < b->np; i++) {
++      nf = fast_fans( b->prim[i], &nv, NULL );
++      for (j = 0; j < nf; j += k) {
++	 k = fast_piece( b->prim[i], b->cv, j, &nv, c->fan + nfi );
++	 n = nv & M68K_STRIP ? 1 : k;
++	 if (nv != lastnv || c->run[c->nrun - 1].nfan + n > 0xffff) {
++	    c->run[c->nrun].nv = nv;
++	    c->run[c->nrun++].nfan = 0;
++	 }
++	 c->run[c->nrun - 1].nfan += n;
++	 lastnv = nv;
++	 nfi += n * ((nv & ~M68K_STRIP) + 1);
++      }
++   }
++   return c;
++}
++
++static void fast_compile( GLcontext *ctx, struct immediate *IM,
++			  TNLvertexcassette *node )
++{
++   struct tnl_fast_build *b = &TNL_CONTEXT(ctx)->FastBuild;
++   const GLuint ok = VERT_BITS_OBJ_23 | VERT_BIT_NORMAL | VERT_BIT_BEGIN |
++		     VERT_BIT_END | VERT_BIT_END_VB;
++   const GLboolean cont = b->open != 0;
++   struct m68k_cas *c;
++   GLuint i, k, f;
++
++   node->Fast = NULL;
++   b->ok = GL_TRUE;
++   b->nc = b->np = 0;
++   for (i = IM->Start; i <= IM->Count; i++) {
++      f = IM->Flag[i];
++      /* a glMaterial before the first primitive is applied at replay */
++      if (f & ~ok && !(i == IM->Start && !cont && (f & ~ok) == VERT_BIT_MATERIAL))
++	 b->ok = GL_FALSE;
++      if ((f & VERT_BIT_END) && b->open)
++	 fast_end( b );
++      if (f & VERT_BIT_NORMAL) {
++	 COPY_3V( b->normal, IM->Attrib[VERT_ATTRIB_NORMAL][i] );
++	 b->have_normal = GL_TRUE;
++      }
++      if (f & VERT_BIT_BEGIN) {
++	 b->open = (IM->Primitive[i] & PRIM_MODE_MASK) + 1;
++	 b->n = 0;
++      }
++      if (i < IM->Count && (f & VERT_BIT_POS)) {
++	 if (!b->open || !b->have_normal ||
++	     !fast_grow( (void **)&b->v, &b->size, b->n, sizeof *b->v ))
++	    b->ok = GL_FALSE;
++	 else {
++	    COPY_3V( b->v[b->n], IM->Attrib[VERT_ATTRIB_POS][i] );
++	    COPY_3V( b->v[b->n] + 3, b->normal );
++	    b->n++;
++	 }
++      }
++   }
++   for (i = 0; i < b->np; i++)
++      if (b->prim[i][0] < GL_TRIANGLES || b->prim[i][0] > GL_POLYGON ||
++	  (b->prim[i][0] == GL_POLYGON && b->prim[i][2] > 15))
++	 b->ok = GL_FALSE;
++   if (b->nc > 1600)
++      b->ok = GL_FALSE;
++   if (!cont && !b->nc && !b->open)
++      return;
++   c = fast_pack( b, cont );
++   if (!c) {
++      if (cont && b->head)
++	 b->head->ok = 0;
++      b->head = NULL;
++      return;
++   }
++   c->open = b->open;
++   c->has_last = (IM->OrFlag & VERT_BIT_NORMAL) != 0;
++   COPY_3V( c->last, b->normal );
++   if (!cont || !b->head) {
++      b->head = c;
++      c->ok = b->ok && !cont;
++   } else if (c->nv) {
++      for (k = 0; k < 3; k++) {
++	 if (c->box[k] < b->head->box[k]) b->head->box[k] = c->box[k];
++	 if (c->box[k + 3] > b->head->box[k + 3]) b->head->box[k + 3] = c->box[k + 3];
++      }
++   }
++   if (b->head != c)
++      b->head->ok &= b->ok;
++   c->head = b->head;
++   node->Fast = c;
++   if (m68k_cas_built)
++      m68k_cas_built( c );
++}
++
++static void fast_reset( GLcontext *ctx )
++{
++   struct tnl_fast_build *b = &TNL_CONTEXT(ctx)->FastBuild;
++
++   if (b->open && b->head)
++      b->head->ok = 0;
++   b->head = NULL;
++   b->open = b->n = 0;
++   b->have_normal = GL_FALSE;
++}
++
++/* whether chain h can go to the driver now: state it lights and draws,
++ * and inside the clip volume
++ */
++static GLboolean fast_ok( GLcontext *ctx, const struct m68k_cas *h )
++{
++   TNLcontext *tnl = TNL_CONTEXT(ctx);
++   const GLfloat *m = ctx->_ModelProjectMatrix.m, *b = tnl->ReplayBox;
++   GLuint i;
++
++   if (!h->ok || ctx->CompileFlag || ctx->RenderMode != GL_RENDER ||
++       ctx->Driver.CurrentExecPrimitive != PRIM_OUTSIDE_BEGIN_END ||
++       ctx->Transform.ClipPlanesEnabled || ctx->Fog.Enabled ||
++       ctx->Texture._EnabledUnits || ctx->VertexProgram.Enabled ||
++       !ctx->Visual.rgbMode)
++      return GL_FALSE;
++   if (ctx->Light.Enabled &&
++       (ctx->_NeedEyeCoords || ctx->Light._NeedVertices ||
++	ctx->Light.ColorMaterialEnabled || ctx->Light.Model.TwoSide ||
++	ctx->Light.Model.ColorControl != GL_SINGLE_COLOR ||
++	ctx->Light.EnabledList.next == &ctx->Light.EnabledList ||
++	ctx->Light.EnabledList.next->next != &ctx->Light.EnabledList ||
++	(ctx->Transform.RescaleNormals && !ctx->Transform.Normalize)))
++      return GL_FALSE;
++   if (!tnl->Driver.Render.ReplayFans( ctx, NULL ))
++      return GL_FALSE;
++   for (i = 0; i < 8; i++) {
++      const GLfloat x = h->box[i & 1 ? 3 : 0];
++      const GLfloat y = h->box[i & 2 ? 4 : 1];
++      const GLfloat z = h->box[i & 4 ? 5 : 2];
++      const GLfloat cx = m[0] * x + m[4] * y + m[8] * z + m[12];
++      const GLfloat cy = m[1] * x + m[5] * y + m[9] * z + m[13];
++      const GLfloat cz = m[2] * x + m[6] * y + m[10] * z + m[14];
++      const GLfloat cw = m[3] * x + m[7] * y + m[11] * z + m[15];
++
++      if (!(cw > 0.0F) || cx < b[0] * cw || cx > b[1] * cw ||
++	  cy < b[2] * cw || cy > b[3] * cw || cz > cw || cz < -cw)
++	 return GL_FALSE;
++   }
++   return GL_TRUE;
++}
++
++/* lit colour of each normal, as the single infinite light stage does */
++static void fast_light( GLcontext *ctx, struct m68k_cas *c )
++{
++   GLchan (*col)[4] = (GLchan (*)[4])c->col;
++   GLuint i;
++
++   if (!ctx->Light.Enabled) {
++      const GLfloat *f = ctx->Current.Attrib[VERT_ATTRIB_COLOR0];
++
++      UNCLAMPED_FLOAT_TO_RGB_CHAN( col[0], f );
++      UNCLAMPED_FLOAT_TO_CHAN( col[0][3], f[3] );
++      for (i = 1; i < c->nn; i++)
++	 COPY_CHAN4( col[i], col[0] );
++   } else {
++      const struct gl_light *light = ctx->Light.EnabledList.next;
++      const GLfloat (*n)[3] = (const GLfloat (*)[3])
++	 (ctx->Transform.Normalize ? c->unit : c->nrm);
++      GLfloat base[3];
++      GLchan bc[4];
++
++      COPY_3V( base, light->_MatAmbient[0] );
++      ACC_3V( base, ctx->Light._BaseColor[0] );
++      UNCLAMPED_FLOAT_TO_RGB_CHAN( bc, base );
++      UNCLAMPED_FLOAT_TO_CHAN( bc[3], ctx->Light.Material[0].Diffuse[3] );
++      if (light->_MatSpecular[0][0] == 0.0F && light->_MatSpecular[0][1] == 0.0F &&
++	  light->_MatSpecular[0][2] == 0.0F) {
++	 struct m68k_lt lt;
++
++	 COPY_3V( lt.vp, light->_VP_inf_norm );
++	 COPY_3V( lt.diff, light->_MatDiffuse[0] );
++	 COPY_3V( lt.base, base );
++	 lt.basecol = (GLuint)bc[0] << 24 | bc[1] << 16 | bc[2] << 8 | bc[3];
++	 lt.alpha = bc[3];
++	 m68k_light_p( (const float (*)[3])n, c->nn, &lt, c->col );
++	 return;
++      }
++      for (i = 0; i < c->nn; i++) {
++	 const GLfloat n_dot_VP = DOT3( n[i], light->_VP_inf_norm );
++
++	 if (n_dot_VP < 0.0F)
++	    COPY_CHAN4( col[i], bc );
++	 else {
++	    const GLfloat n_dot_h = DOT3( n[i], light->_h_inf_norm );
++	    GLfloat sum[3];
++
++	    COPY_3V( sum, base );
++	    ACC_SCALE_SCALAR_3V( sum, n_dot_VP, light->_MatDiffuse[0] );
++	    if (n_dot_h > 0.0F) {
++	       GLfloat spec;
++
++	       GET_SHINE_TAB_ENTRY( ctx->_ShineTable[0], n_dot_h, spec );
++	       ACC_SCALE_SCALAR_3V( sum, spec, light->_MatSpecular[0] );
++	    }
++	    UNCLAMPED_FLOAT_TO_RGB_CHAN( col[i], sum );
++	    col[i][3] = bc[3];
++	 }
++      }
++   }
++}
++
++/* GL_TRUE when the driver drew the cassette */
++static GLboolean fast_replay( GLcontext *ctx, TNLvertexcassette *node )
++{
++   TNLcontext *tnl = TNL_CONTEXT(ctx);
++   struct m68k_cas *c = node->Fast;
++
++   if (!c || !tnl->Driver.Render.ReplayFans)
++      return GL_FALSE;
++   if (!c->cont)
++      tnl->FastChain = !node->SavedBeginState && fast_ok( ctx, c->head );
++   if (!tnl->FastChain)
++      return GL_FALSE;
++   if (node->OrFlag & VERT_BIT_MATERIAL) {
++      _mesa_update_material( ctx, node->IM->Material[node->LastMaterial],
++			     node->MaterialOrMask );
++      tnl->Driver.NotifyMaterialChange( ctx );
++   }
++   if (c->nrun) {
++      fast_light( ctx, c );
++      tnl->Driver.Render.ReplayFans( ctx, c );
++   }
++   if (c->has_last)
++      COPY_3V( ctx->Current.Attrib[VERT_ATTRIB_NORMAL], c->last );
++   ctx->Driver.CurrentExecPrimitive = c->open ? c->open - 1 :
++      PRIM_OUTSIDE_BEGIN_END;
++   if (!c->open)
++      tnl->FastChain = GL_FALSE;
++   return GL_TRUE;
++}
++#endif
++
+ 
+ static void build_normal_lengths( struct immediate *IM )
+ {
+@@ -170,6 +609,9 @@
+    if (tnl->CalcDListNormalLengths) {
+       build_normal_lengths( im );
+    }
++#ifdef __m68k__
++   fast_compile( ctx, im, node );
++#endif
+ 
+    if (ctx->ExecuteFlag) {
+       execute_compiled_cassette( ctx, (void *)node );
+@@ -352,6 +794,10 @@
+       if (tnl->pipeline.build_state_changes)
+ 	 _tnl_validate_pipeline( ctx );
+ 
++#ifdef __m68k__
++      if (fast_replay( ctx, node ))
++	 goto done;
++#endif
+       _tnl_fixup_compiled_cassette( ctx, IM );
+       fixup_compiled_primitives( ctx, IM );
+ 
+@@ -378,6 +824,9 @@
+ 
+       restore_compiled_primitives( ctx, IM );
+    }
++#ifdef __m68k__
++done:
++#endif
+ 
+    if (ctx->Driver.CurrentExecPrimitive == GL_POLYGON+1)
+       tnl->ReplayHardBeginEnd = 0;
+@@ -388,6 +837,10 @@
+ {
+    TNLvertexcassette *node = (TNLvertexcassette *)data;
+ 
++#ifdef __m68k__
++   if (node->Fast)
++      _mesa_free( node->Fast );
++#endif
+    if ( --node->IM->ref_count == 0 )
+       _tnl_free_immediate( ctx, node->IM );
+ }
+@@ -449,6 +902,9 @@
+ 
+    ctx->swtnl_im = 0;
+    IM->ref_count--;
++#ifdef __m68k__
++   fast_reset( ctx );
++#endif
+ 
+    /* outside begin/end, even in COMPILE_AND_EXEC,
+     * so no vertices to copy, right?
+@@ -487,6 +943,9 @@
+     */
+    IM->BeginState = VERT_BEGIN_0;
+    ctx->Driver.CurrentSavePrimitive = PRIM_UNKNOWN;
++#ifdef __m68k__
++   fast_reset( ctx );
++#endif
+ }
+ 
+ 

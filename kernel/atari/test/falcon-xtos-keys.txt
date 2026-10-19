@@ -17,7 +17,7 @@ event keyup 0x1d
 sleep 5
 sleep 3
 debug screenshot OUT/2-console.png
-type starttos -P 2> /tmp/st.log; echo starttos-rc=$?\n
+type starttos 2> /tmp/st.log; echo starttos-rc=$?\n
 sleep 150
 debug screenshot OUT/3-tos.png
 event keydown 0x1d

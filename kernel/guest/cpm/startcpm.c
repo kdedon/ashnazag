@@ -1,8 +1,9 @@
 /*
  * startcpm -- run Concurrent CP/M-68K as Unix processes.
  *
- *	startcpm [-e env] [-m MB] [-d X=path] ...
+ *	startcpm [-e env [-b base]] [-d env] [-m MB] [-D X=path] ...
  *	startcpm [-e env] -c N		join the running environment as console N
+ *	startcpm -d env | -l		set the default environment, list them
  *
  * Memory is mapped at 0 (16 MB by default) and the process becomes a
  * lone guest: CP/M runs natively, its supervisor state virtual, its
@@ -12,12 +13,13 @@
  * share memory from XPRIV up, so a pointer means the same in each.
  * Console 0 is the caller's terminal; consoles 1-3 are sessions that
  * wait for "startcpm -c N" to join from another terminal.  Drives:
- *	A:	~/CPM (with -e, ~/CPM/env), user areas as subdirectories
+ *	A:	~/CPM (environment ccpm, else ~/CPM/env; -b base starts a new one as
+ *		a copy of base's), user areas as subdirectories
  *	H:	home
  *	M:	~/.cpm/tmp (with -e, ~/.cpm/tmp/env), private, emptied at start
  *	O:	/
  *	P:	DRI's programs, read-only; programs not found elsewhere run from here
- * Lines X=path in ~/CPM/DRIVES, then -d, add or replace drives; MOUNT
+ * Lines X=path in ~/CPM/DRIVES, then -D, add or replace drives; MOUNT
  * (on P:) changes them in a session.  EXIT ends the session.
  */
 
@@ -349,7 +351,7 @@ drives(env, nd, dv)
 	}
 	for (i = 0; i < nd; i++)
 		if (setmap(dv[i]) < 0)
-			fprintf(stderr, "startcpm: -d %s: not X=path\n", dv[i]);
+			fprintf(stderr, "startcpm: -D %s: not X=path\n", dv[i]);
 }
 
 /* the CCP gives the tail in upper case: each missing name is matched ignoring case */
@@ -1008,34 +1010,66 @@ main(argc, argv)
 	struct passwd *pw;
 	struct rlimit rl;
 	unsigned long lo;
-	char *env = 0, *h, *dv[NDRV];
-	int c, fd, nd = 0, con = 0, mb = MEMMB;
+	static char *envs[] = { "ccpm", 0 };
+	char *env = 0, *def = 0, *base = 0, *h, *dv[NDRV], meta[1100];
+	struct stat sb;
+	int c, fd, nd = 0, con = 0, mb = MEMMB, list = 0;
 
-	while ((c = getopt(argc, argv, "e:d:m:c:")) != -1)
+	while ((c = getopt(argc, argv, "e:b:d:D:m:c:l")) != -1)
 		if (c == 'e')
 			env = optarg;
-		else if (c == 'd' && nd < NDRV)
+		else if (c == 'b')
+			base = optarg;
+		else if (c == 'd')
+			def = optarg;
+		else if (c == 'l')
+			list = 1;
+		else if (c == 'D' && nd < NDRV)
 			dv[nd++] = optarg;
 		else if (c == 'm' && (mb = atoi(optarg)) >= 2 && mb <= 256)
 			;
 		else if (c == 'c' && (con = atoi(optarg)) > 0)
 			;
 		else {
-			fprintf(stderr, "usage: startcpm [-e env] [-m MB] [-d X=path] ...\n"
-			    "       startcpm [-e env] -c console\n");
+			fprintf(stderr, "usage: startcpm [-e env [-b base]] [-d env] [-m MB] [-D X=path] ...\n"
+			    "       startcpm [-e env] -c console\n"
+			    "       startcpm -d env | -l\n");
 			return 2;
 		}
 	h = getenv("HOME");
 	if ((h == 0 || *h == 0) && (pw = getpwuid(getuid())) != 0)
 		h = pw->pw_dir;
-	if (envroot("cpm", env, h, root, sizeof root) < 0) {
-		fprintf(stderr, "startcpm: %s: not an environment name\n", env ? env : "~/CPM");
+	if (list) {
+		envlist("cpm", h, "ccpm", envs);
+		return 0;
+	}
+	if (def && envsetdefault("startcpm", "cpm", h, def) < 0)
+		return 1;
+	if (def && !env)
+		return 0;
+	if (base && (env == 0 || con)) {
+		fprintf(stderr, "startcpm: -b goes with -e\n");
+		return 2;
+	}
+	env = envchoose("cpm", env, h, "ccpm");
+	if (envhome("cpm", env, "ccpm", h, root, sizeof root) < 0) {
+		fprintf(stderr, "startcpm: %s: not an environment name\n", env);
 		return 1;
 	}
+	if (strcmp(env, "ccpm") == 0)
+		env = 0;
 	home = h;
 	if (con) {
 		tmppath(env, tmpdir);
 		return join(con);
+	}
+	if (base) {
+		if (env == 0 || (envmeta("cpm", root, meta, sizeof meta) == 0 && stat(meta, &sb) == 0)) {
+			fprintf(stderr, "startcpm: %s exists; -b makes a new environment\n", env);
+			return 1;
+		}
+		if (envclone("startcpm", "cpm", env, base, h, "ccpm", root) < 0)
+			return 1;
 	}
 	mkroot();
 	if (envlock("startcpm", "cpm", root) == -1)

@@ -628,6 +628,11 @@ hasstrings(w)
 	return !(w->style & (LBS_OWNERDRAWFIXED | LBS_OWNERDRAWVARIABLE)) || (w->style & LBS_HASSTRINGS);
 }
 
+/* a combo box's list is drawn by the combo box's owner, as the combo box */
+#define	ODTYPE(w, l)	((l)->combo ? 3 : 2)		/* ODT_COMBOBOX, ODT_LISTBOX */
+#define	ODID(w, l)	((l)->combo ? (l)->owner->id : (w)->id)
+#define	ODOWNER(w, l)	((l)->combo ? (l)->owner->parent : (w)->parent)
+
 static int
 itemh(w)
 	struct wnd *w;
@@ -643,13 +648,13 @@ itemh(w)
 		/* WM_MEASUREITEM: CtlType, CtlID, itemID, itemWidth, itemHeight, itemData */
 		u32 p = ualloc(16), q = ulin(p);
 
-		PW(q, 2);		/* ODT_LISTBOX */
-		PW(q + 2, w->id);
+		PW(q, ODTYPE(w, l));
+		PW(q + 2, ODID(w, l));
 		PW(q + 4, 0);
 		PW(q + 6, w->cr.r - w->cr.l);
 		PW(q + 8, l->ih);
 		PL(q + 10, 0);
-		wnd_send(l->combo ? l->owner->parent : w->parent, WM_MEASUREITEM, w->id, p);
+		wnd_send(ODOWNER(w, l), WM_MEASUREITEM, ODID(w, l), p);
 		if (GW(q + 8))
 			l->ih = GW(q + 8);
 		ufree(p);
@@ -716,8 +721,8 @@ lb_drawitem(w, dc, i, r)
 		d_fill(dc, r, br ? br : stockobj[WHITE_BRUSH], 0xf0);
 		p = ualloc(26);
 		q = ulin(p);
-		PW(q, 2);
-		PW(q + 2, w->id);
+		PW(q, ODTYPE(w, l));
+		PW(q + 2, ODID(w, l));
 		PW(q + 4, i);
 		PW(q + 6, 1);
 		PW(q + 8, (sel ? 1 : 0) | (i == l->cur && wnd_focus == w ? 0x10 : 0));
@@ -727,7 +732,7 @@ lb_drawitem(w, dc, i, r)
 		t.l -= dc->ox; t.r -= dc->ox; t.t -= dc->oy; t.b -= dc->oy;
 		r_put(q + 14, &t);
 		PL(q + 22, i >= 0 && i < l->n ? l->it[i].data : 0);
-		wnd_send(l->combo ? l->owner->parent : w->parent, WM_DRAWITEM, w->id, p);
+		wnd_send(ODOWNER(w, l), WM_DRAWITEM, ODID(w, l), p);
 		ufree(p);
 		return;
 	}
@@ -809,14 +814,14 @@ lb_insert(w, pos, p)
 
 			while (lo < hi) {
 				mid = (lo + hi) / 2;
-				PW(q, 2);		/* ODT_LISTBOX */
-				PW(q + 2, w->id);
-				PW(q + 4, w->h);
+				PW(q, ODTYPE(w, l));
+				PW(q + 2, ODID(w, l));
+				PW(q + 4, l->combo ? l->owner->h : w->h);
 				PW(q + 6, mid);
 				PL(q + 8, l->it[mid].data);
 				PW(q + 12, (u16)-1);
 				PL(q + 14, p);
-				if ((short)wnd_send(l->combo ? l->owner->parent : w->parent, WM_COMPAREITEM, w->id, cp) <= 0)
+				if ((short)wnd_send(ODOWNER(w, l), WM_COMPAREITEM, ODID(w, l), cp) <= 0)
 					lo = mid + 1;
 				else
 					hi = mid;
@@ -850,12 +855,12 @@ lb_delete(w, i)
 	if (w->style & (LBS_OWNERDRAWFIXED | LBS_OWNERDRAWVARIABLE)) {
 		u32 p = ualloc(12), q = ulin(p);
 
-		PW(q, 2);
-		PW(q + 2, w->id);
+		PW(q, ODTYPE(w, l));
+		PW(q + 2, ODID(w, l));
 		PW(q + 4, i);
-		PW(q + 6, w->h);
+		PW(q + 6, l->combo ? l->owner->h : w->h);
 		PL(q + 8, l->it[i].data);
-		wnd_send(w->parent, WM_DELETEITEM, w->id, p);
+		wnd_send(ODOWNER(w, l), WM_DELETEITEM, ODID(w, l), p);
 		ufree(p);
 	}
 	if (l->it[i].s)
@@ -1075,11 +1080,13 @@ listbox_proc(a)
 			u32 cs = lin(FPSEL(a[3]), FPOFF(a[3]));
 
 			/* a combo box's own list says so in its create data */
+			if (cs)
+				cs = lin(FPSEL(GL(cs)), FPOFF(GL(cs)));
 			if (cs && GL(cs) == 0x434f4d42) {
-				l->combo = 1;
 				l->owner = wnd_get(GW(cs + 8));
 				if (!l->owner && w->owner)
 					l->owner = w->owner;
+				l->combo = l->owner != 0;
 			}
 			l->askh = w->wr.b - w->wr.t;
 			lb_fit(w);

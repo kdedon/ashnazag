@@ -275,7 +275,15 @@ dflt:
 			out[1] = 0;
 		return 0;
 	}
-	strncpy(out, def ? def : "", size - 1);
+	if (def != out) {
+		long n = def ? strlen(def) : 0;
+
+		if (n > size - 1)
+			n = size - 1;
+		if (n > 0)
+			memmove(out, def, n);
+		out[n] = 0;
+	}
 	out[size - 1] = 0;
 	return strlen(out);
 }

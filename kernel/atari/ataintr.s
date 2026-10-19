@@ -88,13 +88,13 @@ ata_aciaint:
 	moveb	&0xbf,MFP+ISRB		| end of interrupt: GPIP4
 	jmp	intret
 
-| MFP GPIP7: the DMA sound end, enabled only while a guest plays in front.
+| MFP GPIP7: the DMA sound end.
 	.globl	ata_sndint
 ata_sndint:
 	moveml	&0xfffe,%sp@-
 	movel	sup_cacr,%d0
 	movec	%d0,%cacr
-	jsr	ds_sndintr
+	jsr	ata_sndintr
 	moveb	&0x7f,MFP+ISRA		| end of interrupt: GPIP7
 	jmp	intret
 
@@ -164,6 +164,21 @@ ata_spltty:
 	oriw	&0x0600,%d1
 	movew	%d1,%sr
 Lsplok:
+	rts
+
+| int ata_splvm(): at least IPL 5 (masks the disk and video, not the MFP),
+| never lowers; returns the old SR for ata_splx.
+	.globl	ata_splvm
+ata_splvm:
+	movew	%sr,%d0
+	movew	%d0,%d1
+	andiw	&0x0700,%d1
+	cmpiw	&0x0500,%d1
+	bge.s	Lsplok
+	movew	%d0,%d1
+	andiw	&0xf8ff,%d1
+	oriw	&0x0500,%d1
+	movew	%d1,%sr
 	rts
 
 	.globl	ata_splx

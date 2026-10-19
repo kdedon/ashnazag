@@ -1,0 +1,261 @@
+diff -ruN a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_lock.c b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_lock.c
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_lock.c	2026-10-18 20:23:37.710505453 -0500
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_lock.c	2026-10-18 20:23:51.971508802 -0500
+@@ -75,6 +75,10 @@
+         free( state );
+     }
+ 
++    if ( saPriv->textureOffset != fxMesa->fxScreen->textureNow ) {
++        tdfxTMMoved_NoLock( fxMesa, saPriv->textureOffset );
++    }
++
+     if ( saPriv->texOwner != fxMesa->hHWContext ) {
+         tdfxTMRestoreTextures_NoLock( fxMesa );
+         saPriv->texOwner = fxMesa->hHWContext;
+diff -ruN a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_lock.h b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_lock.h
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_lock.h	2026-10-19 00:20:55.249495653 -0500
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_lock.h	2026-10-19 00:21:05.654503955 -0500
+@@ -79,6 +79,7 @@
+ 
+ 
+ extern void tdfxGetLock( tdfxContextPtr fxMesa );
++extern void tdfxTMMoved_NoLock( tdfxContextPtr fxMesa, int offset );
+ 
+ 
+ /* !!! We may want to separate locks from locks with validation.
+@@ -101,6 +102,9 @@
+       if ( __ret ) {							\
+ 	 tdfxGetLock( fxMesa );						\
+       }									\
++      /* a lock taken outside tdfxGetLock may have moved it */		\
++      else if ( fxMesa->sarea->textureOffset != fxMesa->fxScreen->textureNow ) \
++	 tdfxTMMoved_NoLock( fxMesa, fxMesa->sarea->textureOffset );	\
+       DEBUG_LOCK();							\
+    } while (0)
+ 
+diff -ruN a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_screen.c b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_screen.c
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_screen.c	2026-10-18 20:23:37.718505455 -0500
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_screen.c	2026-10-18 20:23:51.970508802 -0500
+@@ -127,6 +127,7 @@
+    fxScreen->depthOffset	= sa->depthOffset;
+    fxScreen->textureOffset	= sa->textureOffset;
+    fxScreen->textureSize	= sa->textureSize;
++   fxScreen->textureNow		= sa->textureOffset;
+    fxScreen->sarea_priv_offset	= sizeof(XF86DRISAREARec);
+ 
+    /* the default 16 MB of mappings a process may have does not fit VRAM */
+diff -ruN a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_screen.h b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_screen.h
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_screen.h	2026-10-18 20:23:37.720505456 -0500
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_screen.h	2026-10-18 20:23:51.970508802 -0500
+@@ -66,6 +66,7 @@
+    int depthOffset;
+    int textureOffset;
+    int textureSize;
++   int textureNow;	/* where the kernel last put the texture memory */
+ 
+    __DRIscreenPrivate *driScrnPriv;
+    unsigned int sarea_priv_offset;
+diff -ruN a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_texman.c b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_texman.c
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_texman.c	2026-10-18 20:23:37.713505454 -0500
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_texman.c	2026-10-19 00:20:55.245495650 -0500
+@@ -304,6 +304,9 @@
+ 
+         shared->tmPool = NULL;
+         fxMesa->glCtx->Shared->DriverData = shared;
++        /* the kernel may have moved texture memory since Glide started */
++        if (fxMesa->fxScreen->textureNow != fxMesa->fxScreen->textureOffset)
++            tdfxTMMoved_NoLock(fxMesa, fxMesa->fxScreen->textureNow);
+         /*printf("Texture memory init UMA: %d\n", shared->umaTexMemory);*/
+     }
+ }
+@@ -976,3 +979,50 @@
+    VerifyFreeList(fxMesa, 1);
+    */
+ }
++
++
++/*
++ * The kernel moved the start of texture memory; its end stays.  Glide
++ * addresses stay relative to where it started, TMU1's half above TMU0's,
++ * but both reach all of it: the memory left is split between them anew.
++ * Every texture goes out and loads again when next used.
++ */
++void tdfxTMMoved_NoLock( tdfxContextPtr fxMesa, int offset )
++{
++   struct gl_shared_state *mesaShared = fxMesa->glCtx->Shared;
++   struct tdfxSharedState *shared = (struct tdfxSharedState *) mesaShared->DriverData;
++   struct gl_texture_object *tObj;
++   tdfxMemRange *r, *next;
++   FxI32 skip = offset - fxMesa->fxScreen->textureOffset;
++   FxU32 start[2], end[2], half;
++   int tmu, n;
++
++   fxMesa->fxScreen->textureNow = offset;
++   if ( !shared )
++      return;
++   for ( tObj = mesaShared->TexObjectList ; tObj ; tObj = tObj->Next )
++      tdfxTMMoveOutTM_NoLock( fxMesa, tObj );
++   n = shared->umaTexMemory || !fxMesa->haveTwoTMUs ? 1 : 2;
++   end[0] = fxMesa->Glide.grTexMaxAddress( 0 );
++   start[0] = skip <= 0 ? 0 : (FxU32) skip;
++   if ( n == 2 ) {
++      half = end[0] + 0x10;	/* TMU0's size: its top address plus the alignment */
++      if ( start[0] > 2 * half - 0x2000 )
++         start[0] = 2 * half - 0x2000;
++      end[0] = half + (start[0] / 2 & ~0xfffU);
++      start[1] = end[0] - half;
++      end[1] = half - 0x10;
++   }
++   else if ( start[0] > end[0] )
++      start[0] = end[0];
++   for ( tmu = 0 ; tmu < n ; tmu++ ) {
++      for ( r = shared->tmFree[tmu] ; r ; r = next ) {
++         next = r->next;
++         DELETE_RANGE_NODE( shared, r );
++      }
++      shared->tmFree[tmu] = NewRangeNode( fxMesa, start[tmu], end[tmu] );
++      shared->totalTexMem[tmu] = shared->freeTexMem[tmu] = end[tmu] - start[tmu];
++   }
++   fxMesa->new_state |= TDFX_NEW_TEXTURE;
++   fxMesa->glCtx->NewState |= _NEW_TEXTURE;
++}
+diff -ruN a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_texman.h b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_texman.h
+--- a/xc/lib/GL/mesa/src/drv/tdfx/tdfx_texman.h	2026-10-18 20:23:37.715505455 -0500
++++ b/xc/lib/GL/mesa/src/drv/tdfx/tdfx_texman.h	2026-10-18 20:23:51.971508802 -0500
+@@ -65,6 +65,8 @@
+ 
+ extern void tdfxTMRestoreTextures_NoLock( tdfxContextPtr fxMesa );
+ 
++extern void tdfxTMMoved_NoLock( tdfxContextPtr fxMesa, int offset );
++
+ 
+ #define tdfxTMMoveInTM( fxMesa, tObj, targetTMU )		\
+    do {								\
+diff -ruN a/xc/lib/GL/mesa/src/drv/r200/r200_context.c b/xc/lib/GL/mesa/src/drv/r200/r200_context.c
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_context.c	2026-10-18 20:24:57.775524738 -0500
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_context.c	2026-10-18 20:25:15.637529192 -0500
+@@ -340,6 +340,7 @@
+       rmesa->texture.age[i] = -1;
+    }
+    rmesa->texture.numHeaps = r200Screen->numTexHeaps;
++   rmesa->texture.cardOffset = r200Screen->texOffset[RADEON_CARD_HEAP];
+    make_empty_list( &rmesa->texture.swapped );
+ 
+    rmesa->swtcl.RenderIndex = ~0;
+diff -ruN a/xc/lib/GL/mesa/src/drv/r200/r200_context.h b/xc/lib/GL/mesa/src/drv/r200/r200_context.h
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_context.h	2026-10-18 20:24:57.773524737 -0500
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_context.h	2026-10-18 20:25:15.637529192 -0500
+@@ -545,6 +545,7 @@
+ 
+    memHeap_t *heap[R200_NR_TEX_HEAPS];
+    GLint age[R200_NR_TEX_HEAPS];
++   GLint cardOffset;	/* the card heap's start in VRAM */
+ 
+    GLint numHeaps;
+ };
+diff -ruN a/xc/lib/GL/mesa/src/drv/r200/r200_lock.c b/xc/lib/GL/mesa/src/drv/r200/r200_lock.c
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_lock.c	2026-10-18 20:24:57.765524735 -0500
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_lock.c	2026-10-19 00:21:05.654503955 -0500
+@@ -37,6 +37,12 @@
+ #include "r200_tex.h"
+ #include "r200_state.h"
+ #include "r200_ioctl.h"
++#ifdef __AMIX__
++#include "sarea.h"
++#define drm_sarea_t		XF86DRISAREARec
++#define drm_radeon_sarea_t	RADEONSAREAPriv
++#include "radeon_amix.h"
++#endif
+ 
+ #if DEBUG_LOCKING
+ char *prevLockFile = NULL;
+@@ -69,6 +75,18 @@
+ 
+ 
+ 
++#ifdef __AMIX__
++/* under the lock: follow a move of the card's texture memory */
++void r200TexCheck( r200ContextPtr rmesa )
++{
++   radeon_amix_layout_t *l = (radeon_amix_layout_t *)
++      ((char *) rmesa->dri.screen->pSAREA + RADEON_AMIX_LAYOUT);
++
++   if ( l->textureOffset != rmesa->texture.cardOffset )
++      r200TexMoved( rmesa, l->textureOffset, l->textureSize );
++}
++#endif
++
+ /* Update the hardware state.  This is called if another context has
+  * grabbed the hardware lock, which includes the X server.  This
+  * function also updates the driver's window state after the X server
+@@ -85,6 +103,8 @@
+ 
+    drmGetLock( rmesa->dri.fd, rmesa->dri.hwContext, flags );
+ 
++   r200TexCheck( rmesa );
++
+    /* The window might have moved, so we might need to get new clip
+     * rects.
+     *
+diff -ruN a/xc/lib/GL/mesa/src/drv/r200/r200_lock.h b/xc/lib/GL/mesa/src/drv/r200/r200_lock.h
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_lock.h	2026-10-19 00:20:55.252495656 -0500
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_lock.h	2026-10-19 00:21:05.654503955 -0500
+@@ -38,6 +38,11 @@
+ #ifdef GLX_DIRECT_RENDERING
+ 
+ extern void r200GetLock( r200ContextPtr rmesa, GLuint flags );
++#ifdef __AMIX__
++extern void r200TexCheck( r200ContextPtr rmesa );
++#else
++#define r200TexCheck( rmesa )
++#endif
+ 
+ /* Turn DEBUG_LOCKING on to find locking conflicts.
+  */
+@@ -94,6 +99,8 @@
+ 	       (DRM_LOCK_HELD | rmesa->dri.hwContext), __ret );	\
+       if ( __ret )						\
+ 	 r200GetLock( rmesa, 0 );				\
++      else							\
++	 r200TexCheck( rmesa );					\
+       DEBUG_LOCK();						\
+    } while (0)
+ 
+diff -ruN a/xc/lib/GL/mesa/src/drv/r200/r200_tex.h b/xc/lib/GL/mesa/src/drv/r200/r200_tex.h
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_tex.h	2026-10-18 20:24:57.770524737 -0500
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_tex.h	2026-10-18 20:25:15.637529192 -0500
+@@ -42,6 +42,7 @@
+ extern int r200UploadTexImages( r200ContextPtr rmesa, r200TexObjPtr t );
+ 
+ extern void r200AgeTextures( r200ContextPtr rmesa, int heap );
++extern void r200TexMoved( r200ContextPtr rmesa, int offset, int size );
+ extern void r200DestroyTexObj( r200ContextPtr rmesa, r200TexObjPtr t );
+ extern void r200SwapOutTexObj( r200ContextPtr rmesa, r200TexObjPtr t );
+ 
+diff -ruN a/xc/lib/GL/mesa/src/drv/r200/r200_texmem.c b/xc/lib/GL/mesa/src/drv/r200/r200_texmem.c
+--- a/xc/lib/GL/mesa/src/drv/r200/r200_texmem.c	2026-10-18 20:24:57.768524736 -0500
++++ b/xc/lib/GL/mesa/src/drv/r200/r200_texmem.c	2026-10-18 20:25:15.639529193 -0500
+@@ -313,6 +313,23 @@
+ }
+ 
+ 
++/* The kernel moved the card heap: every texture there out, the heap afresh. */
++void r200TexMoved( r200ContextPtr rmesa, int offset, int size )
++{
++   r200ScreenPtr s = rmesa->r200Screen;
++   int h = RADEON_CARD_HEAP;
++
++   r200TexturesGone( rmesa, h, 0, s->texSize[h], 0 );
++   mmDestroy( rmesa->texture.heap[h] );
++   s->texOffset[h] = offset;
++   s->texSize[h] = size;
++   rmesa->texture.heap[h] = mmInit( 0, size );
++   rmesa->texture.cardOffset = offset;
++   r200ResetGlobalLRU( rmesa, h );
++   rmesa->texture.age[h] = rmesa->sarea->texAge[h];
++}
++
++
+ /* ------------------------------------------------------------
+  * Texture image conversions
+  */

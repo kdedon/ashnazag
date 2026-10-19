@@ -245,7 +245,7 @@ poke(a, v)
 
 #define	PVF(f)	(TOSPV + (long)&((struct tospv *)0)->f)
 
-static struct tosstat st;
+static struct tosstat st, boot;
 
 static void
 stat1(tag)
@@ -262,11 +262,11 @@ stat1(tag)
 	for (i = 0; i < 48; i++)
 		if (st.ts_refl[i])
 			sprintf(b + strlen(b), " %d:%lu", i, st.ts_refl[i]);
-	t_info(tag, "pc %lx timerc %lu acia %lu vbl %lu io %lu absent %lu berr %lu priv %lu mmu %lu"
-	    " kb %lu/%lu cmd %lu sys %lu last %lx@%lx hz200 %ld refl%s",
-	    st.ts_lastpc, st.ts_ints[5], st.ts_ints[6], st.ts_vbl, st.ts_io, st.ts_absent,
-	    st.ts_berr, st.ts_priv, st.ts_mmu, st.ts_kbrd, st.ts_kbin, st.ts_kbcmd, st.ts_sys,
-	    st.ts_lastio, st.ts_lastiopc, peek((long)HZ200, 4), b);
+	t_info(tag, "pc %lx timerc %lu vbl %lu absent %lu berr %lu priv %lu mmu %lu"
+	    " sys %lu iow %lu at %lx stop %lu hz200 %ld refl%s",
+	    st.ts_lastpc, st.ts_ints[5], st.ts_vbl, st.ts_absent,
+	    st.ts_berr, st.ts_priv, st.ts_mmu, st.ts_sys, st.ts_iow, st.ts_iowpc, st.ts_stop,
+	    peek((long)HZ200, 4), b);
 }
 
 /* what starttos processes are left, and where they wait */
@@ -704,7 +704,7 @@ static void
 background()
 {
 	long kbs = peek(0xe00024L, 4), h0, h1, sh;
-	unsigned long v0, v1, k0;
+	unsigned long v0, v1;
 
 	host("down shift");
 	nap(300);
@@ -714,7 +714,6 @@ background()
 	host("up shift");
 	ioctl(tfd, TOSIOC_STAT, &st);
 	v0 = st.ts_vbl;
-	k0 = st.ts_kbin;
 	h0 = peek(PVF(pv_head), 4);
 	host("move 30 30");
 	nap(1000);
@@ -722,8 +721,7 @@ background()
 	v1 = st.ts_vbl;
 	h1 = peek(PVF(pv_head), 4);
 	t_check(N("background_sleeps"), v1 - v0 <= 2, "%lu VBLs in 1 s", v1 - v0);
-	t_check(N("background_no_input"), h1 == h0 && st.ts_kbin == k0,
-	    "events %ld -> %ld, IKBD bytes %lu -> %lu", h0, h1, k0, st.ts_kbin);
+	t_check(N("background_no_input"), h1 == h0, "events %ld -> %ld", h0, h1);
 	host("key ctrl+alt+meta_l+1");
 	nap(1000);
 	t_check(N("hotkey_tos"), front() == sess, "front %ld, TOS %ld", front(), sess);
@@ -995,16 +993,6 @@ solotraps()
 	}
 }
 
-/* the host's TOS ROM, else ENODEV */
-static void
-maprom()
-{
-	int r = ioctl(tfd, TOSIOC_MAPROM, 0), e = errno;
-
-	t_check(N("maprom"), r < 0 ? e == ENODEV : r == 0x80000 || r == 0x100000,
-	    "TOSIOC_MAPROM %d errno %d", r, e);
-}
-
 static void
 timers()
 {
@@ -1029,7 +1017,7 @@ entries()
 	int i;
 
 	ioctl(tfd, TOSIOC_STAT, &st);
-	n = st.ts_io + st.ts_priv + st.ts_mmu + st.ts_sys + st.ts_vbl;
+	n = st.ts_priv + st.ts_mmu + st.ts_sys + st.ts_vbl;
 	if ((f = t_kmem("guest_nftrap")) > 0)		/* the gates' fast paths */
 		n += f;
 	if ((f = t_kmem("guest_nfpriv")) > 0)
@@ -1195,41 +1183,43 @@ idle()
 }
 
 /*
- * A left click on empty desktop while the guest is stopped and the IKBD
- * FIFO full: it still arrives.  Left, because TOS 3.06 keeps a right
- * click nobody asked for and lets it eat the next left click.
+ * A left click on empty desktop while the VBL queue is off and the
+ * cartridge's queue full: it still arrives.  Left, because TOS 3.06
+ * keeps a right click nobody asked for and lets it eat the next one.
  */
 static void
 fullfifo()
 {
-	struct tosinput in;
-	unsigned long r0;
-	int i;
+	long h, t, b0, p0, p1, i, xy, vs, n = 0;
 
-	memset((char *)&in, 0, sizeof in);
 	host("move -400 0");
 	host("move 0 -300");
 	host("move 300 250");
 	nap(500);
-	ioctl(tfd, TOSIOC_STAT, &st);
-	r0 = st.ts_kbrd;
-	kill(tpid, SIGSTOP);
+	if ((vs = peek(0x452L, 4)) < 0 || !poke(0x452L, vs & 0xffff))
+		return;
 	nap(300);
-	for (i = 0; i < sizeof in.ti_b; i++)
-		in.ti_b[i] = 0xb9;		/* Space released */
-	in.ti_n = sizeof in.ti_b;
-	for (i = 0; i < 5; i++)
-		ioctl(tfd, TOSIOC_INPUT, &in);
-	in.ti_n = 0;
-	in.ti_btn = 2;
-	ioctl(tfd, TOSIOC_INPUT, &in);
-	in.ti_btn = 0;
-	ioctl(tfd, TOSIOC_INPUT, &in);
-	kill(tpid, SIGCONT);
+	h = peek(PVF(pv_head), 4);
+	t = peek(PVF(pv_tail), 4);
+	p0 = peek(PVF(pv_npkt), 4);
+	b0 = peek(PVF(pv_nkey), 4);
+	xy = peek(PVF(pv_xy), 4);
+	for (i = h - t; i < PV_NEV; i++, h++, n++)	/* Space released */
+		if (!poke(PVF(pv_ev[0]) + 8 * (h % PV_NEV), (long)PE_KEY << 24 | 0xb9L << 16) ||
+		    !poke(PVF(pv_ev[0]) + 8 * (h % PV_NEV) + 4, xy))
+			break;
+	poke(PVF(pv_head), h);
+	host("button 1 0");
+	nap(300);		/* the host mouse merges a press and release in one poll */
+	host("button 0 0");
+	nap(300);
+	poke(0x452L, (vs & 0xffff0000L) | (peek(0x454L, 2) & 0xffff));
 	nap(2000);
-	ioctl(tfd, TOSIOC_STAT, &st);
-	t_check(N("click_full_fifo"), st.ts_kbrd - r0 == 256 + 6,
-	    "%lu IKBD bytes read, 262 expected", st.ts_kbrd - r0);
+	p1 = peek(PVF(pv_npkt), 4);
+	t_check(N("click_full_fifo"), peek(PVF(pv_tail), 4) == peek(PVF(pv_head), 4) &&
+	    peek(PVF(pv_nkey), 4) - b0 >= n && n > 0 && p1 - p0 >= 2,
+	    "keys %ld, mouse packets %ld, %ld events left", peek(PVF(pv_nkey), 4) - b0, p1 - p0,
+	    peek(PVF(pv_head), 4) - peek(PVF(pv_tail), 4));
 }
 
 /* kbshift: bit 1 is the left Shift key */
@@ -1237,14 +1227,11 @@ static void
 keys()
 {
 	long kbs = peek(0xe00024L, 4), a, b, c, k0 = peek(PVF(pv_nkey), 4);
-	unsigned long n0;
 
 	if (kbs <= 0 || kbs >= 0x100000) {
 		t_skip(N("kbshift"), "no kbshift address in the ROM header");
 		return;
 	}
-	ioctl(tfd, TOSIOC_STAT, &st);
-	n0 = st.ts_kbrd;
 	a = peek(kbs, 1);
 	host("down shift");
 	nap(500);
@@ -1254,14 +1241,9 @@ keys()
 	c = peek(kbs, 1);
 	t_check(N("kbshift"), a >= 0 && !(a & 2) && (b & 2) && !(c & 2),
 	    "kbshift %lx, with Shift down %lx, up %lx", a, b, c);
-	ioctl(tfd, TOSIOC_STAT, &st);
-	if (k0 >= 0 && (peek(PVF(pv_on), 4) & PV_KEYS))
-		t_check(N("keys_direct"), peek(PVF(pv_nkey), 4) >= k0 + 2 && st.ts_kbrd == n0,
-		    "keys to kbdvec %ld -> %ld, IKBD bytes %lu -> %lu", k0, peek(PVF(pv_nkey), 4),
-		    n0, st.ts_kbrd);
-	else
-		t_check(N("ikbd_read"), st.ts_kbrd >= n0 + 2, "IKBD bytes read %lu -> %lu", n0,
-		    st.ts_kbrd);
+	t_check(N("keys_direct"), k0 >= 0 && (peek(PVF(pv_on), 4) & PV_KEYS) &&
+	    peek(PVF(pv_nkey), 4) >= k0 + 2, "pv_on %ld, keys to kbdvec %ld -> %ld",
+	    peek(PVF(pv_on), 4), k0, peek(PVF(pv_nkey), 4));
 }
 
 /*
@@ -1293,89 +1275,42 @@ heldkey()
 	    "kbshift with Shift down %lx, up %lx", a, b);
 }
 
-/* on: $118 to a stub chaining to TOS's handler, so input takes the IKBD */
-static int
-ikbdonly(on)
-	int on;
-{
-	static long v;
-	int ok;
-
-	if (on) {
-		v = peek(0x118L, 4);
-		ok = poke(0x3f0L, 0x4ef90000L | (v >> 16 & 0xffff)) &&
-		    poke(0x3f4L, v << 16) && poke(0x118L, 0x3f0L);
-	} else
-		ok = poke(0x118L, v);
-	nap(300);
-	return ok;
-}
-
 /*
- * Input straight to TOS's handlers: motion reaches mousevec with no
- * IKBD byte.  With the ACIA vector taken (a stub that chains to TOS)
- * the IKBD carries it, and the direct path returns with the vector.
+ * Input straight to TOS's handlers: motion reaches mousevec.  With the
+ * VBL queue off it waits in the cartridge's queue, and arrives when the
+ * queue runs again.
  */
 static void
 direct()
 {
-	long on = peek(PVF(pv_on), 4), p0 = peek(PVF(pv_npkt), 4), p1, on1, vs, t0;
-	unsigned long b0, v0;
+	long on = peek(PVF(pv_on), 4), p0 = peek(PVF(pv_npkt), 4), p1, vs, t0;
+	unsigned long v0;
 
-	ioctl(tfd, TOSIOC_STAT, &st);
-	t_info(N("pv_on"), "%ld head %ld tail %ld xy %lx cxy %lx btn %ld kbin %lu", on,
+	t_info(N("pv_on"), "%ld head %ld tail %ld xy %lx cxy %lx btn %ld", on,
 	    peek(PVF(pv_head), 4), peek(PVF(pv_tail), 4), peek(PVF(pv_xy), 4),
-	    peek(PVF(pv_cxy), 4), peek(PVF(pv_btn), 4), st.ts_kbin);
+	    peek(PVF(pv_cxy), 4), peek(PVF(pv_btn), 4));
 	if (!t_check(N("mouse_direct_on"), on >= 0 && (on & PV_MOUSE), "pv_on %ld", on))
 		return;
-	ioctl(tfd, TOSIOC_STAT, &st);
-	b0 = st.ts_kbrd;
 	host("move 20 10");
 	nap(500);
-	ioctl(tfd, TOSIOC_STAT, &st);
 	p1 = peek(PVF(pv_npkt), 4);
-	t_check(N("mouse_direct"), p1 > p0 && st.ts_kbrd == b0,
-	    "mousevec packets %ld -> %ld, IKBD bytes %lu -> %lu", p0, p1, b0, st.ts_kbrd);
-	if (!ikbdonly(1)) {
-		t_check(N("fallback"), 0, "guest memory not writable: %s", T_ERR);
-		return;
-	}
-	nap(300);
-	on1 = peek(PVF(pv_on), 4);
-	ioctl(tfd, TOSIOC_STAT, &st);
-	b0 = st.ts_kbrd;
-	p0 = peek(PVF(pv_npkt), 4);
-	host("move -20 -10");
-	nap(500);
-	ioctl(tfd, TOSIOC_STAT, &st);
-	p1 = peek(PVF(pv_npkt), 4);
-	t_check(N("fallback"), on1 == 0 && st.ts_kbrd >= b0 + 3 && p1 == p0,
-	    "pv_on %ld, IKBD bytes %lu -> %lu, mousevec packets %ld -> %ld", on1, b0,
-	    st.ts_kbrd, p0, p1);
-	ikbdonly(0);
-	t_check(N("fallback_back"), peek(PVF(pv_on), 4) == on, "pv_on %ld", peek(PVF(pv_on), 4));
-	/* with the VBL queue off the IKBD carries the motion */
+	t_check(N("mouse_direct"), p1 > p0, "mousevec packets %ld -> %ld", p0, p1);
 	vs = peek(0x452L, 4);
 	ioctl(tfd, TOSIOC_STAT, &st);
 	v0 = st.ts_vbl;
 	if (vs < 0 || !poke(0x452L, vs & 0xffff))
 		return;
-	/* the display process gives up on the queue after 15 of the guest's VBLs */
 	t0 = t_now_ms();
 	do {
 		nap(100);
 		ioctl(tfd, TOSIOC_STAT, &st);
 	} while (st.ts_vbl - v0 < 20 && t_now_ms() - t0 < 10000);
-	ioctl(tfd, TOSIOC_STAT, &st);
-	b0 = st.ts_kbrd;
-	host("move 20 10");
-	nap(500);
-	ioctl(tfd, TOSIOC_STAT, &st);
-	poke(0x452L, (vs & 0xffff0000L) | (peek(0x454L, 2) & 0xffff));
-	t_check(N("novbl"), st.ts_kbrd >= b0 + 3, "IKBD bytes %lu -> %lu", b0, st.ts_kbrd);
-	nap(300);
 	p0 = peek(PVF(pv_npkt), 4);
 	host("move -20 -10");
+	nap(500);
+	p1 = peek(PVF(pv_npkt), 4);
+	poke(0x452L, (vs & 0xffff0000L) | (peek(0x454L, 2) & 0xffff));
+	t_check(N("novbl"), p1 == p0, "mousevec packets %ld -> %ld with the VBL queue off", p0, p1);
 	nap(500);
 	p1 = peek(PVF(pv_npkt), 4);
 	t_check(N("novbl_back"), p1 > p0, "mousevec packets %ld -> %ld", p0, p1);
@@ -1444,7 +1379,7 @@ glide(name)
 	char *name;
 {
 	long a, t0, t, tl = 0, p, lp, p500 = -1, g0, g1, d0, d1;
-	unsigned long e0, e1, kb0, ki0, n = 0;
+	unsigned long e0, e1, n = 0;
 
 	if ((a = pvar = ptrvar()) == 0) {
 		t_info(N(name), "pointer variable not found");
@@ -1453,8 +1388,6 @@ glide(name)
 	lp = peek(a, 4);
 	cputimes(&g0, &d0);
 	e0 = entries();
-	kb0 = st.ts_kbrd;
-	ki0 = st.ts_ints[6];
 	host("glide 100 3 2 10");
 	t0 = t_now_ms();
 	while ((t = t_now_ms() - t0) < 3000) {
@@ -1472,9 +1405,8 @@ glide(name)
 	e1 = entries();
 	cputimes(&g1, &d1);
 	t_info(N(name), "var %lx: %lu updates, last at %ld ms, at 500 ms (%ld,%ld) end (%ld,%ld);"
-	    " 3 s: entries %lu, acia ints %lu, bytes %lu, CPU ms guest %ld display %ld", a, n, tl,
-	    p500 >> 16, p500 & 0xffff, p >> 16, p & 0xffff, e1 - e0, st.ts_ints[6] - ki0,
-	    st.ts_kbrd - kb0, g1 - g0, d1 - d0);
+	    " 3 s: entries %lu, CPU ms guest %ld display %ld", a, n, tl,
+	    p500 >> 16, p500 & 0xffff, p >> 16, p & 0xffff, e1 - e0, g1 - g0, d1 - d0);
 }
 
 /* ms from a host move to a new pointer position, 10 moves */
@@ -1504,15 +1436,27 @@ latency(name)
 	    n, n ? sum / n : 0, max);
 }
 
+/* a button state straight into the cartridge's queue: the host mouse has one button */
+static void
+qbutton(b)
+	long b;
+{
+	long h = peek(PVF(pv_head), 4);
+
+	poke(PVF(pv_ev[0]) + 8 * (h % PV_NEV), (long)PE_BTN << 24 | b << 16);
+	poke(PVF(pv_ev[0]) + 8 * (h % PV_NEV) + 4, peek(PVF(pv_xy), 4));
+	poke(PVF(pv_head), h + 1);
+}
+
 /*
  * Each button pressed and released: the line-A button word next to the
  * pointer (x, y, hide count, buttons) reads 1 for left, 2 for right,
- * then 0.  Last, because TOS 3.06 keeps an unclaimed right click.
+ * then 0.  Left from the host, right queued.  Last, because TOS 3.06
+ * keeps an unclaimed right click.
  */
 static void
 buttons()
 {
-	struct tosinput in;
 	long down[2], up[2];
 	int i;
 
@@ -1524,14 +1468,17 @@ buttons()
 	host("move 0 -300");
 	host("move 300 250");
 	nap(500);
-	memset((char *)&in, 0, sizeof in);
 	for (i = 0; i < 2; i++) {
-		in.ti_btn = i ? 1 : 2;		/* IKBD bits: 2 left, 1 right */
-		ioctl(tfd, TOSIOC_INPUT, &in);
+		if (i)
+			qbutton(1L);	/* IKBD bits: 2 left, 1 right */
+		else
+			host("button 1 0");
 		nap(400);
 		down[i] = peek(pvar + 6, 2);
-		in.ti_btn = 0;
-		ioctl(tfd, TOSIOC_INPUT, &in);
+		if (i)
+			qbutton(0L);
+		else
+			host("button 0 0");
 		nap(400);
 		up[i] = peek(pvar + 6, 2);
 	}
@@ -1539,12 +1486,11 @@ buttons()
 	    "left %ld/%ld, right %ld/%ld (down/up)", down[0], up[0], down[1], up[1]);
 }
 
-/* input the display process has handed on: ring events and IKBD bytes */
+/* input the display process has handed on */
 static unsigned long
 handed()
 {
-	ioctl(tfd, TOSIOC_STAT, &st);
-	return peek(PVF(pv_head), 4) + st.ts_kbin;
+	return peek(PVF(pv_head), 4);
 }
 
 /* until handed() moves past c, at most 2 s */
@@ -1642,6 +1588,7 @@ run(rom)
 		if (hfd >= 0 && (up = desktop(S("desk"), 1)) != 0)
 			t_info(N("desktop_after"), "%ld s", (t_now_ms() - t0) / 1000);
 	}
+	boot = st;
 	if (tpid) {
 		t_check(N("desktop"), up, "no desktop on screen after %ld s", (t_now_ms() - t0) / 1000);
 		if (hfd >= 0) {
@@ -1653,7 +1600,6 @@ run(rom)
 			fvdichecks();
 		else {
 			owner();
-			maprom();
 			solotraps();
 			ucheck();
 			timers();
@@ -1673,11 +1619,6 @@ run(rom)
 				pointer(35, rom ? 77 : 38);
 			glide("glide");
 			latency("latency");
-			if (ikbdonly(1)) {
-				glide("glide_ikbd");
-				latency("latency_ikbd");
-				ikbdonly(0);
-			}
 			buttons();
 			(void)desktop(S("end"), 1);
 			if (fvdi)
@@ -1689,6 +1630,16 @@ run(rom)
 		} else
 			t_skip(N("input"), "no host line");
 		stat1(N("final"));
+		/* after boot, nothing reaches hardware or needs emulating */
+		t_check(N("steady_hw"), st.ts_absent == boot.ts_absent && st.ts_top == boot.ts_top &&
+		    st.ts_berr == boot.ts_berr && st.ts_refl[2] == boot.ts_refl[2] &&
+		    st.ts_iow == boot.ts_iow,
+		    "absent %lu top %lu berr %lu I/O writes %lu (last pc %lx) since boot",
+		    st.ts_absent - boot.ts_absent, st.ts_top - boot.ts_top, st.ts_berr - boot.ts_berr,
+		    st.ts_iow - boot.ts_iow, st.ts_iowpc);
+		t_check(N("steady_emul"), st.ts_mmu == boot.ts_mmu && st.ts_refl[4] == boot.ts_refl[4] &&
+		    st.ts_isp == boot.ts_isp, "mmu %lu illegal %lu isp %lu since boot",
+		    st.ts_mmu - boot.ts_mmu, st.ts_refl[4] - boot.ts_refl[4], st.ts_isp - boot.ts_isp);
 		relay();
 		kill(tpid, SIGTERM);
 		t0 = t_now_ms();

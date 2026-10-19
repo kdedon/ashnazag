@@ -569,7 +569,7 @@ static void watch(int fd, int go, int ack, unsigned char *fb, struct fbinfo *fi,
             }
         }
         if (fmt == MIG_RTG_INDEX8 && cmap(fd, &rtg, status) < 0) {
-            perror("startmig: RTG palette");
+            perror("startamiga: RTG palette");
             return;
         }
         if (rtg.copy || away) {
@@ -740,18 +740,23 @@ int migdisp_open(struct fbinfo *fi)
 {
     struct fbacq acq;
     int fd = open("/dev/fb0", O_RDWR);
-    if (fd < 0) { perror("startmig: /dev/fb0"); return -1; }
+    if (fd < 0) { perror("startamiga: /dev/fb0"); return -1; }
     memset(&acq, 0, sizeof acq);
     acq.fa_kind = FBK_USER; acq.fa_flags = FBA_FRONT;
     strcpy(acq.fa_name, "amiga");
     if (ioctl(fd, FBIOACQUIRE, &acq) < 0 || ioctl(fd, FBIOGINFO, fi) < 0) {
-        perror("startmig: display session"); close(fd); return -1;
+        perror("startamiga: display session"); close(fd); return -1;
+    }
+    /* room for a triple-buffered screen beside the Workbench, if the card spares it */
+    if ((fi->fi_flags & FBF_OWNV) && fi->fi_size <= MIG_RTG_VRAM_MAX / 3 &&
+        ioctl(fd, FBIOVSIZE, 3 * fi->fi_size) == 0 && ioctl(fd, FBIOGINFO, fi) < 0) {
+        perror("startamiga: display session"); close(fd); return -1;
     }
     if (fi->fi_depth != 8 || fi->fi_layout != FBL_PACKED || fi->fi_cmapsize < 256 ||
         fi->fi_rowbytes < fi->fi_width || fi->fi_offset > fi->fi_size ||
         !fi->fi_rowbytes || fi->fi_size > MIG_RTG_VRAM_MAX ||
         fi->fi_height > (fi->fi_size - fi->fi_offset) / fi->fi_rowbytes) {
-        fprintf(stderr, "startmig: display requires a packed 8-bit framebuffer with 256 colors\n");
+        fprintf(stderr, "startamiga: display requires a packed 8-bit framebuffer with 256 colors\n");
         close(fd); return -1;
     }
     /* a session with its own VRAM keeps room for deeper screens there too */
@@ -760,7 +765,7 @@ int migdisp_open(struct fbinfo *fi)
     modes(fd, fi);
     /* write-through keeps reads cached for the card's blits */
     if (ioctl(fd, FBIOCACHE, FBC_WT) < 0 && ioctl(fd, FBIOCACHE, FBC_CI) < 0) {
-        perror("startmig: framebuffer cache mode"); close(fd); return -1;
+        perror("startamiga: framebuffer cache mode"); close(fd); return -1;
     }
     return fd;
 }
@@ -778,7 +783,7 @@ int migdisp(int ready, int life, int go, int ack, int fd, struct fbinfo *fip)
     pid_t guest = getppid(), watcher;
     char success = 1;
     fb = (unsigned char *)mmap((caddr_t)0, fi.fi_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (fb == (unsigned char *)-1) { perror("startmig: display mmap"); return 1; }
+    if (fb == (unsigned char *)-1) { perror("startamiga: display mmap"); return 1; }
     memset(fb + fi.fi_offset, 0, fi.fi_rowbytes * fi.fi_height);
     miglog(0, "display session %ux%u", fi.fi_width, fi.fi_height);
     mig_input_init(input);
@@ -789,7 +794,7 @@ int migdisp(int ready, int life, int go, int ack, int fd, struct fbinfo *fip)
     p[2].fd = input_open("/dev/kbd", fd, &keyinfo);
     p[3].fd = input_open("/dev/mouse", fd, &mouseinfo);
     if (p[2].fd < 0 || p[3].fd < 0)
-        fprintf(stderr, "startmig: one or more session input devices unavailable\n");
+        fprintf(stderr, "startamiga: one or more session input devices unavailable\n");
     sigset(SIGUSR2, woken);
     watcher = fork();
     if (watcher == 0) {
@@ -799,7 +804,7 @@ int migdisp(int ready, int life, int go, int ack, int fd, struct fbinfo *fip)
         watch(fd, go, ack, fb, &fi, guest);
         _exit(0);
     }
-    if (watcher < 0) { perror("startmig: display fork"); return 1; }
+    if (watcher < 0) { perror("startamiga: display fork"); return 1; }
     close(go);
     if (ack >= 0) close(ack);
     if (write(ready, &success, 1) != 1) return 1;
@@ -810,7 +815,7 @@ int migdisp(int ready, int life, int go, int ack, int fd, struct fbinfo *fip)
         status = poll(p, 4, -1);
         if (status < 0) {
             if (errno == EINTR) continue;
-            perror("startmig: display poll"); break;
+            perror("startamiga: display poll"); break;
         }
         if (p[0].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) break;
         if (p[1].revents & (POLLHUP | POLLERR | POLLNVAL)) break;

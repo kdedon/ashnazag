@@ -42,7 +42,7 @@ start(fd0, fd1)
 		dup2(fd1, 2);
 		for (fd0 = 3; fd0 < 64; fd0++)	/* the input's write end: EOF */
 			close(fd0);
-		execl(startprog, "startcpm", "-e", "t", "-d", "C=" H "/c", (char *)0);
+		execl(startprog, "startcpm", "-e", "t", "-D", "C=" H "/c", (char *)0);
 		_exit(126);
 	}
 	if (p > 0)

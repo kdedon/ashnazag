@@ -17,20 +17,8 @@ AUX=$(cd "$T/.." && pwd)
 G=$AUX/kernel/guest/win16
 B=$T/build/win16
 WATCOM=${WATCOM:-$AUX/toolchain/watcom}
-mkdir -p "$B/obj" "$B/ftobj" "$B/progs" "$B/shots"
-# FreeType for TrueType (fetched once; see kernel/guest/win16/ft/freetype.sh)
-FTF=$(sh "$G/ft/freetype.sh" flags)
-for f in $(sh "$G/ft/freetype.sh" srcs); do
-	o=$B/ftobj/$(basename "$f" .c).o
-	[ -f "$o" ] && [ "$o" -nt "$f" ] && [ "$o" -nt "$G/ft/w16ftopt.h" ] && continue
-	cc -O1 -w $FTF -c -o "$o" "$f"
-done
-for f in "$G"/*.c; do
-	case $(basename "$f") in scr_fb.c|snd_so.c) continue ;; esac
-	o=$B/obj/$(basename "$f" .c).o
-	cc -std=gnu89 -O1 -w -I"$G" $FTF -c -o "$o" "$f"
-done
-cc -o "$B/startwin" "$B"/obj/*.o "$B"/ftobj/*.o -lm
+mkdir -p "$B/progs" "$B/shots"
+sh "$T/win16/host.sh" "$B"
 echo "[ok] startwin for this host"
 # -install from setup disks: SETUP.INF placing the files, SZDD expanded,
 # our own modules (USER.EXE) left out

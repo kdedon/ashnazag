@@ -1,11 +1,12 @@
 /*
  * tossnd.c -- the TOS environment's sound pump, a process of starttos.
  * It plays the buffer that the guest's Falcon XBIOS calls (struct
- * tossnd) or STE DMA sound registers describe, straight from ST-RAM,
- * through the host's sound service, and raises the guest's buffer-end
- * interrupt when each pass has been heard, by the clock.  It sleeps
- * until rung: by the cartridge's calls (the doorbell pipe), a control
- * register write (SIGUSR1), or the next pass end or feed while playing.
+ * tossnd) describe, straight from ST-RAM, through the host's sound
+ * service, and raises the guest's buffer-end interrupt when each pass
+ * has been heard, by the clock.  It sleeps until rung by the
+ * cartridge's calls (the doorbell pipe), or the next pass end or feed
+ * while playing.  It also plays the YM2149 as the XBIOS left it (struct
+ * tosym) on a stream of its own, running Dosound sequences at 50 Hz.
  */
 
 #include <sys/types.h>
@@ -26,11 +27,10 @@
 static struct sndout so;
 static struct tossnd *sd = (struct tossnd *)TOSSND;
 static struct tossndio sn;
-static int tfd, wake[2];
+static int tfd;
 static unsigned long ram;
-static unsigned long sseen;	/* control register writes acted on */
 
-static int playing, ste, loop;
+static int playing, loop;
 static int done;			/* a single play is all taken */
 static int wait;			/* the next pass waits: a new format once the last is heard */
 static int reg;				/* the kernel knows this pump */
@@ -46,37 +46,183 @@ static struct pass {
 } pq[NPASS];
 static int npq;
 
-static unsigned short steclk[4] = { 6258, 12517, 25033, 50066 };
+#define	YMRATE	22050
+#define	YMTICK	(YMRATE / 50)	/* frames between sequence steps */
+#define	YMIDLE	YMRATE		/* silent frames before the stream stops */
 
-static void
-rung(sig)
-	int sig;
+extern unsigned long tos_romlo, tos_romsz;
+static struct sndout yo;
+static struct tosym *ym = (struct tosym *)TOSYM;
+static int yon;				/* streaming */
+static long yquiet, ytick;		/* silent frames; frames to the next step */
+static unsigned long ytgen, yegen, yseq;
+static int ydelay, ytmp;
+static unsigned long yph[3], ynph, yeph, ylfsr = 1;
+static int epos, eatt, ehold, elev;
+
+/* output level of each 4-bit volume, 3 dB apart */
+static short yvol[16] = {
+	0, 78, 110, 156, 221, 313, 442, 625, 884, 1250, 1768, 2500, 3536, 5000, 7071, 10000
+};
+
+/* a byte of a Dosound sequence; -1 outside ST-RAM and the ROM */
+static int
+yb(a)
+	unsigned long a;
 {
-	char b = 1;
-
-	write(wake[1], &b, 1);
+	return a < ram || a - tos_romlo < tos_romsz ? *(unsigned char *)a : -1;
 }
 
-/* the kernel's half: buffer ends, the STE registers */
 static void
-ksnd(ends, ctl)
+yset(r, v)
+	int r, v;
+{
+	if (r > 15)
+		return;
+	ym->ym_reg[r] = v;
+	if (r == 13)
+		ym->ym_egen++;
+}
+
+/* one 50 Hz step of the sequence, as TOS's own Timer C handler runs it */
+static void
+ystep()
+{
+	unsigned long c = yseq;
+	int in, d, r, i;
+
+	if (ym->ym_tgen != ytgen) {
+		ytgen = ym->ym_tgen;
+		c = ym->ym_table;
+		ydelay = 0;
+	}
+	if (c == 0)
+		return;
+	if (ydelay) {
+		ydelay--;
+		return;
+	}
+	for (i = 0; i < 64 && (in = yb(c)) >= 0 && in <= 0x80; i++, c += 2) {
+		if ((d = yb(c + 1)) < 0)
+			break;
+		if (in == 0x80)
+			ytmp = d;
+		else
+			yset(in, in == 7 ? (ym->ym_reg[7] & 0xc0) | (d & 0x3f) : d);
+	}
+	if (in == 0x81 && (r = yb(c + 1)) >= 0 && (d = yb(c + 2)) >= 0 && (i = yb(c + 3)) >= 0) {
+		ytmp = (ytmp + d) & 255;
+		yset(r, ytmp);
+		if (ytmp == i)
+			c += 4;
+	} else if (in > 0x81 && (d = yb(c + 1)) >= 0) {
+		ydelay = d;
+		c = d ? c + 2 : 0;
+	} else
+		c = 0;
+	yseq = ym->ym_seq = c;
+}
+
+/* phase step for f2/2/den Hz; integer only, as an F-line here would go to the guest */
+static unsigned long
+ystepof(f2, den)
+	unsigned long f2;
+	unsigned den;
+{
+	unsigned long long s = ((unsigned long long)f2 << 31) / ((unsigned long)(den ? den : 1) * YMRATE);
+
+	return s >= 0xffffffffUL ? 0xffffffffL : (unsigned long)s;
+}
+
+/* n frames of the chip into b; 0 if all were silent */
+static int
+ysynth(b, n)
+	short *b;
+	int n;
+{
+	unsigned char *rg = ym->ym_reg;
+	unsigned long ts[3], ns, es;
+	int c, i, v, lv, any = 0, bit;
+
+	if (ym->ym_egen != yegen) {
+		yegen = ym->ym_egen;
+		epos = ehold = 0;
+		eatt = rg[13] & 4;
+	}
+	for (c = 0; c < 3; c++)
+		ts[c] = ystepof(250000L, rg[2 * c] | (rg[2 * c + 1] & 15) << 8);
+	ns = ystepof(250000L, rg[6] & 31);
+	es = ystepof(15625L, rg[11] | rg[12] << 8);
+	for (i = 0; i < n; i++) {
+		if ((ynph += ns) < ns) {
+			bit = (ylfsr ^ ylfsr >> 3) & 1;
+			ylfsr = ylfsr >> 1 | (unsigned long)bit << 16;
+		}
+		if (!ehold && (yeph += es) < es && ++epos > 15) {
+			if (!(rg[13] & 8) || rg[13] & 1) {
+				ehold = 1;
+				elev = rg[13] & 8 && (eatt != 0) ^ ((rg[13] & 2) != 0) ? 15 : 0;
+			} else {
+				epos = 0;
+				if (rg[13] & 2)
+					eatt = !eatt;
+			}
+		}
+		for (v = c = 0; c < 3; c++) {
+			yph[c] += ts[c];
+			lv = rg[8 + c] & 16 ? ehold ? elev : eatt ? epos : 15 - epos : rg[8 + c] & 15;
+			if (lv == 0)
+				continue;
+			any = 1;
+			if ((yph[c] >> 31 | rg[7] >> c) & (ylfsr | rg[7] >> (c + 3)) & 1)
+				v += yvol[lv];
+		}
+		b[i] = v;
+	}
+	return any;
+}
+
+/* the YM stream: sequence steps and samples a lead ahead of its clock */
+static void
+yfeed()
+{
+	static short b[(SO_REC - 64) / 2];
+	long n, k;
+
+	if (!yon) {
+		if (ym->ym_tgen == ytgen && yseq == 0 && !ysynth(b, 1))
+			return;
+		so_start(&yo, (unsigned long)YMRATE << 16, SNDE_S16, 1);
+		yon = 1;
+		yquiet = ytick = 0;
+	}
+	for (n = so_due(&yo, LEAD * (long)YMRATE / 1000); n > 0; n -= k) {
+		if (ytick <= 0) {
+			ystep();
+			ytick = YMTICK;
+		}
+		k = n < ytick ? n : ytick;
+		if (k > sizeof b / sizeof b[0])
+			k = sizeof b / sizeof b[0];
+		if (ysynth(b, (int)k) || yseq)
+			yquiet = 0;
+		else if ((yquiet += k) > YMIDLE) {
+			yon = 0;
+			return;
+		}
+		so_put(&yo, (char *)b, k);
+		ytick -= k;
+	}
+}
+
+/* the kernel's half: buffer ends */
+static void
+ksnd(ends)
 	unsigned long ends;
-	long ctl;
 {
 	sn.sn_ends = ends;
-	sn.sn_ctl = ctl;
-	sn.sn_pos = ste && playing ? sd->sd_pos : 0;
-	if (ioctl(tfd, TOSIOC_SND, &sn) < 0)
-		memset((char *)&sn, 0, sizeof sn);
-	else
+	if (ioctl(tfd, TOSIOC_SND, &sn) == 0)
 		reg = 1;
-}
-
-static unsigned long
-reg24(o)
-	int o;
-{
-	return ((unsigned long)sn.sn_reg[o] << 16 | sn.sn_reg[o + 2] << 8 | sn.sn_reg[o + 4]) & ~1L;
 }
 
 static void
@@ -90,8 +236,8 @@ stop()
 }
 
 /*
- * The next pass: its buffer and format from the registers or the XBIOS
- * state.  0: begun, 1: waits for the heard ones (a new format), -1: bad.
+ * The next pass: its buffer and format from the XBIOS state.  0: begun,
+ * 1: waits for the heard ones (a new format), -1: bad.
  */
 static int
 pass()
@@ -101,26 +247,16 @@ pass()
 
 	step = 0;
 	off = 0;
-	if (ste) {
-		beg = reg24(3);
-		end = reg24(0xf);
-		rate = (unsigned long)steclk[sn.sn_reg[0x21] & 3] << 16;
-		enc = SNDE_S8;
-		ch = sn.sn_reg[0x21] & 0x80 ? 1 : 2;
-		fs = ch;
-		irq = TSE_TIMERA | TSE_GPIP7;
-	} else {
-		beg = sd->sd_beg;
-		end = sd->sd_end;
-		rate = sd->sd_rate;
-		irq = sd->sd_irq;
-		enc = sd->sd_mode == 1 ? SNDE_S16 : SNDE_S8;
-		ch = sd->sd_mode == 2 ? 1 : 2;
-		fs = sd->sd_mode == 1 ? 4 * (sd->sd_tracks + 1) : ch;
-		if (sd->sd_mode == 1) {
-			step = 4;
-			off = 4 * (sd->sd_mon > sd->sd_tracks ? 0 : sd->sd_mon);
-		}
+	beg = sd->sd_beg;
+	end = sd->sd_end;
+	rate = sd->sd_rate;
+	irq = sd->sd_irq;
+	enc = sd->sd_mode == 1 ? SNDE_S16 : SNDE_S8;
+	ch = sd->sd_mode == 2 ? 1 : 2;
+	fs = sd->sd_mode == 1 ? 4 * (sd->sd_tracks + 1) : ch;
+	if (sd->sd_mode == 1) {
+		step = 4;
+		off = 4 * (sd->sd_mon > sd->sd_tracks ? 0 : sd->sd_mon);
 	}
 	if (!step)
 		step = fs;
@@ -145,17 +281,15 @@ pass()
 }
 
 static void
-start(src)
-	int src;
+start()
 {
 	stop();
-	ste = src;
-	loop = ste ? sn.sn_reg[1] & 2 : sd->sd_ctl & SB_REPEAT;
+	loop = sd->sd_ctl & SB_REPEAT;
 	so.so_hz = 0;			/* the clock starts with the first pass */
 	playing = 1;
 	if (pass() != 0)
 		stop();
-	sd->sd_play = playing && !ste;
+	sd->sd_play = playing;
 }
 
 /* the pass being read is all taken */
@@ -214,25 +348,19 @@ static void
 ends()
 {
 	unsigned long t = so_now(&so);
-	long ctl;
 
 	while (npq > 0 && pq[0].p_endat && (long)(t - pq[0].p_endat) >= 0) {
 		sd->sd_ends++;
-		ctl = -1;
 		if (npq == 1 && done) {
 			playing = 0;
 			sd->sd_play = 0;
-			if (ste)
-				ctl = sn.sn_reg[1] & ~1;
 		}
-		ksnd(pq[0].p_irq, ctl);
+		ksnd(pq[0].p_irq);
 		memmove((char *)pq, (char *)(pq + 1), --npq * sizeof *pq);
 	}
 	if (npq > 0) {
 		t = (long)(t - pq[0].p_at) > 0 ? (t - pq[0].p_at) * fs : 0;
 		sd->sd_pos = pq[0].p_beg + (t < pq[0].p_end - pq[0].p_beg ? t : 0);
-		if (ste)
-			ksnd(0L, -1L);
 	}
 }
 
@@ -242,22 +370,12 @@ changes()
 {
 	unsigned long g = sd->sd_gen;
 
-	if (sn.sn_gen != sseen) {
-		sseen = sn.sn_gen;
-		if (!(sn.sn_reg[1] & 1)) {
-			if (playing && ste)
-				stop();
-		} else if (!playing || !ste)
-			start(1);
-		else
-			loop = sn.sn_reg[1] & 2;
-	}
 	if (g != sd->sd_seen) {
 		if (!(sd->sd_ctl & SB_PLAY)) {
-			if (playing && !ste)
+			if (playing)
 				stop();
-		} else if (!playing || ste)
-			start(0);
+		} else if (!playing)
+			start();
 		else
 			loop = sd->sd_ctl & SB_REPEAT;
 		sd->sd_seen = g;
@@ -269,8 +387,7 @@ tossnd(fd, bell, ramsize)
 	int fd, bell;
 	unsigned long ramsize;
 {
-	struct sigaction sa;
-	struct pollfd pf[2];
+	struct pollfd pf[1];
 	char b[64];
 	long ms, k;
 	int i;
@@ -280,21 +397,13 @@ tossnd(fd, bell, ramsize)
 	for (i = 3; i < 256; i++)
 		if (i != tfd && i != bell)
 			close(i);
-	if (pipe(wake) < 0)
-		return;
 	fcntl(bell, F_SETFL, O_NDELAY);
-	fcntl(wake[0], F_SETFL, O_NDELAY);
-	fcntl(wake[1], F_SETFL, O_NDELAY);
-	memset((char *)&sa, 0, sizeof sa);
-	sa.sa_handler = rung;
-	sigaction(SIGUSR1, &sa, (struct sigaction *)0);
 	signal(SIGPIPE, SIG_IGN);
 	so_init(&so);
-	ksnd(0L, -1L);
-	sseen = sn.sn_gen;
+	so_init(&yo);
+	ksnd(0L);
 	pf[0].fd = bell;
-	pf[1].fd = wake[0];
-	pf[0].events = pf[1].events = POLLIN;
+	pf[0].events = POLLIN;
 	for (;;) {
 		ms = reg ? -1 : 100;	/* until the guest has entered */
 		if (playing) {
@@ -302,16 +411,16 @@ tossnd(fd, bell, ramsize)
 			if (npq > 0 && pq[0].p_endat && (k = so_ms(&so, pq[0].p_endat)) < ms)
 				ms = k;
 		}
-		if (poll(pf, 2UL, (int)ms) < 0 && errno != EINTR)
+		if (yon)
+			ms = TICK;
+		if (poll(pf, 1UL, (int)ms) < 0 && errno != EINTR)
 			return;
 		if (pf[0].revents & POLLIN)
 			read(bell, b, sizeof b);
 		else if (pf[0].revents & (POLLHUP | POLLERR | POLLNVAL))
 			return;			/* the guest is gone */
-		if (pf[1].revents & POLLIN)
-			read(wake[0], b, sizeof b);
-		if (!reg || pf[1].revents & POLLIN)
-			ksnd(0L, -1L);
+		if (!reg)
+			ksnd(0L);
 		changes();
 		if (playing && wait) {
 			if ((i = pass()) < 0)
@@ -322,5 +431,6 @@ tossnd(fd, bell, ramsize)
 		if (playing)
 			feed();
 		ends();
+		yfeed();
 	}
 }

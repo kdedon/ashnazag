@@ -127,6 +127,11 @@ main()
     }
     sprintf(path, "%s/separate", roots[0]);
     check("named_root", mkdir(path, 0700) == 0 && run(0, "separate", payload, media) == 37);
+    check("list_default", system("/tests/startnative lisa -l | grep -s '^office (default)$' > /dev/null") == 0);
+    check("set_default", system("/tests/startnative lisa -d separate && "
+        "/tests/startnative lisa -l | grep -s '^separate (default)$' > /dev/null") == 0);
+    unlink(FIXTURE "/.default/lisa");
+    rmdir(FIXTURE "/.default");
     check("missing_media", run(0, 0, payload, "/tmp/natlaunch/absent") == 1);
     memset(header, 0, sizeof header);
     memcpy(header, "\177ELF\001\002\001", 7);

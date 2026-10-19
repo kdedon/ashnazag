@@ -13,7 +13,7 @@
  * unpatched in a guest with AMIGAF_CENSUS for 40 s; the kernel logs
  * each custom-chip, CIA and other I/O register it touched at exit
  * ("amiga census" lines) and the guest's last fault.
- * With SYS: on a ufs volume (SCSI disk 0), startmig boots it from
+ * With SYS: on a ufs volume (SCSI disk 0), startamiga boots it from
  * /amiga/sys; host-side access times show DOS reading Startup-Sequence
  * and Workbench loading.  The boot extension binds container.card
  * before any screen opens; the RTG session then shows Workbench, a
@@ -1160,7 +1160,7 @@ alert()
 	unlink(b);
 }
 
-/* the startmig log's last line holding s, or 0 */
+/* the startamiga log's last line holding s, or 0 */
 static char *
 miglogline(s)
 	char *s;
@@ -1170,7 +1170,7 @@ miglogline(s)
 	FILE *f;
 
 	b[0] = 0;
-	if ((f = fopen("/tmp/startmig.0.log", "r")) == 0)
+	if ((f = fopen("/tmp/startamiga.0.log", "r")) == 0)
 		return 0;
 	while (fgets(l, sizeof l, f))
 		if (strstr(l, s))
@@ -1182,7 +1182,7 @@ miglogline(s)
 }
 
 /*
- * Warp3D.library through Mesa in startmig: SYS:w3dgo runs w3dtest, which
+ * Warp3D.library through Mesa in startamiga: SYS:w3dgo runs w3dtest, which
  * draws on the deepest display-sized screen a navy clear, a red triangle,
  * a 2x2 checker on a square and a green triangle in front of a blue one
  * drawn after it.  The pixels are checked on the screen.
@@ -1201,7 +1201,7 @@ warp3d()
 	int k, i, bad = 0;
 
 	if (!miglogline("Warp3D: Mesa ready")) {
-		t_skip("warp3d", "startmig built without Mesa");
+		t_skip("warp3d", "startamiga built without Mesa");
 		return;
 	}
 	t0 = time((time_t *)0);
@@ -1303,7 +1303,7 @@ sound()
 	close(creat(b, 0644));
 	for (k = 0; k < 30 && !got; k++) {
 		sleep(1);
-		if ((f = fopen("/tmp/startmig.log", "r")) == 0)
+		if ((f = fopen("/tmp/startamiga.log", "r")) == 0)
 			continue;
 		while (fgets(line, sizeof line, f) != 0)
 			if ((s = strstr(line, "sound: stopped:")) != 0)
@@ -1634,9 +1634,9 @@ drag(p)
 
 /*
  * Tools > Log Out, Control-click being the menu button: the session's
- * exit ends startmig with status 0.  Tools is the last menu title and
+ * exit ends startamiga with status 0.  Tools is the last menu title and
  * Log Out the item above root's Shut Down; positions come from the
- * screen.  o is the screen's origin.  0 if startmig is still running.
+ * screen.  o is the screen's origin.  0 if startamiga is still running.
  */
 static int
 logout(p, stp, o)
@@ -1710,7 +1710,7 @@ logout(p, stp, o)
 		r = 0;
 	else
 		t_check("boot_logout", WIFEXITED(*stp) && WEXITSTATUS(*stp) == 0 &&
-		    getsym("guest_adcall") == 0, "startmig status 0x%x, uadmin %#lx", *stp,
+		    getsym("guest_adcall") == 0, "startamiga status 0x%x, uadmin %#lx", *stp,
 		    getsym("guest_adcall"));
 	setsym("guest_adtest", 0L);
 	setsym("guest_adcall", 0L);
@@ -1718,7 +1718,7 @@ logout(p, stp, o)
 }
 
 
-/* startmig --menu: the boot held by the menu, whose screen is on the card */
+/* startamiga --menu: the boot held by the menu, whose screen is on the card */
 static void
 menu()
 {
@@ -1737,11 +1737,11 @@ menu()
 	host("shot amiga_menu0");
 	t0 = time((time_t *)0);
 	if ((p = fork()) == 0) {
-		fd = open("/tmp/startmig.menu.log", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+		fd = open("/tmp/startamiga.menu.log", O_WRONLY | O_CREAT | O_TRUNC, 0644);
 		dup2(fd, 1);
 		dup2(fd, 2);
 		putenv("HOME=/nonexistent");
-		execl("/tests/amiga/startmig", "startmig", "--menu", "-m", "16",
+		execl("/tests/amiga/startamiga", "startamiga", "--menu", "-m", "16",
 		    "-boot", "/etc/amiga/boot.rom", (char *)0);
 		_exit(127);
 	}
@@ -1768,7 +1768,7 @@ menu()
 			r = "0";
 		alive = waitpid(p, &st, WNOHANG) == 0;
 		t_check("boot_menu", atoi(r) > w * h / 8 && !used("C/IPrefs", t0) && alive,
-		    "%s of %d pixels lit, startup %s, startmig %s: no boot menu", r, w * h,
+		    "%s of %d pixels lit, startup %s, startamiga %s: no boot menu", r, w * h,
 		    used("C/IPrefs", t0) ? "run" : "not run", alive ? "running" : "ended");
 		t_info("boot_menu", "%s of %d pixels lit after %ld s", r, w * h,
 		    (long)(time((time_t *)0) - t0));
@@ -1798,7 +1798,7 @@ menu()
 			r = host("cmp amiga_mp2 amiga_nostart");
 		t_check("boot_menu_click", used("DEVS/system-configuration", t1) && alive &&
 		    !used("C/IPrefs", t0) && r != 0 && strncmp(r, "diff", 4) == 0,
-		    "DOS %s, startup %s, startmig %s, screen %s",
+		    "DOS %s, startup %s, startamiga %s, screen %s",
 		    used("DEVS/system-configuration", t1) ? "started" : "not started",
 		    used("C/IPrefs", t0) ? "run" : "not run", alive ? "running" : "ended",
 		    r ? r : "not dumped");
@@ -1809,7 +1809,7 @@ menu()
 	}
 	for (i = 0; i < 10 && (sleep(1), system("/sbin/umount " SYS) != 0); i++)
 		;
-	if ((f = fopen("/tmp/startmig.0.log", "r")) != 0) {
+	if ((f = fopen("/tmp/startamiga.0.log", "r")) != 0) {
 		while (fgets(line, sizeof line, f) != 0) {
 			fputs(line, stdout);
 			fflush(stdout);
@@ -1863,15 +1863,15 @@ boot()
 	t_info("boot_reserve", "%d MB of private memory can be reserved (%s)", k - 4, T_ERR);
 	t0 = migt0 = time((time_t *)0);
 	if ((p = fork()) == 0) {
-		fd = open("/tmp/startmig.log", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+		fd = open("/tmp/startamiga.log", O_WRONLY | O_CREAT | O_TRUNC, 0644);
 		dup2(fd, 1);
 		dup2(fd, 2);
 		putenv("HOME=/nonexistent");
 		/*
 		 * this root has no swap: fast RAM within what it can reserve,
-		 * leaving startmig's heap room for Warp3D's Mesa context
+		 * leaving startamiga's heap room for Warp3D's Mesa context
 		 */
-		execl("/tests/amiga/startmig", "startmig", "--census", "-m", "12",
+		execl("/tests/amiga/startamiga", "startamiga", "--census", "-m", "12",
 		    "-boot", "/etc/amiga/boot.rom", (char *)0);
 		_exit(127);
 	}
@@ -1898,7 +1898,7 @@ boot()
 	}
 	for (k = 0; k < 5; k++)
 		t_check(name[k], seen[k], "SYS:%s never read", mark[k]);
-	t_check("boot_alive", i < 180 ? kill(p, 0) == 0 : 1, "startmig ended: status 0x%x", st);
+	t_check("boot_alive", i < 180 ? kill(p, 0) == 0 : 1, "startamiga ended: status 0x%x", st);
 	{
 		long z[4];
 
@@ -1975,11 +1975,11 @@ boot()
 	}
 	if (!w || !logout(p, &st, o)) {
 		if (w)
-			t_fail("boot_logout", "startmig still running");
+			t_fail("boot_logout", "startamiga still running");
 		kill(p, SIGTERM);
 		t_waitchild(p, &st, 10);
 		t_check("boot_exit", WIFSIGNALED(st) && WTERMSIG(st) == SIGTERM,
-		    "startmig status 0x%x", st);
+		    "startamiga status 0x%x", st);
 	}
 
 	if (w) {
@@ -1994,7 +1994,7 @@ boot()
 	for (i = 0; i < 10 && (sleep(1), system("/sbin/umount " SYS) != 0); i++)
 		;
 	/* the display's input-to-screen times, a line per 2 s with input, and its pointer */
-	if ((f = fopen("/tmp/startmig.0.log", "r")) != 0) {
+	if ((f = fopen("/tmp/startamiga.0.log", "r")) != 0) {
 		while (fgets(line, sizeof line, f) != 0)
 			{
 				fputs(line, stdout);
@@ -2003,7 +2003,7 @@ boot()
 		fclose(f);
 	}
 	/* line by line: the console takes at most 256 bytes per write */
-	if ((f = fopen("/tmp/startmig.log", "r")) != 0) {
+	if ((f = fopen("/tmp/startamiga.log", "r")) != 0) {
 		while (fgets(line, sizeof line, f) != 0) {
 			fputs(line, stdout);
 			fflush(stdout);
@@ -2014,7 +2014,7 @@ boot()
 }
 
 /*
- * startmig --screens: Workbench and a screen in front of it, opened before
+ * startamiga --screens: Workbench and a screen in front of it, opened before
  * DOS.  The front one is copied to the display, Workbench is the display
  * again once it closes, and the boot goes on to Workbench.
  */
@@ -2033,11 +2033,11 @@ screens()
 	}
 	t0 = time((time_t *)0);
 	if ((p = fork()) == 0) {
-		fd = open("/tmp/startmig.screens.log", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+		fd = open("/tmp/startamiga.screens.log", O_WRONLY | O_CREAT | O_TRUNC, 0644);
 		dup2(fd, 1);
 		dup2(fd, 2);
 		putenv("HOME=/nonexistent");
-		execl("/tests/amiga/startmig", "startmig", "--screens", "-m", "16",
+		execl("/tests/amiga/startamiga", "startamiga", "--screens", "-m", "16",
 		    "-boot", "/etc/amiga/boot.rom", (char *)0);
 		_exit(127);
 	}
@@ -2052,7 +2052,7 @@ screens()
 	}
 	for (i = 0; i < 10 && (sleep(1), system("/sbin/umount " SYS) != 0); i++)
 		;
-	if ((f = fopen("/tmp/startmig.0.log", "r")) != 0) {
+	if ((f = fopen("/tmp/startamiga.0.log", "r")) != 0) {
 		while (fgets(line, sizeof line, f) != 0) {
 			copied |= strstr(line, "copied to the display") != 0;
 			back |= strstr(line, "is the display again") != 0;
@@ -2063,7 +2063,7 @@ screens()
 		fclose(f);
 	}
 	t_check("early_screens", p > 0 && alive && copied && back && !alert && wb,
-	    "startmig %s, front screen %s, Workbench %s, %s, LoadWB %s", alive ? "running" : "ended",
+	    "startamiga %s, front screen %s, Workbench %s, %s, LoadWB %s", alive ? "running" : "ended",
 	    copied ? "copied" : "not copied", back ? "the display again" : "not back",
 	    alert ? "an alert" : "no alert", wb ? "run" : "not run");
 }
@@ -2144,7 +2144,7 @@ main(argc, argv)
 		return t_done();
 	}
 	rom();
-	if (stat(SYSDEV, &sb) < 0 || stat("/tests/amiga/startmig", &sb) < 0) {
+	if (stat(SYSDEV, &sb) < 0 || stat("/tests/amiga/startamiga", &sb) < 0) {
 		t_skip("boot", "no SYS: volume on this root");
 		return t_done();
 	}

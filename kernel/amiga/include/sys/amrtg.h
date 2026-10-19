@@ -7,6 +7,8 @@
 #ifndef _SYS_AMRTG_H
 #define _SYS_AMRTG_H
 
+struct am_mode;
+
 struct am_rtg {
 	unsigned long	r_base;		/* first pixel, kernel address */
 	int		r_width, r_height;
@@ -24,18 +26,33 @@ struct am_rtg {
 	unsigned long	r_rgb[2][3];
 	void		(*r_setdepth)();	/* (bits): the card's pixels from now */
 	/*
-	 * Optional: with r_pan, each session may own a frame in the r_vram
-	 * bytes from r_base's page, and the card shows the one at the
-	 * offset it is given.  r_phys: r_base's physical address, if not
-	 * r_base.
+	 * Optional: with r_pan, the display service hands out the r_vram
+	 * bytes from r_base's page to sessions and the card's 3D driver, up
+	 * to r_altfb hidden sessions keeping a frame there, and the card
+	 * shows the frame at the offset it is given.  r_phys: r_base's
+	 * physical address, if not r_base.
 	 */
 	void		(*r_pan)();	/* (offset from r_base's page) */
 	unsigned long	r_vram;
 	unsigned long	r_phys;
+	int		r_altfb;
+	/*
+	 * Optional: the card's timings, r_mode the one set at attach.
+	 * r_setmode (n, bits) shows timing n at that depth, rows packed;
+	 * at any IPL, without sleeping.
+	 */
+	struct am_mode	*r_modes;
+	int		r_nmode, r_mode;
+	void		(*r_setmode)();
+};
+
+struct am_mode {
+	int		m_width, m_height, m_hz;
 };
 
 extern int am_rtgattach();	/* (struct am_rtg *) 0, or EBUSY once in use */
 extern int am_rtgbusy();	/* () 0, or EBUSY once a card or the chipset has it */
 extern int am_rtgdetach();	/* (struct am_rtg *) 0, or EBUSY while in use */
+extern unsigned long am_vtake();	/* (1) the 3D driver's VRAM offset, 0 if none; (off) again there; (0) given back */
 
 #endif

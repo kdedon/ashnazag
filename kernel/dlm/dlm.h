@@ -302,9 +302,14 @@ extern int dlm_xreg();
 extern int dlm_creg(), dlm_sreg();
 extern int dlm_autoload();
 extern int dlm_loadname();
+extern struct bootmod *dlm_bootfind();
 
 /* dlm_str.c */
 extern void dlm_str_init();
+
+/* dlm_fs.c */
+extern void dlm_fs_init();
+extern int dlm_fsbusy();
 
 /* dlmconf.c */
 extern long dlm_maximage;

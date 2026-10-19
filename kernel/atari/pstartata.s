@@ -305,9 +305,10 @@ Lkroot:
 	bnes	Lpcr
 	bclr	&1,%d1
 Lpcr:	.word	0x4e7b,0x1808		| movec %d1,%pcr
-	movel	&0xa0c08000,%d1		| EDC ESB EBC CABC EIC
+	orl	cacr060,%d0		| store buffer, branch cache
+	movel	%d0,%d1
+	oril	&0x00400000,%d1		| CABC, this write only
 	.word	0x4e7b,0x1002		| movec %d1,%cacr
-	movel	&0xa0808000,%d0		| the same without CABC, for reloads
 Lcache:
 	movel	%d0,cacr
 	movel	%d0,sup_cacr

@@ -613,6 +613,29 @@ long uin_pollnaps;
 static long ev_polltick, ev_pollsc;
 static int ev_polls;
 
+/* the tick's signal wakes gp's task */
+static int
+ev_ticks(gp)
+	struct guest_proc *gp;
+{
+	struct uitask *t = ui_task(gp);
+
+	return t && t->t_tick;
+}
+
+/* a task without the tick takes it on its own event calls, so Ticks moves */
+static void
+ev_owntick(gp)
+	struct guest_proc *gp;
+{
+	static long last;
+
+	if (gp == ui.l_active && !ev_ticks(gp) && last != lbolt) {
+		last = lbolt;
+		ui_update(gp);
+	}
+}
+
 static int
 ev_spinning()
 {
@@ -672,6 +695,7 @@ ui_getosevent(b)
 		uin_evlast[4]=end; uin_evlast[5]=ev_n;
 		uin_evlast[6]=G32(b+24); uin_evlast[7]=G32(b+28);
 	}
+	ev_owntick(GUESTP(u.u_procp));
 
 	s = DS_SPL(DS_HI);
 	for (;;) {
@@ -707,12 +731,13 @@ ui_getosevent(b)
 			return 0;
 		}
 		bcopy(b + 24, (caddr_t)ev_rect, sizeof ev_rect);
-		/* the tick's signal ends the wait */
+		/* the tick's signal ends the wait, or for a task without it the tick */
 		if (!nap && (!(blk & 1) || (long)(lbolt - end) >= 0) && ev_spinning()) {
 			nap = 1;
 			uin_pollnaps++;
 			ev_wait = 1;
-			i = sleep((caddr_t)ev_q, (PZERO + 1) | PCATCH);
+			i = sleep(ev_ticks(GUESTP(u.u_procp)) ? (caddr_t)ev_q :
+			    (caddr_t)&ui.l_tid, (PZERO + 1) | PCATCH);
 			ev_wait = 0;
 			if (!i)
 				continue;
@@ -1201,7 +1226,7 @@ struct guest_proc *gp;
             v[10]=GR_PC(u.u_ar0);v[11]=ev_n;
         }
         started=lbolt;ev_wait=1;uin_pmidlesleeps++;
-        i=sleep((caddr_t)ev_q,(PZERO+1)|PCATCH);
+        i=sleep(ev_ticks(gp)?(caddr_t)ev_q:(caddr_t)&ui.l_tid,(PZERO+1)|PCATCH);
         ev_wait=0;if(i)uin_pmidleinterrupts++;
         ticks=(unsigned long)lbolt-(unsigned long)started;
         uin_pmidleticks+=ticks;if(!ticks)uin_pmidlezero++;
@@ -1218,6 +1243,7 @@ struct guest_proc *gp;
         P32(clock,lbolt);
         if(copyout((caddr_t)clock,(caddr_t)LM_TICKS,4))uin_pmidleclockfaults++;
     }
+    ev_owntick(gp);
 }
 
 long uin_pollmouse,uin_pollhost,uin_pollmb,uin_pollcursor;

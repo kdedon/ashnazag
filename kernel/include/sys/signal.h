@@ -88,4 +88,6 @@ extern k_sigset_t fillset, cantmask;
 #define sigdiffset(s1, s2)	(*(s1) &= ~(*(s2)))
 #define sigutok(us, ks)		(*(ks) = (us)->sigbits[0])
 
+extern void setsigact();
+
 #endif

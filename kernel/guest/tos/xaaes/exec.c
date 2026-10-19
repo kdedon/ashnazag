@@ -12,10 +12,17 @@ struct prghdr {
 	short	abs;
 } __attribute__((packed));
 
+extern long mcpu;
+
+/* a 68020/030 has no cpusha: clear both caches through the CACR */
 static void
 cpush_all(void)
 {
-	__asm__ __volatile__("cpusha %%bc" : : : "memory");
+	if (mcpu >= 40)
+		__asm__ __volatile__("cpusha %%bc" : : : "memory");
+	else
+		__asm__ __volatile__("movec %%cacr,%%d0; orw #0x808,%%d0; movec %%d0,%%cacr"
+		    : : : "d0", "memory");
 }
 
 void _cdecl

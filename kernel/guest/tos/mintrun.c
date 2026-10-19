@@ -885,6 +885,11 @@ mint_gemdos(a)
 			return merr(errno);
 		lp = (long *)L(2);
 		lp[0] = vf.f_bavail; lp[1] = vf.f_blocks; lp[2] = vf.f_frsize; lp[3] = 1;
+		/* free and total bytes stay below 2 GB for 32-bit arithmetic */
+		if (vf.f_frsize && lp[0] > 0x7fff0000 / vf.f_frsize)
+			lp[0] = 0x7fff0000 / vf.f_frsize;
+		if (vf.f_frsize && lp[1] > 0x7fff0000 / vf.f_frsize)
+			lp[1] = 0x7fff0000 / vf.f_frsize;
 		return 0;
 	case 0x39: return RV(mkdir(hpath(P(2), h), 0777));
 	case 0x3a: return RV(rmdir(hpath(P(2), h)));

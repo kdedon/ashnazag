@@ -2,9 +2,8 @@
  * Macintosh side of the AMIX SCSI layer (sd.h): host adapter selection
  * and disk slices from the Apple Partition Map.
  *
- * Replaces the Amiga sdopen/sdqueue/sdhardwarename (controller table
- * filled by autoconfig) and sdpartition/sdvalid/sdblkno/sddevsize (Rigid
- * Disk Block).
+ * Replaces the Amiga sdpartition/sdvalid/sdblkno/sddevsize (Rigid Disk
+ * Block); the controller attaches through sd_attach.
  *
  * Minor number (sd.h): bits 0-2 target, bit 3 card (only 0), bits 4-6
  * slice.  Slice 0 is the whole disk; 1..7 come from apm_scan().
@@ -23,8 +22,6 @@
 #define BSIZE 512
 #endif
 
-extern void	ncr96init(), ncr96queue();
-
 struct partab {
 	ulong	base,
 		len;
@@ -39,30 +36,21 @@ static bool		shown[SDCARDS * SDUNITS];
 static int		(*rdstrat)();
 static dev_t		rddev;
 
-static char	hwname[] = "Quadra 53C96 SCSI";
 static char	*hows[] = { "", "disk", "bzb slice", "bzb", "name", "unix", "other" };
 
-int
-sdopen(card)
-{
-	if (card != 0)
-		return ENXIO;
-	ncr96init(1);
-	return 0;
-}
+/* the controller module the disk driver loads when none is attached */
+char	*sd_modnames[] = { "ncr96", 0 };
+
+extern char	*sdhardwarename();
 
 void
-sdqueue(cp)
-struct sdcom	*cp;
+sd_hostinit()
 {
-	ncr96queue(cp);
-}
+#ifdef BOOTDIAG
+	extern int ncr96_load();
 
-char *
-sdhardwarename(card)
-uint	card;
-{
-	return hwname;
+	(void)ncr96_load();
+#endif
 }
 
 /* Read one block of the whole-disk device for apm_scan. */
@@ -100,7 +88,8 @@ dev_t	dev;
 {
 	int	s;
 
-	printf("%s: disk c%dd0:", hwname, sdcard(dev) * 8 + sdunit(dev));
+	printf("%s: disk c%dd0:", sdhardwarename(sdcard(dev)),
+	    sdcard(dev) * 8 + sdunit(dev));
 	if (sl[0].len)
 		printf(" %d blocks", sl[0].len);
 	printf("\n");

@@ -25,6 +25,7 @@ t_out(kind, name, fmt, ap)
 char *kind, *name, *fmt;
 va_list ap;
 {
+	FILE *nul;
 	char buf[512];
 	int n, fd;
 
@@ -33,7 +34,13 @@ va_list ap;
 	if (fmt != 0) {
 		strcpy(buf + n, ": ");
 		n += 2;
-		vsprintf(buf + n, fmt, ap);
+		/* no vsnprintf here: measure first (va_list is a pointer on this target, so ap can be reused) */
+		if ((nul = fopen("/dev/null", "w")) != 0 && vfprintf(nul, fmt, ap) < (int)sizeof buf - n - 1)
+			vsprintf(buf + n, fmt, ap);
+		else
+			sprintf(buf + n, "%.400s (not formatted)", fmt);
+		if (nul)
+			fclose(nul);
 		n = strlen(buf);
 	}
 	buf[n++] = '\n';

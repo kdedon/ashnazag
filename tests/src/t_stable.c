@@ -772,7 +772,7 @@ amiexec(e)
 	struct env *e;
 {
 	putenv("HOME=/nonexistent");
-	execl("/tests/amiga/startmig", "startmig", "-m", "16", "-boot", "/etc/amiga/boot.rom",
+	execl("/tests/amiga/startamiga", "startamiga", "-m", "16", "-boot", "/etc/amiga/boot.rom",
 	    (char *)0);
 }
 
@@ -811,7 +811,7 @@ cpmexec(e)
 	struct env *e;
 {
 	putenv("HOME=" CPMH);
-	execl("/cpm/bin/startcpm", "startcpm", "-e", "t", "-d", "C=" CPMH "/c", (char *)0);
+	execl("/cpm/bin/startcpm", "startcpm", "-e", "t", "-D", "C=" CPMH "/c", (char *)0);
 }
 
 /* EXIT.68K on P: ends the session from console 0 */
@@ -891,7 +891,7 @@ static struct env envs[] = {
 	{ "teradesk", "/tos/teradesk/TERADESK/DESKTOP.PRG", "tosguest", 150, tosprep, tosexec,
 	    tosdone, CDIR "/.env", 0 },
 	{ "xaaes", "/tos/xaaes/MINT", "tosguest", 200, tosprep, tosexec, tosdone, CDIR "/.env", 0 },
-	{ "amiga", "/tests/amiga/startmig", "amigaguest", 150, amiprep, amiexec, amidone, 0, 0 },
+	{ "amiga", "/tests/amiga/startamiga", "amigaguest", 150, amiprep, amiexec, amidone, 0, 0 },
 	{ "cpm", "/cpm/bin/startcpm", "cpmguest", 90, cpmprep, cpmexec, cpmdone,
 	    CPMH "/CPM/t/.env", cpmout },
 	{ "win16", "/usr/bin/startwin", 0, 400, winprep, winexec, 0, 0, 0 },

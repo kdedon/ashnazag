@@ -2,7 +2,7 @@
  * mkbb -- prepare the kernel and boot blocks for a direct Mac boot.
  *
  *	usage:	mkbb flat in.elf out.bin
- *		mkbb patch bootblk.bin in.elf volume [cmdline]
+ *		mkbb patch bootblk.bin in.elf volume [cmdline [module...]]
  *		mkbb check disk.img in.elf
  *
  * flat	 writes the ELF's PT_LOAD segments as one image from the lowest
@@ -11,6 +11,8 @@
  *	 it (one run of allocated blocks), writes offset, length, link
  *	 address, end, entry, checksum and the command line into a copy of
  *	 the boot blocks and stores that in blocks 0-1 of the volume.
+ *	 Each module file, also in the volume, gets its offset, length and
+ *	 name (the file's last component) in the boot blocks' module table.
  * check finds the Apple_HFS partition of a partitioned disk image and
  *	 verifies its boot blocks and the image they point to.
  *
@@ -34,8 +36,11 @@
 #define	P_KEND		0x9C
 #define	P_KENTRY	0xA0
 #define	P_KSUM		0xA4
-#define	CMDOFF		(BBSIZE - 128)
-#define	CMDMAX		128
+#define	P_MODS		0x0C	/* offset, length, name[8]; length 0 ends */
+#define	NMODS		7
+#define	MODNAME		8
+#define	CMDOFF		(BBSIZE - 64)
+#define	CMDMAX		64
 
 /* ELF32 */
 #define	PT_LOAD		1
@@ -210,18 +215,18 @@ long vlen, ofs, len;
 	return NULL;
 }
 
-/* offset of the flat image in v: allocated, block aligned */
+/* offset of the n bytes at p in v: allocated, block aligned */
 long
-findimg(v, vlen)
-unsigned char *v;
-long vlen;
+findimg(v, vlen, p, n)
+unsigned char *v, *p;
+long vlen, n;
 {
 	long o;
 
-	for (o = BBSIZE; o + (long)flatlen <= vlen; o += BLK)
-		if (memcmp(v + o, flat, BLK) == 0 &&
-		    memcmp(v + o, flat, flatlen) == 0 &&
-		    inuse(v, vlen, o, (long)flatlen) == NULL)
+	for (o = BBSIZE; o + n <= vlen; o += BLK)
+		if (memcmp(v + o, p, n < BLK ? n : BLK) == 0 &&
+		    memcmp(v + o, p, n) == 0 &&
+		    inuse(v, vlen, o, (n + BLK - 1) / BLK * BLK) == NULL)
 			return o;
 	return -1;
 }
@@ -240,24 +245,44 @@ char *what;
 }
 
 void
-patch(bbname, vname, cmd)
-char *bbname, *vname, *cmd;
+patch(bbname, vname, cmd, nmod, mods)
+char *bbname, *vname, *cmd, **mods;
+int nmod;
 {
-	unsigned char *bb, *v;
-	long bblen, vlen, o;
+	unsigned char *bb, *v, *m;
+	long bblen, vlen, mlen, o, mo;
+	char *name;
 	FILE *f;
+	int i;
 
 	bb = slurp(bbname, &bblen);
 	if (bblen != BBSIZE)
 		die("%s: not 1024 bytes", bbname);
 	bbcheck(bb, bbname);
 	if (strlen(cmd) >= CMDMAX)
-		die("command line longer than 127 bytes: %s", cmd);
+		die("command line longer than 63 bytes: %s", cmd);
+	if (nmod > NMODS)
+		die("more than 7 modules%s", "");
 	v = slurp(vname, &vlen);
 	if (vlen < 3 * BLK || be16(v + 2 * BLK) != 0x4244)
 		die("%s: no HFS master directory block", vname);
-	if ((o = findimg(v, vlen)) < 0)
+	if ((o = findimg(v, vlen, flat, (long)flatlen)) < 0)
 		die("%s: kernel image not found as one contiguous allocated run", vname);
+	memset(bb + P_MODS, 0, (NMODS + 1) * (8 + MODNAME));
+	for (i = 0; i < nmod; i++) {
+		name = strrchr(mods[i], '/') ? strrchr(mods[i], '/') + 1 : mods[i];
+		if (strlen(name) > MODNAME)
+			die("module name longer than 8 bytes: %s", name);
+		m = slurp(mods[i], &mlen);
+		if (mlen == 0 || (mo = findimg(v, vlen, m, mlen)) < 0)
+			die("%s: not found as one contiguous allocated run", mods[i]);
+		put32(bb + P_MODS + i * (8 + MODNAME), (unsigned long)mo);
+		put32(bb + P_MODS + i * (8 + MODNAME) + 4,
+		    (unsigned long)(mlen + BLK - 1) / BLK * BLK);
+		memcpy(bb + P_MODS + i * (8 + MODNAME) + 8, name, strlen(name));
+		printf("boot blocks: module %s at volume offset 0x%lx\n", name, mo);
+		free(m);
+	}
 	put32(bb + P_KOFS, (unsigned long)o);
 	put32(bb + P_KLEN, flatlen);
 	put32(bb + P_KLOAD, kload);
@@ -321,7 +346,7 @@ char *dname;
 	printf("boot blocks: bbVersion 0x%04x, image offset 0x%lx length 0x%lx load 0x%lx end 0x%lx entry 0x%lx sum 0x%08lx\n",
 	    be16(bb + 6), ofs, len, be32(bb + P_KLOAD), be32(bb + P_KEND),
 	    be32(bb + P_KENTRY), be32(bb + P_KSUM));
-	printf("cmdline \"%.127s\"\n", (char *)bb + CMDOFF);
+	printf("cmdline \"%.63s\"\n", (char *)bb + CMDOFF);
 	bad = 0;
 	if ((why = inuse(bb, cnt * BLK, ofs, len)) != NULL) {
 		printf("  image %s\n", why);
@@ -359,17 +384,17 @@ char **argv;
 		    fwrite(flat, 1, flatlen, f) != flatlen || fclose(f))
 			die("cannot write %s", argv[3]);
 		report();
-	} else if ((argc == 5 || argc == 6) && strcmp(argv[1], "patch") == 0) {
+	} else if (argc >= 5 && strcmp(argv[1], "patch") == 0) {
 		flatten(argv[3]);
 		report();
-		patch(argv[2], argv[4], argc == 6 ? argv[5] : "");
+		patch(argv[2], argv[4], argc >= 6 ? argv[5] : "", argc - 6 > 0 ? argc - 6 : 0, argv + 6);
 	} else if (argc == 4 && strcmp(argv[1], "check") == 0) {
 		flatten(argv[3]);
 		report();
 		check(argv[2]);
 	} else {
 		fprintf(stderr, "usage: %s flat in.elf out.bin\n", progname);
-		fprintf(stderr, "       %s patch bootblk.bin in.elf volume [cmdline]\n", progname);
+		fprintf(stderr, "       %s patch bootblk.bin in.elf volume [cmdline [module...]]\n", progname);
 		fprintf(stderr, "       %s check disk.img in.elf\n", progname);
 		exit(2);
 	}

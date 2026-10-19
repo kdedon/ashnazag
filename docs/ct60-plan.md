@@ -28,10 +28,9 @@ Done in the port (Amiga 060, hardware-accepted): 060 HAT, PCR/cputype, FPSP, ISP
 | FastRAM above 16 MB | done: VM in FastRAM, ST-RAM `chipmem`, kernel moves itself there (`ata_reloc`); VM capped at 128 MB | 512 MB untested |
 | Loader hand-over | FastRAM chunk from `_ramtop`; the running TOS image's physical start is passed; `cpusha %bc` before the jump (axbstart.s) | CT60 TOS reports sizes differently: read the `_FRB` and SDRAM size cookies |
 | Cache/MMU set-up | `pstartata.s`: DTT0 0-1 GB noncacheable imprecise, DTT1 serialized for I/O; managed ST-RAM pages write-through, FastRAM copyback | untested on a CT60 |
-| DMA coherence | Falcon DMA (disk, sound, Videl) is not snooped | `ata_dmasync()` around blitter runs; call it from every DMA driver; bounce FastRAM pages for SCSI |
+| DMA coherence | Falcon DMA (disk, sound, Videl) is not snooped | call `ata_dmasync()` from every DMA driver; bounce FastRAM pages for SCSI |
 | FPU | 060 FPU is native; transcendental ops trap to FPSP (vector 11 left to it) | test with an FP probe |
 | movep, 64-bit mul/div | vector 61: `ata_isp61` emulates 64-bit `muls.l`/`mulu.l`; other forms panic | no movep, cas2, 64-bit divide in drivers |
-| TOS-environment ROM | `ata_romva` returns the TOS start the loader passed when outside the VM region, else 0xE00000; on a CT60 TOS is copied to SDRAM and 0x00FFxxxx is not usable | untested under CT60 TOS; EmuTOS container keeps its own ROM image |
 | Real-hardware unknowns | PCR rev 1 quirk, SDRAM cache-line behaviour | friend's tests, hardware-only items |
 
 ## 3. Stages

@@ -33,6 +33,7 @@ static int
 dsuser_unload()
 {
 	int i;
+	struct dssess *s;
 
 	if (ds_segheld())
 		return EBUSY;
@@ -42,8 +43,8 @@ dsuser_unload()
 	for (i = 0; i < DS_NEVH; i++)
 		if (ds_evh[i].e_used)
 			return EBUSY;
-	for (i = 1; i <= DS_NSESS; i++)
-		if (ds_sess[i].s_used)
+	for (s = &ds_sess[1]; s <= &ds_sess[DS_NSESS]; s++)
+		if (s->s_used)
 			return EBUSY;
 	return 0;
 }

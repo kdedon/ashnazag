@@ -1,10 +1,9 @@
 /*
  * tosio.h -- /dev/tos: an Atari TOS container.
  *
- * The launcher maps ST-RAM at 0, the ROM and the cartridge image, then
- * TOSIOC_ENTER makes it the guest; it jumps to the ROM's reset code.
- * The display process of the container reads the video state with
- * TOSIOC_VIDEO and posts keys and mouse motion with TOSIOC_INPUT.
+ * The launcher maps ST-RAM at 0, the I/O pages, the ROM and the
+ * cartridge image, then TOSIOC_ENTER makes it the guest; it jumps to
+ * the ROM's reset code.
  */
 
 #ifndef _TOSIO_H
@@ -15,32 +14,30 @@
 
 #define	TOSIOC(n)	(('T' << 8) | (n))
 #define	TOSIOC_ENTER	TOSIOC(1)	/* in struct tosenter */
-#define	TOSIOC_INPUT	TOSIOC(2)	/* in struct tosinput */
 #define	TOSIOC_VIDEO	TOSIOC(3)	/* out struct tosvideo */
 #define	TOSIOC_STAT	TOSIOC(4)	/* out struct tosstat */
 #define	TOSIOC_OWNER	TOSIOC(5)	/* out struct tosowner: who runs the container */
 #define	TOSIOC_PAUSE	TOSIOC(6)	/* value: 1 the guest sleeps, 0 it runs */
 #define	TOSIOC_SOCK	TOSIOC(7)	/* in/out struct tossock: the guest's sockets */
-#define	TOSIOC_MAPROM	TOSIOC(8)	/* the machine's ROM, read-only at TOS_ROMBASE; returns its size */
 #define	TOSIOC_HALT	TOSIOC(9)	/* the guest: halt the machine, root only */
 #define	TOSIOC_SND	TOSIOC(10)	/* in/out struct tossndio: the sound pump */
-#define TOSIOC_RAM	TOSIOC(14)	/* value: bytes of scattered, fault-allocated RAM */
+#define TOSIOC_RAM	TOSIOC(14)	/* value: bytes of scattered, fault-allocated RAM and I/O pages */
 #define	TOSIOC_STRAM	TOSIOC(11)	/* value: bytes of contiguous ST-RAM, then mmap at 0 */
-#define	TOSIOC_BLIT	TOSIOC(15)	/* in/out the blitter's registers ($FF8A00-$FF8A3D):
-					   the guest's blit on the machine's blitter */
+#define	TOSIOC_TIMER	TOSIOC(16)	/* value: Xbtimer's timer << 16 | control << 8 | data */
+#define	TOSIOC_INTEN	TOSIOC(17)	/* value: MFP channel << 8 | 1 enable, 0 disable */
 
-#define	TOS_ROMBASE	0xe00000L
 
 struct tosenter {
 	unsigned long	te_ramsize;	/* ST-RAM at 0 */
 	unsigned long	te_flags;	/* TEF_* */
-	unsigned short	te_w, te_h;	/* TEF_FALCON: the host screen, TOS's boot mode */
+	unsigned short	te_w, te_h;	/* the host screen */
 	unsigned short	te_depth, te_pad;
+	unsigned long	te_hostlo, te_hosthi;	/* the launcher's code: host calls run there */
+	unsigned long	te_stklo, te_stkhi;	/* the host calls' stack */
 };
 
 #define	TEF_MONO	0x01		/* monochrome monitor */
 #define	TEF_NOMACH	0x02		/* a lone program: no machine, ST-RAM is the caller's */
-#define	TEF_FALCON	0x04		/* a Falcon: Videl, its palette, sound and DSP registers */
 
 struct tosowner {
 	long		to_pid;		/* 0: free */
@@ -76,20 +73,8 @@ struct tossock {
 #define	TSO_SETOPT	11		/* so_arg level << 16 | name, so_buf, so_len */
 #define	TSO_SHUTDOWN	12		/* so_arg how */
 
-struct tosinput {
-	int		ti_n;
-	unsigned char	ti_b[60];	/* IKBD bytes */
-	short		ti_dx, ti_dy;	/* mouse motion since the last post */
-	short		ti_btn;		/* mouse buttons: 1 right, 2 left */
-};
-
+/* the guest's VBLs, taken and held off */
 struct tosvideo {
-	unsigned long	tv_gen;		/* bumped by every video register write */
-	unsigned long	tv_base;	/* screen memory */
-	unsigned short	tv_stmode;	/* $FF8260 */
-	unsigned short	tv_ttmode;	/* $FF8262 */
-	unsigned short	tv_stpal[16];	/* $FF8240 */
-	unsigned short	tv_ttpal[256];	/* $FF8400 */
 	unsigned long	tv_vbl;
 	unsigned long	tv_vblheld;	/* ts_vblheld */
 };
@@ -98,17 +83,12 @@ struct tosstat {
 	unsigned long	ts_pid;
 	unsigned long	ts_ints[16];	/* MFP interrupts delivered, by channel */
 	unsigned long	ts_vbl;		/* VBL interrupts delivered */
-	unsigned long	ts_io;		/* emulated register accesses */
-	unsigned long	ts_absent;	/* bus errors from absent registers */
+	unsigned long	ts_absent;	/* bus errors in the I/O windows */
+	unsigned long	ts_top;		/* the last page's PTEs reloaded */
 	unsigned long	ts_berr;	/* other bus errors reflected */
 	unsigned long	ts_refl[64];	/* exceptions reflected, by vector */
 	unsigned long	ts_priv, ts_mmu;
-	unsigned long	ts_kbin;	/* IKBD bytes queued */
-	unsigned long	ts_kbrd;	/* IKBD bytes the guest read */
-	unsigned long	ts_kbcmd;	/* IKBD command bytes */
 	unsigned long	ts_lastpc;	/* guest PC at the last kernel entry */
-	unsigned long	ts_lastio;	/* last unlisted address, and its PC */
-	unsigned long	ts_lastiopc;
 	unsigned long	ts_sys;		/* host system calls (trap #0) */
 	unsigned long	ts_stop;	/* stop instructions (the guest idles) */
 	unsigned long	ts_cache;	/* cache instructions and CACR writes */
@@ -117,14 +97,15 @@ struct tosstat {
 	unsigned long	ts_vblheld;	/* ticks the guest ran with a VBL masked */
 	unsigned long	ts_held;	/* requests held at an emulation tail */
 	unsigned long	ts_fpriv, ts_ftrap, ts_linea;	/* the gates' fast paths, all guests */
-	unsigned long	ts_tcskip;	/* timer C ticks made without the guest */
+	unsigned long	ts_iow;		/* writes that faulted on the I/O pages */
+	unsigned long	ts_iowpc;	/* the last one's pc */
+	unsigned long	ts_isp;		/* movep emulated (68060) */
 };
 
 /*
  * Input the cartridge hands straight to TOS's own handlers each VBL:
  * the last page of the cartridge, shared by the guest and the display
- * process.  pv_on says which events the guest takes here; the rest go
- * through the IKBD (TOSIOC_INPUT).
+ * process.
  */
 #define	TOSPV		0xfbf000L
 #define	PV_NEV		256
@@ -144,8 +125,35 @@ struct tospv {
 		unsigned long	e_xy;	/* pv_xy when posted */
 	}		pv_ev[PV_NEV];
 	unsigned long	pv_vbl;		/* guest: VBLs run */
-	unsigned long	pv_drop;	/* events before this went by the IKBD */
 	unsigned long	pv_la;		/* guest: its Line A base */
+};
+
+/*
+ * The screen as TOS set it through its XBIOS and VBL handler, kept by
+ * the launcher's host calls and shown by the display process; in the
+ * same page.  A TT shifter: the ST palette is the current bank of 16.
+ */
+#define	TOSVID		(TOSPV + 0x840)
+
+struct tosvid {
+	unsigned long	vd_seq;		/* bumped after each change; 0 until TOS set a screen */
+	unsigned long	vd_base;
+	unsigned short	vd_mode;	/* TT shifter: mode << 8 | bank */
+	unsigned short	vd_pal[256];	/* TT colours */
+};
+
+/*
+ * The YM2149 as TOS's XBIOS sets it, played by the sound pump; in the
+ * same page.  Dosound sequences run in the pump at 50 Hz.
+ */
+#define	TOSYM		(TOSPV + 0xa80)
+
+struct tosym {
+	unsigned long	ym_tgen;	/* bumped by each Dosound */
+	unsigned long	ym_table;	/* Dosound's sequence */
+	unsigned long	ym_seq;		/* the sequence's next command, 0 none */
+	unsigned long	ym_egen;	/* bumped by each envelope shape write */
+	unsigned char	ym_reg[16];
 };
 
 #define	PV_MOUSE	1
@@ -154,17 +162,9 @@ struct tospv {
 #define	PE_KEY		1		/* scan code, $80 on release */
 #define	PE_BTN		2		/* buttons: 1 right, 2 left */
 
-/*
- * The sound pump (TOSIOC_SND): signals buffer ends and serves the STE
- * DMA sound registers, a page of memory at $FF8900.  The caller becomes
- * the pump: a control register write sends it SIGUSR1.
- */
+/* the sound pump (TOSIOC_SND): buffer ends */
 struct tossndio {
-	unsigned long	sn_ends;	/* in: a buffer ended, TSE_* inputs */
-	long		sn_ctl;		/* in: new $FF8901, -1 none */
-	unsigned long	sn_pos;		/* in: the frame counter $FF8909, 0 none */
-	unsigned long	sn_gen;		/* out: control register writes */
-	unsigned char	sn_reg[0x40];	/* out: $FF8900-$FF893F */
+	unsigned long	sn_ends;	/* TSE_* inputs */
 };
 
 #define	TSE_TIMERA	1		/* Timer A's event input */
@@ -194,5 +194,10 @@ struct tossnd {
 
 #define	SB_PLAY		1
 #define	SB_REPEAT	2
+
+/* the shared page's structures, in order, within the page */
+extern char tos_pvfits[sizeof (struct tospv) <= TOSVID - TOSPV &&
+    TOSVID + sizeof (struct tosvid) <= TOSYM && TOSYM + sizeof (struct tosym) <= TOSSND &&
+    TOSSND + sizeof (struct tossnd) <= TOSPV + 0x1000 ? 1 : -1];
 
 #endif	/* _TOSIO_H */

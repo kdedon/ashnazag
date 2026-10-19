@@ -363,6 +363,7 @@ struct wnd {
 	u32	dlgproc;	/* dialogs: the program's dialog procedure */
 	u16	dlgfont;
 	u16	hicon;
+	u16	ititle;		/* minimised: the title's window */
 	u32	user;		/* our controls' state */
 	void	*priv;
 	struct rect priv_track;	/* the outline while moved or sized */
@@ -393,6 +394,8 @@ extern struct wnd *wnd_create();	/* (exstyle, class, title, style, x, y, w, h, p
 extern void wnd_destroy();
 extern void wnd_setpos();		/* (wnd, after, x, y, w, h, flags) */
 extern void wnd_show();
+extern void user_icontitle();		/* (wnd, on) an icon's title made, placed or taken away */
+extern u32 user_titleproc(), user_titlethunk;
 extern void wnd_setfocus();
 extern void wnd_activate();
 extern struct wnd *wnd_frompoint();	/* (x, y, &hittest) */

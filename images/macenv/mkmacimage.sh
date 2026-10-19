@@ -11,9 +11,11 @@
 # The environment packages (images/envpkg/mkenvpkgs.sh and its inputs)
 # are installed as pkgadd would; AMIGASTAGE adds the Amiga's Kickstart and
 # SYS:, CUBASE (mkcubase.sh's) Cubase to guest's ~/TOS, V200ZIP (default
-# media/v200.zip; V200ROM picks the dump) guest's ~/Voyage200.  Given the A/UX
+# media/v200.zip; V200ROM picks the dump) guest's ~/Voyage200, LISAMEDIA
+# guest's ~/Lisa, WINMEDIA (default media/) Windows for Workgroups 3.11
+# (WFW), Windows 3.11 (WIN311) and Wabi in guest's ~/WIN16, QUAKE, GLQUAKE and QUAKEPAK /usr/games.  Given the A/UX
 # 2.0.1 CD (CD201) and the IIci ROM (AUXROM6), System 6 goes in too
-# (startmac6).  Other inputs as x11/mkimage.sh.
+# (startmac -e 6).  Other inputs as x11/mkimage.sh.
 set -e
 umask 077
 
@@ -44,14 +46,57 @@ mkdir -p "$P"
 KERNEL=$KERNEL sh "$AUX/images/envpkg/mkenvpkgs.sh" "$P/envpkg" > "$P/envpkg.log" 2>&1 ||
 	{ tail "$P/envpkg.log"; exit 1; }
 ENVPKGS=
-for p in envcore macenv tosenv amigaenv cpmenv smsqenv win16env v200env; do
+for p in envcore macenv tosenv amigaenv cpmenv win16env lisaenv v200env; do
 	f=$P/envpkg/pkgs/env/$p-1.0.pkg
 	[ ! -f "$f" ] || ENVPKGS="$ENVPKGS $f"
 done
 I=$P/image.manifest
 G=$P/envpkg/guest/home/guest
-# guest's folders, as maketos, startwin and startsmsq make them
-for d in TOS WIN16 SMSQ; do
+# the user's Windows for Workgroups 3.11 (WFW) and Windows 3.11 (WIN311)
+# disks and Wabi 2.2 (WINMEDIA) in guest's ~/WIN16 and ~/WIN16/win311, as
+# startwin -install puts them, with a startwin built for this host
+WINMEDIA=${WINMEDIA:-$AUX/media}
+[ -n "$WFW" ] || for WFW in "$WINMEDIA"/*[Ww]orkgroups*3.11*.7z; do break; done
+[ -n "$WIN311" ] || for WIN311 in "$WINMEDIA"/*Windows*3.11*[Rr]etail*.7z; do break; done
+WABI=$WINMEDIA/Wabi/x86/pkgs/SUNWwabi
+SW=$P/sw/startwin
+WINS=
+# winst archive dir: Windows from archive's disk images into dir, C: as
+# the guest sees it
+winst() {
+	rm -rf "$P/wd"
+	7z e -y -o"$P/wd" "$1" > /dev/null &&
+	"$SW" -C "$G/WIN16$2" -install "$P"/wd/[Dd][Ii][Ss][Kk]*.[Ii][Mm][Gg] "$WABI" > "$P/wfw.log" ||
+		{ cat "$P/wfw.log"; exit 1; }
+	rm -rf "$P/wd"
+	sed -i "s|^Drives.C=$G/WIN16$2|Drives.C=/home/guest/WIN16$2|" "$G/WIN16$2/windows/wabi.ini"
+}
+if [ ! -d "$G/WIN16" ] || [ ! -f "$WABI/pkgmap" ] || { [ ! -f "$WFW" ] && [ ! -f "$WIN311" ]; }; then
+	echo "[skip] Win16: no Windows disks or Wabi in $WINMEDIA"
+elif ! sh "$AUX/tests/win16/host.sh" "$P/sw" > "$P/sw.log" 2>&1; then
+	echo "[skip] Win16: no startwin for this host: $(tail -1 "$P/sw.log")"
+else
+	if [ -f "$WFW" ]; then
+		winst "$WFW" ""
+		WINS=wfw
+		echo "[ok] Win16: Windows for Workgroups 3.11 and Wabi"
+	fi
+	if [ -f "$WIN311" ]; then
+		winst "$WIN311" /win311
+		printf 'id=win311\nname=win311\ncreated=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+			> "$G/WIN16/win311/.env"
+		WINS="$WINS win311"
+		echo "[ok] Win16: Windows 3.11 and Wabi in ~/WIN16/win311"
+	fi
+	# no build paths left in the guest's settings
+	if grep -rl "$P" "$G/WIN16" > "$P/wfw.log"; then
+		echo "[FAIL] Win16: build paths in $(cat "$P/wfw.log")"
+		exit 1
+	fi
+fi
+rm -rf "$P/sw"
+# guest's folders, as starttos and startwin make them
+for d in TOS WIN16; do
 	[ ! -d "$G/$d" ] || printf 't\t/home/guest/%s\t100\t1\t%s\n' $d "$G/$d"
 done > "$I"
 # DRI's CP/M files; the user's Cubase in guest's ~/TOS
@@ -64,7 +109,25 @@ if [ -f "$V200ZIP" ]; then
 	mkdir -p "$P/v200"
 	unzip -p "$V200ZIP" "${V200ROM:-voyage200v209.rom}" > "$P/v200/media"
 	printf 't\t/home/guest/Voyage200\t100\t1\t%s\n' "$P/v200" >> "$I"
+	echo "l /home/guest/Voyage200/native /usr/lib/voyage200/native" >> "$I"
 fi
+# the user's Lisa ROM and ProFile image (LISAMEDIA, default
+# media/lisa/imported: H.rom, profile.dc42) as guest's ~/Lisa
+LISAMEDIA=${LISAMEDIA:-$AUX/media/lisa/imported}
+if [ -f "$LISAMEDIA/H.rom" ] && [ -f "$LISAMEDIA/profile.dc42" ]; then
+	mkdir -p "$P/lisa"
+	cp "$LISAMEDIA/H.rom" "$P/lisa/lisa.rom"
+	cp "$LISAMEDIA/profile.dc42" "$P/lisa/"
+	printf 't\t/home/guest/Lisa\t100\t1\t%s\n' "$P/lisa" >> "$I"
+	echo "l /home/guest/Lisa/native /usr/lib/lisa/native" >> "$I"
+	echo "l /home/guest/Lisa/media profile.dc42" >> "$I"
+fi
+# Quake (gl/quake/build.sh's quake and glquake, QUAKE and GLQUAKE) and
+# the user's id1/pak0.pak (QUAKEPAK) in /usr/games
+for f in "$QUAKE" "$GLQUAKE"; do
+	[ -z "$f" ] || echo "f /usr/games/${f##*/} 755 2 2 $f" >> "$I"
+done
+[ -z "$QUAKEPAK" ] || echo "f /usr/games/id1/pak0.pak 444 2 2 $QUAKEPAK" >> "$I"
 # the datastreams, for pkgadd -d
 for f in $ENVPKGS; do echo "f /var/spool/pkg/${f##*/} 644 0 3 $f"; done >> "$I"
 if [ "$MACNETWORK" = 1 ] && [ -f "$CD81" ]; then
@@ -85,12 +148,19 @@ if [ -n "$AMIGASTAGE" ]; then
 	done >> "$I"
 	cp -R "$S/amiga/sys" "$P/amigasys"
 	chmod -R a+rX,go-w,u+w "$P/amigasys"
-	# guest's ~/Amiga, as makeamiga makes it
+	# guest's ~/Amiga, as startamiga makes it
 	printf 't\t%s\t%s\t%s\t%s\n' /amiga/sys 0 3 "$P/amigasys" \
 		/home/guest/Amiga 100 1 "$P/amigasys" >> "$I"
 fi
 
-cp "$D/motd" "$P/"
+# the motd names the Windows installed
+case $WINS in
+*wfw*win311*) cp "$D/motd" "$P/" ;;
+*wfw*) grep -v 'Windows 3.11:' "$D/motd" > "$P/motd" ;;
+*win311*) sed -e '/Windows for Workgroups/d' \
+	-e 's/^        Windows 3.11:  startwin/ Win16  startwin/' "$D/motd" > "$P/motd" ;;
+*) grep -v 'startwin' "$D/motd" > "$P/motd" ;;
+esac
 # A/UX's shared libraries, File ID daemon and, if given, ROM
 cat >> "$I" <<EOF2
 d /shlib 755 0 3
@@ -100,36 +170,10 @@ f /etc/aux/fidd 755 0 3 $AUXROOT/etc/fidd
 EOF2
 [ -z "$AUXROM" ] || echo "f /etc/aux/rom 444 0 3 $AUXROM" >> "$I"
 
-# A/UX's Mac files as A/UX installs them, less its per-directory File
-# Manager caches; owned by root, group sys
+# A/UX's Mac files with 7.6.1, owned by root, group sys
 M=$P/macroot
-mkdir -p "$M/usr/bin" "$M/usr/lib" "$M/.mac/localhost/Desktop Folder" "$M/.mac/localhost/Trash"
-(cd "$AUXROOT" && tar cf - mac " Applications" " Documentation" " Shared Data" \
-	" System Folder alias") | (cd "$M" && tar xf -)
-COFFRSRC="$AUXROOT/mac/bin/%CommandShell" sh "$AUX/tests/aux/coffcarrier/build.sh" "$P/coffcarrier"
-python3 "$AUX/tests/aux/coffcarrier/install.py" "$AUXROOT/mac/bin/CommandShell" \
-    "$AUXROOT/mac/bin/%CommandShell" "$P/coffcarrier/COFFCarrier" "$M"
-rm -rf "$P/coffcarrier"
-cp "$AUXROOT/usr/bin/systemfolder" "$M/usr/bin/"
-cp "$AUXROOT/usr/lib/updtsysfldr" "$M/usr/lib/"
-find "$M" -name '.fs_*' -o -name '%.fs_*' | while read f; do rm -f "$f"; done
-# Shut Down's dialog (root's only with other users logged in): Cancel ends
-# the session, so it reads Logout
-python3 -c "import sys; sys.path.insert(0, sys.argv[1]); import rsrcedit
-f = sys.argv[2]; d = bytearray(open(f, 'rb').read())
-for i in (128, 129, 130):
-	o, l, a = rsrcedit.resource(d, b'DITL', i)
-	k = d.index(b'\x04\x06Cancel', o, o + l)
-	d[k + 2:k + 8] = b'Logout'
-open(f, 'wb').write(d)" "$AUX/tools" "$M/mac/lib/Resources/%AUX Resources"
-# Mac OS 7.6.1 in place of A/UX's System 7.0.1: the template, and
-# root's copy
-rm -rf "$M/mac/sys/System Folder"
-sh "$D/mksys76.sh" "$CD761" "$M/mac/lib/System Folder" "$AUXROOT"
-cp -rp "$M/mac/lib/System Folder" "$M/mac/sys/"
-# users' Special menu: Log Out in place of Restart and Shut Down
-python3 "$D/userfinder.py" "$M/mac/lib/System Folder/%Finder"
-# Mac OS 8.1, environment 8.1's template (makemac -e 8.1)
+sh "$D/mkmacroot.sh" "$AUXROOT" "$CD761" "$M"
+# Mac OS 8.1, environment 8.1's template
 CD81=${CD81:-$AUX/media/MacOS8_1.iso}
 if [ -f "$CD81" ]; then
 	S81="$M/mac/lib/env/8.1/System Folder"
@@ -146,7 +190,7 @@ chmod 700 "$M/.mac"
 find "$M" -type f -perm -u+x -exec chmod 755 {} +
 find "$M" -type f ! -perm -u+x -exec chmod 644 {} +
 # /usr and its directories keep the manifest's owners; guest's System
-# Folder, as makemac makes it
+# Folder, as startmac makes it
 for f in "$M"/* "$M"/.mac; do
 	[ "$f" = "$M/usr" ] || printf 't\t/%s\t0\t3\t%s\n' "${f#$M/}" "$f"
 done >> "$I"

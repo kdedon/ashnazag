@@ -73,6 +73,14 @@ w16_ticks()
 	return (tv.tv_sec - t0.tv_sec) * 1000 + (tv.tv_usec - t0.tv_usec) / 1000;
 }
 
+/* a time of day on the w16_ticks clock */
+u32
+w16_ticksat(sec, usec)
+	long sec, usec;
+{
+	return (sec - t0.tv_sec) * 1000 + (usec - t0.tv_usec) / 1000;
+}
+
 /* ---- the system's selectors ---- */
 
 u32

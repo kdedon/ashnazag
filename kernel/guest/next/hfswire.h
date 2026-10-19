@@ -12,7 +12,9 @@
 #define HF_FSNAME (HF_BASE + 0x6100UL)
 #define HF_HCALL (HF_BASE + 0x6400UL)	/* move.l 4(sp),d0; illegal; rts: d0 names the service */
 #define HF_HSTUB (HF_BASE + 0x6410UL)	/* 8 bytes per service: moveq #service,d0; jmp HF_HCALL+4; for 0, moveq #0,d0; rts */
+#define HF_TRAMP (HF_BASE + 0x6600UL)	/* a routine's first words, moved for a host call at its entry */
 #define HF_KEYS (HF_BASE + 0x7800UL)
+#define HF_SND (HF_BASE + 0x7c00UL)
 #define HF_CODE (HF_BASE + 0x8000UL)
 #define HF_MAGIC 0x48465331UL
 #define HF_NAME 256
@@ -35,7 +37,9 @@
 #define HC_OFF 10	/* power off: the machine ends */
 #define HC_STAT 11	/* d0 = interrupt status for the level 6 dispatcher */
 #define HC_TACK 12	/* the timer's interrupt acknowledged; d1 as HC_US */
-#define HC_N 13
+#define HC_COPYIN 13	/* (from, to, len) as the kernel's routine; returns to its caller */
+#define HC_COPYOUT 14	/* or, for a page not mapped, goes on in the routine at HF_TRAMP + 16 * (svc - HC_COPYIN) */
+#define HC_N 15
 
 #define HF_IDLE 0
 #define HF_REQUEST 1
@@ -73,17 +77,47 @@ struct hf_box {
 	long error, result;
 	/* the attributes of node, on every reply that names one */
 	unsigned long type, amode, auid, agid, nlink, size, blocks, rdev, ino, atime, mtime, ctime;
-	unsigned long bsize, fblocks, ffree, files;
+	unsigned long bsize, fblocks, ffree, files, nfree;
 	char name[HF_NAME], name2[HF_NAME];
 	unsigned char data[HF_DATA];
 };
 
-/* typed characters for the console, polled by the guest on the kernel's callout */
+/* typed characters for the console and input events, polled by the guest on the kernel's callout */
 struct hf_keys {
 	long (*timeout)(), (*input)();
 	unsigned long ticks;
 	volatile unsigned long head, tail;	/* the host writes head, the guest tail */
 	unsigned char buf[256];
+	/* while the window server has the events: keyboard and mouse words for the event driver */
+	long (*kintr)(), (*mintr)();
+	unsigned long open;	/* the event driver's open flag */
+	volatile unsigned long ehead, etail;
+	volatile unsigned long ev[64];	/* low 16 bits the word, HF_MOUSE set for the mouse's */
+	/* the video retrace handler (it moves the pointer), run each tick instead */
+	long (*retrace)();
+	unsigned long rarg, running, vidon, vidoff;
+};
+#define HF_MOUSE 0x10000UL
+
+/*
+ * Sound out: the guest queues the audio server's output buffers (physical
+ * start and end, 16-bit stereo), the host plays them and counts in tail
+ * those heard.  A new gen drops what is queued; buffers from "from" on
+ * are the new gen's.  The rest is the guest's own.
+ */
+#define HF_SNDBUFS 32
+struct hf_snd {
+	unsigned long rate;
+	volatile unsigned long head, tail, from, gen;
+	unsigned long buf[HF_SNDBUFS][2];
+	/* the kernel's routines and kernel_map's address, from the host */
+	long (*timeout)(), (*softint)(), (*lookup)();
+	unsigned long kmap, dmastart, dmaabort;
+	/* set by the guest code */
+	unsigned long callproc;		/* replaces the kernel's server-procedure call */
+	unsigned long chan, done, abort, polling, server, wait;
+	unsigned long other;		/* the last server searched that is not the Audio server */
+	unsigned long sub[HF_SNDBUFS];	/* the queued buffers' descriptors */
 };
 
 /* the kernel's types (vtype) the host reports */

@@ -1,25 +1,20 @@
 /*
- * Falcon IDE under the AMIX SCSI layer (sd.h).  The disk driver's SCSI
- * commands run as polled ATA PIO commands with 28-bit LBA; slices come
- * from the AHDI root sector.  Card 1 is the SCSI bus, through a module.
- *
- * Minor number (sd.h): bits 0-2 unit (IDE: 0 master, 1 slave; SCSI: the
- * ID), bit 3 card, bits 4-6 slice.
+ * Falcon IDE as the ataide module, card 0 of the AMIX disk driver
+ * (sd.h): its SCSI commands run as polled ATA PIO commands with 28-bit
+ * LBA, unit 0 the master, 1 the slave.  It serves the disks, so it
+ * never unloads.
  */
 
 #include	"sys/types.h"
 #include	"sys/param.h"
-#include	"sys/buf.h"
 #include	"sys/inline.h"
 #include	"sys/errno.h"
-#include	"rico.h"
-#include	"sd.h"
-#include	"ahdi.h"
-#include	"sdhook.h"
-#include	"vm/bootconf.h"
+#include	"sys/moddefs.h"
+#include	"amiga/alien/rico.h"
+#include	"amiga/alien/sd.h"
 
-extern int	printf(), sleep(), ata_busprobe(), dlm_loadname();
-extern void	delayus(), wakeup(), iodone();
+extern int	printf(), ata_busprobe(), sd_attach();
+extern void	delayus(), dlm_cachepush();
 
 #ifndef BSIZE
 #define BSIZE 512
@@ -58,11 +53,6 @@ extern void	delayus(), wakeup(), iodone();
 #define SK_MEDIUM	0x03
 #define SK_ILLEGAL	0x05
 
-struct partab {
-	ulong	base,
-		len;
-};
-
 struct unit {
 	bool	probed,
 		present;
@@ -71,24 +61,13 @@ struct unit {
 	char	model[41];
 };
 
-static struct partab	partab[0x100];
-static struct ahdi_slice sl[AHDI_NSLICE];
 static struct unit	un[NUNIT];
-static bool		busy;
-#define DISK(dev)	((dev) & (SDCARDS * SDUNITS - 1))	/* card and unit */
-static bool		shown[SDCARDS * SDUNITS];
-static bool		scanned[SDCARDS * SDUNITS];
 static bool		reset;
 static bool		noide;		/* no interface: bus error */
 static struct sdcom	*qhead, *qtail;
 static bool		running;
 
-extern dev_t		dumpdev;
-extern struct bootobj	swapfile;
-
 static char	hwname[] = "Falcon IDE";
-
-struct sdhook *__volatile__	ata_sdscsi;
 
 /* Wait until BSY is clear; then until all of want are set, if any. */
 static int
@@ -307,41 +286,19 @@ struct sdcom *cp;
 	return 2;
 }
 
-/* Card 1's module, loaded on first use. */
-static struct sdhook *
-scsihook()
-{
-	if (ata_sdscsi == 0)
-		(void)dlm_loadname("sd");
-	return ata_sdscsi;
-}
-
-int
-sdopen(card)
-{
-	return card == 0 || scsihook() ? 0 : ENXIO;
-}
-
 /*
  * Runs each command to the end and completes it.  A command queued by a
  * completion runs once that completion returns, so they never nest.
  */
-void
-sdqueue(cp)
+static bool
+ide_queue(c, cp)
+uint	c;
 struct sdcom	*cp;
 {
-	struct sdhook	*h;
 	int	x;
 
-	if (cp->card == 1) {
-		if ((h = ata_sdscsi) != 0)
-			(*h->queue)(cp);
-		else {
-			cp->okay = FALSE;
-			(*cp->intr)(cp);
-		}
-		return;
-	}
+	/* the transfer runs through the uncached physical window */
+	dlm_cachepush(cp->addr, cp->nbyte);
 	x = sdspl();
 	cp->next = 0;
 	if (qhead)
@@ -355,7 +312,7 @@ struct sdcom	*cp;
 			qhead = (struct sdcom *)cp->next;
 			cp->okay = FALSE;
 			cp->status = 0xFF;
-			if (cp->card == 0 && cp->unit < NUNIT) {
+			if (cp->unit < NUNIT) {
 				if (!un[cp->unit].probed)
 					ide_probe((int)cp->unit);
 				if (un[cp->unit].present) {
@@ -368,151 +325,21 @@ struct sdcom	*cp;
 		running = FALSE;
 	}
 	splx(x);
-}
-
-char *
-sdhardwarename(card)
-uint	card;
-{
-	return card == 1 && ata_sdscsi ? ata_sdscsi->name : hwname;
+	return TRUE;
 }
 
 static int
-rdblk(arg, bn, buf)
-char	*arg;
-long	bn;
-uchar	*buf;
+ataide_load()
 {
-	return ide_rw((int)arg, (ulong)bn, (ushort *)buf, 1L, TRUE) ? EIO : 0;
+	if (!ata_busprobe(&IDE_CTL))
+		return ENXIO;
+	return sd_attach((int (*)())0, ide_queue, 0, (char *)0xFFF00000, hwname);
 }
 
 static int
-scsiblk(arg, bn, buf)
-char	*arg;
-long	bn;
-uchar	*buf;
+ataide_unload()
 {
-	return (*ata_sdscsi->rdblk)((int)arg, bn, buf);
+	return EBUSY;
 }
 
-static void
-show(c, u, nblk)
-int	c, u;
-ulong	nblk;
-{
-	int	s;
-
-	if (c == 0)
-		printf("%s: disk c%dd0: %s, %d blocks\n", hwname, u, un[u].model, (int)nblk);
-	else
-		printf("%s: disk ID %d: %d blocks\n", ata_sdscsi->name, u, (int)nblk);
-	for (s = 1; s < AHDI_NSLICE; s++)
-		if (sl[s].len)
-			printf("  s%d: %d+%d %s\n", s, (int)sl[s].base, (int)sl[s].len, sl[s].id);
-}
-
-/*
- * Called by the disk driver's open.  Reads the root sector every time,
- * so a repartitioned disk is seen at the next open.
- */
-int
-sdpartition(dev, strat)
-dev_t	dev;
-int	(*strat)();
-{
-	uint	c, d0, s, u;
-	ulong	nblk;
-	bool	present;
-	int	error, x;
-
-	c = sdcard(dev);
-	u = sdunit(dev);
-	if (c == 0 ? u >= NUNIT : scsihook() == 0)
-		return ENXIO;
-	while (busy)
-		sleep(&busy, PRIBIO);
-	busy = TRUE;
-	if (c == 0) {
-		x = sdspl();
-		if (!un[u].probed)
-			ide_probe((int)u);
-		present = un[u].present;
-		nblk = un[u].nblk;
-		error = present ? ahdi_scan(rdblk, (char *)u, sl) : ENXIO;
-		splx(x);
-	} else {
-		present = (*ata_sdscsi->probe)((int)u) == 0;
-		nblk = present ? (*ata_sdscsi->nblk)((int)u) : 0;
-		error = present ? ahdi_scan(scsiblk, (char *)u, sl) : ENXIO;
-	}
-	d0 = MINOR(sddev0p(dev));
-	if (error == 0) {
-		if (sl[0].len == 0 || sl[0].len > nblk)
-			sl[0].len = nblk;
-		for (s = 1; s < AHDI_NSLICE; s++)
-			if (sl[s].base > nblk || sl[s].len > nblk - sl[s].base)
-				sl[s].len = 0;
-		for (s = 0; s < AHDI_NSLICE; s++) {
-			partab[d0 | s << 4].base = sl[s].base;
-			partab[d0 | s << 4].len = sl[s].len;
-		}
-		if (!shown[DISK(dev)]) {
-			shown[DISK(dev)] = TRUE;
-			show((int)c, (int)u, nblk);
-		}
-		/* swap on this disk: use its whole slice */
-		if (sddev0p(dumpdev) == sddev0p(dev) && partab[MINOR(dumpdev)].len)
-			swapfile.bo_size = partab[MINOR(dumpdev)].len;
-	} else {
-		partab[d0].base = 0;
-		partab[d0].len = present ? nblk : 0;
-		for (s = 1; s < AHDI_NSLICE; s++)
-			partab[d0 | s << 4].len = 0;
-	}
-	scanned[DISK(dev)] = present;
-	busy = FALSE;
-	wakeup(&busy);
-	if (!present)
-		return ENXIO;
-	if (sdpart(dev) == 0)
-		return 0;
-	if (error > 0)
-		return error;
-	if (error < 0 || partab[MINOR(dev)].len == 0)
-		return ENXIO;
-	return 0;
-}
-
-bool
-sdvalid(bp)
-struct buf	*bp;
-{
-	if (bp->b_blkno >= 0 && bp->b_blkno + (bp->b_bcount + BSIZE - 1) / BSIZE
-	    <= partab[MINOR(bp->b_edev)].len)
-		return TRUE;
-	bp->b_resid = bp->b_bcount;
-	bp->b_flags |= B_ERROR;
-	iodone(bp);
-	return FALSE;
-}
-
-uint
-sdblkno(bp)
-struct buf	*bp;
-{
-	return partab[MINOR(bp->b_edev)].base + bp->b_blkno;
-}
-
-uint
-sddevsize(dev)
-dev_t	dev;
-{
-	/*
-	 * A block device's size is taken when its node is looked up, which
-	 * can be before the open that reads the slices: until then, the most
-	 * a byte offset can address.  sdvalid still bounds every transfer.
-	 */
-	if (!scanned[DISK(dev)])
-		return 0x3fffff;
-	return partab[MINOR(dev)].len;
-}
+MOD_MISC_WRAPPER(ataide, ataide_load, ataide_unload, "Falcon IDE");

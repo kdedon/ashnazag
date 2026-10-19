@@ -1,7 +1,7 @@
 /*
  * xdmenv -- start an environment full screen from an X session.
  *
- *	xdmenv mac|tos|amiga|win|voyage200
+ *	xdmenv mac|tos|amiga|win|lisa|voyage200
  *
  * Under xdm the screen belongs to root's X server and the user has no
  * console terminal, so the display service would refuse the user's
@@ -33,8 +33,9 @@
 static char *envs[][2] = {
 	{ "mac", "/usr/bin/startmac" },
 	{ "tos", "/usr/bin/starttos" },
-	{ "amiga", "/usr/bin/startmig" },
+	{ "amiga", "/usr/bin/startamiga" },
 	{ "win", "/usr/bin/startwin" },
+	{ "lisa", "/usr/bin/startlisa" },
 	{ "voyage200", "/usr/bin/startvoyage200" },
 	{ 0, 0 }
 };
@@ -126,7 +127,7 @@ main(argc, argv)
 		if (strcmp(argv[1], envs[i][0]) == 0)
 			cmd = envs[i][1];
 	if (cmd == 0) {
-		fprintf(stderr, "usage: xdmenv mac|tos|amiga|win|voyage200\n");
+		fprintf(stderr, "usage: xdmenv mac|tos|amiga|win|lisa|voyage200\n");
 		return 2;
 	}
 	if ((pw = getpwuid(getuid())) == 0) {

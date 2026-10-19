@@ -3,9 +3,11 @@
 # into our kernel: the A/UX disk's partition map and Apple_Driver, then a
 # small HFS volume holding our boot blocks and the kernel as file `unix'.
 #
-#	sh images/mkboot.sh [-c cmdline] [-m MB] [kernel.elf [out.img]]
+#	sh images/mkboot.sh [-c cmdline] [-m MB] [-k module]... [kernel.elf [out.img]]
 #
-# -c	kernel command line in the boot blocks (at most 127 bytes)
+# -c	kernel command line in the boot blocks (at most 63 bytes)
+# -k	a boot module, stored as a file in the volume and read by the boot
+#	blocks (at most 7).  Default: the kernel's SCSI module, ncr96
 # -m	HFS volume size in MB (default: kernel + 1 MB, at least 4)
 # Defaults: kernel/build/unix-mac.elf, images/q800-unix.img.  The map and
 # driver come from BOOT_SOURCE, images/q800-test-small.img, q800-test.img
@@ -26,15 +28,18 @@ auxsash() { nice -n 19 python3 "$IMAGES/auxsash.py" "$@"; }
 
 die() { echo "mkboot: $*" >&2; exit 1; }
 
-CMD= MB=
+CMD= MB= MODS=
 while [ $# -gt 0 ]; do
 	case $1 in
 	-c) CMD=$2; shift 2 ;;
+	-k) MODS="$MODS $2"; shift 2 ;;
 	-m) MB=$2; shift 2 ;;
 	*) break ;;
 	esac
 done
 KERNEL=${1:-$AUX/kernel/build/unix-mac.elf}
+[ -n "$MODS" ] || MODS=$(dirname "$KERNEL")/mac/scsi/mod.d/ncr96
+for m in $MODS; do [ -f "$m" ] || die "missing boot module $m"; done
 OUT=${2:-$IMAGES/q800-unix.img}
 SRC=${BOOT_SOURCE:-$IMAGES/q800-test-small.img}
 if [ -z "${BOOT_SOURCE:-}" ] && [ ! -f "$SRC" ]; then
@@ -72,8 +77,9 @@ dd if=/dev/zero of="$WORK/hfs.vol" bs=1048576 count="$MB" status=none
 "$T/hformat" -l "Unix" "$WORK/hfs.vol" 0 >/dev/null
 "$T/hmount" "$WORK/hfs.vol" 0 >/dev/null
 "$T/hcopy" -r "$WORK/unix.bin" ":unix"
+for m in $MODS; do "$T/hcopy" -r "$m" ":$(basename "$m")"; done
 "$T/humount"
-"$MKBB" patch "$BOOTBLK" "$KERNEL" "$WORK/hfs.vol" "$CMD"
+"$MKBB" patch "$BOOTBLK" "$KERNEL" "$WORK/hfs.vol" "$CMD" $MODS
 "$T/hfsck" -n "$WORK/hfs.vol" 0 || die "hfsck reports errors"
 
 echo "== disk image"

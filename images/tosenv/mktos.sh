@@ -1,5 +1,5 @@
 #!/bin/sh
-# mktos.sh -- the TOS environment's files: starttos, mintrun, maketos, tosdrive,
+# mktos.sh -- the TOS environment's files: starttos, mintrun, tosdrive,
 # EmuTOS, the machine-layer cartridge, the C: folder template /tos/sys,
 # /tos/fvdi and the system apps (drive G:); guest's copy of /tos/sys.
 #
@@ -11,7 +11,7 @@
 # (kernel/guest/tos/fvdi/build.sh).  TOSAPPS names the
 # unpacked apps of APPS.md (default ref/tosapps); without them the
 # image has none.
-# XaAES and its MiNT layer go to /tos/xaaes (maketos -x adds them to a
+# XaAES and its MiNT layer go to /tos/xaaes (starttos -e xaaes adds them to a
 # C: folder) and make guest's environment xaaes.
 # NOTERADESK=1 leaves TeraDesk out, NOFVDI=1 fVDI, NOXAAES=1 XaAES.
 set -e
@@ -35,13 +35,13 @@ LIBGCC=$(ls "$TC"/lib/gcc-lib/m68k-cbm-sysv4/*/libgcc.a | tail -1)
 # nonshared libc members
 (cd "$O/extra" && ar x "$SYS/usr/ccs/lib/libc.so" && rm -f libc.so.1 &&
  ar rc ../libextra.a $(ar t "$SYS/usr/ccs/lib/libc.so" | grep -v '^libc.so.1$'))
-for c in tos/starttos tos/tosdisp tos/tossnd sndout; do
+for c in tos/starttos tos/tospatch tos/tosdisp tos/tossnd sndout; do
 	nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -w -D__STDC__=0 -I"$G/mod/tosguest" \
 		-I"$G/include" -I"$AUX/kernel/mac/display" -I"$AUX/kernel/mac/sound" \
 		-c "$G/$c.c" -o "$O/${c#tos/}.o"
 done
 "$TC/bin/m68k-cbm-sysv4-ld" -o "$T/usr/bin/starttos" "$SYS/usr/ccs/lib/crt1.o" \
-	"$SYS/usr/ccs/lib/crti.o" "$O/starttos.o" "$O/tosdisp.o" "$O/tossnd.o" "$O/sndout.o" \
+	"$SYS/usr/ccs/lib/crti.o" "$O/starttos.o" "$O/tospatch.o" "$O/tosdisp.o" "$O/tossnd.o" "$O/sndout.o" \
 	"$SYS/usr/lib/libc.so.1" \
 	"$O/libextra.a" "$LIBGCC" "$SYS/usr/ccs/lib/crtn.o"
 # mintrun: MiNT command-line programs as Unix processes
@@ -63,7 +63,7 @@ nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -m68020 -Wall -Wno-implicit -fno-buil
 end=$("$BIN/m68k-elf-nm" "$O/tosml.elf" | awk '$3 == "_end" { print $1 }')
 [ $((0x$end)) -le $((0xfa0000 + 0x20000)) ] || { echo "[FAIL] cartridge ends at $end" >&2; exit 1; }
 "$BIN/m68k-elf-objcopy" -O binary "$O/tosml.elf" "$T/etc/tos/tosml.img"
-cp "$D/maketos" "$D/tosdrive" "$T/usr/bin/"
+cp "$D/tosdrive" "$T/usr/bin/"
 # /tos/sys: README.TXT, SESSION.ACC, AUTO, the user's apps (C:\APPS), G: in the drive table
 mkdir -p "$T/tos/sys/AUTO" "$T/tos/sys/APPS" "$T/usr/games/tos"
 sed 's/$/\r/' "$D/c-readme.txt" > "$T/tos/sys/README.TXT"
@@ -116,7 +116,7 @@ else
 	echo "[FAIL] TeraDesk: $(tail -1 "$O/teradesk.log"); NOTERADESK=1 builds without it"
 	exit 1
 fi
-# XaAES over its MiNT layer: C: files for maketos -x; its source beside it (GPL)
+# XaAES over its MiNT layer: C: files of environment xaaes; its source beside it (GPL)
 if [ -n "$NOXAAES" ]; then
 	echo "[warn] XaAES left out"
 elif AUX=$AUX MINT=$O/mint sh "$G/tos/xaaes/build.sh" "$O/xaaes" > "$O/xaaes.log" 2>&1; then
@@ -127,14 +127,16 @@ else
 	echo "[FAIL] XaAES: $(tail -1 "$O/xaaes.log"); NOXAAES=1 builds without it"
 	exit 1
 fi
-# guest's TOS folder, as maketos makes it, and environment xaaes, as maketos -x -e xaaes
+# guest's TOS folders, as starttos makes them: environments emutos and xaaes
 H=$OUT/guest/home/guest
 mkdir -p "$H"
 (cd "$T/tos/sys" && find . | grep -v -x ./drives | cpio -pdm --quiet "$H/TOS")
+printf 'id=emutos\nname=emutos\nbase=emutos\ntemplate=/tos/sys\ncreated=%s\n' \
+	"$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$H/TOS/.env"
 if [ -d "$T/tos/xaaes" ]; then
 	X=$H/TOS/xaaes
 	mkdir -p "$X"
-	printf 'id=xaaes\nname=xaaes\nprofile=tos\ntemplate=/tos/sys\ncreated=%s\n' \
+	printf 'id=xaaes\nname=xaaes\nbase=xaaes\ntemplate=/tos/sys\ncreated=%s\n' \
 		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$X/.env"
 	(cd "$T/tos/sys" && find . | grep -v -x ./drives | cpio -pdm --quiet "$X")
 	(cd "$T/tos/xaaes" && find . | cpio -pdmu --quiet "$X")

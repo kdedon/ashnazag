@@ -1,15 +1,15 @@
 /*
  * SCSI disks as card 1 of the disk driver: its commands go to the target
- * whose ID is the unit number.  Disks with 512-byte blocks only.
+ * whose ID is the unit number, probed at its first command.  Disks with
+ * 512-byte blocks only.
  */
 #include "sys/types.h"
 #include "sys/param.h"
 #include "sys/errno.h"
 #include "sys/inline.h"
 #include "sys/moddefs.h"
-#include "rico.h"
-#include "sd.h"
-#include "sdhook.h"
+#include "amiga/alien/rico.h"
+#include "amiga/alien/sd.h"
 #include "scsi.h"
 
 #define T_DISK		10000000L	/* us between REQs: a disk spinning up */
@@ -27,7 +27,8 @@ static struct sdcom	*qhead, *qtail;
 static bool		running;
 static struct scsi_job	job;
 
-extern void	bcopy(), bzero();
+extern int	sd_attach();
+extern void	bcopy(), bzero(), dlm_cachepush();
 
 static int
 sd_cmd(u, cdb, n, buf, len, dir)
@@ -100,39 +101,10 @@ int u;
 	return r;
 }
 
-static ulong
-sd_nblk(u)
-int u;
-{
-	return un[u].nblk;
-}
-
-static int
-sd_rdblk(u, bn, buf)
-int u;
-long bn;
-uchar *buf;
-{
-	static uchar c[10];
-	int x, r;
-
-	x = sdspl();
-	bzero((caddr_t)c, sizeof c);
-	c[0] = 0x28;
-	c[2] = bn >> 24;
-	c[3] = bn >> 16;
-	c[4] = bn >> 8;
-	c[5] = bn;
-	c[8] = 1;
-	r = sd_cmd(u, c, 10, buf, 512L, FS_IN) == SS_GOOD && job.sj_done == 512 ? 0 : EIO;
-	splx(x);
-	return r;
-}
-
 /*
  * One driver command.  The sense fetched on CHECK CONDITION answers the
  * driver's REQUEST SENSE that follows.  A disk that stops answering is
- * probed again at the next open.
+ * probed again at its next command.
  */
 static void
 sd_one(cp)
@@ -144,7 +116,7 @@ struct sdcom *cp;
 
 	cp->okay = FALSE;
 	cp->status = 0xFF;
-	if (cp->unit >= SC_MYID || !up->present)
+	if (cp->unit >= SC_MYID || sd_probe((int)cp->unit) != 0)
 		return;
 	if (cp->cdb[0] == 0x03 && up->senselen) {
 		r = cp->nbyte < up->senselen ? cp->nbyte : up->senselen;
@@ -171,12 +143,15 @@ struct sdcom *cp;
 }
 
 /* As the IDE queue: each command runs to the end; completions never nest. */
-static void
-sd_queue(cp)
+static bool
+sd_queue(c, cp)
+uint c;
 struct sdcom *cp;
 {
 	int x;
 
+	/* the transfer runs through the uncached physical window */
+	dlm_cachepush(cp->addr, cp->nbyte);
 	x = sdspl();
 	cp->next = 0;
 	if (qhead)
@@ -194,15 +169,21 @@ struct sdcom *cp;
 		running = FALSE;
 	}
 	splx(x);
+	return TRUE;
 }
 
-static struct sdhook sd_hook = { "SCSI", sd_probe, sd_nblk, sd_rdblk, sd_queue };
+static int
+sd_open(c)
+uint c;
+{
+	return scsi_attach() < 0 ? ENXIO : 0;
+}
 
+/* above the IDE card's address, so card 1 */
 static int
 sd_load()
 {
-	ata_sdscsi = &sd_hook;
-	return 0;
+	return sd_attach(sd_open, sd_queue, 0, (char *)0xFFFF8600, "SCSI");
 }
 
 /* The disk driver does not report closes, so a loaded sd stays. */
