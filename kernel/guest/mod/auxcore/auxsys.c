@@ -587,6 +587,7 @@ auxcore_load()
 	aux_profile.gpf_exit = aux_pexit;
 	aux_profile.gpf_vur = aux_vur;
 	aux_profile.gpf_sendsig = aux_sendsig;
+	aux_profile.gpf_fpu040 = 1;
 	d = &aux_profile.gpf_disp[32];
 	d->gd_kind = GD_SYSCALL;
 	d->gd_flags = GDF_USER;

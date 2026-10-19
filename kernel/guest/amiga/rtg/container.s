@@ -10,7 +10,12 @@
 .equ lib_segment, 44
 .equ lib_name, 48
 .equ lib_claimed, 52
-.equ lib_size, 56
+.equ lib_alloc, 56
+.equ lib_free, 60
+| padded screens: address given out, bytes of black rows before it
+.equ lib_pads, 64
+.equ NPADS, 8
+.equ lib_size, lib_pads+NPADS*8
 .equ state_switch, gbi_CardData
 .equ state_display, gbi_CardData+4
 .equ state_format, gbi_CardData+8
@@ -20,6 +25,7 @@
 .equ state_panw, gbi_CardData+20
 .equ state_panx, gbi_CardData+24
 .equ state_pany, gbi_CardData+28
+.equ state_lib, gbi_CardData+32
 
 .text
 .globl _start
@@ -198,6 +204,15 @@ init_card:
  callback gbi_SetSpritePosition, set_sprite_position
  callback gbi_SetSpriteImage, set_sprite_image
  callback gbi_SetSpriteColor, set_sprite_color
+ | P96's allocator under ours, kept once
+ move.l %a6,state_lib(%a0)
+ cmp.l #alloc_mem,gbi_AllocCardMem(%a0)
+ beq 1f
+ move.l gbi_AllocCardMem(%a0),lib_alloc(%a6)
+ move.l gbi_FreeCardMem(%a0),lib_free(%a6)
+ callback gbi_AllocCardMem, alloc_mem
+ callback gbi_FreeCardMem, free_mem
+1:
  drawfn gbi_FillRect, gbi_FillRectDefault, fill_rect
  drawfn gbi_InvertRect, gbi_InvertRectDefault, invert_rect
  drawfn gbi_BlitRect, gbi_BlitRectDefault, blit_rect
@@ -223,6 +238,90 @@ small_rows:
  cmpa.w #0,%a1
  rts
 noop:
+ rts
+| d0 bytes.  A screen of a smaller mode, its rows the display's, gets
+| black rows, half the display's spare height, above and below, so the
+| display shows it centred with nothing else around it.
+alloc_mem:
+ movem.l %d1-%d7/%a1-%a3,-(%sp)
+ move.l %d0,%d4
+ move.l %d0,%d5
+ and.l #-16,%d5
+ moveq #0,%d6
+ lea RTG_BASE+rtg_small,%a2
+1: tst.l (%a2)
+ beq 5f
+ | its height in rows of the display's width, 1 to 4 bytes a pixel
+ moveq #1,%d1
+2: move.l RTG_BASE+rtg_max_width,%d2
+ mulu.l %d1,%d2
+ move.l %d2,%d3
+ mulu.l 4(%a2),%d3
+ cmp.l %d3,%d5
+ beq 3f
+ addq.l #1,%d1
+ cmp.l #4,%d1
+ bls 2b
+ addq.l #8,%a2
+ cmp.l #RTG_BASE+rtg_small+32,%a2
+ blo 1b
+ bra 5f
+3: move.l RTG_BASE+rtg_max_height,%d6
+ sub.l 4(%a2),%d6
+ bls 4f
+ lsr.l #1,%d6
+ mulu.l %d2,%d6
+ | a free slot, else no border
+ move.l state_lib(%a0),%a3
+ lea lib_pads(%a3),%a2
+ moveq #NPADS-1,%d0
+6: tst.l (%a2)
+ beq 5f
+ addq.l #8,%a2
+ dbra %d0,6b
+4: moveq #0,%d6
+5: move.l %d4,%d0
+ add.l %d6,%d0
+ add.l %d6,%d0
+ move.l %d0,%d5
+ move.l state_lib(%a0),%a3
+ move.l lib_alloc(%a3),%a3
+ movem.l (%sp),%d1-%d3
+ move.l 24(%sp),%d7
+ move.l 28(%sp),%a1
+ jsr (%a3)
+ tst.l %d6
+ beq 9f
+ tst.l %d0
+ beq 9f
+ | all of it black, the screen's own row ends too
+ move.l %d0,%a3
+ lsr.l #2,%d5
+7: clr.l (%a3)+
+ subq.l #1,%d5
+ bne 7b
+ add.l %d6,%d0
+ move.l %d0,(%a2)
+ move.l %d6,4(%a2)
+9: movem.l (%sp)+,%d1-%d7/%a1-%a3
+ rts
+| a1 the memory: a padded screen's own block goes back
+free_mem:
+ move.l %a2,-(%sp)
+ move.l state_lib(%a0),%a2
+ move.l lib_free(%a2),-(%sp)
+ lea lib_pads(%a2),%a2
+ moveq #NPADS-1,%d0
+1: cmpa.l (%a2),%a1
+ beq 2f
+ addq.l #8,%a2
+ dbra %d0,1b
+ bra 3f
+2: suba.l 4(%a2),%a1
+ clr.l (%a2)
+3: move.l 4(%sp),%a2
+ move.l (%sp),4(%sp)
+ addq.l #4,%sp
  rts
 
 | P96 serializes board callbacks; each publishes one complete control update.

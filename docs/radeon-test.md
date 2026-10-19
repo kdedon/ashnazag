@@ -9,23 +9,37 @@ Radeon (part B).
 
 ## What changed in this build
 
-Since build 68060-261017-16:
+Since build 68060-261018-01. Everything sent as drop-ins (`fixes/`) is built
+in: start from this disk and drop nothing in.
 
-- One start command per environment: `startamiga` (was `startmig`),
-  `startmac`, `starttos`. `-e name` picks an environment (e.g.
-  `starttos -e xaaes`), `-d name` makes it the default, `-l` lists them.
-- The loader loads the disk drivers (IDE, CyberStorm SCSI) as boot modules;
-  the root is still the CyberStorm's SCSI ID 0.
-- glxgears sends about a third fewer words to the Voodoo3 per frame (7566 to
-  5170): its display lists replay straight to the card. Step A9 compares.
-- Windows 3.1 programs: fixes to Program Manager groups and double clicks.
-- Still open: BlitzQuake stops with "no context" (A4, issue #211).
+- CyberStorm SCSI (`ncr770`) works with the 68060's copyback cache on.
+- Voodoo3 initialises its SGRAM on a cold boot, so it attaches without
+  Workbench opening the card first (#224).
+- `unix_boot040` reads `PROGDIR:S/Modules` first and finds the modules beside
+  itself, so it starts from a Workbench Shell with no Assigns (#225).
+- `startamiga` takes any Kickstart 3.x and rtg.library: your 3.2.2 ROM
+  should work with no `-r` (#188). On a host fault it logs registers and
+  the guest stack to `~/Amiga/.startamiga.log`.
+- `startmac` runs on the 68060 (its integer instructions are served), and a
+  large kernel memory request waits instead of hanging (#226).
+- Memory: swap counts free RAM, the kernel heap grows on demand.
+- One card-memory allocator for screens and 3D: BlitzQuake runs on Warp3D
+  (A4), 3D survives switching between X and Workbench (#214, #211).
+- Screen switches after BlitzQuake work in 64 MB (#233); smaller screens
+  such as BlitzQuake's 640x480 are centred.
+- Each environment can ask for one of the card's display modes; a new mode
+  runs 15 s and stays only if you press Return.
+- GL: shared `libGL.so` loads `tdfx_dri.so` (Voodoo3) or `r200_dri.so`
+  (Radeon); textures follow card-memory moves (no more Quake textures in
+  the Workbench screen).
 
-Earlier: 68060 caches on (A8), 16-bit Workbench, IBrowse can save to SYS:,
-`bigram` swap, faster GL, Quake and X.
+Known issues:
+- The first screen switch after BlitzQuake can take about a minute while
+  memory is freed for the hidden screen.
+- The Radeon texture-move fix is untested on a real card.
 
-Please check: `glxgears -info` names the Voodoo3 (A2), and each environment
-starts.
+Please check: the Voodoo3 picture on a cold boot (Setup 2), `startamiga` with
+your own Kickstart (A3), BlitzQuake (A4), `startmac` (A5).
 
 ## What you need
 
@@ -61,6 +75,7 @@ enough space" error a ZZ9000 can show after several display restarts.
 |---|---|
 | `amix.hdf` | the whole Unix disk, written raw to the spare disk |
 | `TESTSHEET.md` | this sheet |
+| `SHA256SUMS` | checksums: `sha256sum -c SHA256SUMS` |
 
 ## Setup
 
@@ -134,11 +149,11 @@ A3. **Amiga environment.** Type `startamiga`.
     colour (Prefs > ScreenMode shows the depth). Open a Shell there and type
     `w3dtest`. Photo the picture and the text.
 A4. **Amiga programs.** In the Workbench Shell of A3, type
-    `execute SYS:Quake/quake +timedemo demo1` (BlitzQuake on Warp3D). Photo the
-    error: it still stops with "no context", as its double-buffered screen does
-    not yet fit the card memory a session has (issue #211); type `quit` to
-    leave. Then open
-    the IBrowse drawer and start IBrowse (the demo; close its reminder). Photo it.
+    `execute SYS:Quake/quake +timedemo demo1` (BlitzQuake on Warp3D). Photo
+    the frames per second at the end; type `quit` to leave. During the demo,
+    Ctrl + Left Alt + Left Amiga + 1 shows X (if running) and + 2 returns to
+    Workbench: photo any stripes or wrong textures. Then open the IBrowse
+    drawer and start IBrowse (the demo; close its reminder). Photo it.
     Ctrl + Left Alt + Left Amiga + 0, then Ctrl-C, ends Workbench.
 A5. **Mac.** Type `startmac`. System 7.6.1 comes up (the first start takes a few
     minutes). Photo the desktop, open a few folders, photo again. Leave with the

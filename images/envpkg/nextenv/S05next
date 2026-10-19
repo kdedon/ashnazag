@@ -1,0 +1,6 @@
+# The NeXT environment's module: /dev/nextguest (67).
+PATH=/usr/bin:/sbin:/usr/sbin
+case $1 in
+'start')
+	modadmin -r cdev nextguest 67 ;;
+esac

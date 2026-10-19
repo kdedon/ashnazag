@@ -12,7 +12,7 @@
 # are installed as pkgadd would; AMIGASTAGE adds the Amiga's Kickstart and
 # SYS:, CUBASE (mkcubase.sh's) Cubase to guest's ~/TOS, V200ZIP (default
 # media/v200.zip; V200ROM picks the dump) guest's ~/Voyage200, LISAMEDIA
-# guest's ~/Lisa, WINMEDIA (default media/) Windows for Workgroups 3.11
+# guest's ~/Lisa, NEXTCD guest's ~/NeXT/openstep, WINMEDIA (default media/) Windows for Workgroups 3.11
 # (WFW), Windows 3.11 (WIN311) and Wabi in guest's ~/WIN16, QUAKE, GLQUAKE and QUAKEPAK /usr/games.  Given the A/UX
 # 2.0.1 CD (CD201) and the IIci ROM (AUXROM6), System 6 goes in too
 # (startmac -e 6).  Other inputs as x11/mkimage.sh.
@@ -46,7 +46,7 @@ mkdir -p "$P"
 KERNEL=$KERNEL sh "$AUX/images/envpkg/mkenvpkgs.sh" "$P/envpkg" > "$P/envpkg.log" 2>&1 ||
 	{ tail "$P/envpkg.log"; exit 1; }
 ENVPKGS=
-for p in envcore macenv tosenv amigaenv cpmenv win16env lisaenv v200env; do
+for p in envcore macenv tosenv amigaenv cpmenv win16env lisaenv v200env nextenv; do
 	f=`echo "$P/envpkg/pkgs/env/$p"-*.pkg`
 	[ ! -f "$f" ] || ENVPKGS="$ENVPKGS $f"
 done
@@ -121,6 +121,15 @@ if [ -f "$LISAMEDIA/H.rom" ] && [ -f "$LISAMEDIA/profile.dc42" ]; then
 	printf 't\t/home/guest/Lisa\t100\t1\t%s\n' "$P/lisa" >> "$I"
 	echo "l /home/guest/Lisa/native /usr/lib/lisa/native" >> "$I"
 	echo "l /home/guest/Lisa/media profile.dc42" >> "$I"
+fi
+# the user's OPENSTEP 4.2 CD (NEXTCD, default media/openstep's) as
+# guest's ~/NeXT/openstep, as makenext.sh installs it
+NEXTCD=${NEXTCD:-$AUX/media/openstep/Openstep-4.2-Intel-User.iso}
+if [ -f "$NEXTCD" ]; then
+	HOME=$P/next sh "$AUX/tools/makenext.sh" openstep "$NEXTCD" > "$P/next.log" 2>&1 ||
+		{ tail "$P/next.log"; exit 1; }
+	printf 't\t/home/guest/NeXT\t100\t1\t%s\n' "$P/next/NeXT" >> "$I"
+	echo "l /home/guest/NeXT/openstep/native /usr/lib/next/native" >> "$I"
 fi
 # Quake (gl/quake/build.sh's quake and glquake, QUAKE and GLQUAKE) and
 # the user's id1/pak0.pak (QUAKEPAK) in /usr/games

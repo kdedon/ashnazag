@@ -12,6 +12,7 @@
         Windows 3.11:  startwin -e win311
  Lisa   startlisa       Lisa Office System from ~/Lisa (lisa.rom, profile.dc42)
  V200   startvoyage200  Voyage 200 from ~/Voyage200/media; Cmd-Q quits
+ NeXT   startnext       OPENSTEP 4.2 from ~/NeXT/openstep; Cmd-Q quits
  X      startx          twm; or  xsession  for a menu of sessions, or
         xsession twm|xview|mac|tos|amiga|win|lisa|voyage200|
         console|cpm

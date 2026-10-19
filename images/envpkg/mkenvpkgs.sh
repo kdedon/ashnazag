@@ -15,6 +15,7 @@
 #   win16env  startwin
 #   lisaenv   startlisa, the native Lisa host (S05lisa)
 #   v200env   startvoyage200, the native Voyage 200 host (S05v200)
+#   nextenv   startnext, the native NeXT host (S05next)
 #
 # Out: outdir/pkgs/env/PKG-VERSION.pkg, outdir/catalog in apkg's format,
 # outdir/guest/home/guest (guest's TOS, SMSQ and WIN16 folders, for disk
@@ -173,9 +174,10 @@ if [ -f "$W/win/root/usr/bin/startwin" ]; then
 	cp -R "$W/win/guest/." "$OUT/guest/"
 fi
 
-# lisaenv, v200env: launcher (one program, named per environment) and native host
+# lisaenv, v200env, nextenv: launcher (one program, named per environment) and native host
 $CC -I"$G/include" -c "$G/nativeenv/startnative.c" -o "$W/startnative.o"
-for e in "lisa lisaenv lisaguest startlisa lisaboot" "voyage200 v200env tiplatform startvoyage200 voyage200"; do
+for e in "lisa lisaenv lisaguest startlisa lisaboot" "voyage200 v200env tiplatform startvoyage200 voyage200" \
+    "next nextenv nextguest startnext next"; do
 	set -- $e
 	d=$1 p=$2 m=$3 l=$4 s=$5
 	R=$W/$p
@@ -189,7 +191,7 @@ done
 
 # the datastreams and their catalog
 echo '#apkg-catalog 1' > "$OUT/catalog"
-for p in envcore macenv macnet tosenv amigaenv cpmenv smsqenv win16env lisaenv v200env; do
+for p in envcore macenv macnet tosenv amigaenv cpmenv smsqenv win16env lisaenv v200env nextenv; do
 	if [ ! -d "$W/$p" ]; then
 		echo "[skip] $p: inputs missing (see $W/*.log)"
 		continue

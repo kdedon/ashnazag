@@ -4,7 +4,7 @@
 No board register is modelled: the I/O pages the kernel touches are memory holding the ids it
 reads, and its routines for the timer, event counter, clock chip, NVRAM and software interrupts
 are patched in the loaded copy to call host services in the nextguest module. The screen is a
-2-bit 1120x832 display drawn centred on the host's 8-bit screen. Devices (SCSI, DMA, desktop bus,
+2-bit display, the host screen's size and at least 1120x832, drawn on the host's 8-bit screen, scaled down and centred when the host's is smaller. Devices (SCSI, DMA, desktop bus,
 ethernet) come as drivers over host calls. Given a 128 KB boot ROM instead, `native` starts it
 from its reset vector; the ROM drives the board directly and stops early.
 

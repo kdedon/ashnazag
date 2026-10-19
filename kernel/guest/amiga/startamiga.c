@@ -41,6 +41,7 @@ static char *amiga_device;
 #define FASTBASE 0x08000000UL
 #define BOOTBASE 0x00f00000UL
 #define BOOTSIZE 0x80000UL
+#define FITROOM 0x400000UL
 
 extern int mprotect(), munmap();
 extern char etext;
@@ -290,8 +291,9 @@ fitfast(mb)
 	for (i = 0; i < n; i++) {
 		if (step[i] > mb)
 			continue;
-		if (envmem_region(FASTBASE, step[i] << 20, 0, -1) == 0) {
-			munmap((caddr_t)FASTBASE, step[i] << 20);
+		/* with room for the regions reserved after it */
+		if (envmem_region(FASTBASE, (step[i] << 20) + FITROOM, 0, -1) == 0) {
+			munmap((caddr_t)FASTBASE, (step[i] << 20) + FITROOM);
 			if (step[i] < mb && i + 1 < n)
 				i++;
 			miglog(0, "fast RAM %lu MB, fitted to free memory", step[i]);

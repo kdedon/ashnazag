@@ -526,12 +526,11 @@ extern void fsave(), frestore();
 
 /* size of an FPU state frame from its header, 0 if not one */
 static int
-fplen(b)
+fplen(b, f060)
 	u_char *b;
+	int f060;
 {
-	long *__volatile__ ct = &g_cputype;
-
-	if (ct && *ct == 60)		/* three longs, the format in byte 2 */
+	if (f060)		/* three longs, the format in byte 2 */
 		return b[2] == 0 || b[2] == 0x60 || b[2] == 0xe0 ? 12 : 0;
 	if (b[0] == 0)
 		return 4;
@@ -542,31 +541,44 @@ fplen(b)
 
 /*
  * fsave, frestore through the real unit, which holds the process's own
- * state while it runs.  A fault undoes the fsave.
+ * state while it runs.  A fault undoes the fsave.  A guest that sees a
+ * 68040 on a 68060 gets 040 null and idle frames in place of 060 ones.
  */
 static int
-fpstate(pi, op)
+fpstate(gp, pi, op)
+	struct guest_proc *gp;
 	struct pi *pi;
 	int op;
 {
-	long f[26], a, imm;
-	int mode = (op >> 3) & 7, reg = op & 7, n, e;
+	long f[26], a, imm, *__volatile__ ct = &g_cputype;
+	int mode = (op >> 3) & 7, reg = op & 7, n, e, hw60, f60;
 
 	if (!fpu_present)
 		return -1;
+	hw60 = ct && *ct == 60;
+	f60 = hw60 && !gp->gp_prof->gpf_fpu040;
 	if (!(op & 0x40)) {
 		if (mode < 2 || mode == 3 || (mode == 7 && reg > 1))
 			return -1;
 		fsave((caddr_t)f);
-		if ((n = fplen((u_char *)f)) == 0)
+		if (hw60 && !f60) {
+			n = ((u_char *)f)[2];
+			f[3] = f[0];
+			f[0] = n == 0x60 ? 0x41000000 : 0;
+			n = n == 0 || n == 0x60 ? 4 : 0;
+		} else
+			n = fplen((u_char *)f, f60);
+		if (n == 0)
 			e = -1;
 		else if (eaddr(pi, mode, reg, n, &a, &imm) <= 0)
 			e = -1;
 		else
 			e = copyout((caddr_t)f, (caddr_t)a, n) ? -2 : 0;
-		if (e)
+		if (e) {
+			if (hw60 && !f60)
+				f[0] = f[3];
 			frestore((caddr_t)f);
-		else if (n > 4 && n != 12) {
+		} else if (n > 4 && !hw60) {
 			/* keep the unit live so a switch still saves fp0-fp7 */
 			f[0] = 0x41000000;
 			frestore((caddr_t)f);
@@ -581,12 +593,17 @@ fpstate(pi, op)
 		return -1;
 	if (copyin((caddr_t)a, (caddr_t)f, 4))
 		return -2;
-	if ((n = fplen((u_char *)f)) == 0)
+	if ((n = fplen((u_char *)f, f60)) == 0)
 		return -1;
 	if (n > 4 && copyin((caddr_t)(a + 4), (caddr_t)(f + 1), n - 4))
 		return -2;
 	if (mode == 3)
 		*areg(pi, reg) += n;
+	if (hw60 && !f60) {
+		/* 040 null resets the unit; anything else restores as idle */
+		f[0] = ((u_char *)f)[0] ? 0x6000 : 0;
+		f[1] = f[2] = 0;
+	}
 	frestore((caddr_t)f);
 	return 0;
 }
@@ -759,7 +776,7 @@ priv1(gp, pi)
 	if ((op & 0xff00) == 0xf500)			/* pflush, ptest */
 		return gp->gp_mmu ? guest_mmu_insn(gp, (int)op, (unsigned long)*areg(pi, reg)) : 0;
 	if ((op & 0xff80) == 0xf300)			/* fsave, frestore */
-		return fpstate(pi, (int)op);
+		return fpstate(gp, pi, (int)op);
 	if ((op & 0xffc0) == 0xf000 && (gp->gp_flags & GPF_CPU030))	/* 68030 MMU */
 		return pmmu030(pi, (int)op);
 	return -1;

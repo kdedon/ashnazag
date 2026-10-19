@@ -80,6 +80,7 @@ ds_sinfo
 ds_switch
 ds_vblcount
 ds_vsize
+ds_wgrow
 dupmsg
 execmap
 falloc

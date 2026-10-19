@@ -104,6 +104,8 @@ struct dssess {
 	unsigned long	s_voff;		/* its own VRAM, from d_page; 0 none */
 	unsigned long	s_vpan;		/* shown from there into it */
 	unsigned long	s_ext;		/* bytes of its region touched so far */
+	int		s_wgrow;	/* a switch waits for its shadow's frames */
+	unsigned long	s_trim;		/* hidden: bytes kept, 0 all it touched */
 #endif
 };
 

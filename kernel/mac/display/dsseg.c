@@ -339,6 +339,8 @@ enum seg_rw rw;
 	    ((unsigned long)addr + len - (unsigned long)seg->s_base);
 	if (g > t->t_sess->s_ext)
 		t->t_sess->s_ext = g;
+	if (t->t_sess->s_trim && g > t->t_sess->s_trim)
+		t->t_sess->s_trim = (g + DS_PGOFF) & ~DS_PGOFF;
 #endif
 	for (tries = 0; ; tries++) {
 		g = ds_gen;

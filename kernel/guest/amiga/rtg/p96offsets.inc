@@ -17,6 +17,8 @@
 .equ gbi_MaxHorResolution, 222
 .equ gbi_MaxVerResolution, 232
 .equ gbi_PixelClockCount, 254
+.equ gbi_AllocCardMem, 274
+.equ gbi_FreeCardMem, 278
 .equ gbi_SetSwitch, 282
 .equ gbi_SetColorArray, 286
 .equ gbi_SetDAC, 290

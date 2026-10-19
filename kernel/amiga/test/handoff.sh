@@ -6,7 +6,7 @@
 #   sh kernel/amiga/test/handoff.sh [outdir]
 #
 # Out (default images/amiga-handoff): amix.hdf (the last one kept as
-# amix.hdf.prev), TESTSHEET.md, amix-hdf.zip of both and parts/, the zip
+# amix.hdf.prev), TESTSHEET.md, amix-hdf.zip of both, SHA256SUMS and parts/, the zip
 # split for mail with JOIN.txt.  The build ID (the kernel's, as an 060
 # shows it) heads the motd and the sheet.
 # Builds the Amiga kernel (KERNEL skips it), the Mac kernel if MACKERNEL
@@ -207,5 +207,6 @@ plus=$(cd "$O/parts" && ls amix-hdf.zip.?? | paste -sd+)
   echo "The zip holds amix.hdf (the disk image, $(du -m "$O/amix.hdf" | cut -f1) MB unpacked) and TESTSHEET.md, build $BUILD."
   echo "amix.hdf must give sha256 $(sha256sum < "$O/amix.hdf" | cut -d' ' -f1)."
   echo "Then make amix.hdf the CyberStorm SCSI ID 0 disk (see TESTSHEET.md)."; } > "$O/parts/JOIN.txt"
+(cd "$O" && sha256sum amix.hdf amix-hdf.zip TESTSHEET.md > SHA256SUMS)
 rm -rf "$W"
 echo "[OK] $O ($HOST, $BUILD): amix.hdf ($(du -m "$O/amix.hdf" | cut -f1) MB), amix-hdf.zip, $n parts"

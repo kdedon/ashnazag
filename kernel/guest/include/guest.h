@@ -54,6 +54,7 @@ struct guest_profile {
 	int			(*gpf_fsig)();	/* (p, gp): replaces the IPL hold */
 	void			(*gpf_intr)();	/* (gp, regs): before the trap tail */
 	struct guest_profile	*gpf_next;
+	int			gpf_fpu040;	/* sees a 68040 FPU: its fsave frames on a 68060 */
 };
 
 struct guest_ctr;

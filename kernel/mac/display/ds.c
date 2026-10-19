@@ -43,7 +43,7 @@ extern struct streamtab coinfo;
 
 extern timestruc_t hrestime;
 extern long lbolt;
-extern int availrmem;
+extern int availrmem, freemem, minfree;
 extern int hat_cm_fb_add();
 #ifdef DS_AMIGA
 extern int cputype;
@@ -91,6 +91,11 @@ int (*ds_leavefn)();
 
 static long ds_nextid = 1;
 static int ds_pend = -1;		/* hotkey digit to act on, -1 none */
+static long ds_pwait;			/* lbolt of its next try, after ENOMEM */
+#ifdef DS_AMIGA
+static int ds_nomem;			/* its tries refused for memory */
+#define	DS_NOMEMTRY	40		/* then the shadow keeps what it has */
+#endif
 static long ds_hwlast;			/* lbolt at the last DAFB VBL */
 static long ds_lsec, ds_lusec;		/* last timestamp given */
 static unsigned char ds_phys[16];	/* keys physically down */
@@ -906,7 +911,7 @@ ds_tick()
 #ifdef DS_ATARI
 	ata_dspoll();
 #endif
-	if (ds_pend >= 0)
+	if (ds_pend >= 0 && lbolt - ds_pwait >= 0)
 		qenable(&ds_q);
 #ifdef DS_AMIGA
 	if (ds_trial && (ds_tpend || lbolt - ds_tend >= 0)) {
@@ -1184,7 +1189,8 @@ int wait;
 	if (n > s->s_size >> DS_PGSHIFT)
 		n = s->s_size >> DS_PGSHIFT;
 	while (s->s_pfn && s->s_npg < n) {
-		if (availrmem - 1 < tune.t_minarmem)
+		/* without waiting, the pager's reserve stays */
+		if (availrmem - 1 < tune.t_minarmem || (!wait && freemem <= minfree))
 			return ENOMEM;
 		availrmem--;
 		pages_pp_kernel++;
@@ -1206,6 +1212,19 @@ int wait;
 		s->s_pfn[s->s_npg++] = pfn;
 	}
 	return s->s_pfn ? 0 : ENXIO;
+}
+
+static unsigned long ds_extent();
+
+/* the frames a refused switch asked for, from its owner's poll */
+void
+ds_wgrow(s)
+register struct dssess *s;
+{
+	if (s->s_wgrow) {
+		s->s_wgrow = 0;
+		(void)ds_grow(s, ds_extent(s), 1);
+	}
 }
 #endif
 
@@ -1376,6 +1395,8 @@ register struct dssess *s;
 		if (n < s->s_ext)
 			n = s->s_ext;
 		n = (n + DS_PGOFF) & ~DS_PGOFF;
+		if (s->s_trim && n > s->s_trim)
+			n = s->s_trim;
 		return n < s->s_size ? n : s->s_size;
 	}
 	/* the console draws its 8-bit frame */
@@ -1386,6 +1407,25 @@ register struct dssess *s;
 }
 
 #ifdef DS_AMIGA
+/* s's extent in VRAM without its zero pages at the end, at least a page */
+static unsigned long
+ds_used(s, vram)
+register struct dssess *s;
+caddr_t vram;
+{
+	register unsigned long n;
+	register VOL unsigned long *p, *e;
+
+	s->s_trim = 0;
+	for (n = ds_extent(s); n > DS_PGSIZE; n -= DS_PGSIZE) {
+		e = (VOL unsigned long *)(vram + n);
+		for (p = e - DS_PGSIZE / 4; p < e; p++)
+			if (*p)
+				return n;
+	}
+	return DS_PGSIZE;
+}
+
 static void
 ds_lzero(d, n)
 register VOL unsigned long *d;
@@ -1502,13 +1542,22 @@ register struct dssess *to;
 	}
 #endif
 #ifdef DS_AMIGA
+	/* zeros at the end need no frames */
+	if (!from->s_dead && DS_FULL(from) && !DS_OWNV(from))
+		from->s_trim = ds_used(from, vram);
 	if (!from->s_dead && DS_FULL(from) && !DS_OWNV(from) &&
-	    ds_grow(from, ds_extent(from), 0) != 0) {
+	    ds_grow(from, ds_extent(from), 0) != 0 && ds_nomem < DS_NOMEMTRY) {
+		/* its owner's poll takes the frames, waiting for the pager */
+		ds_nomem++;
+		from->s_wgrow = 1;
+		wakeup((caddr_t)from->s_note);
+		pollwakeup(&from->s_ph, POLLIN | POLLRDNORM);
 		if (ds_leavefn)
 			(void)(*ds_leavefn)(from, 1);
 		fbcons_unlock();
 		return ENOMEM;
 	}
+	ds_nomem = 0;
 #endif
 	ds_gen++;
 	ds_unloadsess(from);
@@ -1546,12 +1595,22 @@ register struct dssess *to;
 	else if (!DS_OWNV(to))
 		ds_shcopy(to, vram, 1);
 #ifdef DS_AMIGA
+	/* in front its frames are not needed: the pager gets them back */
+	if (DS_FULL(to) && !DS_OWNV(to) && to->s_pfn && to->s_npg > 1) {
+		ds_pgfree(to->s_pfn + 1, to->s_npg - 1);
+		for (x = 1; x < to->s_npg; x++)
+			to->s_pfn[x] = to->s_pfn[0];
+		to->s_npg = 1;
+	}
+#endif
+#ifdef DS_AMIGA
 	/* what s has not drawn reads as zeros, not another session's pixels */
 	if (DS_FULL(to) && !DS_OWNV(to) && ds_vdirty > ds_extent(to)) {
 		ds_lzero((VOL unsigned long *)(vram + ds_extent(to)),
 		    (ds_vdirty < to->s_size ? ds_vdirty : to->s_size) - ds_extent(to));
 		ds_vdirty = ds_extent(to);
 	}
+	to->s_trim = 0;
 #endif
 	DS_CPUSHA();
 	x = DS_SPL(DS_HI);
@@ -1590,7 +1649,7 @@ static int
 ds_srv(q)
 queue_t *q;
 {
-	register int d, sr, x;
+	register int d, sr, x, e = 0;
 	register struct dssess *s;
 
 	__asm__ __volatile__("mov.w %%sr,%0" : "=d" (sr));
@@ -1617,7 +1676,10 @@ queue_t *q;
 		s = d == 0 ? &ds_sess[0] : ds_nth(d);
 		if (ds_front->s_dead && s == 0)
 			s = ds_after(ds_front);
-		if (s && ds_switch(s) == EBUSY && ds_pend < 0)
+		/* the shadow takes the pages the pager frees meanwhile */
+		if (s && (e = ds_switch(s)) == ENOMEM)
+			ds_pwait = lbolt + HZ / 4;
+		if (s && (e == EBUSY || e == ENOMEM) && ds_pend < 0)
 			ds_pend = d;
 	}
 	DS_SPLX(sr);

@@ -30,6 +30,27 @@ nativeelf(char *path)
 }
 
 static int
+filecopy(char *from, char *to)
+{
+    char buf[8192];
+    int in, out, n = -1;
+
+    if ((in = open(from, O_RDONLY)) < 0)
+        return -1;
+    if ((out = open(to, O_WRONLY | O_CREAT | O_TRUNC, 0644)) >= 0) {
+        while ((n = read(in, buf, sizeof buf)) > 0)
+            if (write(out, buf, n) != n) {
+                n = -1;
+                break;
+            }
+        if (close(out) < 0)
+            n = -1;
+    }
+    close(in);
+    return n;
+}
+
+static int
 publish(char *key, char *value)
 {
     char *s = malloc(strlen(key) + strlen(value) + 2);
@@ -111,6 +132,13 @@ main(int argc, char **argv)
         }
         if (envclone(prog, family, id, from, getenv("HOME"), base, root) < 0)
             return 1;
+        /* NeXT owners and modes live beside the folder */
+        if (!strcmp(family, "next") &&
+            (envhome(family, from, base, getenv("HOME"), bin, sizeof bin - 8) < 0 ||
+            filecopy(strcat(bin, ".meta"), strcat(strcpy(image, root), ".meta")) < 0)) {
+            fprintf(stderr, "%s: %s.meta: cannot copy\n", prog, root);
+            return 1;
+        }
     }
     sprintf(bin, "%s/native", root);
     sprintf(image, "%s/media", root);

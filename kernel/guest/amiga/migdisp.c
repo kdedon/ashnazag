@@ -445,7 +445,7 @@ static void watch(int fd, int go, int ack, unsigned char *fb, struct fbinfo *fi,
     unsigned int lastw = 0, lasth = 0, lastfmt = 0, fmt = MIG_RTG_INDEX8, bpp, shows = 0;
     struct fbinfo *m = fi, *dm;
     unsigned int lastoff = 0, laststride = 0;
-    unsigned long pan = 0, want, refused = 1;
+    unsigned long pan = 0, want, refused = 1, ctr = 0;
     long next = 0;
     memset(&aw, 0, sizeof aw);
     aw.aw_pid = guest;
@@ -518,12 +518,20 @@ static void watch(int fd, int go, int ack, unsigned char *fb, struct fbinfo *fi,
         if (bpp > 1 && (fi->fi_flags & FBF_OWNV) && dm->fi_rowbytes && rtg.stride == dm->fi_rowbytes &&
             rtg.vram + rtg.offset >= MIG_RTG_VRAM + dm->fi_offset)
             want = rtg.vram + rtg.offset - MIG_RTG_VRAM - dm->fi_offset;
+        /* a smaller screen centred: its bitmap has black rows around it */
+        ctr = 0;
+        if (want && rtg.width <= dm->fi_width && rtg.height <= dm->fi_height)
+            ctr = (dm->fi_height - rtg.height) / 2 * rtg.stride + (dm->fi_width - rtg.width) / 2 * bpp;
+        if (ctr > want)
+            ctr = 0;
+        want -= ctr;
         if (want == refused)
-            want = 0;
+            want = 0, ctr = 0;
         if (status == MIG_RTG_VISIBLE && !rtg.copy && want != pan) {
             if (ioctl(fd, FBIOPAN, want) < 0) {
                 refused = want;
                 want = ioctl(fd, FBIOPAN, 0) < 0 ? pan : 0;
+                ctr = 0;
             }
             if (want != pan)
                 miglog(0, "RTG screen %ux%u shown from %lu", rtg.width, rtg.height, want);
@@ -531,7 +539,7 @@ static void watch(int fd, int go, int ack, unsigned char *fb, struct fbinfo *fi,
         }
         other = status == MIG_RTG_VISIBLE && !rtg.copy && (bpp > 1 ?
             !(fi->fi_flags & FBF_OWNV) || !dm->fi_rowbytes || rtg.stride != dm->fi_rowbytes ||
-            rtg.vram + rtg.offset != MIG_RTG_VRAM + dm->fi_offset + pan :
+            rtg.vram + rtg.offset != MIG_RTG_VRAM + dm->fi_offset + pan + ctr :
             rtg.offset || rtg.stride != rtg.vstride);
         if (status == MIG_RTG_VISIBLE && proc >= 0 && other != away) {
             /* the pointer out of the screen being moved first */

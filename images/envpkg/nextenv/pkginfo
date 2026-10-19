@@ -1,0 +1,6 @@
+PKG=nextenv
+NAME=NeXT environment: startnext and its native host
+ARCH=m68k
+CATEGORY=system
+CLASSES=none
+VENDOR=Ash Nazag

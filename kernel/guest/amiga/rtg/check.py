@@ -40,7 +40,7 @@ def check(raw):
         name = ptr(rt+14)
         assert relocated[name:name+15] == b'container.card\0'
         init = ptr(rt+22)
-        assert struct.unpack_from('>I', relocated, init)[0] == 56
+        assert struct.unpack_from(">I", relocated, init)[0] == 128
         table = ptr(init+4)
         assert struct.unpack_from('>I', relocated, init+8)[0] == 0
         init_code = ptr(init+12)

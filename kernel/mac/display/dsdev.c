@@ -27,7 +27,7 @@
 extern struct fbpmode fbp_mode[];
 extern int fbp_nmode, fbp_cur;
 extern int getf();
-extern void delay();
+extern void delay(), ds_wgrow();
 extern struct streamtab coinfo;
 
 static struct pollhead ds_noph;
@@ -161,6 +161,10 @@ struct pollhead **phpp;
 {
 	register struct dssess *s = ds_fbsess(dev);
 
+#ifdef DS_AMIGA
+	if (s)
+		ds_wgrow(s);
+#endif
 	*reventsp = 0;
 	if (s && s->s_nget != s->s_nput)
 		*reventsp = events & (POLLIN | POLLRDNORM);

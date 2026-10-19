@@ -1,0 +1,2 @@
+/usr/aux/lib/modfree startnext nextguest || exit 1
+exit 0

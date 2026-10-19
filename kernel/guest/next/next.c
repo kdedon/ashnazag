@@ -41,7 +41,7 @@ void hf_serve();
 
 #define L(a) (*(volatile unsigned long *)(a))
 static unsigned long width, height, rowbytes;	/* the guest's screen: the host's, 2 bits per pixel */
-static unsigned long shownw, shownh;	/* the part of it the host screen shows */
+static unsigned long shownw, shownh, shownox, shownoy;	/* where the host screen shows it */
 
 /* the window server draws 1120x832 */
 #define MIN_WIDTH 1120
@@ -55,33 +55,39 @@ static pid_t machine;
 /* the host's key codes: command is 0x37, Q 0x0c */
 #define KEY_COMMAND 0x37
 
-static void
-scale(row, vram, line)
-	int row;
-	unsigned char *vram, *line;
-{
-	unsigned char *s = vram + row * rowbytes;
-	unsigned long x;
-
-	for (x = 0; x < shownw; x++)
-		line[x] = 255 - 85 * (s[x >> 2] >> (6 - 2 * (x & 3)) & 3);
-}
-
-/* the changed rows of the screen, 2 bits to 8 */
+/*
+ * The changed rows of the screen, 2 bits to 8.  A host screen smaller than the
+ * guest's shows it scaled down and centred: of the guest pixels that land on one
+ * host pixel the darkest wins, so one-pixel lines survive.
+ */
 static void
 present(vram, shown)
 	unsigned char *vram, *shown;
 {
-	static unsigned char line[4096];
-	unsigned char *fb = (unsigned char *)display.mapping + display.info.fi_offset;
-	unsigned long y, rb = display.info.fi_rowbytes;
+	static unsigned short colx[2032];
+	static unsigned char line[2032];
+	unsigned char *fb = (unsigned char *)display.mapping + display.info.fi_offset +
+	    shownoy * display.info.fi_rowbytes + shownox, *s;
+	unsigned long x, y, e, r, oy, rb = display.info.fi_rowbytes;
+	int v;
 
-	for (y = 0; y < shownh; y++) {
-		if (!memcmp(shown + y * rowbytes, vram + y * rowbytes, rowbytes))
+	if (!colx[width - 1])
+		for (x = 0; x < width; x++)
+			colx[x] = x * shownw / width;
+	for (y = 0; y < height; y = e) {
+		oy = y * shownh / height;
+		for (e = y + 1; e < height && e * shownh / height == oy; e++)
+			;
+		if (!memcmp(shown + y * rowbytes, vram + y * rowbytes, (e - y) * rowbytes))
 			continue;
-		memcpy(shown + y * rowbytes, vram + y * rowbytes, rowbytes);
-		scale((int)y, vram, line);
-		memcpy(fb + y * rb, line, shownw);
+		memcpy(shown + y * rowbytes, vram + y * rowbytes, (e - y) * rowbytes);
+		memset(line, 0, shownw);
+		for (r = y; r < e; r++)
+			for (s = vram + r * rowbytes, x = 0; x < width; x++)
+				if ((v = s[x >> 2] >> (6 - 2 * (x & 3)) & 3) > line[colx[x]])
+					line[colx[x]] = v;
+		for (x = 0; x < shownw; x++)
+			fb[oy * rb + x] = 255 - 85 * line[x];
 	}
 }
 
@@ -104,8 +110,17 @@ screen()
 	height = fi.fi_height > 4095 ? 4095 : fi.fi_height < MIN_HEIGHT ? MIN_HEIGHT : fi.fi_height;
 	if (height > NX_VRAM_SIZE / rowbytes)
 		height = NX_VRAM_SIZE / rowbytes;
-	shownw = width < fi.fi_width ? width : fi.fi_width;
-	shownh = height < fi.fi_height ? height : fi.fi_height;
+	shownw = width;
+	shownh = height;
+	if (fi.fi_width * height <= fi.fi_height * width && fi.fi_width < width) {
+		shownw = fi.fi_width;
+		shownh = height * fi.fi_width / width;
+	} else if (fi.fi_height < height) {
+		shownh = fi.fi_height;
+		shownw = width * fi.fi_height / height;
+	}
+	shownox = (fi.fi_width - shownw) / 2;
+	shownoy = (fi.fi_height - shownh) / 2;
 	return 0;
 }
 

@@ -119,11 +119,11 @@ Known issues: a "micro diskette" dialog stays over the desktop.
 
 ## NeXT
 
-`startnext` (status: Workspace) runs the `mach_kernel` of your OPENSTEP 4.2 CD natively from
-`~/NeXT/NAME` (`tools/makenext.sh NAME` copies the CD there), with that folder as its root. It
+`startnext` (package `nextenv`; status: Workspace) runs the `mach_kernel` of your OPENSTEP 4.2 CD natively from
+`~/NeXT/openstep`, or `~/NeXT/NAME` with `-e NAME` (`tools/makenext.sh NAME` copies the CD there), with that folder as its root. It
 boots through the first-boot panels to the Workspace Manager, logged in as `me` (no password).
 For the login panel, Log Out and hold the mouse button until the panel shows; name `console`
 gives the text console, `root` the Workspace as root. Host keys and mouse reach it, the pointer
-draws at any screen width, and the File Viewer shows the host folder's free space. Timer, clock,
+draws at any screen width, a screen smaller than 1120x832 shows it scaled down and centred, and the File Viewer shows the host folder's free space. Timer, clock,
 NVRAM, screen and sound (at the sound's own rate) are host services; copies between the kernel
 and programs are host calls. No network yet. Cmd-Q quits.

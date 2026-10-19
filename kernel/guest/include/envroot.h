@@ -106,7 +106,8 @@ envroot(family, id, home, out, size)
 {
 	if (id == 0)
 		return envpolicy(family, "LEGACY_ROOT",
-		    strcmp(family, "mac") == 0 ? "~/System Folder" : envhomedir(family), home, out, size);
+		    strcmp(family, "mac") == 0 ? "~/System Folder" :
+		    strcmp(family, "next") == 0 ? "~/NeXT/openstep" : envhomedir(family), home, out, size);
 	if (!envid(id) || envpolicy(family, "ENVIRONMENT_ROOT", envhomedir(family), home, out, size) < 0 ||
 	    strlen(out) + strlen(id) + 2 > size)
 		return -1;
