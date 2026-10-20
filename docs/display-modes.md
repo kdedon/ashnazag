@@ -108,8 +108,8 @@ Card memory: frames are mode-sized, not `d_vsize`. `am_vneed`, `am_vslot` and `a
 |---|---|---|
 | 1 | ds core: mode table, `FBIOREQMODE` grant, origin via `fi_offset`, switch path, trial/confirm, per-environment confirmed modes, console restore; Mac and Atari Videl backends on it; `t_display` cases | 2 runs |
 | 2 | `am_rtg` modes; Voodoo3 and Radeon `r_setmode` from their tables; mode-sized card-memory frames; 3D fronthook pitch. Amiberry Voodoo3 | 1 run |
-| 3 | ZZ9000 firmware modes and `SCALE2` | 1 run (friend hardware) |
-| 4 | SuperVidel mode set at switch time | 1 run (friend 060) |
+| 3 | ZZ9000 firmware modes and `SCALE2` | 1 run (real hardware) |
+| 4 | SuperVidel mode set at switch time | 1 run (real 060) |
 | 5 | Amiga environment: P96 list, `SetGC` request, `BestModeID` | 1 run |
 | 6 | TOS `Setscreen` request, TT high when listed | 1 run |
 | 7 | Mac declaration ROM resolutions, Display Manager csCodes, tested on the Amiga host | 1-2 runs |

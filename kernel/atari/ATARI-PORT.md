@@ -3,7 +3,7 @@
 Host port of our kernel (AMIX 2.1 objects + Atari platform layer) to:
 
 - **Falcon030 base model**: 68030 at 16 MHz, no FPU, up to 14 MB ST-RAM, no FastRAM (the user's FPGA core).
-- **CT60/CT63 Falcon**: 68060 (with FPU; EC/LC possible), SDRAM FastRAM from 0x01000000 (a friend's real machine).
+- **CT60/CT63 Falcon**: 68060 (with FPU; EC/LC possible), SDRAM FastRAM from 0x01000000.
 
 Unix boots first: the ROM runs our root-sector code, which loads the kernel; TOS only initialises the hardware and is gone after hand-off. Console = Videl screen + IKBD keyboard (no serial at the user's end).
 
@@ -105,7 +105,7 @@ Image builder: `mkdisk.sh` writes a raw 512 MB image (`DISKMB`): root sector wit
 - DMA flush around disk/sound transfers (§3);
 - EC060 (no MMU) is unsupported; LC060 runs the FPE as on the Amiga LC060.
 
-Hatari `--cpulevel 6` covers early checks; the friend's machine is the acceptance test.
+Hatari `--cpulevel 6` covers early checks; real hardware is the acceptance test.
 
 ## 7. Console
 
@@ -135,7 +135,7 @@ Probe (`probe/mkprobe.sh`): the same code in the root sector and in partition 0'
 |---|---|---|---|
 | M1 | kernel to console on Falcon030 | `--lilo` boot, `--fpu none`, 14 MB ST: banner, memory sizes and single-user `#` prompt on the Videl screen, typed commands echo via IKBD; RAM-disk root linked in as on the Mac; 60 Hz tick within 0.1 % of host time; FPE: `fsck -n` on the RAM root works | Hatari |
 | M2 | disks and shell | IDE root (s5) from an AHDI image booted through our root sector and loader; multi-user login on the console; swap; RTC date; reboot/halt; SCSI disk second; then the test suite (`tests/`) in Hatari | Hatari, then the FPGA core (user) |
-| M3 | 68060 | `unix-atari060` on Hatari `--cpulevel 6 --ttram`; FastRAM as VM; ISP/FPSP exercised; DMA flushing; then the friend's CT60/CT63 | Hatari, real CT60 |
+| M3 | 68060 | `unix-atari060` on Hatari `--cpulevel 6 --ttram`; FastRAM as VM; ISP/FPSP exercised; DMA flushing; then a real CT60/CT63 | Hatari, real CT60 |
 | M4 | TOS container passthrough | EmuTOS container on a Falcon host with Videl, DMA sound, IKBD, YM, DSP forwarded (shared grade), disks and MFP timer A kept by the host; ST-RAM low area reserved 1:1 for the guest | Hatari, real Falcon/CT60 |
 
 ## 10. Test emulator and media
