@@ -309,7 +309,7 @@ gput(a, v, n)
  * flags from D0.
  */
 HC_ENTRY
-enum { HC_READ, HC_PFID, HC_XFER, HC_MMU, HC_SEG1, HC_SERIAL, HC_IRQON, HC_IRQ1, HC_CLOCK, HC_VIDEO, HC_PMRD, HC_PMWR, HC_INPUT, HC_UNPACK, HC_TAKE, HC_CTX, HC_FDTYPE, HC_FDIN1, HC_RESET, HC_STOP, HC_VID0 };
+enum { HC_READ, HC_PFID, HC_XFER, HC_MMU, HC_SEG1, HC_SERIAL, HC_IRQON, HC_IRQ1, HC_CLOCK, HC_VIDEO, HC_PMRD, HC_PMWR, HC_INPUT, HC_UNPACK, HC_TAKE, HC_CTX, HC_FDTYPE, HC_FDIN1, HC_RESET, HC_STOP, HC_VID0, HC_ROUND, HC_FDCMD };
 #define	hc_read	HC_STUB(HC_READ)
 #define	hc_pfid	HC_STUB(HC_PFID)
 #define	hc_xfer	HC_STUB(HC_XFER)
@@ -330,7 +330,8 @@ enum { HC_READ, HC_PFID, HC_XFER, HC_MMU, HC_SEG1, HC_SERIAL, HC_IRQON, HC_IRQ1,
 #define	hc_reset	HC_STUB(HC_RESET)
 #define	hc_stop	HC_STUB(HC_STOP)
 #define	hc_vid0	HC_STUB(HC_VID0)
-extern void hc_fdin();
+#define	hc_round	HC_STUB(HC_ROUND)
+extern void hc_fdin(), hc_fdcmd();
 
 void hc_fdinbody() { __asm__("\n\
 	.text\n\
@@ -338,7 +339,12 @@ void hc_fdinbody() { __asm__("\n\
 hc_fdin:\n\
 	jsr hc_stubs+102\n\
 	tst.b %d0\n\
-	rts\n"); }
+	rts\n\
+hc_fdcmd:\n\
+	jsr hc_stubs+132\n\
+	move.l (%sp)+,%a0\n\
+	addq.l &4,%sp\n\
+	jmp (%a0)\n"); }
 
 /* ---- patches to files as their blocks are read ---- */
 
@@ -458,7 +464,8 @@ pfdrv(fid, page0, f, n)
 	addpat(fid, page0, f, (int)e, loop, sizeof loop);
 	addpat(fid, page0, f, (int)i, id, sizeof id);
 	addpat(fid, page0, f, (int)d + 10, nop, sizeof nop);
-	fprintf(stderr, "lisa: ProFile driver in file %d: host block I/O\n", fid);
+	if (verbose)
+		fprintf(stderr, "lisa: ProFile driver in file %d: host block I/O\n", fid);
 }
 
 /*
@@ -529,7 +536,8 @@ lldirq(fid, page0, f, n)
 	addpat(fid, page0, f, (int)i + 4, skip8, sizeof skip8);
 	put32(jsr + 2, (unsigned long)hc_irqon);
 	addpat(fid, page0, f, (int)o + 4, jsr, sizeof jsr);
-	fprintf(stderr, "lisa: level 1 interrupts in file %d: host sources\n", fid);
+	if (verbose)
+		fprintf(stderr, "lisa: level 1 interrupts in file %d: host sources\n", fid);
 	/* the poll: register save, sr, then the three tests from 10 on, its sr restore at 54 */
 	if ((a = find1(f, n, psig, sizeof psig)) < 0 || a + 56 > n || memcmp(f + a + 24, ptsig, sizeof ptsig) ||
 	    memcmp(f + a + 40, ksig, sizeof ksig) || !word(f + a + 54, 0x46df))
@@ -547,7 +555,8 @@ lldirq(fid, page0, f, n)
 	p[28] = e >> 8;
 	p[29] = e;
 	addpat(fid, page0, f, (int)a, p, sizeof p);
-	fprintf(stderr, "lisa: interrupt poll in file %d: host sources\n", fid);
+	if (verbose)
+		fprintf(stderr, "lisa: interrupt poll in file %d: host sources\n", fid);
 }
 
 /*
@@ -586,7 +595,8 @@ lldmisc(fid, page0, f, n)
 	if ((a = find1(f, n, csig, sizeof csig)) >= 14 && f[a - 14] == 0x42 && f[a - 14 + 1] == 0x39) {
 		put32(clk + 2, (unsigned long)hc_clock);
 		addpat(fid, page0, f, (int)a - 14, clk, sizeof clk);
-		fprintf(stderr, "lisa: clock in file %d: host time\n", fid);
+		if (verbose)
+			fprintf(stderr, "lisa: clock in file %d: host time\n", fid);
 	}
 	if ((a = find1(f, n, vsig, sizeof vsig)) >= 0) {
 		put32(vid + 2, (unsigned long)hc_video);
@@ -660,7 +670,8 @@ lldcops(fid, page0, f, n)
 	d[23] = s2 - (a + 22);
 	addpat(fid, page0, f, (int)a, d, sizeof d);
 	addpat(fid, page0, f, (int)h, skip, sizeof skip);
-	fprintf(stderr, "lisa: keyboard and mouse in file %d: host input\n", fid);
+	if (verbose)
+		fprintf(stderr, "lisa: keyboard and mouse in file %d: host input\n", fid);
 }
 
 /*
@@ -709,13 +720,15 @@ lldinit(fid, page0, f, n)
 		addpat(fid, page0, f, (int)o, b, 2);
 	}
 	addpat(fid, page0, f, (int)v, rts, sizeof rts);
-	fprintf(stderr, "lisa: hardware setup in file %d skipped\n", fid);
+	if (verbose)
+		fprintf(stderr, "lisa: hardware setup in file %d skipped\n", fid);
 }
 
 /*
  * The micro diskette driver keeps whether a disk is in place in its drive
  * state (byte 15), set from the controller.  Its status call and its I/O
- * check read it by host call: no disk.
+ * check read it by host call: no disk.  Its controller command routine
+ * becomes a host call that gives every command no result and no error.
  */
 static void
 sonydrv(fid, page0, f, n)
@@ -725,15 +738,22 @@ sonydrv(fid, page0, f, n)
 {
 	static unsigned char st[] = { 0x20, 0x47, 0x10, 0x28, 0x00, 0x0f, 0x48, 0x80, 0x48, 0xc0, 0x29, 0x40, 0x00, 0x04 };
 	static unsigned char io[] = { 0x20, 0x47, 0x4a, 0x28, 0x00, 0x0f, 0x66, 0x08, 0x3d, 0x7c };
-	static unsigned char j[6] = { 0x4e, 0xb9 };
-	long a, b;
+	/* the command routine: clears the command's result and status, loads the controller's address */
+	static unsigned char cmd[] = { 0x48, 0xe7, 0x3c, 0x38, 0x28, 0x6f, 0x00, 0x20, 0x26, 0x6c, 0x00, 0x04,
+	    0x42, 0x6b, 0x00, 0x08, 0x42, 0x6b, 0x00, 0x0a, 0x24, 0x53 };
+	static unsigned char j[6] = { 0x4e, 0xb9 }, jm[6] = { 0x4e, 0xf9 };
+	long a, b, c;
 
-	if ((a = find1(f, n, st, sizeof st)) < 0 || (b = find1(f, n, io, sizeof io)) < 0)
+	if ((a = find1(f, n, st, sizeof st)) < 0 || (b = find1(f, n, io, sizeof io)) < 0 ||
+	    (c = find1(f, n, cmd, sizeof cmd)) < 0)
 		return;
 	put32(j + 2, (unsigned long)hc_fdin);
 	addpat(fid, page0, f, (int)a, j, sizeof j);
 	addpat(fid, page0, f, (int)b, j, sizeof j);
-	fprintf(stderr, "lisa: diskette driver in file %d: disk in place by host call\n", fid);
+	put32(jm + 2, (unsigned long)hc_fdcmd);
+	addpat(fid, page0, f, (int)c, jm, sizeof jm);
+	if (verbose)
+		fprintf(stderr, "lisa: diskette driver in file %d: disk in place by host call\n", fid);
 }
 
 /*
@@ -752,7 +772,10 @@ sonydrv(fid, page0, f, n)
  *    same, stored back; its byte-sized code shortened to make room), the
  *    size it takes from the top of free memory at start (by host call), the
  *    jump table page's (4 KB), and a new stack keeps the page it would give
- *    back.
+ *    back;
+ *  - the drivers' code space grows its segment by each driver's size and
+ *    fails unless the segment has exactly that size, so the size rounds up
+ *    to 4 KB (by host call) in place of 512 bytes.
  */
 static unsigned char unpsig[] = { 0x4c, 0xdf, 0x1c, 0xf8, 0x4e, 0x5e, 0x20, 0x5f, 0xde, 0xfc, 0x00, 0x14, 0x4e, 0xd0,
     'U', 'N', 'P', 'A', 'C', 'K' };
@@ -807,6 +830,8 @@ codepatch(c, n)
 	static int mkp[] = { 0x4e56, 0xfff6, 0x48e7, 0x0f18, 0x42a7, 0x4ead, -1, 0x2d5f, 0xfff6, 0x4267, 0x3f3c, 0x003c };
 	static int jtp[] = { 0x4267, 0x3f3c, 0x0001, 0x486c, 0x0008, 0x4eba, -1, 0x101f, 0x0a00, 0x0001, 0x6708,
 	    0x3f3c, -1, 0x4ead, -1, 0x397c, 0x0001, 0x000a, 0x297c, 0x0000, 0x0200, 0x0010 };
+	static int csp[] = { 0x42ae, 0x0010, 0x206e, 0x000c, 0x30bc, 0x0001, 0x42a7, 0x2f2e, 0x0008, 0x4eba, -1,
+	    0x2d5f, 0x0008, 0x2f2e, 0x0008, 0x2f3c, 0x0000, 0x0200 };
 	static unsigned char unp[] = { 0x4e, 0xb9, 0, 0, 0, 0, 0x20, 0x5f, 0xde, 0xfc, 0x00, 0x14, 0x4e, 0xd0 };
 	static unsigned char tk[] = { 0x4e, 0xb9, 0, 0, 0, 0, 0x4e, 0x71, 0x4e, 0x71 };
 	static unsigned char pmc[] = { 0x4e, 0xb9, 0, 0, 0, 0, 0x4e, 0xd0 };
@@ -834,6 +859,11 @@ codepatch(c, n)
 			p[5] = p[33] = 8;		/* the jump table page: 4 KB */
 			p[40] = 0x10;
 			p[41] = 0;
+			k++;
+		} else if (a + 2 * 18 < n && wmatch(p, csp, 18)) {
+			/* move.l size(a6),-(sp); jsr hc_round */
+			memcpy(p + 12, "\x2f\x2e\x00\x08\x4e\xb9", 6);
+			put32(p + 18, (unsigned long)hc_round);
 			k++;
 		} else if (a + 2 * 18 < n && wmatch(p, top, 18)) {
 			memcpy(p + 8, tk, sizeof tk);
@@ -1004,18 +1034,19 @@ hcread(r)
 
 	/* before each read, the blocks read and checked so far may need patches */
 	if (!copsdone) {
-		if ((k = patchload(lfd)) > 0)
+		if ((k = patchload(lfd)) > 0 && verbose)
 			fprintf(stderr, "lisa: loader rounds to 4 KB (%d)\n", k);
-		if ((k = patchmmu(lfd)) > 0)
+		if ((k = patchmmu(lfd)) > 0 && verbose)
 			fprintf(stderr, "lisa: MMU setup by host call (%d)\n", k);
-		if ((k = patchserial(lfd)) > 0)
+		if ((k = patchserial(lfd)) > 0 && verbose)
 			fprintf(stderr, "lisa: serial number by host call (%d)\n", k);
-		if ((k = patchunpack(lfd)) > 0)
+		if ((k = patchunpack(lfd)) > 0 && verbose)
 			fprintf(stderr, "lisa: unpacked code by host call (%d)\n", k);
-		if ((k = patchprobe(lfd)) > 0)
+		if ((k = patchprobe(lfd)) > 0 && verbose)
 			fprintf(stderr, "lisa: loader's controller probe skipped (%d)\n", k);
 		if ((k = patchcops(lfd)) > 0) {
-			fprintf(stderr, "lisa: controller send patched (%d)\n", k);
+			if (verbose)
+				fprintf(stderr, "lisa: controller send patched (%d)\n", k);
 			copsdone = 1;
 		}
 	}
@@ -1319,6 +1350,12 @@ hostcall(r)
 	case 20:
 		ioctl(lfd, LISAIOC_VIDEO, (int)(r[0] & 0x3f));
 		break;
+	case 22:
+		P32(G32(G32(&r[18]) + 4) + 8, 0);	/* the command's result and status words */
+		break;
+	case 21:
+		P32(&r[17], (G32(&r[17]) + 0xfff) & ~0xfffUL);	/* the size on the stack becomes the result */
+		break;
 	case 10:
 		gmem(r[9], pm, sizeof pm, LM_WRITE, 0L);
 		break;
@@ -1438,7 +1475,8 @@ romfix()
 	romp[a + 6] = 0x44;			/* neg.l d0: carry on error */
 	romp[a + 7] = 0x80;
 	romrts(a + 8);
-	fprintf(stderr, "lisa: ROM reset at %#lx, boot choice at %#lx, block read at %#lx\n", 0xfe0000 | rst, go, 0xfe0000 | a);
+	if (verbose)
+		fprintf(stderr, "lisa: ROM reset at %#lx, boot choice at %#lx, block read at %#lx\n", 0xfe0000 | rst, go, 0xfe0000 | a);
 	if ((a = romjt(0xa8L)) >= 0 && romfind(cops, sizeof cops, a) >= 0 && romfind(cops, sizeof cops, a) < a + 16)
 		romrts(a);
 	else
@@ -1494,7 +1532,8 @@ hcreset(r)
 	for (i = 2; i < 64; i++)
 		P32(i * 4, rstop);
 	r[7] = 1L << 28;
-	fprintf(stderr, "lisa: self-test by host call\n");
+	if (verbose)
+		fprintf(stderr, "lisa: self-test by host call\n");
 }
 
 /*
@@ -1829,7 +1868,8 @@ show(fd)
 	colors.cm_red = colors.cm_green = colors.cm_blue = grey;
 	ioctl(d.framebuffer, FBIOPUTCMAP, &colors);
 	memset(d.mapping, 0, d.info.fi_size);
-	fprintf(stderr, "lisa: display %dx%d, the screen at %dx%d\n", (int)d.info.fi_width, (int)d.info.fi_height, ow, oh);
+	if (verbose)
+		fprintf(stderr, "lisa: display %dx%d, the screen at %dx%d\n", (int)d.info.fi_width, (int)d.info.fi_height, ow, oh);
 	memset(&was, 0, sizeof was);
 	pf[0].fd = d.keyboard;
 	pf[1].fd = d.mouse;
@@ -1844,13 +1884,13 @@ show(fd)
 			_exit(0);
 		if (ioctl(fd, LISAIOC_STAT, &st) < 0)
 			continue;
-		if (!have++)
+		if (verbose && !have++)
 			fprintf(stderr, "lisa: running\n");
-		if ((st.ls_flags & LSF_VIDEO) && st.ls_vid != was.ls_vid)
+		if (verbose && (st.ls_flags & LSF_VIDEO) && st.ls_vid != was.ls_vid)
 			fprintf(stderr, "lisa: video page %d\n", st.ls_vid);
-		if ((st.ls_flags & LSF_PFREAD) && !(was.ls_flags & LSF_PFREAD))
+		if (verbose && (st.ls_flags & LSF_PFREAD) && !(was.ls_flags & LSF_PFREAD))
 			fprintf(stderr, "lisa: first volume read\n");
-		if (st.ls_berr != was.ls_berr)
+		if (verbose && st.ls_berr != was.ls_berr)
 			fprintf(stderr, "lisa: bus error at %#lx, pc %#lx\n", st.ls_berraddr, st.ls_berrpc);
 		if (st.ls_hwfault != was.ls_hwfault)
 			fprintf(stderr, "lisa: hardware access at %#lx, pc %#lx\n", st.ls_hwaddr, st.ls_hwpc);
@@ -1881,7 +1921,7 @@ show(fd)
 			memcpy(fb + oy * d.info.fi_rowbytes, line, ow);
 		}
 		vid = st.ls_vid;
-		if (lit != lastlit && n % 10 == 0) {
+		if (verbose && lit != lastlit && n % 10 == 0) {
 			lastlit = lit;
 			fprintf(stderr, "lisa: screen %lu pixels lit\n", lit);
 		}

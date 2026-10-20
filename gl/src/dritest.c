@@ -11,7 +11,8 @@
  * clip rectangle is painted (green, blue, alternating) and must cover
  * exactly the visible part.  Moving the cover must move the drawable's
  * stamp.  A child that takes the hardware lock and exits must leave it
- * free.  The server's GL configurations must name its visuals, with
+ * free, and so must one killed holding the drawable lock.  The server's
+ * GL configurations must name its visuals, with
  * depth-less, single-buffered and (at 32 bits) stencil and alpha sets
  * on a TrueColor screen.  A second child, with no driver linked for the screen, draws
  * with Mesa's Xlib renderer: a red square.  The windows stay up for
@@ -342,6 +343,49 @@ deadlock(char *busid)
     drmDestroyContext(nscreen->fd, ctx);
 }
 
+/* a client killed holding the drawable lock must leave it free */
+static void
+deaddraw(char *busid)
+{
+    drmLock *dl = &nscreen->pSAREA->drawable_lock;
+    int p[2], got;
+    char c = 0;
+    pid_t pid;
+    time_t t;
+
+    if (pipe(p) < 0)
+	return;
+    if ((pid = fork()) == 0) {
+	DRM_CAS_RESULT(r);
+
+	if (drmOpen(NULL, busid) < 0)
+	    _exit(1);
+	DRM_CAS(dl, 0, getpid(), r);
+	if (!r)
+	    write(p[1], "D", 1);
+	pause();
+	_exit(0);
+    }
+    close(p[1]);
+    read(p[0], &c, 1);
+    close(p[0]);
+    got = dl->lock;
+    kill(pid, SIGKILL);
+    waitpid(pid, 0, 0);
+    if (c != 'D' || got != pid) {
+	check("drawlock", 0, "child got no drawable lock (0x%x)", got);
+	return;
+    }
+    t = time(0);
+    do
+	DRM_SPINLOCK_COUNT(dl, nscreen->drawLockID, 100000, got);
+    while (got && time(0) - t < 5);
+    check("drawlock", !got && nscreen->drawLockID == getpid(),
+	  "free after its holder was killed (id %d)", nscreen->drawLockID);
+    if (!got)
+	DRM_SPINUNLOCK(dl, nscreen->drawLockID);
+}
+
 /*
  * A switch away gives a client holding the lock a second, then goes
  * ahead; X's clients get no lock while X is hidden.
@@ -511,6 +555,7 @@ main(int argc, char **argv)
     paint(ndraw);
 
     deadlock(busid);
+    deaddraw(busid);
     switchaway(info);
     glXMakeCurrent(dpy, None, NULL);
 out:

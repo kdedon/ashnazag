@@ -141,6 +141,9 @@ main(int argc, char **argv)
         }
     }
     sprintf(bin, "%s/native", root);
+    /* else the copy the package installs */
+    if (access(bin, F_OK) < 0)
+        sprintf(bin, "/usr/lib/%s/native", family);
     sprintf(image, "%s/media", root);
     if (!executable)
         executable = bin;

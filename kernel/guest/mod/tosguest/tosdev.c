@@ -56,32 +56,20 @@ tos_berr(gp, r, a, ssw, absent)
 	return 0;
 }
 
-/* writes a 68040 left in its write-back buffers (real 68040s complete them here) */
+/* a write a 68040 left in its write-back buffers (real 68040s complete them here) */
 static int
-writebacks(r)
-	char *r;
+wbput(arg, a, sz, v)
+	char *arg;
+	unsigned long a, v;
+	int sz;
 {
-	static char so[3] = { 14, 16, 18 }, ao[3] = { 24, 32, 40 };
-	unsigned short *sp;
-	unsigned long a, d;
 	unsigned char b[4];
-	int i, k, n = 0, sz;
+	int k;
 
-	for (i = 0; i < 3; i++) {
-		sp = (unsigned short *)(r + 64 + so[i]);
-		if (!(*sp & 0x80))
-			continue;
-		sz = (*sp >> 5) & 3;
-		sz = sz == 1 ? 1 : sz == 2 ? 2 : 4;
-		a = *(unsigned long *)(r + 64 + ao[i]);
-		d = *(unsigned long *)(r + 64 + ao[i] + 4);
-		for (k = sz - 1; k >= 0; k--, d >>= 8)
-			b[k] = d;
-		(void)copyout((caddr_t)b, (caddr_t)a, sz);
-		*sp &= ~0x80;
-		n++;
-	}
-	return n;
+	for (k = sz - 1; k >= 0; k--, v >>= 8)
+		b[k] = v;
+	(void)copyout((caddr_t)b, (caddr_t)a, sz);
+	return 0;
 }
 
 /* in an I/O window: a chip this machine lacks */
@@ -134,7 +122,7 @@ tos_fault(gp, r, v)
 	if ((e = tos_access(gp, r, fa, ssw)) != 0)
 		return e == 1;
 	/* a 68040 write is done already, in its write-back buffers */
-	if (!(ssw & 0x100) && (GR_FV(r) >> 12) == 7 && writebacks(r))
+	if (!(ssw & 0x100) && (GR_FV(r) >> 12) == 7 && guest_wb040(r, wbput, (char *)0))
 		u.u_sigflag |= USTKCLEAR;
 	guest_trapret();
 	return 0;
@@ -206,7 +194,7 @@ tos_xbtimer(v)
 {
 	struct tostimer *tm;
 	int i = v >> 16 & 3, c = v >> 8 & 0xff, d = v & 0xff ? v & 0xff : 256;
-	int s = splhi_();
+	int s = guest_splhi();
 
 	if (i < 2) {
 		tm = &tosc.t_tm[i];
@@ -215,7 +203,7 @@ tos_xbtimer(v)
 		tm->tm_ev = tm->tm_left = c == 8 ? d : 0;
 		tosc.t_ipend[i ? CH_TIMERB : CH_TIMERA] = 0;
 	}
-	splx_(s);
+	guest_splx(s);
 }
 
 /* Jenabint, Jdisint: a disabled channel drops what it owed */
@@ -223,7 +211,7 @@ void
 tos_inten(v)
 	unsigned long v;
 {
-	int ch = v >> 8 & 15, s = splhi_();
+	int ch = v >> 8 & 15, s = guest_splhi();
 
 	if (v & 1)
 		tosc.t_ien |= 1 << ch;
@@ -231,7 +219,7 @@ tos_inten(v)
 		tosc.t_ien &= ~(1 << ch);
 		tosc.t_ipend[ch] = 0;
 	}
-	splx_(s);
+	guest_splx(s);
 }
 
 /* a Timer A event input */
@@ -274,13 +262,13 @@ void
 tos_snd(sn)
 	struct tossndio *sn;
 {
-	int s = splhi_();
+	int s = guest_splhi();
 
 	if (sn->sn_ends & TSE_TIMERA)
 		tevent();
 	if (sn->sn_ends & TSE_GPIP7)
 		owe(CH_GPIP7, 1);
-	splx_(s);
+	guest_splx(s);
 	if (sn->sn_ends)
 		tos_kick(1);
 }

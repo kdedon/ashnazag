@@ -694,36 +694,6 @@ emul(x)
 	return -1;
 }
 
-/* WB1 carries bus-lane data; WB2 and WB3 carry right-justified data. */
-static int
-writebacks(x, r)
-	struct ix *x;
-	char *r;
-{
-	static int status[3] = { 82, 80, 78 }, address[3] = { 104, 96, 88 };
-	unsigned long a, value;
-	int i, w, size, shift, n = 0;
-	for (i = 0; i < 3; i++) {
-		w = G16(r + status[i]);
-		if (!(w & 0x80)) continue;
-		size = (w >> 5) & 3;
-		if (size == 3 || (w & 0x18) || ((w & 7) != 1 && (w & 7) != 5)) return -1;
-		size = size == 0 ? 4 : size == 1 ? 1 : 2;
-		a = G32(r + address[i]); value = G32(r + address[i] + 4);
-		if (i == 0) {
-			shift = (a & 3) * 8;
-			if (size == 1) value >>= 24 - shift;
-			else {
-				if (size == 2) shift = (shift + 16) & 31;
-				if (shift) value = ((value << shift) | (value >> (32 - shift))) & 0xffffffffUL;
-			}
-		}
-		if (mput(x, a, size, value & szmask(size))) return -1;
-		n++;
-	}
-	return n;
-}
-
 int
 amiga_fault(gp, r, v)
 	struct guest_proc *gp;
@@ -777,7 +747,7 @@ amiga_fault(gp, r, v)
 			a->ac_census.custom[0x9a / 2][1]++;
 		amiga_nfast++;
 		m = amiga_pvget(gp);
-		s = amiga_spl();
+		s = guest_splhi();
 		if (m >= 0)
 			a->ac_dev.intena = (a->ac_dev.intena & ~0x4000) | m;
 		if (value & 0x8000)
@@ -786,7 +756,7 @@ amiga_fault(gp, r, v)
 			a->ac_dev.intena &= ~value;
 		nm = a->ac_dev.intena & 0x4000;
 		a->ac_epoch++;
-		amiga_splx(s);
+		guest_splx(s);
 		if (m >= 0 && (nm || m))
 			amiga_pvput(gp, nm);
 		amiga_repost(gp);
@@ -803,23 +773,23 @@ amiga_fault(gp, r, v)
 	for (tries = 0; tries < 3; tries++) {
 		x.r = r; x.pc = GR_PC(r); x.len = 0; x.ba = 0;
 		x.ctr = a; x.fault = fa; x.hit = 0; x.read = ssw & 0x100; x.nst = 0; x.bell = 0; x.sbell = 0;
-		s = amiga_spl();
+		s = guest_splhi();
 		if (m >= 0)
 			a->ac_dev.intena = (a->ac_dev.intena & ~0x4000) | m;
 		epoch = a->ac_epoch; x.dev = a->ac_dev;
 		for (i = 0; i < 4; i++) x.gary[i] = a->ac_gary[i];
-		amiga_splx(s);
+		guest_splx(s);
 		wb = cm ? 0 : (wbs | w) & 0x80;
-		if (wb) e = (ssw & 0x100) ? -1 : writebacks(&x, r);
+		if (wb) e = (ssw & 0x100) ? -1 : guest_wb040(r, mput, (char *)&x);
 		else e = emul(&x);
 		if (e >= 0 && x.hit) {
-			s = amiga_spl();
+			s = guest_splhi();
 			if (a->ac_epoch == epoch) {
 				a->ac_dev = x.dev;
 				for (i = 0; i < 4; i++) a->ac_gary[i] = x.gary[i];
 				a->ac_epoch++;
 				nm = a->ac_dev.intena & 0x4000;
-				amiga_splx(s);
+				guest_splx(s);
 				if (m >= 0 && nm != m) {
 					amiga_pvput(gp, nm);
 					amiga_repost(gp);
@@ -849,7 +819,7 @@ amiga_fault(gp, r, v)
 				guest_trapret();
 				return 0;
 			}
-			amiga_splx(s);
+			guest_splx(s);
 		}
 		for (i = 0; i < 8; i++) GR_D(r, i) = saved[i];
 		for (i = 0; i < 7; i++) GR_A(r, i) = saved[i + 8];

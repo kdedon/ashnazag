@@ -26,6 +26,9 @@ PATH="$AUX/toolchain/linux/bin:$AUX/toolchain/bin:$PATH"
 export PATH AMIX_TAPE
 mkdir -p "$LOG"
 
+. "$K/port-tree.sh"
+[ ! -d "$PORT/.git" ] || port_sync "$PORT" || { echo "FAIL port-sync"; exit 1; }
+
 pass() { echo "PASS $1"; }
 fail() { echo "FAIL $1: $2 (log: $LOG/$1.log)"; exit 1; }
 

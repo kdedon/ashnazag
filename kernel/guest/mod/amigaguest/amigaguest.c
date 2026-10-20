@@ -22,20 +22,6 @@ static unsigned long amiga_srung[AMIGA_NGUEST], amiga_sheard[AMIGA_NGUEST];
 static unsigned long amiga_answered[AMIGA_NGUEST];
 static char amiga_answers[AMIGA_NGUEST], amiga_late[AMIGA_NGUEST];
 
-int
-amiga_spl()
-{
-	int s;
-	__asm__ __volatile__("mov.w %%sr,%0" : "=d" (s) : : "memory");
-	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (s | 0x700) : "memory");
-	return s;
-}
-void
-amiga_splx(s)
-	int s;
-{
-	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (s) : "memory");
-}
 static void amiga_post();
 static int
 amiga_level(gp)
@@ -81,9 +67,9 @@ amiga_pvclock(gp)
 	int s;
 	if (!(a->ac_config.ae_flags & AMIGAF_PV))
 		return;
-	s = amiga_spl();
+	s = guest_splhi();
 	v = a->ac_dev.cia[0].counter[1];
-	amiga_splx(s);
+	guest_splx(s);
 	if (v == a->ac_pvtb)
 		return;
 	b[0] = v >> 8; b[1] = v;
@@ -115,49 +101,18 @@ amiga_postlevel(gp)
 	d->intena = e;
 	return l;
 }
-/* a host signal handler runs on the alternate stack: not the guest's code */
-static int
-amiga_onstack(p)
-	struct proc *p;
-{
-	return p == u.u_procp && (u.u_sigaltstack.ss_flags & SS_ONSTACK);
-}
-/*
- * Whether an interrupt may go to the frame r returns to; nonzero when it
- * may.  A sigreturn rebuilds the frame saved in u_sigsave over r, which
- * would undo the interrupt's PC and SR but keep its stack: once that frame
- * has nothing left to finish, r returns in its place.
- */
-static int
-amiga_tail(r)
-	char *r;
-{
-	char *f = (char *)u.u_sigsave;
-	int fmt = G16(f + 6) >> 12;
-	if (amiga_onstack(u.u_procp))
-		return 0;
-	if (!(u.u_sigflag & USTKRESTORE))
-		return 1;
-	if (fmt == 7 ? (G16(f + 12) & 0xf000) || ((G16(f + 14) | G16(f + 16) | G16(f + 18)) & 0x80) :
-	    fmt != 0 && fmt != 2 && fmt != 4)
-		return 0;
-	GR_SR(r) = G16(f);
-	GR_PC(r) = G32(f + 2);
-	u.u_sigflag &= ~USTKRESTORE;
-	return 1;
-}
 static void
 amiga_intr(gp, r)
 	struct guest_proc *gp;
 	char *r;
 {
-	int m = amiga_pvget(gp), s = amiga_spl(), l;
+	int m = amiga_pvget(gp), s = guest_splhi(), l;
 	amiga_pvsync(gp, m);
 	l = amiga_level(gp);
 	gp->gp_vpend = amiga_postlevel(gp) << 8;
-	amiga_splx(s);
+	guest_splx(s);
 	/* the frame goes to guest memory, which may fault */
-	if (l > ((gp->gp_vsr >> 8) & 7) && amiga_tail(r)) {
+	if (l > GUEST_VIPL(gp) && guest_sigtail(r)) {
 		if (guest_reflect(gp, r, GR_PC(r), (24 + l) << 2,
 		    (char *)0, 2, l) < 0)
 			psignal(curproc, SIGSEGV);
@@ -167,12 +122,12 @@ amiga_intr(gp, r)
 				u.u_sigflag |= USTKCLEAR;
 		}
 	}
-	s = amiga_spl();
+	s = guest_splhi();
 	l = amiga_postlevel(gp);
 	gp->gp_vpend = l << 8;
-	if (l <= ((gp->gp_vsr >> 8) & 7))
+	if (l <= GUEST_VIPL(gp))
 		sigdelset(&gp->gp_proc->p_sig, AMIGA_SIG);
-	amiga_splx(s);
+	guest_splx(s);
 	amiga_pvclock(gp);
 }
 static int
@@ -181,7 +136,7 @@ amiga_fsig(p, gp)
 	struct guest_proc *gp;
 {
 	k_sigset_t h;
-	int m = amiga_pvget(gp), s = amiga_spl(), n, held = 0, ipl = (gp->gp_vsr >> 8) & 7;
+	int m = amiga_pvget(gp), s = guest_splhi(), n, held = 0, ipl = GUEST_VIPL(gp);
 	amiga_pvsync(gp, m);
 	if (sigismember(&p->p_sig, SIGPOLL)) {	/* host socket readiness: PORTS, as AMIGAIOC_KICK raises it */
 		sigdelset(&p->p_sig, SIGPOLL);
@@ -195,11 +150,11 @@ amiga_fsig(p, gp)
 		sigaddset(&p->p_hold, AMIGA_SIG);
 		held = m == 0 && amiga_postlevel(gp) > ipl;
 	}
-	if (amiga_onstack(p))
+	if (guest_onstack(p))
 		sigaddset(&p->p_hold, AMIGA_SIG);
 	n = __amix_fsig(p);
 	p->p_hold = h;
-	amiga_splx(s);
+	guest_splx(s);
 	/* Enable sees the flag and writes INTENA, which traps and delivers */
 	if (held && sigismember(&p->p_sig, AMIGA_SIG)) {
 		unsigned char b[2];
@@ -236,7 +191,7 @@ void
 amiga_await(gp)
 	struct guest_proc *gp;
 {
-	int i, s = amiga_spl(), id;
+	int i, s = guest_splhi(), id;
 	unsigned long want;
 	for (i = 0; i < AMIGA_NGUEST && amiga_guests[i] != gp; i++)
 		;
@@ -250,16 +205,16 @@ amiga_await(gp)
 		if (id != -1)
 			untimeout(id);
 	}
-	amiga_splx(s);
+	guest_splx(s);
 }
 /* after the guest enabled interrupts, from its own context */
 void
 amiga_repost(gp)
 	struct guest_proc *gp;
 {
-	int s = amiga_spl();
+	int s = guest_splhi();
 	amiga_post(gp);
-	amiga_splx(s);
+	guest_splx(s);
 }
 /* raised by the tick or a helper's doorbell: wake or signal the guest */
 static void
@@ -280,14 +235,14 @@ amiga_ring(gp, snd)
 	struct guest_proc *gp;
 	int snd;
 {
-	int i, s = amiga_spl();
+	int i, s = guest_splhi();
 	unsigned long *r = snd ? amiga_srung : amiga_rung;
 	for (i = 0; i < AMIGA_NGUEST; i++)
 		if (amiga_guests[i] == gp) {
 			r[i]++;
 			wakeup((caddr_t)&r[i]);
 		}
-	amiga_splx(s);
+	guest_splx(s);
 	/* the helpers answer before the guest goes on */
 	runrun = 1;
 }
@@ -298,7 +253,7 @@ amiga_tick(arg)
 	struct guest_proc *gp = (struct guest_proc *)arg;
 	struct amigactr *a = AMIGAP(gp);
 	unsigned long clocks;
-	int s = amiga_spl();
+	int s = guest_splhi();
 	a->ac_timer = -1;
 	a->ac_fraction += (a->ac_config.ae_flags & AMIGAF_PAL) ? 709379 : 715909;
 	clocks = a->ac_fraction / HZ;
@@ -311,7 +266,7 @@ amiga_tick(arg)
 		psignal(gp->gp_proc, SIGTERM);
 		if (a->ac_sleeping) wakeup((caddr_t)&a->ac_sleeping);
 	}
-	amiga_splx(s);
+	guest_splx(s);
 }
 static void
 amiga_census(a)
@@ -361,7 +316,7 @@ amiga_exit(gp)
 	int s, i;
 	if (a->ac_gp == gp && (a->ac_config.ae_flags & AMIGAF_CENSUS))
 		amiga_census(a);
-	s = amiga_spl();
+	s = guest_splhi();
 	if (a->ac_gp == gp && a->ac_timer >= 0)
 		untimeout(a->ac_timer);
 	if (a->ac_gp == gp)
@@ -374,7 +329,7 @@ amiga_exit(gp)
 			wakeup((caddr_t)&amiga_srung[i]);
 			wakeup((caddr_t)&amiga_answered[i]);
 		}
-	amiga_splx(s);
+	guest_splx(s);
 }
 static int
 amiga_fork(pg, cg)
@@ -388,20 +343,7 @@ amiga_refl(gp, r, v)
 	char *r;
 	int v;
 {
-	int n;
-	switch (GR_FV(r) >> 12) {
-	case 0: n = 0; break;
-	case 2: case 3: n = 4; break;
-	case 4: n = 8; break;
-	default: return 1;
-	}
-	if (guest_reflect(gp, r, GR_PC(r), (GR_FV(r) & 0xf000) | (v << 2),
-	    r + 72, n + 2, -1) < 0)
-		psignal(curproc, SIGSEGV);
-	if (GR_FV(r) >> 12)
-		u.u_sigflag |= USTKCLEAR;
-	guest_trapret();
-	return 0;
+	return guest_reflcpu(gp, r, GR_PC(r), (GR_FV(r) & 0xf000) | (v << 2), (char *)0);
 }
 static int
 amiga_priv(gp, r, v)
@@ -433,7 +375,7 @@ amiga_priv(gp, r, v)
 	if (op == 0x4e70) {
 		amiga_pvput(gp, 0);
 		a->ac_pvtb = 0x10000;
-		s = amiga_spl();
+		s = guest_splhi();
 		amigadev_reset(&a->ac_dev);
 		amigadev_configure(&a->ac_dev, (a->ac_config.ae_flags & AMIGAF_PAL) != 0,
 		    (a->ac_config.ae_flags & AMIGAF_SCSI) != 0);
@@ -442,7 +384,7 @@ amiga_priv(gp, r, v)
 		gp->gp_vpend = 0; a->ac_fraction = 0;
 		GR_PC(r) += 2;
 		sigdelset(&gp->gp_proc->p_sig, AMIGA_SIG);
-		amiga_splx(s);
+		guest_splx(s);
 		guest_trapret();
 		return 0;
 	}
@@ -453,15 +395,15 @@ amiga_priv(gp, r, v)
 		GR_PC(r) += 4;
 		a->ac_stat.as_stop++;
 		c = amiga_pvget(gp);
-		s = amiga_spl();
+		s = guest_splhi();
 		amiga_pvsync(gp, c);
-		while (a->ac_timer >= 0 && amiga_level(gp) <= ((gp->gp_vsr >> 8) & 7)) {
+		while (a->ac_timer >= 0 && amiga_level(gp) <= GUEST_VIPL(gp)) {
 			a->ac_sleeping = 1;
 			if (sleep((caddr_t)&a->ac_sleeping, (PZERO + 1) | PCATCH))
 				break;
 		}
 		a->ac_sleeping = 0;
-		amiga_splx(s);
+		guest_splx(s);
 		amiga_pvclock(gp);
 		guest_trapret();
 		return 0;
@@ -540,7 +482,7 @@ amigaioctl(dev, cmd, arg, mode, cr, rvp)
 	struct amigactr *a;
 	int e, i, s;
 	if (cmd == AMIGAIOC_SNDWAIT) {
-		s = amiga_spl();
+		s = guest_splhi();
 		for (i = 0; i < AMIGA_NGUEST; i++) {
 			gp = amiga_guests[i];
 			if (gp && gp->gp_proc->p_pid == (pid_t)arg &&
@@ -555,14 +497,14 @@ amigaioctl(dev, cmd, arg, mode, cr, rvp)
 			else
 				amiga_sheard[i] = amiga_srung[i];
 		}
-		amiga_splx(s);
+		guest_splx(s);
 		return e;
 	}
 	if (cmd == AMIGAIOC_WAITN || cmd == AMIGAIOC_GSTAT) {
 		struct amigawait aw;
 		struct amigastat st;
 		if (copyin(arg, (caddr_t)&aw, sizeof aw)) return EFAULT;
-		s = amiga_spl();
+		s = guest_splhi();
 		for (i = 0; i < AMIGA_NGUEST; i++) {
 			gp = amiga_guests[i];
 			if (gp && gp->gp_proc->p_pid == (pid_t)aw.aw_pid &&
@@ -583,14 +525,14 @@ amigaioctl(dev, cmd, arg, mode, cr, rvp)
 				e = EINTR;
 			aw.aw_heard = amiga_rung[i];
 		}
-		amiga_splx(s);
+		guest_splx(s);
 		if (e) return e;
 		if (cmd == AMIGAIOC_GSTAT)
 			return copyout((caddr_t)&st, (caddr_t)aw.aw_stat, sizeof st) ? EFAULT : 0;
 		return copyout((caddr_t)&aw, arg, sizeof aw) ? EFAULT : 0;
 	}
 	if (cmd == AMIGAIOC_KICK || cmd == AMIGAIOC_WAIT) {
-		s = amiga_spl();
+		s = guest_splhi();
 		for (i = 0; i < AMIGA_NGUEST; i++) {
 			gp = amiga_guests[i];
 			if (gp && gp->gp_proc->p_pid == (pid_t)arg &&
@@ -614,7 +556,7 @@ amigaioctl(dev, cmd, arg, mode, cr, rvp)
 			amiga_answered[i] = amiga_rung[i];
 			amiga_answers[i] = 0;
 		}
-		amiga_splx(s);
+		guest_splx(s);
 		return e;
 	}
 	if (cmd == AMIGAIOC_INFO) {
@@ -651,7 +593,7 @@ amigaioctl(dev, cmd, arg, mode, cr, rvp)
 			guest_detach(&amiga_profile);
 			return EAGAIN;
 		}
-		s = amiga_spl();
+		s = guest_splhi();
 		for (i = 0; i < AMIGA_NGUEST && amiga_guests[i]; i++)
 			;
 		if (i < AMIGA_NGUEST) {
@@ -660,7 +602,7 @@ amigaioctl(dev, cmd, arg, mode, cr, rvp)
 			amiga_answered[i] = amiga_rung[i];
 			amiga_answers[i] = 0;
 		}
-		amiga_splx(s);
+		guest_splx(s);
 		return 0;
 	}
 	gp = GUESTP(curproc);

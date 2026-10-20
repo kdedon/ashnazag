@@ -309,9 +309,10 @@ romload1(aux2)
 		ui_rom.r_vp = makespecvp((*romdev)((caddr_t)ui_hwrom, ui_rom.r_size), VBLK);
 	if (b)
 		kmem_free((_VOID *)b, head);
-	printf("uinter: ROM %s, %d KB, version %x, sum %x, ProductInfo %x, box %d\n",
-	    name, (int)(ui_rom.r_size >> 10), ui_rom.r_version, (int)ui_rom.r_sum,
-	    (int)ui_rom.r_prodoff, (int)ui_rom.r_low[0xcb3]);
+	if (uinter_trace)
+		printf("uinter: ROM %s, %d KB, version %x, sum %x, ProductInfo %x, box %d\n",
+		    name, (int)(ui_rom.r_size >> 10), ui_rom.r_version, (int)ui_rom.r_sum,
+		    (int)ui_rom.r_prodoff, (int)ui_rom.r_low[0xcb3]);
 	return 0;
 }
 

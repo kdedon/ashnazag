@@ -1,5 +1,6 @@
 /*
- * t_mem.c -- brk/sbrk, malloc, copy-on-write, mmap, mprotect, stack growth.
+ * t_mem.c -- brk/sbrk, malloc, copy-on-write, mmap, mprotect, stack growth,
+ * /dev/kmem.
  */
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -16,6 +17,7 @@
 #include "t.h"
 
 #define PG	4096
+#define KHOLE	0x4E000000L	/* kernel window, never mapped */
 
 
 static int
@@ -490,6 +492,26 @@ test_big()
 	}
 }
 
+/* /dev/kmem: a kernel long reads, an unmapped kernel address fails */
+static void
+test_kmem()
+{
+	long v;
+	int fd, n = -2;
+
+	t_check("kmem_read", t_kmem("freemem") > 0, "freemem %ld", t_kmem("freemem"));
+	fd = open("/dev/kmem", O_RDONLY);
+	if (fd < 0) {
+		t_fail("kmem_hole", "open: %s", T_ERR);
+		return;
+	}
+	errno = 0;
+	if (lseek(fd, (off_t)KHOLE, 0) != -1)
+		n = read(fd, (char *)&v, sizeof v);
+	t_check("kmem_hole", n == -1 && errno == EFAULT, "read %d: %s", n, T_ERR);
+	close(fd);
+}
+
 int
 main()
 {
@@ -525,5 +547,6 @@ main()
 	test_mmap_zero();
 	test_stack();
 	test_highshared();
+	test_kmem();
 	return t_done();
 }

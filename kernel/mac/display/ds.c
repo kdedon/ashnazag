@@ -269,7 +269,8 @@ int lo, hi;
 #else
 #define HWCLUT	ds_disp.d_dafb
 
-/* entries lo..hi-1 of s's table into the DAFB (black while blanked) */
+/* entries 0..hi-1 of s's table into the DAFB (black while blanked): it loads only from entry 0 */
+/*ARGSUSED*/
 static void
 ds_clutload(s, lo, hi)
 register struct dssess *s;
@@ -278,8 +279,8 @@ int lo, hi;
 	register VOL unsigned char *d = (unsigned char *)(DAFB_REG + DAFB_CLUTDATA);
 	register int i;
 
-	*(VOL unsigned long *)(DAFB_REG + DAFB_CLUTADDR) = lo;
-	for (i = lo; i < hi; i++) {
+	*(VOL unsigned long *)(DAFB_REG + DAFB_CLUTADDR) = 0;
+	for (i = 0; i < hi; i++) {
 		*d = s->s_blank ? 0 : s->s_cmap[0][i] >> 8;
 		*d = s->s_blank ? 0 : s->s_cmap[1][i] >> 8;
 		*d = s->s_blank ? 0 : s->s_cmap[2][i] >> 8;

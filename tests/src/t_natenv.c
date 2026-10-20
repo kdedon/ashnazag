@@ -149,6 +149,10 @@ main()
     if (lock >= 0)
         close(lock);
     check("retry_after_failure", run(0, 0, payload, media) == 37);
+    /* no host program in the folder: the installed one */
+    check("installed_host", system("/tests/startnative voyage200 -m " FIXTURE "/media -q 2>&1 | "
+        "grep -s /usr/lib/voyage200/native > /dev/null || "
+        "/tests/startnative voyage200 -m " FIXTURE "/media -q") == 0);
     sprintf(path, "%s/separate/payload.ok", roots[0]);
     unlink(path);
     sprintf(path, "%s/separate/.env", roots[0]);

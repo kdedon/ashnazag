@@ -43,23 +43,6 @@ long	guest_privop;			/* the last refused opcode */
 long	guest_nfault7, guest_f7pc, guest_f7ea;	/* faults sent to vector 2 */
 long	guest_nunote;			/* their notices left out */
 
-static int
-splhi_()
-{
-	int s;
-
-	__asm__ __volatile__("mov.w %%sr,%0" : "=d" (s) : : "memory");
-	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (s | 0x700) : "memory");
-	return s;
-}
-
-static void
-splx_(s)
-	int s;
-{
-	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (s) : "memory");
-}
-
 /* the SR the guest sees */
 static int
 vsr_get(gp, r)
@@ -208,6 +191,40 @@ guest_reflect(gp, r, pc, fv, x, n, ipl)
 	GR_USP(r) = sp;
 	GR_PC(r) = h;
 	return 0;
+}
+
+/* a host signal handler runs on the alternate stack: not the guest's code */
+int
+guest_onstack(p)
+	struct proc *p;
+{
+	return p == u.u_procp && (u.u_sigaltstack.ss_flags & SS_ONSTACK);
+}
+
+/*
+ * Whether an interrupt may go to the frame r returns to; nonzero when it
+ * may.  A sigreturn rebuilds the frame saved in u_sigsave over r, which
+ * would undo the interrupt's PC and SR but keep its stack: once that frame
+ * has nothing left to finish, r returns in its place.
+ */
+int
+guest_sigtail(r)
+	char *r;
+{
+	char *f = (char *)u.u_sigsave;
+	int fmt = G16(f + 6) >> 12;
+
+	if (guest_onstack(u.u_procp))
+		return 0;
+	if (!(u.u_sigflag & USTKRESTORE))
+		return 1;
+	if (fmt == 7 ? (G16(f + 12) & 0xf000) || ((G16(f + 14) | G16(f + 16) | G16(f + 18)) & 0x80) :
+	    fmt != 0 && fmt != 2 && fmt != 4)
+		return 0;
+	GR_SR(r) = G16(f);
+	GR_PC(r) = G32(f + 2);
+	u.u_sigflag &= ~USTKRESTORE;
+	return 1;
 }
 
 /*
@@ -958,11 +975,11 @@ guest_fault(p, gp, n)
 	if (!(gp->gp_flags & GPF_FAULT) || gp->gp_fpc != GR_PC(r) || GR_VEC(r) != 2 ||
 	    (GR_SR(r) & 0x2000))
 		return 1;
-	s = splhi_();
+	s = guest_splhi();
 	for (sq = p->p_sigqueue; sq && sq->sq_info.si_signo != n; sq = sq->sq_next)
 		;
 	h = sq && !SI_FROMKERNEL(&sq->sq_info);
-	splx_(s);
+	guest_splx(s);
 	if (h)
 		return 1;
 	fl = guest_bframe(f, GR_SR(r) | gp->gp_vsr, GR_PC(r), gp->gp_fea, gp->gp_fssw,
@@ -980,7 +997,7 @@ guest_fault(p, gp, n)
 		    copyout(f, (caddr_t)usp, fl))
 			return 1;
 	}
-	s = splhi_();
+	s = guest_splhi();
 	for (pp = &p->p_sigqueue; *pp && *pp != sq; pp = &(*pp)->sq_next)
 		;
 	if (sq && *pp)
@@ -991,7 +1008,7 @@ guest_fault(p, gp, n)
 		;
 	if (!q)
 		sigdelset(&p->p_sig, n);
-	splx_(s);
+	guest_splx(s);
 	if (sq)
 		kmem_free((caddr_t)sq, sizeof *sq);
 	guest_nfault7++;
@@ -1049,7 +1066,7 @@ guest_fsig1(p, gp)
 	int s, n;
 
 	if (gp->gp_flags & GPF_QUIET) {
-		s = splhi_();
+		s = guest_splhi();
 		h = p->p_hold;
 		pass = sigmask(SIGKILL) | sigmask(SIGINT) | sigmask(SIGQUIT) |
 		    sigmask(SIGTERM) | sigmask(SIGHUP);
@@ -1059,7 +1076,7 @@ guest_fsig1(p, gp)
 			p->p_hold = ~pass;
 		n = __amix_fsig(p);
 		p->p_hold = h;
-		splx_(s);
+		guest_splx(s);
 		return n;
 	}
 	if (gp->gp_prof->gpf_fsig)
@@ -1071,14 +1088,14 @@ guest_fsig1(p, gp)
 		for (n = 1; n < NSIG; n++)
 			if (u.u_signal[n - 1] == SIG_DFL)
 				pass |= sigmask(n);
-	s = splhi_();
+	s = guest_splhi();
 	if (p->p_sig & ~p->p_hold & ~pass)
 		gp->gp_flags |= GPF_VPEND;
 	h = p->p_hold;
 	p->p_hold |= ~pass;
 	n = __amix_fsig(p);
 	p->p_hold = h;
-	splx_(s);
+	guest_splx(s);
 	return n;
 }
 

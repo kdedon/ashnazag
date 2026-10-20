@@ -58,7 +58,7 @@ INFO time.clk_tck: 60
 | Program | Covers |
 |---|---|
 | `t_proc` | fork/wait/exit status, 300 sequential and 25 concurrent forks, orphan reparenting, vfork, exec of `xh_*` (file ends at 16…4096 bytes into its last page, 70 KB data), exec of every root tool, argv/envp, ENOENT/EACCES/ENOEXEC, `#!`, exec of a freshly written copy |
-| `t_mem` | sbrk grow/shrink/regrow, 8 MB malloc, copy-on-write of heap/bss/data/stack, file mmap shared/private/offset and EOF zero fill, `/dev/zero` private and shared, mprotect, munmap, 400 KB stack |
+| `t_mem` | sbrk grow/shrink/regrow, 8 MB malloc, copy-on-write of heap/bss/data/stack, file mmap shared/private/offset and EOF zero fill, `/dev/zero` private and shared, mprotect, munmap, 400 KB stack, `/dev/kmem` read and `EFAULT` at an unmapped kernel address |
 | `t_file` | sizes around 512/1 K/2 K/4 K/10 K (direct-block limit), in-place overwrite, 700-byte appends, 600 KB file (double indirect), seeks, F_FREESP/ftruncate, sparse files, stat fields, chmod/utime, directories past one block, rename/link/symlink/unlink, free-count restore; writeback checked through the raw device and by rereading after `msync(MS_INVALIDATE)` drops the pages |
 | `t_pipe` | pipe (duplex, I_NREAD, capacity, blocking writer, EAGAIN/O_NDELAY, EOF, SIGPIPE/EPIPE), 1 MB transfers, FIFOs, dup/dup2/F_DUPFD, close-on-exec, record locks, poll/select |
 | `t_sig` | kill/signal/sigaction, SA_RESETHAND, masks and pending, alarm, SIGCHLD and SIG_IGN reaping, EINTR vs SA_RESTART, stop/continue, process groups, SIGFPE/SIGILL, siglongjmp from handlers and faults |

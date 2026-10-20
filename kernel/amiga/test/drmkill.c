@@ -7,6 +7,9 @@
  *   fast    killed holding the lock taken in user space
  *   orphan  exited holding it while a child keeps its file open
  *   switch  alive and holding it: a switch away still goes ahead
+ *   nested  asks for it again from a signal handler, a waiter queued:
+ *           gets it at once and exits
+ *   draw    killed holding the drawable lock: the next taker gets it
  * Each round takes the lock within 5 s and writes a word to VRAM
  * through the command fifo.  Output: one line per check, then PASS or
  * FAIL.
@@ -45,12 +48,13 @@ typedef struct {
 #define	NOPCMD		0x120
 
 static volatile unsigned char *reg, *vram;
-static volatile unsigned int *lock;
+static volatile unsigned int *lock, *dlock;
 static tdfx_sarea_t *sp;
 static int fbfd, swap, fails;
 static long session;
 static unsigned long *wp;	/* next fifo word */
 static void give();
+static int hfd, hctx;
 
 static void
 alarmed(s)
@@ -165,16 +169,24 @@ int fd, ctx;
 	ioctl(fd, DRM_IOCTL_UNLOCK, &l);
 }
 
+static int
+cas2(w, old, new)
+volatile unsigned int *w;
+unsigned int old, new;
+{
+	unsigned int o = old;
+
+	__asm__ __volatile__("cas.l %0,%2,(%1)" : "=d" (o) : "a" (w), "d" (new), "0" (o)
+	    : "memory", "cc");
+	return o == old;
+}
+
 /* the user-space lock: held to free and back without the kernel */
 static int
 cas(old, new)
 unsigned int old, new;
 {
-	unsigned int o = old;
-
-	__asm__ __volatile__("cas.l %0,%2,(%1)" : "=d" (o) : "a" (lock), "d" (new), "0" (o)
-	    : "memory", "cc");
-	return o == old;
+	return cas2(lock, old, new);
 }
 
 /* where the card reads next, as a client takes the fifo over */
@@ -237,6 +249,17 @@ int ok, n, rounds;
 		fails++;
 }
 
+/* the lock asked for again by its holder, as a dying client's cleanup does */
+static void
+relock(s)
+int s;
+{
+	int ok = take(hfd, hctx);
+
+	give(hfd, hctx);
+	_exit(ok ? 0 : 2);
+}
+
 /* fork a holder; it writes 'H' once it holds */
 static pid_t
 holder(kind, p)
@@ -253,6 +276,16 @@ int kind, *p;
 	if (!take(fd, ctx))
 		_exit(1);
 	switch (kind) {
+	case 'n':
+		hfd = fd;
+		hctx = ctx;
+		signal(SIGTERM, relock);
+		break;
+	case 'd':
+		give(fd, ctx);
+		if (!cas2(dlock, 0, getpid()))
+			_exit(1);
+		break;
 	case 'h':		/* half a packet: 3 of 100 register writes */
 		import();
 		put(100UL << 16 | NOPCMD << 1 | 1);
@@ -294,6 +327,7 @@ int kind, fd, ctx, r;
 	int p[2], ok, st;
 	pid_t pid;
 	char c = 0;
+	unsigned int w;
 	time_t t;
 
 	if (pipe(p) < 0)
@@ -317,6 +351,35 @@ int kind, fd, ctx, r;
 		waitpid(pid, &st, 0);
 		return ok && probe(fd, ctx, 0x5a000000UL | r);
 	}
+	if (kind == 'n') {
+		/* a waiter's mark, as X leaves it */
+		do
+			w = *lock;
+		while (!cas(w, w | _DRM_LOCK_CONT));
+		kill(pid, SIGTERM);
+		for (t = time(0); waitpid(pid, &st, WNOHANG) == 0; poll((struct pollfd *)0, 0, 50))
+			if (time(0) - t > 5) {
+				kill(pid, SIGKILL);
+				waitpid(pid, &st, 0);
+				printf("drmkill: nested: holder stuck asking for its own lock\n");
+				return 0;
+			}
+		if (!WIFEXITED(st) || WEXITSTATUS(st) != 0)
+			return 0;
+		return probe(fd, ctx, 0x3c000000UL | r);
+	}
+	if (kind == 'd') {
+		ok = *dlock == pid;
+		kill(pid, SIGKILL);
+		waitpid(pid, &st, 0);
+		for (t = time(0); !cas2(dlock, 0, getpid()); poll((struct pollfd *)0, 0, 50))
+			if (time(0) - t > 5) {
+				printf("drmkill: draw: drawable lock 0x%x after its holder was killed\n", *dlock);
+				return 0;
+			}
+		*dlock = 0;
+		return ok && probe(fd, ctx, 0xd0000000UL | r);
+	}
 	if (kind != 'o')
 		kill(pid, SIGKILL);
 	waitpid(pid, &st, 0);
@@ -337,7 +400,7 @@ char **argv;
 	struct fbacq a;
 	drm_dsbind_t b;
 	drm_map_t m, regm, fbm, shm;
-	static char kinds[] = "hrfos", *names[] = { "half", "random", "fast", "orphan", "switch" };
+	static char kinds[] = "hrfosnd", *names[] = { "half", "random", "fast", "orphan", "switch", "nested", "draw" };
 	int fd, ctx, i, k, n, rounds = argc > 1 ? atoi(argv[1]) : 10;
 
 	signal(SIGALRM, alarmed);
@@ -377,6 +440,7 @@ char **argv;
 	}
 	reg = map(fd, regm.offset, 0x200000UL);
 	lock = map(fd, shm.offset, shm.size);
+	dlock = &((drm_sarea_t *)lock)->drawable_lock.lock;
 	sp = (tdfx_sarea_t *)((char *)lock + sizeof(drm_sarea_t));
 	if (sp->fifoSize == 0) {
 		fprintf(stderr, "drmkill: no room for 3D\n");
@@ -388,7 +452,7 @@ char **argv;
 	fd = client(&ctx);
 	printf("drmkill: fifo 0x%x+0x%x, scratch 0x%x\n", sp->fifoOffset, sp->fifoSize, sp->textureOffset);
 	check("start", probe(fd, ctx, 0x12345678UL), 1, 1);
-	for (k = 0; k < 5; k++) {
+	for (k = 0; k < 7; k++) {
 		for (n = i = 0; i < rounds; i++)
 			if (trial(kinds[k], fd, ctx, i))
 				n++;

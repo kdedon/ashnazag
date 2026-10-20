@@ -16,6 +16,7 @@ typedef char *caddr_t;
 struct guest_proc { struct proc *gp_proc; uint32_t gp_flags; unsigned short gp_vsr; };
 #define GPF_AWATCH 0x4000
 #define GPF_STUB 0x80000000UL
+#define GPF_PROFILE 0xfffe0000UL
 #define GR_USP(r) (*(uint32_t *)((r) + 0))
 #define GR_D(r,n) (*(uint32_t *)((r) + 4 + 4*(n)))
 #define GR_A(r,n) (*(uint32_t *)((r) + 36 + 4*(n)))

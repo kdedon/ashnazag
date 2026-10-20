@@ -4,7 +4,7 @@ Our Mac drivers compared with NetBSD mac68k and Linux m68k. Static review; ranke
 
 | # | Risk | Area | NetBSD / Linux | Ours | Change | Status |
 |---|---|---|---|---|---|---|
-| 1 | high | DAFB CLUT | DAFB cannot address single entries: write 0 to the index, reload from entry 0 (Linux `macfb.c` `dafb_setpalette`; NetBSD `grf_obio.c` `dafb_set_mapreg`) | `display/ds.c` `ds_clutload` writes `lo` to CLUTADDR | always write 0, load 0..hi-1 from the shadow table | open |
+| 1 | high | DAFB CLUT | DAFB cannot address single entries: write 0 to the index, reload from entry 0 (Linux `macfb.c` `dafb_setpalette`; NetBSD `grf_obio.c` `dafb_set_mapreg`) | `display/ds.c` `ds_clutload` writes 0 to CLUTADDR and loads 0..hi-1 from the shadow table | — | fixed |
 | 2 | high | ADB, PB3 low after command byte | a pending auto-poll reply is being delivered; our command was not sent; switch SR to input, record as auto-poll data, retry the request (Linux `via-macii.c` ~417-445) | `adb/adb.c`: a low PB3 after the command byte is a pending auto-poll reply; it is read and the command resent | — | fixed (adb/NOTES.md) |
 | 3 | med | ADB, SRQ at data byte 1 | ODD low at byte 1 = SRQ; keep reading (Linux `via-macii.c` ~497) | `adb/adb.c`: byte 1 low is SRQ and the read continues | — | fixed (adb/NOTES.md) |
 | 4 | med | ADB, IDLE before CMD | NetBSD holds IDLE ≥150 µs; Linux skips IDLE | `adb_delay(150)` before a command that follows a dataless one | — | fixed (adb/NOTES.md) |

@@ -468,6 +468,14 @@ aux_ioctl(ap, a, rv, r)
 			return e;
 		if (copyin((caddr_t)a[2], b, TIO_SIZE))
 			return EFAULT;
+		/*
+		 * startmac turns the console's echo off while the Mac has
+		 * the keyboard; Mac programs copying its modes, as
+		 * CommandShell does for its windows, get it back on.
+		 */
+		if ((ap->ap_mac & APM_TASK) && majdev((int)a[0], 0) &&
+		    getf((int)a[0], &fp) == 0 && fp->f_vnode->v_rdev == makedevice(0, 0))
+			P16(b + 6, G16(b + 6) | ECHO);
 		tio_out(b);
 		return copyout(b, (caddr_t)a[2], TIO_SIZE) ? EFAULT : 0;
 	case 0x80125402: case 0x80125403: case 0x80125404:	/* TCSETA* */

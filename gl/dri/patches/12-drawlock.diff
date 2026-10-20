@@ -1,0 +1,18 @@
+diff -ruN a/xc/lib/GL/dri/dri_util.c b/xc/lib/GL/dri/dri_util.c
+--- a/xc/lib/GL/dri/dri_util.c	2026-10-13 20:11:23.564746570 -0500
++++ b/xc/lib/GL/dri/dri_util.c	2026-10-13 20:11:26.685749481 -0500
+@@ -946,11 +946,10 @@
+     }
+ 
+     /*
+-    ** NOT_DONE: This is used by the X server to detect when the client
+-    ** has died while holding the drawable lock.  The client sets the
+-    ** drawable lock to this value.
++    ** The drawable lock holds its taker's pid: closing the DRM file of
++    ** a client killed holding it frees it.
+     */
+-    psp->drawLockID = 1;
++    psp->drawLockID = getpid();
+ 
+     psp->fd = drmOpen(NULL,BusID);
+     if (psp->fd < 0) {

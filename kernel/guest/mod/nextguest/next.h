@@ -36,6 +36,6 @@ struct nx {
 	struct nx_info	st;
 };
 extern struct nx nx;
-extern int nx_splhi(), nx_level();
-extern void nx_splx(), nx_kick();
+extern int nx_level();
+extern void nx_kick();
 extern unsigned long nx_us();

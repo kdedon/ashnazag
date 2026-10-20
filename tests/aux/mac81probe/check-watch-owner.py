@@ -14,7 +14,7 @@ typedef char *caddr_t;
 #define GPF_STUB 1
 #define GPF_AWATCH 2
 #define GPF_ALINE 4
-#define GPF_DONE(i) (0x10000UL<<(i))
+#define GPF_DONE(i) (0x20000UL<<(i))
 #define DS_HI 1
 #define LS_INUSE 1
 #define UI_NTASK 2

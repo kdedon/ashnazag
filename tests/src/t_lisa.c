@@ -261,8 +261,8 @@ changed(a, b)
 
 /*
  * The Lisa's mouse and keyboard on the desktop, the screen scaled to the
- * host's width and centred: the pointer moves, a click on Cancel closes the
- * micro diskette dialog, a click on the volume's icon and typing renames it,
+ * host's width and centred: the pointer moves, no micro diskette dialog
+ * shows (a click where its Cancel would be changes nothing), a click on the volume's icon and typing renames it,
  * and Apple-O (a beep) keeps it running.
  */
 #define	LX(x)	((w - sw) / 2 + (x) * sw / 720)	/* a Lisa screen point on the host's */
@@ -286,7 +286,8 @@ input()
 		host("click 1");
 		nap(5000);
 		host("shot li1");
-		t_check("cancel", strcmp(changed("li0", "li1"), "none") != 0, "no change");
+		s = changed("li0", "li1");
+		t_check("no_dialog", strcmp(s, "none") == 0, "a dialog closed: %s changed", s);
 	}
 	/* the first click may only bring the desktop forward */
 	moveto(LX(675), LY(352));

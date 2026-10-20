@@ -1,5 +1,5 @@
---- a/src/sys_amix.c	2026-10-12 11:22:21.804767126 -0500
-+++ b/src/sys_amix.c	2026-10-12 11:27:12.468298839 -0500
+--- a/src/sys_amix.c
++++ b/src/sys_amix.c
 @@ -41,6 +41,9 @@
  #include <sys/wait.h>
  #include <sys/mman.h>
@@ -10,7 +10,7 @@
  
  #include "quakedef.h"
  
-@@ -429,7 +432,23 @@
+@@ -460,6 +463,20 @@
  	j = COM_CheckParm("-mem");
  	if (j)
  		parms.memsize = (int) (Q_atof(com_argv[j+1]) * 1024 * 1024);
@@ -28,9 +28,6 @@
 +			}
 +	}
 +#endif
- 	parms.membase = malloc (parms.memsize);
-+	if (!parms.membase)
-+		Sys_Error ("no memory for a %d byte heap", parms.memsize);
- 
- 	parms.basedir = basedir;
- // caching is disabled by default, use -cachedir to enable
+ 	/* with little free memory, take the biggest heap that fits */
+ 	while (!(parms.membase = malloc (parms.memsize)) &&
+ 	    parms.memsize > MINIMUM_MEMORY_LEVELPAK) {

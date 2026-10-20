@@ -86,8 +86,9 @@ static int copyout(char *from, char *to, unsigned int count)
     return 0;
 }
 static void psignal(void *p, int sig) { (void)p; (void)sig; signals++; }
-static int amiga_spl(void) { return spldepth++; }
-static void amiga_splx(int s) { assert(spldepth == s + 1); spldepth = s; }
+static int guest_splhi(void) { return spldepth++; }
+static void guest_splx(int s) { assert(spldepth == s + 1); spldepth = s; }
+extern int guest_bfault(), guest_wb040();
 static void guest_trapret(void) { assert(spldepth == 0); tails++; }
 
 #include "../../guest/mod/amigaguest/amigafault.c"

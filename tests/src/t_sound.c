@@ -416,7 +416,7 @@ macsnd(int a, int version)
 	struct sndstat s;
 	char line[256], tn[16], init[96], inith[96], *root = sys6 ? ROOT6 : "";
 	char tf[64], tout[64], ttrace[64];
-	unsigned long fed[4], tsync, tasync, tcb;
+	unsigned long fed[4], fedst, fullst, underst, tsync, tasync, tcb;
 	long serr, err, t0, tpart = -1, tdone = -1, el, mcpu;
 	int cb, ui, fd, n, st, id, k, lf, nm = 0, p[2];
 	off_t tsz = 0;
@@ -467,6 +467,11 @@ macsnd(int a, int version)
 	unlink(tout);
 	unlink(ttrace);
 	close(creat(tf, 0666));
+	s.ss_fed = 0;
+	sstat(a, &s);
+	fedst = s.ss_fed;
+	fullst = s.ss_full;
+	underst = s.ss_under;
 	kset("uinter_boxflag", sys6 ? 5L : 29L);
 	/* as a login starts it: output to a pipe, nothing else inherited */
 	if (pipe(p) < 0)
@@ -496,7 +501,7 @@ macsnd(int a, int version)
 			sstat(a, &s);
 			fed[nm++] = s.ss_fed;
 			tsz = sb.st_size;
-			t_info("mac_mark", "%d at %ld ms, fed %lu", nm, t_now_ms() - t0, s.ss_fed);
+			t_info("mac_mark", "%d at %ld ms, fed %lu (+%lu since start)", nm, t_now_ms() - t0, s.ss_fed, s.ss_fed - fedst);
 		}
 		if ((fd = open(tout, O_RDONLY)) >= 0) {
 			n = read(fd, line, sizeof line - 1);
@@ -587,6 +592,9 @@ macsnd(int a, int version)
 		tdone - tpart, tcb);
 	t_check(NM("heard"), fed[3] - fed[2] >= CHIPHZ * 9 / 10,
 		"chip fed %lu frames", fed[3] - fed[2]);
+	/* the hardware reads a full FIFO as empty at its next interrupt */
+	t_check(NM("whole_sounds"), s.ss_full == fullst, "FIFO full %lu times", s.ss_full - fullst);
+	t_info(NM("underruns"), "%lu", s.ss_under - underst);
 #undef NM
 }
 
@@ -786,6 +794,7 @@ main()
 		"heard %lu fed %lu", s1.ss_heard - s0.ss_heard, s1.ss_fed - s0.ss_fed);
 	t_check("chip_irq", k0 >= 0 && k1 - k0 >= 20, "chip interrupts %ld -> %ld", k0, k1);
 	t_info("underruns", "%lu", s1.ss_under);
+	t_check("fifo_never_full", s1.ss_full == 0, "full %lu times", s1.ss_full);
 
 	/* 44.1 kHz 16-bit stereo, a quarter second, resampled */
 	sstat(a, &s0);

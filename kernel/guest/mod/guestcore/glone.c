@@ -12,6 +12,46 @@ struct guest_lone_stat *st;
 	bcopy((caddr_t)&guest_lone_stat, (caddr_t)st, sizeof *st);
 }
 
+/* guest_reflect's n for a CPU frame with format word fv; 0: a format not passed on */
+int
+guest_fvsize(fv)
+int fv;
+{
+	switch (fv >> 12 & 0xf) {
+	case 0: return 2;
+	case 2: case 3: return 6;
+	case 4: return 10;
+	}
+	return 0;
+}
+
+/*
+ * An exception through the guest's vector at fv's offset, with the rest
+ * of the CPU's own frame, then back to the guest.  1: a format left to
+ * the caller.  name: the console line when the guest has no stack.
+ */
+int
+guest_reflcpu(gp, r, pc, fv, name)
+struct guest_proc *gp;
+char *r, *name;
+long pc;
+int fv;
+{
+	int n = guest_fvsize(fv);
+
+	if (!n)
+		return 1;
+	if (guest_reflect(gp, r, pc, fv, r + 72, n, -1) < 0) {
+		if (name)
+			printf("%s: vector %d with no guest stack, pc %x\n", name, (fv & 0xfff) >> 2, (int)pc);
+		psignal(curproc, SIGSEGV);
+	}
+	if (GR_FV(r) >> 12)
+		u.u_sigflag |= USTKCLEAR;
+	guest_trapret();
+	return 0;
+}
+
 static int
 lone_reflect(gp, r, v, pc, format)
 struct guest_proc *gp;
@@ -19,7 +59,6 @@ char *r;
 int v, format;
 long pc;
 {
-	int n;
 	/* Negative format requests a synthetic format-0 frame. */
 	if (!fuword((caddr_t)(gp->gp_vvbr + (v << 2)))) {
 		if (format < 0)
@@ -37,20 +76,10 @@ long pc;
 		format = 0;
 	if (gp->gp_flags & GPF_FRAME68K)
 		format = 0;
-	switch (format >> 12) {
-	case 0: n = 0; break;
-	case 2: case 3: n = 4; break;
-	case 4: n = 8; break;
-	default: return 1;
-	}
+	if (!guest_fvsize(format))
+		return 1;
 	guest_lone_stat.reflected++;
-	if (guest_reflect(gp, r, pc, format ? format : v << 2,
-					format ? r + 72 : (char *)0, n + 2, -1) < 0)
-		psignal(curproc, SIGSEGV);
-	if (GR_FV(r) >> 12)
-		u.u_sigflag |= USTKCLEAR;
-	guest_trapret();
-	return 0;
+	return guest_reflcpu(gp, r, pc, format ? format : v << 2, (char *)0);
 }
 
 int

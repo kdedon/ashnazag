@@ -20,8 +20,6 @@ struct amigactr {
 	struct amigacensus ac_census;
 };
 #define AMIGAP(gp) ((struct amigactr *)GUEST_PRIV(gp))
-extern int amiga_spl();
-extern void amiga_splx();
 extern int amiga_fault();
 extern long amiga_nfast;
 extern void amiga_ring();

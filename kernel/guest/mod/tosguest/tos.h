@@ -11,6 +11,7 @@
 
 #define	SR_S		0x2000
 #define	TGF_SOLO	0x20000		/* gp_flags: TEF_NOMACH guest */
+typedef char tgf_profile[(TGF_SOLO & GPF_PROFILE) == TGF_SOLO ? 1 : -1];
 #define	SR_IPL		0x0700
 
 /* MFP channels: vector $40 + channel */
@@ -59,8 +60,6 @@ extern struct tosctr tosc;
 extern int tos_trace;
 
 /* tosguest.c */
-extern int splhi_();
-extern void splx_();
 extern void tos_kick();
 extern void mfp_pend();
 extern int tos_berr();

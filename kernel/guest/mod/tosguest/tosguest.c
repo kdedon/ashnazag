@@ -44,23 +44,6 @@ static pid_t tos_stpid;
 static struct guest_ram *tos_ram;
 static int tosdevflag[1] = { 0 };
 
-int
-splhi_()
-{
-	int s;
-
-	__asm__ __volatile__("mov.w %%sr,%0" : "=d" (s) : : "memory");
-	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (s | 0x700) : "memory");
-	return s;
-}
-
-void
-splx_(s)
-	int s;
-{
-	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (s) : "memory");
-}
-
 /* the highest level asking, 0 none */
 static int
 tos_level()
@@ -68,13 +51,6 @@ tos_level()
 	if (mfp_level())
 		return 6;
 	return tosc.t_vblpend ? 4 : 0;
-}
-
-static int
-vipl(gp)
-	struct guest_proc *gp;
-{
-	return (gp->gp_vsr & SR_IPL) >> 8;
 }
 
 /*
@@ -93,7 +69,7 @@ tos_kick(rr)
 		return;
 	l = tos_level();
 	t->t_gp->gp_vpend = l << 8;
-	if (l <= vipl(t->t_gp))
+	if (l <= GUEST_VIPL(t->t_gp))
 		return;
 	if (t->t_sleeping)
 		wakeup((caddr_t)&t->t_sleeping);
@@ -110,11 +86,11 @@ tos_stop_insn(gp)
 	struct guest_proc *gp;
 {
 	struct tosctr *t = &tosc;
-	int s = splhi_();
+	int s = guest_splhi();
 	long t0 = lbolt;
 
 	t->t_st.ts_stop++;
-	while (t->t_state == 1 && tos_level() <= vipl(gp)) {
+	while (t->t_state == 1 && tos_level() <= GUEST_VIPL(gp)) {
 		t->t_sleeping = 1;
 		if (sleep((caddr_t)&t->t_sleeping, (PZERO + 1) | PCATCH))
 			break;
@@ -122,7 +98,7 @@ tos_stop_insn(gp)
 	t->t_sleeping = 0;
 	gp->gp_flags |= GPF_IDROP;	/* the CPU takes the interrupt that ends stop */
 	t->t_st.ts_slept += lbolt - t0;
-	splx_(s);
+	guest_splx(s);
 }
 
 /* ---- delivery ---- */
@@ -176,20 +152,20 @@ tos_intr(gp, r)
 		if (!(u.u_sigflag & USTKCLEAR))
 			return;
 	}
-	s = splhi_();
-	while (!t->t_paused && (l = tos_level()) > vipl(gp)) {
+	s = guest_splhi();
+	while (!t->t_paused && (l = tos_level()) > GUEST_VIPL(gp)) {
 		/* the tick posts the carrier again; meanwhile the gate's fast paths stay open */
 		if (tos_hold(gp)) {
 			sigdelset(&gp->gp_proc->p_sig, TOS_SIG);
 			break;
 		}
 		t->t_held = 0;
-		splx_(s);
+		guest_splx(s);
 		tos_unsink();
-		s = splhi_();
+		s = guest_splhi();
 		if (l == 6) {
 			vec = mfp_ack();
-			splx_(s);
+			guest_splx(s);
 		} else {
 			if (t->t_vblowed)
 				t->t_vblowed--;
@@ -197,30 +173,30 @@ tos_intr(gp, r)
 				t->t_vblpend = 0;
 			t->t_st.ts_vbl++;
 			vec = 28;
-			splx_(s);
+			guest_splx(s);
 		}
 		if (guest_reflect(gp, r, GR_PC(r), vec << 2, (char *)0, 2, l) < 0) {
-			s = splhi_();
+			s = guest_splhi();
 			if (l == 6)
 				mfp_unack(vec);		/* still pending for a debugger */
 			else
 				t->t_vblpend = 1;
-			splx_(s);
+			guest_splx(s);
 			printf("tos: interrupt with no guest stack, pc %x\n", (int)GR_PC(r));
 			psignal(curproc, SIGSEGV);
 			return;
 		}
 		if (GR_FV(r) >> 12)
 			u.u_sigflag |= USTKCLEAR;
-		s = splhi_();
+		s = guest_splhi();
 	}
 	l = tos_level();
 	gp->gp_vpend = l << 8;
-	if (!t->t_paused && l <= vipl(gp)) {
+	if (!t->t_paused && l <= GUEST_VIPL(gp)) {
 		t->t_held = 0;
 		sigdelset(&gp->gp_proc->p_sig, TOS_SIG);
 	}
-	splx_(s);
+	guest_splx(s);
 }
 
 /* the carrier waits while the guest's IPL masks every request */
@@ -234,14 +210,14 @@ tos_fsig(p, gp)
 
 	if (gp->gp_flags & TGF_SOLO)
 		return __amix_fsig(p);
-	s = splhi_();
+	s = guest_splhi();
 	h = p->p_hold;
 	sigdelset(&p->p_hold, TOS_SIG);
-	if (tosc.t_gp != gp || (!tosc.t_paused && (tos_level() <= vipl(gp) || tos_hold(gp))))
+	if (tosc.t_gp != gp || (!tosc.t_paused && (tos_level() <= GUEST_VIPL(gp) || tos_hold(gp))))
 		sigaddset(&p->p_hold, TOS_SIG);
 	n = __amix_fsig(p);
 	p->p_hold = h;
-	splx_(s);
+	guest_splx(s);
 	return n;
 }
 
@@ -269,7 +245,7 @@ tos_sendsig(gp, sig, sip, hdlr)
 		return __amix_sendsig(sig, sip, hdlr);
 	if (tosc.t_gp != gp)
 		return 1;
-	s = splhi_();
+	s = guest_splhi();
 	while (tosc.t_paused && tosc.t_gp == gp) {
 		if (!tos_pauser()) {
 			tosc.t_paused = 0;
@@ -282,7 +258,7 @@ tos_sendsig(gp, sig, sip, hdlr)
 		if (l)
 			break;
 	}
-	splx_(s);
+	guest_splx(s);
 	tos_intr(gp, r);
 	return 1;
 }
@@ -302,27 +278,14 @@ tos_refl(gp, r, v)
 	char *r;
 	int v;
 {
-	int n;
-
 	if (gp->gp_flags & TGF_SOLO)
 		return guest_lone_trap(gp, r, v);
-	switch (GR_FV(r) >> 12) {
-	case 0: n = 0; break;
-	case 2: case 3: n = 4; break;
-	case 4: n = 8; break;
-	default: return 1;
-	}
+	if (!guest_fvsize(GR_FV(r)))
+		return 1;
 	TST(gp)->ts_lastpc = GR_PC(r);
 	if (v < 64)
 		TST(gp)->ts_refl[v]++;
-	if (guest_reflect(gp, r, GR_PC(r), (int)GR_FV(r), r + 72, n + 2, -1) < 0) {
-		printf("tos: vector %d with no guest stack, pc %x\n", v, (int)GR_PC(r));
-		psignal(curproc, SIGSEGV);
-	}
-	if (GR_FV(r) >> 12)
-		u.u_sigflag |= USTKCLEAR;
-	guest_trapret();
-	return 0;
+	return guest_reflcpu(gp, r, GR_PC(r), (int)GR_FV(r), "tos");
 }
 
 /* a frame of our own: format 0 at pc */
@@ -335,14 +298,7 @@ tos_refl0(gp, r, v, pc)
 {
 	if (v < 64)
 		TST(gp)->ts_refl[v]++;
-	if (guest_reflect(gp, r, pc, v << 2, (char *)0, 2, -1) < 0) {
-		printf("tos: vector %d with no guest stack, pc %x\n", v, (int)pc);
-		psignal(curproc, SIGSEGV);
-	}
-	if (GR_FV(r) >> 12)
-		u.u_sigflag |= USTKCLEAR;
-	guest_trapret();
-	return 0;
+	return guest_reflcpu(gp, r, pc, v << 2, "tos");
 }
 
 static int
@@ -457,14 +413,14 @@ tos_tick(arg)
 	t->t_tid = 0;
 	if (t->t_state != 1)
 		return;
-	s = splhi_();
-	if (t->t_vblpend && curproc == t->t_proc && vipl(t->t_gp) >= 4)
+	s = guest_splhi();
+	if (t->t_vblpend && curproc == t->t_proc && GUEST_VIPL(t->t_gp) >= 4)
 		t->t_st.ts_vblheld++;
 	else if (t->t_vblpend && t->t_held && t->t_vblowed < 2)
 		t->t_vblowed++;		/* goes out after the held one */
 	t->t_vblpend = 1;
 	tos_timers();
-	splx_(s);
+	guest_splx(s);
 	tos_kick(1);
 	if ((t->t_tid = ttimeout(tos_tick, (caddr_t)0, 1L)) == -1)
 		t->t_tid = 0;
@@ -474,7 +430,7 @@ static void
 tos_stop()
 {
 	struct tosctr *t = &tosc;
-	int s = splhi_();
+	int s = guest_splhi();
 
 	if (t->t_tid) {
 		untimeout(t->t_tid);
@@ -483,7 +439,7 @@ tos_stop()
 	t->t_state = 0;
 	t->t_proc = 0;
 	t->t_gp = 0;
-	splx_(s);
+	guest_splx(s);
 }
 
 static void
@@ -721,17 +677,17 @@ enter(arg, cr)
 		return solo();
 	if (GUESTP(curproc))
 		return EBUSY;
-	s = splhi_();
+	s = guest_splhi();
 	if (t->t_state != 0) {
-		splx_(s);
+		guest_splx(s);
 		return EBUSY;
 	}
 	if (curproc != tos_stproc || curproc->p_pid != tos_stpid) {
-		splx_(s);
+		guest_splx(s);
 		return EACCES;		/* only the RAM's owner maps the I/O pages */
 	}
 	t->t_state = 2;			/* claimed: the tick and hooks wait for 1 */
-	splx_(s);
+	guest_splx(s);
 	if ((e = guest_attach(&tos_profile)) != 0) {
 		t->t_state = 0;
 		return e;
@@ -883,13 +839,13 @@ tosioctl(dev, cmd, arg, mode, cr, rvp)
 		return EPERM;
 	switch (cmd) {
 	case TOSIOC_VIDEO:
-		s = splhi_();
+		s = guest_splhi();
 		tv.tv_vbl = t->t_st.ts_vbl;
 		tv.tv_vblheld = t->t_st.ts_vblheld;
-		splx_(s);
+		guest_splx(s);
 		return copyout((caddr_t)&tv, arg, sizeof tv) ? EFAULT : 0;
 	case TOSIOC_PAUSE:
-		s = splhi_();
+		s = guest_splhi();
 		t->t_paused = arg != 0;
 		t->t_ppid = curproc->p_pid;
 		t->t_pproc = curproc;
@@ -897,7 +853,7 @@ tosioctl(dev, cmd, arg, mode, cr, rvp)
 			psignal(t->t_proc, TOS_SIG);
 		else
 			wakeup((caddr_t)&t->t_paused);
-		splx_(s);
+		guest_splx(s);
 		tos_kick(1);
 		return 0;
 	case TOSIOC_STAT:

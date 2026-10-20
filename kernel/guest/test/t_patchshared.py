@@ -24,7 +24,7 @@ static long lbolt;
 #define bzero(p,n) __builtin_memset(p,0,n)
 #define bcmp(a,b,n) __builtin_memcmp(a,b,n)
 #define NPATCH 3
-#define GPF_DONE(i) (0x10000UL<<(i))
+#define GPF_DONE(i) (0x20000UL<<(i))
 #define GPF_STUB 0x80000000UL
 #define GPF_AWATCH 0x4000
 #define PGROUP 4

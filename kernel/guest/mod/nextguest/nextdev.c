@@ -72,12 +72,12 @@ void
 nx_post(l)
 	int l;
 {
-	int s = nx_splhi();
+	int s = guest_splhi();
 
 	if (l == 6)
 		nx.istat |= INT_TIMER;
 	nx.stat &= l == 6 ? ~INT_TIMER : l == 2 ? ~INT_SOFT2 : ~INT_SOFT1;
-	nx_splx(s);
+	guest_splx(s);
 }
 
 /* the timer the kernel set is due */
@@ -85,7 +85,7 @@ static void
 nx_tick(arg)
 	caddr_t arg;
 {
-	int s = nx_splhi();
+	int s = guest_splhi();
 
 	nx.tid = 0;
 	if (nx.state == 1) {
@@ -93,7 +93,7 @@ nx_tick(arg)
 		nx.stat |= INT_TIMER;
 		nx_kick();
 	}
-	nx_splx(s);
+	guest_splx(s);
 }
 
 /* a guest buffer of n bytes at a lies in the guest's space */
@@ -195,13 +195,13 @@ nx_service(gp, r)
 			break;
 		us = a[1] ? 65535 : a[2] / 1000;
 		us = us < 500 ? 500 : us > 65535 ? 65535 : us;
-		s = nx_splhi();
+		s = guest_splhi();
 		if (nx.tid > 0)
 			untimeout(nx.tid);
 		nx.stat &= ~INT_TIMER;
 		if ((nx.tid = ttimeout(nx_tick, (caddr_t)0, drv_usectohz(us))) == -1)
 			nx.tid = 0;
-		nx_splx(s);
+		guest_splx(s);
 		break;
 	case HC_STAT:
 		GR_D(r, 0) = nx.istat;
@@ -210,16 +210,16 @@ nx_service(gp, r)
 	case HC_COPYOUT:
 		return nx_copy(gp, r, svc == HC_COPYOUT, a);
 	case HC_TACK:
-		s = nx_splhi();
+		s = guest_splhi();
 		nx.istat &= ~INT_TIMER;
-		nx_splx(s);
+		guest_splx(s);
 		GR_D(r, 1) = nx_us() & 0xfffff;
 		break;
 	case HC_SOFT:
-		s = nx_splhi();
+		s = guest_splhi();
 		nx.stat |= GR_D(r, 1) >> 24 & (INT_SOFT1 | INT_SOFT2);
 		nx_kick();
-		nx_splx(s);
+		guest_splx(s);
 		break;
 	case HC_TIME:
 		GR_D(r, 0) = hrestime.tv_sec;

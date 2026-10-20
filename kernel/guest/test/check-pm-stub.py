@@ -48,7 +48,7 @@ pre+=r'''
 #define GR_SR(r) (((struct word16 *)((r)+64))->v)
 static int pmstate;
 #define NPATCH 14
-#define GPF_DONE(i) (1UL<<((i)+16))
+#define GPF_DONE(i) (1UL<<((i)+17))
 struct {long ap_mac;} ap;
 #define AUXP(gp) (&ap)
 int uin_coffdiag;struct guest_proc *coffdiagowner;
@@ -94,7 +94,7 @@ ap.ap_mac=4;task.t_force=4;uin_coffdiag=1;coffdiagowner=&gp;uinter_nalwatch=100;
 uin_pmphaseon=1;uin_pmphasecount=0;pmphaseseen=0;lbolt=100;waitticks=1;waitnativeticks=1;P32(mem+0x16a,0x1234);proc.p_hold=0x100;
 assert(!pmstubpoll(&gp,r)&&uin_pmphasecount==1&&uin_pmphase[0][0]==-1&&uin_pmphase[0][1]==100&&uin_pmphase[0][2]==101);n++;
 assert(uin_pmphase[0][3]==site&&uin_pmphase[0][4]==0x900100&&uin_pmphase[0][5]==0x45678&&uin_pmphase[0][6]==0x90004a&&uin_pmphase[0][7]==sys&&!memcmp(before,r,128));n++;
-assert(uin_pmwatch[0][0]==4&&uin_pmwatch[0][1]==gp.gp_flags&&uin_pmwatch[0][2]==(((GPF_DONE(NPATCH)-GPF_DONE(0))&~gp.gp_flags)>>16));n++;
+assert(uin_pmwatch[0][0]==4&&uin_pmwatch[0][1]==gp.gp_flags&&uin_pmwatch[0][2]==(((GPF_DONE(NPATCH)-GPF_DONE(0))&~gp.gp_flags)>>17));n++;
 assert(uin_pmwatch[0][3]==force&&uin_pmwatch[0][4]==4&&uin_pmwatch[0][5]==1&&uin_pmwatch[0][6]==100&&uin_pmwatch[0][7]==80);n++;
 task.t_force=0;uin_coffdiag=0;ap.ap_mac=0;
 assert(uin_pmphase[0][12]==0x1234&&uin_pmphase[0][13]==0x1235&&!uin_pmphase[0][14]&&uin_pmphase[0][15]==0x100);n++;

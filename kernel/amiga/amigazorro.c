@@ -362,3 +362,29 @@ int intnum;
 	else if (intnum == 3)
 		zint2 = 0;
 }
+
+/*
+ * Bytes of RAM or board space from a, 0 in a hole, where an access never
+ * ends without a bus timeout.  The kernel window is left to the fault path.
+ */
+long
+plat_kmemlen(a)
+unsigned long a;
+{
+	char *m;
+	unsigned long lo, hi;
+	int i;
+
+	if (a >= 0x40000000 && a < 0x80000000)
+		return -1;
+	for (i = 0, m = bootinfo + NAUTO * CDSIZE; i < 16; i++, m += 32) {
+		lo = W(m + 14) & 2 ? 0 : L(m + 20);		/* chip RAM from 0 */
+		hi = L(m + 24);
+		if (a >= lo && a < hi)
+			return hi - a;
+	}
+	for (i = 0, m = bootinfo; i < NAUTO; i++, m += CDSIZE)
+		if (a >= L(m + 32) && a - L(m + 32) < L(m + 36))
+			return L(m + 32) + L(m + 36) - a;
+	return 0;
+}

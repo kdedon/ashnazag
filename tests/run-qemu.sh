@@ -52,7 +52,7 @@ case ${GROUP:-} in
 "") ;;
 smoke)	G="t_sys t_file t_proc t_pipe t_dlm t_guestdlm t_envram t_gate t_vtop" ;;
 core)	G="t_arith t_fpimm t_cc295 t_file t_mem t_pipe t_proc t_sig t_streams t_sys t_time t_prof t_tty t_vtop t_dlm t_guestdlm t_envram t_gate t_page t_moddemo t_stress t_env t_ufs t_gmmu" ;;
-mac)	G="t_aux t_mac t_mac6 t_mac76 t_coff76 t_mac81 t_env" ;;
+mac)	G="t_aux t_mac t_mac6 t_mac76 t_coff76 t_mac81 t_coff81d t_env" ;;
 tos)	G="t_tos t_xaaes t_env" ;;
 mint)	G="t_mint" ;;
 cpm)	G="t_cpm"; CPM_NO_TOS=1; export CPM_NO_TOS ;;

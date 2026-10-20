@@ -38,23 +38,6 @@ extern clock_t lbolt;
 #define	GAPSKIP		512	/* gap: bytes left free below usp */
 #define	SSMAX		0x10000	/* gap: sp this far below the sigstack top is on it */
 
-static int
-splhi_()
-{
-	int s;
-
-	__asm__ __volatile__("mov.w %%sr,%0" : "=d" (s) : : "memory");
-	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (s | 0x700) : "memory");
-	return s;
-}
-
-static void
-splx_(s)
-	int s;
-{
-	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (s) : "memory");
-}
-
 /*
  * n bytes of user scratch below the caller's stack.  A handler on the
  * signal stack gets it below the sp the stack was entered from, since
@@ -580,14 +563,14 @@ void
 aux_itstop(ap)
 	struct aux_proc *ap;
 {
-	int s = splhi_();
+	int s = guest_splhi();
 
 	if (ap->ap_itid) {
 		untimeout(ap->ap_itid);
 		ap->ap_itid = 0;
 		aux_nit--;
 	}
-	splx_(s);
+	guest_splx(s);
 }
 
 /* the current itimerval of ITIMER_REAL into v[4] */
@@ -597,7 +580,7 @@ itget(ap, v)
 	long *v;
 {
 	long left = 0, it = 0;
-	int s = splhi_();
+	int s = guest_splhi();
 
 	if (ap->ap_itid) {
 		left = ap->ap_itexp - lbolt;
@@ -605,7 +588,7 @@ itget(ap, v)
 			left = 1;
 		it = ap->ap_itint;
 	}
-	splx_(s);
+	guest_splx(s);
 	tick2tv(it, v);
 	tick2tv(left, v + 2);
 }
@@ -657,10 +640,10 @@ aux_setitimer(ap, a, rv, r)
 		t = tv2tick(v + 2);
 		it = tv2tick(v);
 		if (t) {
-			s = splhi_();
+			s = guest_splhi();
 			ap->ap_itint = it;
 			e = itarm(ap, GUESTP(u.u_procp), t);
-			splx_(s);
+			guest_splx(s);
 			if (!e)
 				return EAGAIN;
 		}
@@ -708,10 +691,10 @@ aux_alstop(ap, native)
 {
 	long a[1];
 	rval_t rv;
-	int s = splhi_();
+	int s = guest_splhi();
 
 	a[0] = alstop(ap);
-	splx_(s);
+	guest_splx(s);
 	if (native && a[0]) {
 		a[0]++;
 		(void)(*sysent[27].sy_call)(a, &rv);	/* mid-exec: keep u_syscall */
@@ -732,7 +715,7 @@ aux_alarm(ap, a, rv, r)
 	z[0] = 0;
 	(void)aux_amix(27, z, rv);	/* a stock alarm from before the exec */
 	old = rv->r_val1;
-	s = splhi_();
+	s = guest_splhi();
 	z[0] = alstop(ap);
 	if (z[0] > old)
 		old = z[0];
@@ -742,7 +725,7 @@ aux_alarm(ap, a, rv, r)
 		ap->ap_alexp = lbolt + n * HZ + 1;
 		ap->ap_alid = id;
 	}
-	splx_(s);
+	guest_splx(s);
 	if (n && ap->ap_alid == 0) {
 		z[0] = n < 0xffffffff ? n + 1 : n;
 		(void)aux_amix(27, z, rv);

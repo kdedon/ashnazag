@@ -1,0 +1,61 @@
+--- a/src/sys_amix.c
++++ b/src/sys_amix.c
+@@ -390,6 +390,37 @@
+ }
+ #endif
+ 
++/* the game data sits next to the binary, wherever it is started from */
++static char *Sys_BaseDir (char *argv0)
++{
++	static char dir[MAX_OSPATH];
++	char *p, *e;
++	int n;
++
++	if (!strchr(argv0, '/')) {
++		for (p = getenv("PATH"); p && *p; p = *e ? e + 1 : e) {
++			e = strchr(p, ':');
++			if (!e)
++				e = p + strlen(p);
++			n = e - p;
++			if (n == 0 || n + strlen(argv0) + 2 > sizeof dir)
++				continue;
++			sprintf(dir, "%.*s/%s", n, p, argv0);
++			if (access(dir, X_OK) == 0) {
++				dir[n] = 0;
++				return dir;
++			}
++		}
++		return ".";
++	}
++	if (strlen(argv0) >= sizeof dir)
++		return ".";
++	strcpy(dir, argv0);
++	p = strrchr(dir, '/');
++	p[p == dir] = 0;
++	return dir;
++}
++
+ int main (int c, char **v)
+ {
+ 
+@@ -429,9 +460,18 @@
+ 	j = COM_CheckParm("-mem");
+ 	if (j)
+ 		parms.memsize = (int) (Q_atof(com_argv[j+1]) * 1024 * 1024);
+-	parms.membase = malloc (parms.memsize);
++	/* with little free memory, take the biggest heap that fits */
++	while (!(parms.membase = malloc (parms.memsize)) &&
++	    parms.memsize > MINIMUM_MEMORY_LEVELPAK) {
++		parms.memsize /= 2;
++		if (parms.memsize < MINIMUM_MEMORY_LEVELPAK)
++			parms.memsize = MINIMUM_MEMORY_LEVELPAK;
++		printf ("heap reduced to %d KB\n", parms.memsize / 1024);
++	}
++	if (!parms.membase)
++		Sys_Error ("no memory for a %d byte heap", parms.memsize);
+ 
+-	parms.basedir = basedir;
++	parms.basedir = Sys_BaseDir (v[0]);
+ // caching is disabled by default, use -cachedir to enable
+ //	parms.cachedir = cachedir;
+ 

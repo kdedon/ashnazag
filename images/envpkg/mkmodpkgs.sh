@@ -80,7 +80,10 @@ for t in mac amiga atari030 atari060; do
 		pack $t $dir atsnd$s "Sound: DMA sound, Mac environment sound" "" dmasnd auxsnd ;;
 	esac
 	o=$(ls "$IN/mod.d-$t" | grep -vxF -f "$W/owned" || :)
-	pack $t $dir mod$s "Other modules" "" $o
+	case $t in
+	amiga)	pack $t $dir mod$s "Voodoo3 bring-up check: colour bars at 640x480" amopci $o ;;
+	*)	pack $t $dir mod$s "Other modules" "" $o ;;
+	esac
 done
 sh "$D/relnotes.sh" "$OUT/.list" > "$OUT/.notes"
 rm -rf "$W" "$OUT/.list"

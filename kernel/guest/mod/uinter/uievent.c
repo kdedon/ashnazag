@@ -676,7 +676,7 @@ ui_evtrace()
         v[29]++;
         next=G32(b);if(next<=fp)break;fp=next;
     }
-    for(i=0;i<32;i++)printf("uinter idlecaller row %d field %d value %x\n",
+    if(uinter_trace)for(i=0;i<32;i++)printf("uinter idlecaller row %d field %d value %x\n",
         row,i,(int)v[i]);
 }
 

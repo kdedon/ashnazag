@@ -24,30 +24,6 @@ extern struct modwrapper nextguest_wrapper;
 static struct guest_profile profile;
 static int device_flag;
 
-int
-nx_splhi()
-{
-	int s;
-
-	__asm__ __volatile__("mov.w %%sr,%0" : "=d" (s) : : "memory");
-	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (s | 0x700) : "memory");
-	return s;
-}
-
-void
-nx_splx(s)
-	int s;
-{
-	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (s) : "memory");
-}
-
-static int
-vipl(gp)
-	struct guest_proc *gp;
-{
-	return (gp->gp_vsr & SR_IPL) >> 8;
-}
-
 /* a request above the guest's IPL wakes a halted guest or sends the carrier; under spl */
 void
 nx_kick()
@@ -58,7 +34,7 @@ nx_kick()
 		return;
 	l = nx_level();
 	nx.gp->gp_vpend = l << 8;
-	if (l <= vipl(nx.gp))
+	if (l <= GUEST_VIPL(nx.gp))
 		return;
 	if (nx.sleeping)
 		wakeup((caddr_t)&nx.sleeping);
@@ -66,55 +42,21 @@ nx_kick()
 		psignal(nx.proc, NX_SIG);
 }
 
-/* a host signal handler runs on the alternate stack: not the guest's code */
-static int
-onstack(p)
-	struct proc *p;
-{
-	return p == u.u_procp && (u.u_sigaltstack.ss_flags & SS_ONSTACK);
-}
-
-/*
- * Whether an interrupt may go to the frame r returns to; nonzero when it
- * may.  A sigreturn rebuilds the frame saved in u_sigsave over r, which
- * would undo the interrupt's PC and SR but keep its stack: once that frame
- * has nothing left to finish, r returns in its place.
- */
-static int
-tail(r)
-	char *r;
-{
-	char *f = (char *)u.u_sigsave;
-	int fmt = G16(f + 6) >> 12;
-
-	if (onstack(u.u_procp))
-		return 0;
-	if (!(u.u_sigflag & USTKRESTORE))
-		return 1;
-	if (fmt == 7 ? (G16(f + 12) & 0xf000) || ((G16(f + 14) | G16(f + 16) | G16(f + 18)) & 0x80) :
-	    fmt != 0 && fmt != 2 && fmt != 4)
-		return 0;
-	GR_SR(r) = G16(f);
-	GR_PC(r) = G32(f + 2);
-	u.u_sigflag &= ~USTKRESTORE;
-	return 1;
-}
-
 static void
 nx_intr(gp, r)
 	struct guest_proc *gp;
 	char *r;
 {
-	int s = nx_splhi(), l = nx_level();
+	int s = guest_splhi(), l = nx_level();
 
 	if (nx.gp != gp || nx.state != 1) {
-		nx_splx(s);
+		guest_splx(s);
 		return;
 	}
 	gp->gp_vpend = l << 8;
-	nx_splx(s);
+	guest_splx(s);
 	/* the frame goes to guest memory, which may fault */
-	if (l > vipl(gp) && tail(r)) {
+	if (l > GUEST_VIPL(gp) && guest_sigtail(r)) {
 		nx_post(l);
 		if (guest_reflect(gp, r, GR_PC(r), (24 + l) << 2, (char *)0, 2, l) < 0)
 			psignal(curproc, SIGSEGV);
@@ -124,12 +66,12 @@ nx_intr(gp, r)
 				u.u_sigflag |= USTKCLEAR;
 		}
 	}
-	s = nx_splhi();
+	s = guest_splhi();
 	l = nx_level();
 	gp->gp_vpend = l << 8;
-	if (l <= vipl(gp))
+	if (l <= GUEST_VIPL(gp))
 		sigdelset(&gp->gp_proc->p_sig, NX_SIG);
-	nx_splx(s);
+	guest_splx(s);
 }
 
 /* the carrier waits while the guest's IPL masks every request */
@@ -139,15 +81,15 @@ nx_fsig(p, gp)
 	struct guest_proc *gp;
 {
 	k_sigset_t h;
-	int s = nx_splhi(), n;
+	int s = guest_splhi(), n;
 
 	h = p->p_hold;
 	sigdelset(&p->p_hold, NX_SIG);
-	if (nx.gp != gp || nx_level() <= vipl(gp) || onstack(p))
+	if (nx.gp != gp || nx_level() <= GUEST_VIPL(gp) || guest_onstack(p))
 		sigaddset(&p->p_hold, NX_SIG);
 	n = __amix_fsig(p);
 	p->p_hold = h;
-	nx_splx(s);
+	guest_splx(s);
 	return n;
 }
 
@@ -185,17 +127,11 @@ refl(gp, r, v)
 	char *r;
 	int v;
 {
-	int n;
-
 	/* the host's own code; trap #0 there is a host system call */
 	if ((unsigned long)GR_PC(r) >= NX_TOP && ((nx.flags & NXF_HOST) || v == 32))
 		return 1;
-	switch (GR_FV(r) >> 12) {
-	case 0: n = 0; break;
-	case 2: case 3: n = 4; break;
-	case 4: n = 8; break;
-	default: return 1;
-	}
+	if (!guest_fvsize(GR_FV(r)))
+		return 1;
 	if (v >= 32 && !(gp->gp_vsr & 0x2000)) {
 		unsigned long *t = nx.st.utrap[nx.st.utraps++ % 16];
 		long fp;
@@ -211,12 +147,7 @@ refl(gp, r, v)
 			if (copyin((caddr_t)fp + 4, (caddr_t)&t[i], 4) || copyin((caddr_t)fp, (caddr_t)&fp, 4))
 				t[i] = 0, fp = 0;
 	}
-	if (guest_reflect(gp, r, GR_PC(r), (GR_FV(r) & 0xf000) | (v << 2), r + 72, n + 2, -1) < 0)
-		psignal(curproc, SIGSEGV);
-	if (GR_FV(r) >> 12)
-		u.u_sigflag |= USTKCLEAR;
-	guest_trapret();
-	return 0;
+	return guest_reflcpu(gp, r, GR_PC(r), (GR_FV(r) & 0xf000) | (v << 2), (char *)0);
 }
 
 /* a host call from the kernel's patched routines; anything else illegal is the guest's */
@@ -232,9 +163,9 @@ hcall(gp, r, v)
 		return refl(gp, r, v);
 	if (e == 0)
 		GR_PC(r) += 2;
-	s = nx_splhi();
+	s = guest_splhi();
 	gp->gp_vpend = nx_level() << 8;
-	nx_splx(s);
+	guest_splx(s);
 	guest_trapret();
 	return 0;
 }
@@ -255,12 +186,12 @@ priv(gp, r, v)
 		return 1;
 	op = G16(b);
 	if (op == 0x4e70) {			/* reset: the peripherals, not memory or the clock chip */
-		s = nx_splhi();
+		s = guest_splhi();
 		nx.stat = nx.istat = 0;
 		if (nx.tid > 0)
 			untimeout(nx.tid);
 		nx.tid = 0;
-		nx_splx(s);
+		guest_splx(s);
 		GR_PC(r) += 2;
 		guest_trapret();
 		return 0;
@@ -270,15 +201,15 @@ priv(gp, r, v)
 			return 1;
 		guest_setsr(gp, r, (int)G16(b));
 		GR_PC(r) += 4;
-		s = nx_splhi();
-		while (nx.state == 1 && nx_level() <= vipl(gp)) {
+		s = guest_splhi();
+		while (nx.state == 1 && nx_level() <= GUEST_VIPL(gp)) {
 			nx.sleeping = 1;
 			if (sleep((caddr_t)&nx.sleeping, (PZERO + 1) | PCATCH))
 				break;
 		}
 		nx.sleeping = 0;
 		gp->gp_flags |= GPF_IDROP;
-		nx_splx(s);
+		guest_splx(s);
 		guest_trapret();
 		return 0;
 	}
@@ -373,13 +304,13 @@ enter(arg)
 	if (ne.width < 16 || ne.width > 4092 || ne.height < 16 || ne.height > 4095 ||
 	    ne.width / 4 * ne.height > NX_VRAM_SIZE)
 		return EINVAL;
-	s = nx_splhi();
+	s = guest_splhi();
 	if (nx.state) {
-		nx_splx(s);
+		guest_splx(s);
 		return EBUSY;
 	}
 	nx.state = 2;
-	nx_splx(s);
+	guest_splx(s);
 	if ((e = guest_attach(&profile)) != 0) {
 		nx.state = 0;
 		return e;
@@ -484,10 +415,10 @@ ioctl_device(dev, command, argument, mode, credentials, result)
 		if (nx.state != 1)
 			return ENXIO;
 		guest_mmu_stats(nx.gp, nx.st.mmu);
-		s = nx_splhi();
+		s = guest_splhi();
 		nx.st.level = nx_level();
 		nx.st.stat = nx.stat;
-		nx_splx(s);
+		guest_splx(s);
 		return copyout((caddr_t)&nx.st, argument, sizeof nx.st) ? EFAULT : 0;
 	}
 	return EINVAL;

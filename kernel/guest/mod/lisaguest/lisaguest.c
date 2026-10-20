@@ -31,7 +31,7 @@ extern void dlm_cacheflush();
 extern struct modwrapper lisaguest_wrapper;
 
 struct lisactr lisac;
-int	lisa_trace = 1;		/* console lines for unknown accesses and guest bus errors */
+int	lisa_trace;		/* console lines for unknown accesses and guest bus errors */
 
 static struct guest_profile lisa_profile;
 static int lisa_nopen;
@@ -294,8 +294,8 @@ lisa_space(gp, sr)
 		setctx(&lisac, sr & 0x2000 ? 0 : lisac.l_seg);
 }
 
-static int splhi_();
-static void splx_(), lisa_post();
+static int guest_splhi();
+static void guest_splx(), lisa_post();
 
 /* ---- vector 2 ---- */
 
@@ -425,23 +425,6 @@ lisa_aline(gp, r, v)
 
 /* ---- interrupts ---- */
 
-static int
-splhi_()
-{
-	int s;
-
-	__asm__ __volatile__("mov.w %%sr,%0" : "=d" (s) : : "memory");
-	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (s | 0x700) : "memory");
-	return s;
-}
-
-static void
-splx_(s)
-	int s;
-{
-	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (s) : "memory");
-}
-
 /* the level asking: 2 for input, 1 for retrace or the timer */
 static int
 lisa_level(t)
@@ -452,8 +435,6 @@ lisa_level(t)
 	return t->l_inh != t->l_int ? 2 : t->l_vpend || t->l_tpend;
 }
 
-#define	VIPL(gp)	((gp)->gp_vsr >> 8 & 7)
-
 /* the guest's IPL lets a request through: the carrier takes it there */
 static void
 lisa_post(t)
@@ -462,7 +443,7 @@ lisa_post(t)
 	if (t->l_state != 1 || !t->l_gp)
 		return;
 	t->l_gp->gp_vpend = lisa_level(t) << 8;
-	if (lisa_level(t) > VIPL(t->l_gp))
+	if (lisa_level(t) > GUEST_VIPL(t->l_gp))
 		psignal(t->l_proc, LISA_SIG);
 }
 
@@ -484,9 +465,9 @@ lisa_intr(gp, r)
 		if (!(u.u_sigflag & USTKCLEAR))
 			return;		/* resumes an instruction part way */
 	}
-	s = splhi_();
-	while ((l = lisa_level(t)) > VIPL(gp)) {
-		splx_(s);
+	s = guest_splhi();
+	while ((l = lisa_level(t)) > GUEST_VIPL(gp)) {
+		guest_splx(s);
 		t->l_st.ls_intr++;
 		if (guest_reflect(gp, r, GR_PC(r), (24 + l) << 2, (char *)0, 2, l) < 0) {
 			printf("lisa: interrupt with no guest stack, pc %x\n", (int)GR_PC(r));
@@ -495,11 +476,11 @@ lisa_intr(gp, r)
 		}
 		if (GR_FV(r) >> 12)
 			u.u_sigflag |= USTKCLEAR;
-		s = splhi_();
+		s = guest_splhi();
 	}
 	gp->gp_vpend = l << 8;
 	sigdelset(&gp->gp_proc->p_sig, LISA_SIG);
-	splx_(s);
+	guest_splx(s);
 }
 
 /* the carrier waits while the IPL masks every request */
@@ -511,14 +492,14 @@ lisa_fsig(p, gp)
 	k_sigset_t h;
 	int s, n;
 
-	s = splhi_();
+	s = guest_splhi();
 	h = p->p_hold;
 	sigdelset(&p->p_hold, LISA_SIG);
-	if (lisac.l_gp != gp || lisa_level(&lisac) <= VIPL(gp))
+	if (lisac.l_gp != gp || lisa_level(&lisac) <= GUEST_VIPL(gp))
 		sigaddset(&p->p_hold, LISA_SIG);
 	n = __amix_fsig(p);
 	p->p_hold = h;
-	splx_(s);
+	guest_splx(s);
 	return n;
 }
 
@@ -541,11 +522,11 @@ lisa_tick(arg)
 	caddr_t arg;
 {
 	struct lisactr *t = &lisac;
-	int s = splhi_();
+	int s = guest_splhi();
 
 	t->l_timer = -1;
 	if (t->l_state != 1) {
-		splx_(s);
+		guest_splx(s);
 		return;
 	}
 	if (t->l_irqon) {
@@ -556,7 +537,7 @@ lisa_tick(arg)
 	}
 	lisa_post(t);
 	t->l_timer = ttimeout(lisa_tick, arg, 1L);
-	splx_(s);
+	guest_splx(s);
 }
 
 /* ---- /dev/lisa ---- */
@@ -718,7 +699,7 @@ irq(how, rvp)
 
 	if (!t->l_state || curproc != t->l_proc)
 		return ENXIO;
-	s = splhi_();
+	s = guest_splhi();
 	*rvp = 0;
 	if (how == LIRQ_ON)
 		t->l_irqon = 1;
@@ -729,7 +710,7 @@ irq(how, rvp)
 		t->l_tpend--;
 		*rvp = LIRQ_TIMER;
 	}
-	splx_(s);
+	guest_splx(s);
 	return 0;
 }
 
@@ -744,7 +725,7 @@ input(ev, rvp)
 
 	if (!t->l_state || (!ev && curproc != t->l_proc))
 		return ENXIO;
-	s = splhi_();
+	s = guest_splhi();
 	*rvp = 0;
 	if (ev) {
 		if (t->l_inh - t->l_int < sizeof t->l_in / sizeof t->l_in[0])
@@ -752,7 +733,7 @@ input(ev, rvp)
 		lisa_post(t);
 	} else if (t->l_inh != t->l_int)
 		*rvp = t->l_in[t->l_int++ % (sizeof t->l_in / sizeof t->l_in[0])];
-	splx_(s);
+	guest_splx(s);
 	return 0;
 }
 

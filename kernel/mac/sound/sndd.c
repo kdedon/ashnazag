@@ -18,6 +18,9 @@
 #include <sys/mman.h>
 #include <sys/stropts.h>
 #include <sys/time.h>
+#include <sys/procset.h>
+#include <sys/priocntl.h>
+#include <sys/rtpriocntl.h>
 #include <poll.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -29,6 +32,7 @@
 #include "sndio.h"
 
 extern int gettimeofday(), chmod(), fattach(), fdetach();
+extern long __priocntl();
 
 #define NCL	32
 #define RING	16384		/* frames per client, 0.74 s */
@@ -37,8 +41,13 @@ extern int gettimeofday(), chmod(), fattach(), fdetach();
 #define WDMS	300		/* the chip is silent if no interrupt came in this long */
 #define SESSMAX	8		/* clients of one user in one session (the Mac uses 7) */
 #define LEADMS	100		/* Atari: most queued in the driver */
-/* never fill the FIFO: its full and empty states share one interrupt bit */
-#define PRIME	(ASC_FIFOLEN - 1)
+/*
+ * never fill the FIFO: full and empty share one status bit, which stays
+ * set until the next interrupt reads it, so the chip's next half-empty
+ * interrupt would also read as empty and stop the sound.  1023 bytes
+ * already count as full.
+ */
+#define PRIME	(ASC_FIFOLEN - 2)
 #define HALF	(ASC_FIFOLEN / 2 - 1)
 
 struct cl {
@@ -70,7 +79,8 @@ static int frameus = 45;	/* microseconds per output frame, for pacing */
 static long front, fuid;
 static int hold;		/* a passthrough guest has the hardware */
 static int playing, vol = 7;
-static unsigned long fed, nirq, under;
+static int tail;		/* frames of data in the last push */
+static unsigned long fed, nirq, under, full;
 static struct timeval last, irqt;
 static unsigned long usacc;	/* pacing remainder, microseconds */
 
@@ -98,26 +108,38 @@ stop()
 	playing = 0;
 }
 
-/* up to max frames of c into the FIFOs */
-static void
+/*
+ * max frames into the FIFOs: up to max of c's, then silence.  A FIFO left
+ * short runs dry before the next interrupt and the chip replays old samples.
+ * Returns c's frames.
+ */
+static int
 push(c, max)
 struct cl *c;
 int max;
 {
-	register int i, k = c->c_n < max ? c->c_n : max;
-
+	register int i, k = c == 0 ? 0 : c->c_n < max ? c->c_n : max;
+	register int l, r;
 	register short *f;
 
-	for (i = 0; i < k; i++) {
-		f = &c->c_ring[2 * c->c_get];
-		ASC(ASC_FIFOA + (i & (ASC_FIFOLEN - 1))) = (f[0] >> 8) ^ 0x80;
-		ASC(ASC_FIFOB + (i & (ASC_FIFOLEN - 1))) = (f[1] >> 8) ^ 0x80;
-		if (++c->c_get == RING)
-			c->c_get = 0;
+	for (i = 0; i < max; i++) {
+		l = r = 0x80;
+		if (i < k) {
+			f = &c->c_ring[2 * c->c_get];
+			l = (f[0] >> 8) ^ 0x80;
+			r = (f[1] >> 8) ^ 0x80;
+			if (++c->c_get == RING)
+				c->c_get = 0;
+		}
+		ASC(ASC_FIFOA + (i & (ASC_FIFOLEN - 1))) = l;
+		ASC(ASC_FIFOB + (i & (ASC_FIFOLEN - 1))) = r;
 	}
+	if (k == 0)
+		return 0;
 	c->c_n -= k;
 	c->c_heard += k;
 	fed += k;
+	return k;
 }
 
 /* Atari: as many frames of c as the driver takes, in its format */
@@ -172,7 +194,7 @@ start()
 	ASC(ASC_IRQMASKB) = 1;
 	ASC(ASC_MODE) = 1;
 	gettimeofday(&irqt, (void *)0);
-	push(cur, PRIME);
+	tail = push(cur, PRIME);
 	ASC(ASC_IRQMASKA) = 0;
 	playing = 1;
 }
@@ -194,14 +216,21 @@ unsigned long bits;
 			playing = 0;
 		return;
 	}
+	if ((bits & (ASC_IRQEMPTY | ASC_IRQHALF)) == ASC_IRQEMPTY)
+		full++;
 	if (bits & ASC_IRQSTOP) {
 		if (cur && cur->c_n > 0) {
 			under++;
 			start();	/* the interrupt turned the chip off */
 		} else
 			stop();
-	} else if ((bits & ASC_IRQHALF) && cur && cur->c_n > 0)
-		push(cur, HALF);
+	} else if (bits & ASC_IRQHALF) {
+		/* the FIFO holds the last push: stop once that was all silence */
+		if (tail || (cur && cur->c_n > 0))
+			tail = push(cur, HALF);
+		else
+			stop();
+	}
 }
 
 static void
@@ -334,6 +363,7 @@ struct cl *c;
 		st.ss_fed = fed;
 		st.ss_nirq = nirq;
 		st.ss_under = under;
+		st.ss_full = full;
 		return reply(c, (unsigned long)SNDR_STAT, (char *)&st, (int)sizeof st);
 	}
 	drop(c);
@@ -481,6 +511,25 @@ int lfd;
 	fcntl(c->c_fd, F_SETFL, O_NONBLOCK);
 }
 
+/* real time: the chip's FIFO lasts 23 ms past each interrupt, a busy machine's time slice longer */
+static void
+realtime()
+{
+	pcinfo_t pi;
+	pcparms_t pp;
+	rtparms_t *rp = (rtparms_t *)pp.pc_clparms;
+
+	strcpy(pi.pc_clname, "RT");
+	if (priocntl(P_PID, P_MYID, PC_GETCID, (caddr_t)&pi) < 0)
+		return;
+	pp.pc_cid = pi.pc_cid;
+	rp->rt_pri = 0;
+	rp->rt_tqsecs = 0;
+	rp->rt_tqnsecs = RT_TQDEF;
+	if (priocntl(P_PID, P_MYID, PC_SETPARMS, (caddr_t)&pp) < 0)
+		perror("sndd: real-time class");
+}
+
 static void
 quit()
 {
@@ -579,6 +628,7 @@ char **argv;
 			exit(0);
 		setsid();
 	}
+	realtime();
 	for (c = cl; c < cl + NCL; c++)
 		c->c_fd = -1;
 	gettimeofday(&last, (void *)0);

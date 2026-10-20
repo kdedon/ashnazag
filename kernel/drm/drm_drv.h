@@ -930,8 +930,12 @@ int DRM(close)(dev_t kdev, int flags, int fmt, DRM_STRUCTPROC *p)
 	 * Clients lock and unlock in user space while the word names their
 	 * context: clear it, so a later client given the same context asks.
 	 */
-	if (dev->lock.hw_lock)
+	if (dev->lock.hw_lock) {
 		DRM_SAREA_SYNC();
+		/* the drawable lock, after the hardware one, names its taker's pid */
+		DRM(cmpxchg)(&dev->lock.hw_lock[1].lock, priv->pid, 0);
+		DRM(cmpxchg)(&dev->lock.hw_lock[1].lock, DRM_CURRENTPID, 0);
+	}
 	if (dev->lock.hw_lock && !_DRM_LOCK_IS_HELD(dev->lock.hw_lock->lock)
 	    && dev->lock.filp == priv)
 		DRM(lock_free)(dev, &dev->lock.hw_lock->lock,
@@ -1185,6 +1189,11 @@ int DRM(lock)( DRM_IOCTL_ARGS )
 					break;
 				continue;
 			}
+			/* the holder asking again, as a signal handler that ends its drawing does */
+			if ( dev->lock.filp == priv &&
+			     (dev->lock.hw_lock->lock & ~_DRM_LOCK_CONT) ==
+			     (lock.context | _DRM_LOCK_HELD) )
+				break;
 #endif
                         if ( DRM(lock_take)( &dev->lock.hw_lock->lock,
 					     lock.context ) ) {

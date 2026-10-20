@@ -67,8 +67,8 @@ from the volume.
   is left to the launcher and reported once; a guest access to a launcher page stops
   the environment with its address.
 - Whole host pages: the host maps 4 KB, the Lisa MMU 512-byte pages. The loader's
-  allocation rounding and the OS memory manager's segment sizes are patched to 4 KB, so
-  every segment starts and ends on a host page; a RAM page that still cannot be mapped
+  allocation rounding, the OS memory manager's segment sizes and the drivers' code space
+  sizes are patched to 4 KB, so every segment starts and ends on a host page; a RAM page that still cannot be mapped
   stops the environment. A write to a read-only segment is a bus error, as on the Lisa.
 - Contexts: context 0 in supervisor mode, SEG1/SEG2's context in user mode. guestcore
   calls the module on every virtual S change; the module remaps only segments whose
@@ -105,6 +105,7 @@ from the volume.
 | drive type | OS probe | host call: a Lisa 2/5 |
 | expansion slots | OS slot probe | no card |
 | disk in place | micro diskette driver's status and I/O check | host call: no disk |
+| diskette controller | micro diskette driver's command routine | host call: no result, no error |
 
 No access reaches the I/O pages, at boot or later; `ls_hwfault` counts any that does
 and each stops the environment. t_lisa asserts it stays 0, and that no user A-line goes
@@ -121,9 +122,6 @@ system's entry points swapped for host calls, one host file per Lisa file.
 
 ## 6. Open
 
-- The Office System shows "The micro diskette is not in the standard Lisa Office System
-  format" at the desktop. The diskette driver is never called; the device list in
-  parameter memory and the Filer's mount of the diskette are next.
 - Serial, printer and diskette block I/O have no host service yet.
 - Keyboard tables exist for ADB hosts only.
 - A screen narrower than 720 gets the screen scaled. The Office System's loader takes

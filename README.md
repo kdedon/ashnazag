@@ -18,6 +18,8 @@ top of it as environments: ordinary Unix processes with their own display sessio
 One start command per family, run as an ordinary user: `-e NAME` picks an environment,
 `-l` lists them, `-d NAME` sets your default. Ctrl-Option-Command-0 shows the console,
 -1 to -9 the sessions. Details: [docs/environments.md](docs/environments.md).
+The test suite runs in QEMU on the Quadra; tests on the Amiga and Falcon hosts, and the
+environments missing there, are tracked in #243.
 
 | Environment | Command | Hosts | Status |
 |---|---|---|---|
@@ -28,7 +30,7 @@ One start command per family, run as an ordinary user: `-e NAME` picks an enviro
 | Amiga (Kickstart 3.x, Workbench) | `startamiga` | Quadra, Amiga (68040 or 68060) | Partial: Workbench on RTG at 8, 16 or 32 bits where the host has them; Warp3D on a Voodoo3 (16-bit screens), else in software (slow); 640x480 and 800x600 game screens; 3D survives session switches; slow start; no chipset display. |
 | Concurrent CP/M-68K | `startcpm` | Quadra, Falcon | Works, in the terminal: CP/M 3 BDOS, XDOS processes, more consoles with `startcpm -c N`, RSXes. Z80 and 8086 programs too. |
 | Windows 3.x programs (Win16) | `startwin` | Quadra | Works for Program Manager and the tested programs. Windows for Workgroups 3.11 by default, Windows 3.11 with `-e win311`. Each user installs their own Windows and Wabi 2.2 with `startwin -install`. |
-| Apple Lisa (Office System 3.1) | `startlisa` | Quadra | Partial: your Lisa ROM boots your ProFile volume to the Office desktop at any screen size; a stray "micro diskette" dialog stays open. The ProFile is read only, writes go to a file beside it. |
+| Apple Lisa (Office System 3.1) | `startlisa` | Quadra | Partial: your Lisa ROM boots your ProFile volume to the Office desktop at any screen size. The ProFile is read only, writes go to a file beside it. |
 | TI Voyage 200 (AMS 2.09, 3.10) | `startvoyage200` | Quadra | Works: your Flash dump boots to the AMS desktop; archived variables are TI variable files on the host; OFF/ON. |
 | NeXTSTEP / OPENSTEP | `startnext` | Quadra | In progress: your OPENSTEP install boots to the Workspace Manager, with sound, login panel and text console; no network yet. |
 | X11R6.3 | `startx`, `xsession` | Quadra, Falcon, Amiga | Works: twm, XView, xdm session chooser; sessions for each environment. OpenGL through Mesa 5, in software or on a Voodoo3 through DRI; `glxgears`. |

@@ -58,7 +58,7 @@ long uin_aslmreads,uin_aslmcode;
 #define	RESUME	0xa89f		/* _Unimplemented, should it run unwatched */
 #define	FMAGIC	0x75697063	/* 'uipc' */
 #define	FSIZE	96
-#define	GPF_DONE(i)	(0x10000UL << (i))
+#define	GPF_DONE(i)	(0x20000UL << (i))
 
 static unsigned char hfsplus[] = {	/* 'ptch' -20217 +0, the trap at +$12 */
 	0x4e, 0xfa, 0x00, 0x0a, 0x70, 0x74, 0x63, 0x68, 0xb1, 0x07, 0x00, 0x02,
@@ -179,7 +179,8 @@ static unsigned short sleepq[] = {	/* f+4, up to RESUME */
 	0x700a, 0xa71e, 0x21c8, 0x0bbc, 0x4e71, 0x4e71
 };
 #define	NPATCH	(sizeof uipatches / sizeof uipatches[0])
-typedef char uipatch_flaglimit[NPATCH <= 15 ? 1 : -1];
+typedef char uipatch_flaglimit[NPATCH <= 14 &&
+    !((GPF_DONE(NPATCH) - GPF_DONE(0)) & (~GPF_PROFILE | GPF_STUB)) ? 1 : -1];
 
 /*
  * _HFSDispatch's OS trap table entry: HFSTRAP, taken here, gives the call
@@ -1465,7 +1466,7 @@ coffdiagwatch(gp, r)
     uin_cofflast[5]=which ? 0 : G32(frame+8);
     uin_cofflast[6]=which ? 0 : G32(frame+12);
     uin_cofflast[7]=which ? 0 : G32(frame+16);
-    if(uin_coffcalls[which]<=4) printf("uinter: COFF bridge %ld PC %lx SP %lx fields %lx %lx %lx %lx %lx\n",
+    if(uinter_trace && uin_coffcalls[which]<=4) printf("uinter: COFF bridge %ld PC %lx SP %lx fields %lx %lx %lx %lx %lx\n",
         uin_cofflast[2],pc,sp,uin_cofflast[3],uin_cofflast[4],
         uin_cofflast[5],uin_cofflast[6],uin_cofflast[7]);
     if(which) {uin_coffclosed=5;coffdiagowner=0;return 0;}
@@ -1705,7 +1706,7 @@ char *r;
         phase=uin_pmphase[uin_pmphasecount];
         {long *w=uin_pmwatch[uin_pmphasecount];struct uitask *t=ui_task(gp);
          w[0]=AUXP(gp)->ap_mac;w[1]=gp->gp_flags;
-         w[2]=((GPF_DONE(NPATCH)-GPF_DONE(0))&~gp->gp_flags)>>16;
+         w[2]=((GPF_DONE(NPATCH)-GPF_DONE(0))&~gp->gp_flags)>>17;
          w[3]=ui_forceget();w[4]=t ? t->t_force : -1;
          w[5]=uin_coffdiag && gp==coffdiagowner;
          w[6]=uinter_nalwatch;w[7]=uin_watchskipped;

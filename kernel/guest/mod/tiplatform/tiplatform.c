@@ -44,30 +44,6 @@ static struct guest_profile profile;
 static int device_flag;
 static void uncache();
 
-static int
-splhi_()
-{
-	int s;
-
-	__asm__ __volatile__("mov.w %%sr,%0" : "=d" (s) : : "memory");
-	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (s | 0x700) : "memory");
-	return s;
-}
-
-static void
-splx_(s)
-	int s;
-{
-	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (s) : "memory");
-}
-
-static int
-vipl(gp)
-	struct guest_proc *gp;
-{
-	return (gp->gp_vsr & SR_IPL) >> 8;
-}
-
 /* the highest autovector waiting, 0 none */
 static int
 level()
@@ -102,7 +78,7 @@ kick()
 	tic.gp->gp_vpend = l << 8;
 	if (tic.sleeping)
 		wakeup((caddr_t)&tic.sleeping);
-	else if (l > vipl(tic.gp))
+	else if (l > GUEST_VIPL(tic.gp))
 		psignal(tic.proc, TI_SIG);
 }
 
@@ -114,11 +90,11 @@ static void
 tick(arg)
 	caddr_t arg;
 {
-	int s = splhi_();
+	int s = guest_splhi();
 
 	tic.tid = 0;
 	if (tic.state != 1) {
-		splx_(s);
+		guest_splx(s);
 		return;
 	}
 	tic.st.ticks++;
@@ -128,7 +104,7 @@ tick(arg)
 	if (tic.st.ticks % HZ == 0)
 		tic.pend |= 1 << 3;
 	kick();
-	splx_(s);
+	guest_splx(s);
 	if ((tic.tid = ttimeout(tick, (caddr_t)0, 1L)) == -1)
 		tic.tid = 0;
 }
@@ -175,10 +151,10 @@ ti_intr(gp, r)
 		if (!(u.u_sigflag & USTKCLEAR))
 			return;
 	}
-	s = splhi_();
-	while ((l = level()) > vipl(gp)) {
+	s = guest_splhi();
+	while ((l = level()) > GUEST_VIPL(gp)) {
 		tic.pend &= ~(1 << l);
-		splx_(s);
+		guest_splx(s);
 		if ((tic.flags & TIF_CENSUS) && tic.st.ints < 8)
 			printf("tiplatform: census interrupt %d pc %x sr %x\n", l, (int)GR_PC(r),
 			    guest_getsr(gp, r));
@@ -190,11 +166,11 @@ ti_intr(gp, r)
 		tic.st.ints++;
 		if (GR_FV(r) >> 12)
 			u.u_sigflag |= USTKCLEAR;
-		s = splhi_();
+		s = guest_splhi();
 	}
 	gp->gp_vpend = l << 8;
 	sigdelset(&gp->gp_proc->p_sig, TI_SIG);
-	splx_(s);
+	guest_splx(s);
 }
 
 /* the carrier waits while the guest's IPL masks every request */
@@ -206,14 +182,14 @@ ti_fsig(p, gp)
 	k_sigset_t h;
 	int s, n;
 
-	s = splhi_();
+	s = guest_splhi();
 	h = p->p_hold;
 	sigdelset(&p->p_hold, TI_SIG);
-	if (tic.gp != gp || level() <= vipl(gp))
+	if (tic.gp != gp || level() <= GUEST_VIPL(gp))
 		sigaddset(&p->p_hold, TI_SIG);
 	n = __amix_fsig(p);
 	p->p_hold = h;
-	splx_(s);
+	guest_splx(s);
 	return n;
 }
 
@@ -244,7 +220,7 @@ ti_after(gp, r)
 	}
 	if (mask) {
 		tic.halt = 0;
-		s = splhi_();
+		s = guest_splhi();
 		while (tic.state == 1 && !(tic.pend & mask)) {
 			tic.sleeping = 1;
 			if (sleep((caddr_t)&tic.sleeping, (PZERO + 1) | PCATCH))
@@ -252,7 +228,7 @@ ti_after(gp, r)
 		}
 		tic.sleeping = 0;
 		gp->gp_flags |= GPF_IDROP;
-		splx_(s);
+		guest_splx(s);
 	}
 	guest_trapret();
 }
@@ -657,13 +633,13 @@ enter(arg)
 
 	if (copyin(arg, (caddr_t)&te, sizeof te))
 		return EFAULT;
-	s = splhi_();
+	s = guest_splhi();
 	if (tic.state) {
-		splx_(s);
+		guest_splx(s);
 		return EBUSY;
 	}
 	tic.state = 2;
-	splx_(s);
+	guest_splx(s);
 	if ((e = guest_attach(&profile)) != 0) {
 		tic.state = 0;
 		return e;
@@ -698,7 +674,7 @@ keys(arg)
 
 	if (copyin(arg, (caddr_t)&k, sizeof k))
 		return EFAULT;
-	s = splhi_();
+	s = guest_splhi();
 	for (i = 0; i < 10; i++) {
 		down |= k.rows[i] & ~tic.keys[i];
 		tic.keys[i] = k.rows[i];
@@ -709,7 +685,7 @@ keys(arg)
 		tic.pend |= 1 << 6;
 	tic.on = k.on;
 	kick();
-	splx_(s);
+	guest_splx(s);
 	return 0;
 }
 

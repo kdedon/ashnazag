@@ -206,13 +206,13 @@ uitick(arg)
 static void
 uitickstop()
 {
-	int s = splhi_();
+	int s = guest_splhi();
 
 	if (ui.l_tid) {
 		untimeout(ui.l_tid);
 		ui.l_tid = 0;
 	}
-	splx_(s);
+	guest_splx(s);
 }
 
 /* ---- XPRAM: read from its file as a session starts, written back as it ends ---- */

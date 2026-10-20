@@ -101,7 +101,7 @@ struct guest_proc {
 #define	GPF_AWATCH	0x4000	/* A-line: profile callback before reflection */
 #define	GPF_NCALL	0x8000	/* native C region: host dispatch and signal frames */
 #define	GPF_FRAME68K	0x10000	/* sees a 68000: 6-byte frames, rte pops SR and PC */
-#define	GPF_PROFILE	0xfffe0000	/* profile's own bits */
+#define	GPF_PROFILE	0xfffe0000	/* reserved for the profile's own bits */
 /* a sum equals the OR only if no two flags share a bit */
 #define	GPF_ALL	(GPF_ALINE + GPF_PRIV + GPF_SPIN + GPF_VPEND + GPF_FAULT + \
 	GPF_PRIVBAD + GPF_EXEC + GPF_UNOTE + GPF_FTRAP + GPF_FTRAP13 + \
@@ -154,6 +154,27 @@ struct guest_ctr {
 #define	GR_FV(r)	(*(unsigned short *)((char *)(r) + 70))
 #define	GR_VEC(r)	((GR_FV(r) & 0xfff) >> 2)
 
+/* the guest's interrupt mask */
+#define	GUEST_VIPL(gp)	((gp)->gp_vsr >> 8 & 7)
+
+/* host interrupts off; the old SR */
+static __inline__ int
+guest_splhi()
+{
+	int s;
+
+	__asm__ __volatile__("mov.w %%sr,%0" : "=d" (s) : : "memory");
+	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (s | 0x700) : "memory");
+	return s;
+}
+
+static __inline__ void
+guest_splx(s)
+	int s;
+{
+	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (s) : "memory");
+}
+
 /* static shims (always in the kernel) */
 extern struct proc *guest_loading;	/* exec that makes a guest */
 extern struct guest_profile *guest_loadprof;
@@ -191,6 +212,11 @@ extern int guest_getsr();		/* (gp, regs): the SR the guest sees */
 extern void guest_setsr();		/* (gp, regs, sr): switches stacks */
 extern void guest_trapret();		/* reschedule, deliverable signals */
 extern int guest_reflect();		/* (gp, regs, pc, fv, x, n, ipl) */
+extern int guest_fvsize();		/* (fv): the n guest_reflect copies of that frame, 0 none */
+extern int guest_reflcpu();		/* (gp, regs, pc, fv, name): the CPU's frame, then trapret; 1 declined */
+extern int guest_onstack();		/* (p): on the host's signal stack */
+extern int guest_sigtail();		/* (regs): an interrupt may go to the frame regs returns to */
+extern int guest_wb040();		/* (regs, put, arg): a format 7 frame's write-backs */
 extern int guest_rommap();		/* (dev, pa, size): the host's ROM in place */
 extern int guest_halt();		/* root's Shut Down from a session */
 extern int guest_mmu_init();		/* (gp, pbase, plimit, lo, hi): the guest may enable its MMU */

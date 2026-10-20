@@ -408,6 +408,20 @@ int w,h,*box;
     return box[2]-box[0]>=240 && box[3]-box[1]>=40;
 }
 
+/* the console as startmac leaves it while the Mac runs: no echo */
+static void
+consecho(on)
+int on;
+{
+    struct termio t;int fd;
+    if((fd=open("/dev/console",O_RDWR|O_NOCTTY))<0)return;
+    if(ioctl(fd,TCGETA,&t)==0) {
+        if(on)t.c_lflag|=ECHO;else t.c_lflag&=~ECHO;
+        ioctl(fd,TCSETAW,&t);
+    }
+    close(fd);
+}
+
 static int
 coffvisible(pid)
 int pid;
@@ -440,6 +454,14 @@ int pid;
         if(*q==' ')host("key spc");
         else {sprintf(request,"key %c",*q);host(request);}
     }
+    pause_ms(1500L);
+    host("shot " SHOT "coff_text_typed");
+    sprintf(request,"glyph " SHOT "coff_text_before " SHOT "coff_text_typed %d %d %d %d",
+        box[0],box[1],box[2],box[3]);
+    reply=host(request);
+    if(reply)sscanf(reply,"glyph %d %d",&rows,&pixels);
+    t_check("coff_echo",rows>=4 && pixels>=128,"typed line: rows %d pixels %d",rows,pixels);
+    rows=pixels=-1;
     host("key ret");pause_ms(1500L);
     host("shot " SHOT "coff_text_after");
     sprintf(request,"glyph " SHOT "coff_text_before " SHOT "coff_text_after %d %d %d %d",
@@ -3188,7 +3210,9 @@ commanddirect81()
     t_check("coff_native47_mode",setsym("uinter_coffnative47",native47)==0,"");
     for(i=0;i<2;i++) {
         t_info("coff_launch_iteration","%d",i+1);
+        consecho(0);
         commanddirect81once();
+        consecho(1);
     }
     setsym("uinter_coffnative47",saved);
 }
@@ -3776,7 +3800,9 @@ command76()
     for(i=0;i<2;i++) {
         t_info("coff_launch_iteration","%d",i+1);
         save=coffcapture();
+        consecho(0);
         command76once();
+        consecho(1);
         coffrelease(save);
     }
     setsym("uinter_coffnative47",saved);
@@ -4264,7 +4290,9 @@ screen6()
 	}
 	for (n = 0; n < 8; n++) {
 		t_rearm(120);
-		host("shot " SHOT "desktop");
+		r = host("shot " SHOT "desktop");
+		if (r)
+			sscanf(r, "%d %d", &scrw, &scrh);
 		r = host("mac " SHOT "desktop");
 		if (r)
 			sscanf(r, "checker %d white %d top %d", &chk, &white, &top);

@@ -11,6 +11,7 @@
 #include "auxcore.h"
 
 #define	GPF_STUB	0x80000000UL
+typedef char gpf_stub_profile[(GPF_STUB & GPF_PROFILE) == GPF_STUB ? 1 : -1];
 
 #define	UI_MAJOR	54
 #define	UI_VERSION	5
@@ -124,23 +125,6 @@ extern void ui_romfree(), ui_romrel();
 extern int ui_rombusy();
 extern int ui_rommap(), ui_romunmap();
 extern int valid_usr_range();
-
-static __inline__ int
-splhi_()
-{
-	int s;
-
-	__asm__ __volatile__("mov.w %%sr,%0" : "=d" (s) : : "memory");
-	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (s | 0x700) : "memory");
-	return s;
-}
-
-static __inline__ void
-splx_(s)
-	int s;
-{
-	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (s) : "memory");
-}
 
 extern int ui_otroute(),ui_otrouteclear(),ui_otroutecontext();
 extern void ui_otrouteforget();

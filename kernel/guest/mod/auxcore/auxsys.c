@@ -207,10 +207,8 @@ aux_tlog(pid, s, v)
 	long v;
 {
 	long p0 = aux_tpos;
-	int sr;
+	int sr = guest_splhi();
 
-	__asm__ __volatile__("mov.w %%sr,%0" : "=d" (sr) : : "memory");
-	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (sr | 0x700) : "memory");
 	tdec((long)pid);
 	tput(" ");
 	tput(s);
@@ -219,7 +217,7 @@ aux_tlog(pid, s, v)
 	tput("\n");
 	if ((aux_trace & 16) && aux_tpos > AUX_TBUF)
 		aux_tpos = p0;		/* a line that does not fit */
-	__asm__ __volatile__("mov.w %0,%%sr" : : "d" (sr) : "memory");
+	guest_splx(sr);
 }
 
 static struct auxent *auxtab[AUX_NCALL];

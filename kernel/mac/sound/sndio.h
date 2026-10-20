@@ -118,6 +118,7 @@ struct sndstat {
 	unsigned long	ss_fed;		/* frames sent to the chip, all clients */
 	unsigned long	ss_nirq;	/* chip interrupts */
 	unsigned long	ss_under;	/* chip ran empty with data still to come */
+	unsigned long	ss_full;	/* chip reported its FIFO full */
 };
 
 /*

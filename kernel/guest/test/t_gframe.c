@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 
-extern int guest_bfault(), guest_bfcycle(), guest_bframe(), guest_ssw030();
+extern int guest_bfault(), guest_bfcycle(), guest_bframe(), guest_ssw030(), guest_wb040();
 extern void guest_bfdone();
 
 static int nfail;
@@ -27,6 +27,34 @@ frame(fv, pc)
 	memset(r, 0, sizeof r);
 	p32(F + 2, pc);
 	p16(F + 6, fv);
+}
+
+/* write-backs as put sees them */
+static unsigned long wa[4], wv[4];
+static int wsz[4], nw, wfail;
+
+static int
+put(arg, a, sz, v)
+	char *arg;
+	unsigned long a, v;
+	int sz;
+{
+	if (nw == wfail)
+		return 1;
+	wa[nw] = a; wsz[nw] = sz; wv[nw] = v;
+	nw++;
+	return 0;
+}
+
+/* write-back slot 1-3: status, address, data */
+static void
+wb(i, st, a, d)
+	int i;
+	unsigned long st, a, d;
+{
+	p16(F + 20 - 2 * i, st);
+	p32(F + 48 - 8 * i, a);
+	p32(F + 52 - 8 * i, d);
 }
 
 int
@@ -99,6 +127,68 @@ main()
 	EQ("7 ssw", g16((unsigned char *)f + 12), 0x125);
 	EQ("7 fa", g32((unsigned char *)f + 20), 0xffff8000);
 	EQ("7 ea", g32((unsigned char *)f + 8), 0xffff8000);
+
+	/* 68040 write-backs: WB1 first, its data in the lanes of its address */
+	{
+		static struct { unsigned long st, a, d, v; } lane[] = {
+			{ 0xa1, 0x100, 0xab000000, 0xab },	/* byte */
+			{ 0xa1, 0x101, 0x00ab0000, 0xab },
+			{ 0xa1, 0x102, 0x0000ab00, 0xab },
+			{ 0xa1, 0x103, 0x000000ab, 0xab },
+			{ 0xc1, 0x100, 0x12340000, 0x1234 },	/* word */
+			{ 0xc1, 0x101, 0x00123400, 0x1234 },
+			{ 0xc1, 0x102, 0x00001234, 0x1234 },
+			{ 0xc1, 0x103, 0x34000012, 0x1234 },
+			{ 0x81, 0x100, 0x12345678, 0x12345678 },	/* long */
+			{ 0x81, 0x101, 0x78123456, 0x12345678 },
+			{ 0x81, 0x102, 0x56781234, 0x12345678 },
+			{ 0x85, 0x103, 0x34567812, 0x12345678 },
+		};
+		int i;
+
+		for (i = 0; i < sizeof lane / sizeof lane[0]; i++) {
+			frame(0x7008, 0x1000);
+			wb(1, lane[i].st, lane[i].a, lane[i].d);
+			nw = 0; wfail = -1;
+			EQ("wb1 count", guest_wb040((char *)r, put, (char *)0), 1);
+			EQ("wb1 addr", wa[0], lane[i].a);
+			EQ("wb1 size", wsz[0], lane[i].st == 0xa1 ? 1 : lane[i].st == 0xc1 ? 2 : 4);
+			EQ("wb1 data", wv[0], lane[i].v);
+		}
+
+		/* word write to $FF8240 with a word and a byte behind it, right-justified */
+		frame(0x7008, 0x1000);
+		wb(3, 0xa5, 0x2001, 0xffffff5a);
+		wb(2, 0xc1, 0x2002, 0xffff0102);
+		wb(1, 0xc1, 0xff8240, 0x07770000);
+		nw = 0; wfail = -1;
+		EQ("wb order count", guest_wb040((char *)r, put, (char *)0), 3);
+		EQ("wb order 1", wa[0], 0xff8240);
+		EQ("wb order 1 data", wv[0], 0x777);
+		EQ("wb order 2", wa[1], 0x2002);
+		EQ("wb order 2 data", wv[1], 0x102);
+		EQ("wb order 3", wa[2], 0x2001);
+		EQ("wb order 3 data", wv[2], 0x5a);
+
+		/* nothing pending; a write that fails; MOVE16, line and code write-backs */
+		frame(0x7008, 0x1000);
+		nw = 0; wfail = -1;
+		EQ("wb none", guest_wb040((char *)r, put, (char *)0), 0);
+		wb(3, 0x81, 0x3000, 1);
+		wb(1, 0x81, 0x2000, 2);
+		nw = 0; wfail = 1;
+		EQ("wb put fails", guest_wb040((char *)r, put, (char *)0), -1);
+		EQ("wb put fails after one", nw, 1);
+		frame(0x7008, 0x1000);
+		wb(2, 0x89, 0x2000, 0);
+		nw = 0; wfail = -1;
+		EQ("wb move16", guest_wb040((char *)r, put, (char *)0), -1);
+		wb(2, 0xe1, 0x2000, 0);
+		EQ("wb line", guest_wb040((char *)r, put, (char *)0), -1);
+		wb(2, 0x82, 0x2000, 0);
+		EQ("wb code", guest_wb040((char *)r, put, (char *)0), -1);
+		EQ("wb none written", nw, 0);
+	}
 	printf("%s t_gframe\n", nfail ? "[FAIL]" : "[OK]");
 	return nfail != 0;
 }

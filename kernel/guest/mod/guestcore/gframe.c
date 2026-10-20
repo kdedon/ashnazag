@@ -125,3 +125,42 @@ guest_bframe(f, sr, pc, fa, ssw, cpu030)
 	}
 	return n;
 }
+
+/*
+ * The write-backs a 68040 format 7 frame leaves pending, in the order
+ * the handler finishes them: WB1, WB2, WB3.  WB1's data sits in its bus
+ * lanes, WB2's and WB3's right-justified.  put(arg, a, size, v) writes
+ * one, nonzero failing.  The number written; -1 at a line, MOVE16 or
+ * non-data write-back, or a failed put.
+ */
+int
+guest_wb040(r, put, arg)
+	char *r;
+	int (*put)();
+	char *arg;
+{
+	static unsigned char st[3] = { 18, 16, 14 }, ad[3] = { 40, 32, 24 };
+	unsigned char *f = (unsigned char *)r + 64;
+	unsigned long a, v;
+	int i, w, sz, sh, n = 0;
+
+	for (i = 0; i < 3; i++) {
+		w = G16(f + st[i]);
+		if (!(w & 0x80))
+			continue;
+		sz = w >> 5 & 3;
+		if (sz == 3 || (w & 0x18) || ((w & 7) != 1 && (w & 7) != 5))
+			return -1;
+		sz = sz == 0 ? 4 : sz == 1 ? 1 : 2;
+		a = G32(f + ad[i]);
+		v = G32(f + ad[i] + 4);
+		/* WB1: rotate the lanes at a down to the low bytes, e.g. a word at a+3 is bits 7-0, 31-24 */
+		sh = i == 0 ? ((a & 3) + sz) * 8 & 31 : 0;
+		if (sh)
+			v = (v << sh | v >> (32 - sh)) & 0xffffffffUL;
+		if ((*put)(arg, a, sz, sz == 4 ? v : v & ((1UL << 8 * sz) - 1)))
+			return -1;
+		n++;
+	}
+	return n;
+}

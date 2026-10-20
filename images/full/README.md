@@ -1,6 +1,6 @@
 # Full test images (private)
 
-q800-full.hda: main f4816920 with startnext (branch nextimg), 2026-10-19. The Falcon images: main 34db39d, 2026-10-14. They hold Apple, Atari, Commodore/Hyperion and DRI media: never publish or share.
+q800-full.hda: main 622f96d6, 2026-10-19. The Falcon images: main 34db39d, 2026-10-14. They hold Apple, Atari, Commodore/Hyperion and DRI media: never publish or share.
 
 | Image | Machine | Size |
 |---|---|---|
@@ -34,7 +34,7 @@ Cubase 3.1, Score and Audio Falcon are in guest's ~/TOS/CUBASE, patched (no dong
 
 Leave the Mac with Special > Log Out (System 6: Logout), Windows with Alt-F4, the Voyage 200 and NeXT with Cmd-Q, TOS, Lisa and X with Ctrl-C on the console.
 
-Checked in QEMU at 640x480x8: login, X, Lisa, 7.6.1, 8.1, System 6, both Windows, TOS, Voyage 200, CP/M, NeXT. Known issues: CommandShell does not echo what you type (#234); Amiga stays on its start screen (#236); Lisa opens behind two diskette dialogs, Cancel both (#237). NeXT's first start shows the language panel (Return twice) and takes several minutes to the Workspace; it logs in as `me` by itself, also after Log Out.
+Not checked in QEMU (test build). New since the last image: Mac sound pads and stops the chip cleanly (#44, listen for the startup chime and stray sounds), Mac OS 8.1 exception frames (#240), CommandShell echoes typing (#234), Lisa prints no console noise. Known issues: Amiga stays on its start screen at 640x480 (#236); Lisa diskette dialogs (#237) are fixed on main, not yet in this image. NeXT's first start shows the language panel (Return twice) and takes several minutes to the Workspace; it logs in as `me` by itself, also after Log Out.
 
 Build (inputs in media/ and images/work):
 
