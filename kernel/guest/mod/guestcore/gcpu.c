@@ -503,9 +503,14 @@ creg(gp, pi, c, vp, wr)
 	}
 	if (c == 0x801 && (*vp & 1))
 		return -1;
+	/* a 68030's CD and CI clear its caches */
+	if (c == 0x002 && *cp == *vp && !((gp->gp_flags & GPF_CPU030) && (*vp & 0x808)))
+		return 0;
 	*cp = *vp;
-	if (c == 0x002)
+	if (c == 0x002) {
 		dlm_cacheflush();
+		guest_cflush_all++;
+	}
 	return 0;
 }
 
@@ -786,8 +791,11 @@ priv1(gp, pi)
 			*rp = (*rp & ~(sz == 4 ? -1L : (1L << 8 * sz) - 1)) | v;
 		return 0;
 	}
-	if ((op & 0xff00) == 0xf400) {			/* cinv, cpush: push all */
-		dlm_cacheflush();
+	if ((op & 0xff00) == 0xf400) {			/* cinv, cpush */
+		if (guest_cache_insn(gp, (int)op, (unsigned long)*areg(pi, reg)) < 0) {
+			dlm_cacheflush();
+			guest_cflush_all++;
+		}
 		return 0;
 	}
 	if ((op & 0xff00) == 0xf500)			/* pflush, ptest */

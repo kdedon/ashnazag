@@ -27,6 +27,7 @@
 #include <stropts.h>
 #include "sys/mod.h"
 #include "t.h"
+#include "tflush.h"
 
 extern char *ptsname();
 extern int getksym();
@@ -588,6 +589,7 @@ main()
 	struct stat sb;
 	char *argv[4];
 	unsigned long v, info;
+	long f[5];
 	int st, e;
 
 	t_init("aux", 240);
@@ -608,6 +610,7 @@ main()
 	    "modpath %d, modadm: %s", e, T_ERR))
 		return t_done();
 
+	t_flushes(f, 0);
 	argv[0] = SH;
 	argv[1] = "-c";
 	argv[2] = "echo hello";
@@ -653,5 +656,6 @@ main()
 		test_vi();
 	}
 	modules("released", "all A/UX processes gone: auxcore not held");
+	t_flushes(f, "A/UX programs");
 	return t_done();
 }

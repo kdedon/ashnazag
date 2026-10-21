@@ -157,7 +157,7 @@ hash in kvseg, 60 bytes per page (about 2 MB at 128 MB).
 
 `mac/patch_kvmpages.py` makes `kvm_init` use the array's address in a cached window onto the
 first 16 MB of RAM (VA = PA | 0x60000000, built by `mac_iomap_build` with the kernel's RAM
-cache mode). The identity map (DTT0) is noncacheable, so the window keeps the array cached as
+cache mode). The identity map (DTT0) is write-through, so the window keeps the array in copyback as
 kvseg did. `mac_ramwin_check` halts at boot if the array does not fit the window.
 
 - RAM above 128 MB is ignored ("config: memory limited to 128 MB"): the segmap window

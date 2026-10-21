@@ -886,7 +886,7 @@ tick(sig, si, uc)
 	static int n;
 	char line[60];
 
-	if (getenv("NEXT_PC") && ++n % 100 == 0) {
+	if (++n % 100 == 0) {
 		sprintf(line, "next: pc %lx sp %lx\n", (unsigned long)uc->uc_mcontext.gregs[R_PC], (unsigned long)uc->uc_mcontext.gregs[R_SP]);
 		write(2, line, strlen(line));
 	}
@@ -1531,6 +1531,8 @@ audio()
 	return 0;
 }
 
+static int hfslog;	/* each request on stderr */
+
 /* a host call from the guest: the request in the mailbox */
 static void
 hostcall(sig)
@@ -1546,7 +1548,7 @@ hostcall(sig)
 		sprintf(line, "next: root mounted from the host folder\n");
 		write(1, line, strlen(line));
 	}
-	if (getenv("NEXT_CENSUS")) {
+	if (hfslog) {
 		sprintf(line, "next: hfs op %lu node %lu error %ld result %ld %.40s\n", b->op, b->node, b->error, b->result,
 		    b->op == HF_LOOKUP || b->op == HF_CREATE || b->op == HF_REMOVE || b->op == HF_MKDIR || b->op == HF_RENAME ?
 		    b->name : "");
@@ -1660,7 +1662,8 @@ main(argc, argv)
 		fprintf(stderr, "next: RAM %lu MB\n", ramsize >> 20);
 	fprintf(stderr, direct ? "next: screen %lux%lu, %lu bytes a row, 8-bit gray direct\n" :
 	    "next: screen %lux%lu, %lu bytes a row, 2-bit\n", width, height, rowbytes);
-	ne.flags = (getenv("NEXT_CENSUS") ? NXF_CENSUS : 0) | NXF_HOST;
+	hfslog = getenv("NEXT_CENSUS") != 0;
+	ne.flags = (hfslog ? NXF_CENSUS : 0) | NXF_HOST;
 	memset(&sa, 0, sizeof sa);
 	sa.sa_handler = carrier;
 	sigaction(SIGUSR2, &sa, (struct sigaction *)0);
@@ -1703,7 +1706,7 @@ main(argc, argv)
 	}
 	if (child == 0)
 		_exit(host(root));
-	{
+	if (getenv("NEXT_PC")) {
 		struct itimerval it;
 
 		sa.sa_handler = (void (*)())tick;

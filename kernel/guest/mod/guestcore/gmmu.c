@@ -22,6 +22,10 @@
 #include "vm/hat.h"
 #include "vm/page.h"
 
+/* hat flags of the 68040 port, beyond AMIX's */
+#define HAT_NOCPUSH	0x20	/* load: the frame's bytes did not change */
+#define HAT_NOPFLUSH	0x40	/* unload: the caller flushes the ATC */
+
 extern int as_map(), as_unmap(), as_fault();
 extern void hat_memload(), hat_devload(), hat_unload(), seg_free();
 extern page_t *page_numtookpp();
@@ -31,6 +35,11 @@ extern unsigned long ds_gen;
 __asm__(".weak hat_cm_ram");
 extern long hat_cm_ram;
 static long *__volatile__ gmu_hat4k = &hat_cm_ram;
+__asm__(".weak cputype");
+extern long gmu_cputype __asm__("cputype");
+static long *__volatile__ gmu_cpu = &gmu_cputype;
+
+unsigned long guest_cflush_all = 0, guest_cflush_scoped = 0;	/* guest cache instructions: whole caches, lines or pages */
 
 #define	HP	4096UL		/* host page, with the 4 KB HAT */
 #define	NLOAD	4096
@@ -179,9 +188,11 @@ unload_all(m)
 	if (m->seg) {
 		if (m->nload > NLOAD)
 			hat_unload(m->seg, m->seg->s_base, m->seg->s_size, HAT_NOFLAGS);
-		else
+		else {
 			for (i = 0; i < m->nload; i++)
-				hat_unload(m->seg, (addr_t)m->load[i], (u_int)HP, HAT_NOFLAGS);
+				hat_unload(m->seg, (addr_t)m->load[i], (u_int)HP, HAT_NOPFLUSH);
+			__asm__ __volatile__(".short 0xf518" : : : "memory");	/* pflusha */
+		}
 	}
 	m->nload = 0;
 	m->nflush++;
@@ -248,10 +259,11 @@ fill(seg, m, va, rw, reload, lock)
 	if (reload)
 		hat_unload(seg, (addr_t)va, (u_int)HP, HAT_NOFLAGS);
 	prot = PROT_READ | PROT_EXEC | PROT_USER | (mod ? PROT_WRITE : 0);
+	/* the guest keeps its own caches coherent */
 	if ((pp = page_numtookpp((u_int)pf)) != 0)
-		hat_memload(seg, (addr_t)va, pp, prot, HAT_NOFLAGS);
+		hat_memload(seg, (addr_t)va, pp, prot, HAT_NOCPUSH);
 	else
-		hat_devload(seg, (addr_t)va, (u_int)pf, prot, HAT_NOFLAGS);
+		hat_devload(seg, (addr_t)va, (u_int)pf, prot, HAT_NOCPUSH);
 	if (hrw != S_OTHER)
 		(void)as_fault(as, (addr_t)h, (u_int)HP, F_SOFTUNLOCK, hrw);
 	if (moved) {
@@ -574,6 +586,61 @@ guest_mmu_insn(gp, op, a)
 		return 0;
 	}
 	return -1;
+}
+
+/* cpushl or cpushp of host physical a; c: 1 data, 2 instruction, 3 both caches */
+static void
+hcpush(a, c, page)
+	unsigned long a;
+	int c, page;
+{
+	register unsigned long r __asm__("a0") = a;
+
+	switch (c | page << 2) {
+	case 1: __asm__ __volatile__(".short 0xf468" : : "a" (r) : "memory"); break;
+	case 2: __asm__ __volatile__(".short 0xf4a8" : : "a" (r) : "memory"); break;
+	case 3: __asm__ __volatile__(".short 0xf4e8" : : "a" (r) : "memory"); break;
+	case 5: __asm__ __volatile__(".short 0xf470" : : "a" (r) : "memory"); break;
+	case 6: __asm__ __volatile__(".short 0xf4b0" : : "a" (r) : "memory"); break;
+	case 7: __asm__ __volatile__(".short 0xf4f0" : : "a" (r) : "memory"); break;
+	}
+}
+
+/*
+ * cinv or cpush of the line or page at guest physical a, done as a push
+ * of the same caches over the host frames: an invalidate would drop
+ * host data.  -1: the whole caches.
+ */
+int
+guest_cache_insn(gp, op, a)
+	struct guest_proc *gp;
+	int op;
+	unsigned long a;
+{
+	struct guest_mmu *m = gp->gp_mmu;
+	struct as *as = gp->gp_proc->p_as;
+	unsigned long *d, h, n;
+	int c = op >> 6 & 3, sc = op >> 3 & 3;
+
+	if (!gmu_hat4k || !gmu_cpu || *gmu_cpu < 40 || (sc != 1 && sc != 2))
+		return -1;
+	if (c == 0)
+		return 0;
+	n = sc == 1 ? 16 : m && (m->tc & TC_P) ? 2 * HP : HP;
+	a &= ~(n - 1);
+	if (m && a > m->plimit - n)
+		return 0;
+	h = m ? m->pbase + a : a;
+	do {
+		if ((d = leaf(as, h)) != 0 && (*d & 1))
+			hcpush((*d & ~(HP - 1)) | (h & (HP - 1)), c, sc == 2);
+		h += HP;
+	} while (n > HP && (n -= HP) >= HP);
+	if ((c & 2) && *gmu_cpu >= 60)
+		/* CACR.CABC: the branch cache */
+		__asm__ __volatile__(".long 0x4e7a0002\n\t.long 0x00800040\n\t.short 0\n\t.long 0x4e7b0002" : : : "d0");
+	guest_cflush_scoped++;
+	return 0;
 }
 
 /* the guest frame of sz bytes at va in the user space, in one host page, or 0: not mapped for that access */

@@ -6,9 +6,9 @@
 | The addresses are physical; the driver's pool is kernel .bss reached
 | through DTT0, so VA = PA.  Each cpushl is followed by a cinvl so the
 | line is gone whatever CPUSH does on the part (on a 68060 its
-| invalidation depends on CACR.DPI).  DTT0 maps the pool cache-inhibited,
-| so both are no-ops costing a few cycles a line.  Enough for buffers in
-| any cache mode, for descriptors only in write-through.
+| invalidation depends on CACR.DPI).  DTT0 maps the pool write-through,
+| so pushes find nothing dirty.  Enough for buffers in any cache mode, for
+| descriptors only in write-through.
 | Opcodes as words: cpushl dc,(a0) = 0xf468, cinvl dc,(a0) = 0xf448.
 
 	.text

@@ -21,6 +21,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <setjmp.h>
 #include "t.h"
 #include "sys/mod.h"
 #include "dspat.h"
@@ -1041,6 +1042,79 @@ kread(char *sym, unsigned long off, void *buf, int n)
 	return ok;
 }
 
+static sigjmp_buf m16jb;
+
+static void
+m16ill(int s)
+{
+	siglongjmp(m16jb, 1);
+}
+
+/* MOVE16 (a0)+,(a1)+: one 16-byte line */
+static void
+move16(void *dst, void *src)
+{
+	__asm__ __volatile__("mov.l %0,%%a0\n\tmov.l %1,%%a1\n\t.short 0xf620,0x9000"
+	    : : "g" (src), "g" (dst) : "a0", "a1", "memory");
+}
+
+/*
+ * MOVE16 lines into a fresh mapping of the session, whose pages fault
+ * in on the burst itself: a page's first lines, then lines running
+ * from one page's end into the next.  Read back through both mappings.
+ */
+static void
+t_move16(int fd, unsigned char *fba)
+{
+	static unsigned long buf[80];
+	unsigned long *src = (unsigned long *)(((unsigned long)buf + 15) & ~15UL);
+	unsigned long n0 = 0, n1 = 0, off[2];
+	unsigned char keep[2][64];
+	struct sigaction sa, osa;
+	unsigned char *m;
+	int i, j;
+	volatile int bad = 0;
+
+	if (fi.fi_size < 4 * 4096) {
+		t_skip("move16_fresh", "session of %lu bytes", (unsigned long)fi.fi_size);
+		return;
+	}
+	m = (unsigned char *)mmap(0, fi.fi_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	if (m == (unsigned char *)-1) {
+		t_fail("move16_fresh", "mmap: %s", T_ERR);
+		return;
+	}
+	for (i = 0; i < 64; i++)
+		src[i] = 0x10203040UL * (i + 1) ^ (unsigned long)i << 24;
+	off[0] = 4096;
+	off[1] = 3 * 4096 - 32;
+	for (i = 0; i < 2; i++)
+		memcpy(keep[i], fba + off[i], 64);
+	kread("wb_m16_n", 0UL, &n0, 4);
+	memset(&sa, 0, sizeof sa);
+	sa.sa_handler = m16ill;
+	sigaction(SIGILL, &sa, &osa);
+	if (sigsetjmp(m16jb, 1)) {
+		sigaction(SIGILL, &osa, 0);
+		munmap(m, fi.fi_size);
+		t_skip("move16_fresh", "no MOVE16 on this CPU");
+		return;
+	}
+	for (i = 0; i < 2; i++)
+		for (j = 0; j < 4; j++)
+			move16(m + off[i] + 16 * j, src + 16 * i + 4 * j);
+	sigaction(SIGILL, &osa, 0);
+	kread("wb_m16_n", 0UL, &n1, 4);
+	for (i = 0; i < 2; i++)
+		bad += memcmp(m + off[i], src + 16 * i, 64) != 0 ||
+		    memcmp(fba + off[i], src + 16 * i, 64) != 0;
+	for (i = 0; i < 2; i++)
+		memcpy(fba + off[i], keep[i], 64);
+	t_check("move16_fresh", bad == 0, "%d of 2 bursts differ", bad);
+	t_info("move16_lines", "%lu completed by the kernel", n1 - n0);
+	munmap(m, fi.fi_size);
+}
+
 /*
  * The console keeps text, no pixels: no shadow while a session is in
  * front, and what it prints meanwhile is on the screen once it is back.
@@ -1209,6 +1283,7 @@ main()
 	t_reqmode();
 	t_session(fd, &ida, &fba);
 	if (fba != 0 && fba != (unsigned char *)-1) {
+		t_move16(fd, fba);
 		t_input(fd, ida, fba);
 		t_perm(ida);
 		t_inputsec(fd, ida);

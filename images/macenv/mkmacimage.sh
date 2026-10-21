@@ -156,6 +156,7 @@ if [ -n "$AMIGASTAGE" ]; then
 		[ ! -f "$f" ] || echo "f ${f#$S} 644 0 3 $f"
 	done >> "$I"
 	cp -R "$S/amiga/sys" "$P/amigasys"
+	sh "$AUX/images/amigaenv/refresh-sys.sh" "$P/amigasys" || exit 1
 	chmod -R a+rX,go-w,u+w "$P/amigasys"
 	# guest's ~/Amiga, as startamiga makes it
 	printf 't\t%s\t%s\t%s\t%s\n' /amiga/sys 0 3 "$P/amigasys" \
@@ -242,3 +243,6 @@ ROOTMB=${ROOTMB:-320} SWAPMB=${SWAPMB:-96} MACPKG=$P ENVPKGS=$ENVPKGS BOOTX=$bx 
 # first startmac instead)
 [ "$DESKTOP" = 0 ] || BOOTX=$BOOTX python3 "$D/mkdesktop.py" "$OUT" ||
 	{ echo "[FAIL] desktop database (DESKTOP=0 leaves it to the first startmac)"; exit 1; }
+
+# the written image must boot to the login prompt from the Quadra ROM
+sh "$D/romboot.sh" "$OUT" || exit 1

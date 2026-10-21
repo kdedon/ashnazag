@@ -726,9 +726,9 @@ unsigned long mac_iopt[10 * 64] = { 1 };
 
 /*
  * Cached window onto the first RAM_WIN bytes of RAM, VA = PA | RAM_VA.
- * The page array lives here (see patch_kvmpages.py): the identity map
- * (DTT0) is noncacheable.  Nothing else reaches these addresses through
- * a cacheable mapping, so the two views do not alias in the cache.
+ * The page array lives here (see patch_kvmpages.py) in copyback; the
+ * identity map (DTT0) is write-through.  The 040 data cache is physically
+ * tagged, so both views share one line.
  */
 #define RAM_VA	0x60000000
 #define RAM_WIN	0x1000000

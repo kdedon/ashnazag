@@ -28,7 +28,7 @@
 #define ASC_CONTROL	0x802	/* 0x02 stereo */
 #define ASC_FIFOMODE	0x803	/* 0x80 clears both FIFOs */
 #define ASC_FIFOIRQ	0x804	/* read clears; ASC_IRQ* per FIFO, B shifted by 2 */
-#define ASC_VOLUME	0x806	/* level in bits 7-5 */
+#define ASC_VOLUME	0x806	/* level in bits 7-5; 0 mutes */
 #define ASC_CLOCK	0x807	/* 0: 22254.5 Hz */
 #define ASC_IRQMASKA	0xF09	/* EASC: 1 masks FIFO A's interrupt */
 #define ASC_IRQMASKB	0xF29

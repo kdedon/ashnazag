@@ -22,6 +22,7 @@
 #include "sys/mod.h"
 #include "next/profile.h"
 #include "t.h"
+#include "tflush.h"
 
 #define	MD	"/tests/aux/mod.d"
 #define	DEV	"/dev/dsk/c6d0s0"
@@ -575,7 +576,7 @@ kernel()
 	struct stat st;
 	unsigned long io0 = 0, priv0 = 0;
 	pid_t pid;
-	int i, k, hw, hh, gone = 0, status, banner, typed = 0, after = 0, nopanel = 0, panelkeys = 0, held = 0, again = 0;
+	int i, hw, hh, gone = 0, status, banner, typed = 0, after = 0, nopanel = 0, panelkeys = 0, held = 0, again = 0;
 	char *q;
 	long t0 = t_now_ms(), login = 0;
 
@@ -841,12 +842,6 @@ kernel()
 	} else
 		t_check("rc_boot_done", logfind("error 2 result 0 hostconfig\n") && logfind("error 2 result 0 utmp\n"),
 		    "init did not get past rc.boot to the utmp file");
-	t_info("traps", "%lu user traps in %d ms", info.utraps, i * 100);
-	for (k = 0; k < 16 && k < (int)info.utraps; k++) {
-		unsigned long *t = info.utrap[((info.utraps >= 16 ? info.utraps : 0) + k) % 16];
-
-		t_info("utrap", "vector %lu d0 %lx pc %lx urp %lx d5 %lx calls %lx %lx %lx", t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7]);
-	}
 	t_check("guest_space", info.high == 0, "%lu guest accesses above its space, last %lx pc %lx", info.high,
 	    info.higha, info.highpc);
 	t_check("host_alive", !gone || !WIFSIGNALED(status), "the host died of signal %d", WTERMSIG(status));
@@ -905,6 +900,7 @@ main()
 {
 	struct mod_mreg reg;
 	int mj = NX_MAJOR, id;
+	long f[5];
 
 	t_init("next", 600);
 	if (access(MD "/nextguest", 0) < 0 || access("/dev/nextguest", 0) < 0) {
@@ -922,7 +918,9 @@ main()
 	if (!t_check("open_autoload", dev >= 0, "%s", T_ERR))
 		return t_done();
 	hostopen();
+	t_flushes(f, 0);
 	kernel();
+	t_flushes(f, "NeXT boot");
 	close(dev);
 	id = modid("nextguest");
 	t_check("loaded", id > 0, "not in modstat");

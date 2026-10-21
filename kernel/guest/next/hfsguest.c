@@ -14,6 +14,14 @@ struct hnode {
 	unsigned long dcur_off, dcur_idx;
 };
 
+/* a node's attributes from a reply, the box's type to bsize, kept a short while */
+#define NATTR 64
+#define ATTRS 13
+#define ATTRTICKS 20	/* about a second of the console's polls */
+struct hattr {
+	unsigned long id, gen, when, a[ATTRS];
+};
+
 struct hctx {
 	long (*kalloc)();
 	long (*vm_info_init)();
@@ -29,6 +37,8 @@ struct hctx {
 	unsigned long vfsp;
 	unsigned long rootnode;
 	unsigned char *spare;		/* free copy buffers, linked through their first long */
+	unsigned long agen, now;	/* agen moves on when names change */
+	struct hattr attr[NATTR];
 };
 
 #define C ((struct hctx *)HF_CTX)
@@ -46,6 +56,73 @@ struct hctx {
 #define V_DATA 46
 #define VROOT 1
 
+static void
+keep(id)
+	unsigned long id;
+{
+	struct hattr *a = &C->attr[id % NATTR];
+	unsigned long *f = &B->type;
+	int i;
+
+	a->id = id;
+	a->gen = C->agen;
+	a->when = C->now;
+	for (i = 0; i < ATTRS; i++)
+		a->a[i] = f[i];
+}
+
+static int
+cached(id)
+	unsigned long id;
+{
+	struct hattr *a = &C->attr[id % NATTR];
+	unsigned long *f = &B->type;
+	int i;
+
+	if (a->id != id || a->gen != C->agen || C->now - a->when >= ATTRTICKS)
+		return 0;
+	for (i = 0; i < ATTRS; i++)
+		f[i] = a->a[i];
+	B->error = 0;
+	return 1;
+}
+
+/* what a reply tells of the cached attributes */
+static void
+note(op)
+	unsigned long op;
+{
+	struct hf_box *b = B;
+
+	switch (op) {
+	case HF_WRITE:
+	case HF_SETATTR:
+		C->attr[b->node % NATTR].id = 0;
+		if (op == HF_SETATTR && !b->error)
+			keep(b->node);
+		break;
+	case HF_GETATTR:
+		if (!b->error)
+			keep(b->node);
+		break;
+	case HF_CREATE:
+	case HF_MKDIR:
+		C->agen++;
+		/* fall through */
+	case HF_LOOKUP:
+		if (!b->error)
+			keep(b->node2);
+		break;
+	case HF_REMOVE:
+	case HF_RMDIR:
+	case HF_RENAME:
+	case HF_LINK:
+	case HF_SYMLINK:
+		C->agen++;
+		break;
+	}
+}
+
 static long
 host(op)
 	unsigned long op;
@@ -53,6 +130,8 @@ host(op)
 	struct hf_box *b = B;
 	long spin;
 
+	if (op == HF_GETATTR && cached(b->node))
+		return 0;
 	b->magic = HF_MAGIC;
 	b->op = op;
 	b->state = HF_REQUEST;
@@ -60,6 +139,7 @@ host(op)
 	for (spin = 0; b->state != HF_REPLY && spin < 2000000000L; spin++)
 		;
 	b->state = HF_IDLE;
+	note(op);
 	return b->error;
 }
 
@@ -289,6 +369,7 @@ hf_keys()
 		} else
 			k->kintr(&w);
 	}
+	C->now++;
 	k->timeout(hf_keys, 0, k->ticks);
 }
 
@@ -470,7 +551,12 @@ hf_pagein(vp, m, off)
 	C->bcopy(b->data, pg, got);
 	for (i = got; i < HF_DATA; i++)
 		pg[i] = 0;
-	__asm__ __volatile__(".short 0xf4f8");		/* cpusha bc: the page may be code */
+	{
+		/* cpushp bc,(a0): the page may be code; its address is physical */
+		register unsigned char *a0 __asm__("a0") = pg;
+
+		__asm__ __volatile__(".short 0xf4f0" : : "a" (a0) : "memory");
+	}
 	return 0;
 }
 

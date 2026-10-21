@@ -38,7 +38,16 @@ struct ment {
 struct idn {
 	char *path;
 	unsigned long id;
+	unsigned long okgen;	/* dirgen when the path to it was found free of host links */
 	struct idn *next;
+};
+
+/* a directory being read: the stream, the index of the next entry, one that did not fit */
+struct dirpos {
+	DIR *d;
+	unsigned long node, at;
+	int pend;
+	char name[HF_NAME];
 };
 
 static char *root, *metapath;
@@ -46,6 +55,9 @@ static struct ment *mt[NHASH];
 static struct idn *byid[NHASH], **ids;
 static unsigned long nids, capids;
 static FILE *metaout;
+static unsigned long dirgen = 1;	/* moves on when a name may have become a link */
+static struct dirpos dirs[4];
+static int dirnext;
 
 static unsigned
 hash(s)
@@ -189,10 +201,23 @@ idof(path)
 	if ((n = malloc(sizeof *n)) == 0 || (n->path = copy(path)) == 0)
 		return 0;
 	n->id = nids++;
+	n->okgen = 0;
 	n->next = byid[h];
 	byid[h] = n;
 	ids[n->id] = n;
 	return n->id;
+}
+
+static struct idn *
+known(path)
+	char *path;
+{
+	struct idn *n;
+
+	for (n = byid[hash(path)]; n; n = n->next)
+		if (strcmp(n->path, path) == 0)
+			return n;
+	return 0;
 }
 
 static char *
@@ -215,17 +240,31 @@ hostpath(rel, special)
 {
 	static char p[2200];
 	struct stat st;
-	char *c;
+	struct idn *n;
+	unsigned long id;
+	char *c, *dir = p + strlen(root) + 1;
 
 	sprintf(p, "%s/%.1000s", root, rel);
 	if (rel[0] == 0)
 		sprintf(p, "%s/.", root);
-	for (c = p + strlen(root) + 1; (c = strchr(c, '/')) != 0; *c++ = '/') {
+	/* the parent directory's path, once checked, is not walked again */
+	if ((c = strrchr(dir, '/')) != 0) {
+		*c = 0;
+		n = known(dir);
+		*c = '/';
+		if (n && n->okgen == dirgen)
+			c = 0;
+		else
+			c = dir;
+	}
+	for (; c && (c = strchr(c, '/')) != 0; *c++ = '/') {
 		*c = 0;
 		if (lstat(p, &st) == 0 && S_ISLNK(st.st_mode)) {
 			errno = ELOOP;
 			return 0;
 		}
+		if (!strchr(c + 1, '/') && (id = idof(dir)) != 0)
+			ids[id]->okgen = dirgen;
 	}
 	if (special && lstat(p, &st) < 0 && errno == ENOENT)
 		strcat(p, SPECIAL);
@@ -453,6 +492,56 @@ wsfix(fd, off, buf, n)
 			buf[k + 1 - h] = 2;
 }
 
+/* a directory entry's name as the guest sees it; 0 to leave it out */
+static int
+entry(de, nm)
+	struct dirent *de;
+	char *nm;
+{
+	int n;
+
+	strncpy(nm, de->d_name, HF_NAME - 1);
+	nm[HF_NAME - 1] = 0;
+	n = strlen(nm);
+	if (n > (int)strlen(SPECIAL) && strcmp(nm + n - strlen(SPECIAL), SPECIAL) == 0)
+		nm[n - strlen(SPECIAL)] = 0;
+	return nm[0] != 0;
+}
+
+static void
+dirsdone(dp)
+	struct dirpos *dp;
+{
+	if (dp->d)
+		closedir(dp->d);
+	dp->d = 0;
+}
+
+/* node's directory stream at entry index off: the one kept from the last read, or opened again */
+static struct dirpos *
+dirat(node, off)
+	unsigned long node, off;
+{
+	struct dirpos *dp;
+	struct dirent *de;
+	char nm[HF_NAME], *hp;
+	int i;
+
+	for (i = 0; i < 4; i++)
+		if (dirs[i].d && dirs[i].node == node && dirs[i].at == off && off)
+			return &dirs[i];
+	dp = &dirs[dirnext++ % 4];
+	dirsdone(dp);
+	if ((hp = nolink(pathof(node), 0)) == 0 || (dp->d = opendir(hp)) == 0)
+		return 0;
+	dp->node = node;
+	dp->at = 0;
+	dp->pend = 0;
+	while (dp->at < off && (de = readdir(dp->d)) != 0)
+		dp->at += entry(de, nm);
+	return dp;
+}
+
 /* one request */
 void
 hf_serve(b)
@@ -527,43 +616,46 @@ hf_serve(b)
 			e = errmap(errno);
 		else
 			b->result = n;
-		if (op == HF_READ && n > 0)
+		if (op == HF_READ && n > 0 && strcmp(strrchr(hp, '/') + 1, "WindowServer") == 0)
 			wsfix(fd, (long)b->offset, b->data, n);
 		close(fd);
 		break;
 	case HF_READDIR: {
 		/* entries from index b->offset: ino, namlen, name\0 packed; result = count */
-		DIR *d;
+		struct dirpos *dp;
 		struct dirent *de;
-		unsigned long i = 0, used = 0, count = 0, len;
+		unsigned long used = 0, len;
 		unsigned char *o = b->data;
 		char nm[HF_NAME];
 
-		if (!(rel = pathof(b->node))) {
+		if (!pathof(b->node)) {
 			e = 2;
 			break;
 		}
-		if ((hp = nolink(rel, 0)) == 0 || (d = opendir(hp)) == 0) {
+		if ((dp = dirat(b->node, b->offset)) == 0) {
 			e = errmap(errno);
 			break;
 		}
 		b->flags = 1;		/* set to 0 when the end is reached */
-		while ((de = readdir(d)) != 0) {
-			strncpy(nm, de->d_name, HF_NAME - 1);
-			nm[HF_NAME - 1] = 0;
-			n = strlen(nm);
-			if (n > (int)strlen(SPECIAL) && strcmp(nm + n - strlen(SPECIAL), SPECIAL) == 0)
-				nm[n - strlen(SPECIAL)] = 0;
-			if (nm[0] == 0)
-				continue;
-			if (i++ < b->offset)
+		for (;;) {
+			if (dp->pend) {
+				strcpy(nm, dp->name);
+				dp->pend = 0;
+			} else if ((de = readdir(dp->d)) == 0)
+				break;
+			else if (!entry(de, nm))
 				continue;
 			if (!child(b->node, nm, buf)) {
+				dp->at++;
 				continue;
 			}
 			len = (8 + strlen(nm) + 1 + 3) & ~3UL;
-			if (used + len > b->length || used + len > HF_DATA)
+			if (used + len > b->length || used + len > HF_DATA) {
+				/* the entry that did not fit is read next time */
+				strcpy(dp->name, nm);
+				dp->pend = 1;
 				goto more;
+			}
 			{
 				unsigned long ino = idof(buf);
 
@@ -576,22 +668,21 @@ hf_serve(b)
 			memset(o + used + 8, 0, len - 8);
 			strcpy((char *)o + used + 8, nm);
 			used += len;
-			count++;
-			b->offset = i;
+			dp->at++;
 		}
 		b->flags = 0;
 	more:
-		closedir(d);
-		if (b->flags)
-			b->offset = i - 1;	/* the entry that did not fit is read next time */
-		else
-			b->offset = i;
+		b->offset = dp->at;
+		if (!b->flags)
+			dirsdone(dp);
 		b->result = used;
 		break;
 	}
 	case HF_CREATE:
 	case HF_MKDIR:
 	case HF_SYMLINK:
+		if (op == HF_SYMLINK)
+			dirgen++;
 		if (!child(b->node, b->name, buf) || buf[0] == 0) {
 			e = 22;
 			break;
@@ -653,6 +744,9 @@ hf_serve(b)
 		break;
 	case HF_REMOVE:
 	case HF_RMDIR:
+		if (op == HF_RMDIR)
+			for (n = 0; n < 4; n++)
+				dirsdone(&dirs[n]);
 		if (!child(b->node, b->name, buf) || buf[0] == 0) {
 			e = 22;
 			break;
@@ -665,6 +759,12 @@ hf_serve(b)
 	case HF_RENAME:
 	case HF_LINK: {
 		struct ment *m;
+
+		if (op == HF_RENAME) {
+			dirgen++;
+			for (n = 0; n < 4; n++)
+				dirsdone(&dirs[n]);
+		}
 
 		if (op == HF_LINK) {
 			if (!(rel = pathof(b->node)) || !child(b->node2, b->name, buf2)) {

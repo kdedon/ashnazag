@@ -477,8 +477,7 @@ long CDECL initialize(Virtual *vwk)
 	share->fs_on = 1;
 	access->funcs.set_cookie("AshF", (long)share);
 	fb_wk = wk;
-	/* MOVE16 rows into RAM only: the display takes no burst writes */
-	do_init(fc == &rom ? access->funcs.get_cookie("_CPU", 0) : 30);
+	do_init(access->funcs.get_cookie("_CPU", 0));
 	if (!fc->fc_plane8)
 		linea_init(wk);
 	return 1;

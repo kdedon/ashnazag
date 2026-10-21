@@ -13,12 +13,13 @@
 |   hexit(code)         exit through a host call, as the session's Log Out
 |   hhalt(fd)           AMIGAIOC_HALT through a host call, as Shut Down: errno
 |   zdiv()              a divide by zero here; zero divides seen by the guest
+|   m16(dst, src, n)    n 16-byte lines with MOVE16
 
 	.text
 	.globl	start
 start:
 	.long	getsr, setsr, wr16, rd16, urte, stopit, vblon, vblcount, dis, trp
-	.long	hexit, hhalt, zdiv
+	.long	hexit, hhalt, zdiv, m16
 
 getsr:
 	moveq	#0,d0
@@ -151,6 +152,15 @@ zdiv:
 zhit:
 	addq.l	#1,zcount
 	rte
+
+m16:
+	move.l	4(sp),a1
+	move.l	8(sp),a0
+	move.l	12(sp),d0
+1:	move16	(a0)+,(a1)+
+	subq.l	#1,d0
+	bne.s	1b
+	rts
 
 stopit:
 	stop	#0x2000

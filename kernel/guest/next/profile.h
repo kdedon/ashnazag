@@ -38,8 +38,6 @@ struct nx_info {
 	unsigned long ticks, ints, io, faults, nvseq, level, stat, mask, ncensus, lasta, lastpc, monexit;
 	unsigned long high, higha, highpc;	/* guest accesses at or above NX_TOP; the latest address and pc */
 	unsigned long mmu[5];	/* MMU fills, faults, space switches, flushes; privileged instructions */
-	unsigned long utraps;	/* trap instructions from the guest's user mode */
-	unsigned long utrap[16][8];	/* the latest: vector, d0, pc, URP, d5, three return addresses up the frame chain */
 	unsigned long hcalls[16];	/* host calls by service */
 	unsigned char nvram[NX_NVRAM];
 	struct nx_census census[NX_NCENSUS];

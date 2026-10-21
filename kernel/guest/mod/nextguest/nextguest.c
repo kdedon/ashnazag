@@ -132,21 +132,6 @@ refl(gp, r, v)
 		return 1;
 	if (!guest_fvsize(GR_FV(r)))
 		return 1;
-	if (v >= 32 && !(gp->gp_vsr & 0x2000)) {
-		unsigned long *t = nx.st.utrap[nx.st.utraps++ % 16];
-		long fp;
-		int i;
-
-		t[0] = v;
-		t[1] = GR_D(r, 0);
-		t[2] = GR_PC(r);
-		guest_mmu_creg(gp, 0x806, (long *)&t[3], 0);
-		t[4] = GR_D(r, 5);
-		fp = GR_A(r, 6);
-		for (i = 5; i < 8; i++)
-			if (copyin((caddr_t)fp + 4, (caddr_t)&t[i], 4) || copyin((caddr_t)fp, (caddr_t)&fp, 4))
-				t[i] = 0, fp = 0;
-	}
 	return guest_reflcpu(gp, r, GR_PC(r), (GR_FV(r) & 0xf000) | (v << 2), (char *)0);
 }
 
@@ -233,7 +218,10 @@ priv(gp, r, v)
 				value = *rp;
 				if (c == 2) {
 					value &= 0x80008000UL;
-					dlm_cacheflush();
+					if (value != *cp) {
+						dlm_cacheflush();
+						guest_cflush_all++;
+					}
 				}
 				*cp = value;
 			} else

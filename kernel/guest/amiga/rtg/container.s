@@ -134,12 +134,9 @@ find_card:
 .endm
 init_card:
  move.l #4,RTG_BASE+rtg_card
- | MOVE16 rows on a 68040 or 68060 (AttnFlags), into RAM only: the
- | display takes no burst writes
+ | MOVE16 rows on a 68040 or 68060 (AttnFlags)
  move.l 4,%a1
  moveq #30,%d1
- tst.l RTG_BASE+rtg_copy
- beq 1f
  move.w 296(%a1),%d0
  and.w #0x88,%d0
  beq 1f

@@ -102,7 +102,9 @@ stop()
 		return;
 	}
 	ASC(ASC_MODE) = 0;
+	ASC(ASC_VOLUME) = 0;
 	ASC(ASC_IRQMASKA) = 1;
+	ASC(ASC_IRQMASKB) = 1;
 	ASC(ASC_FIFOMODE) = 0x80;
 	ASC(ASC_FIFOMODE) = 0;
 	playing = 0;

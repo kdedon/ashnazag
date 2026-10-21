@@ -27,7 +27,7 @@ ncr96q(c, cp)
 uint c;
 struct sdcom *cp;
 {
-	/* the transfer runs through the uncached physical window */
+	/* the transfer runs through the physical window */
 	dlm_cachepush(cp->addr, cp->nbyte);
 	ncr96queue(cp);
 	return TRUE;

@@ -22,14 +22,18 @@
 #define VIA2_IER	0x1C00
 #define VIA_CB1		0x10
 #define PRI		((PZERO + 1) | PCATCH)
+#define LATE		2	/* ticks: past the 23 ms a half FIFO lasts */
 #define ASC(r)		(((VOL unsigned char *)ASC_PHYS)[r])
 #define VIA(r)		(((VOL unsigned char *)VIA2)[r])
 
-extern int uiomove();
-extern void pollwakeup();
+extern int uiomove(), timeout();
+extern void pollwakeup(), untimeout();
+extern long lbolt;
 
 struct sndev snd_ev;
 static int snd_busy, snd_pend;
+static int snd_due, snd_tid;	/* a refill is owed; its deadline timer */
+static long snd_irqat;
 static struct pollhead snd_ph;
 
 static void
@@ -40,19 +44,57 @@ snd_wake()
 	pollwakeup(&snd_ph, POLLIN | POLLRDNORM);
 }
 
+/* stopped, FIFOs cleared, muted */
+static void
+snd_halt()
+{
+	ASC(ASC_MODE) = 0;
+	ASC(ASC_VOLUME) = 0;
+	ASC(ASC_FIFOMODE) = 0x80;
+	ASC(ASC_FIFOMODE) = 0;
+}
+
+/*
+ * The service did not answer the last half-empty interrupt in time.  A
+ * FIFO left to run dry replays its old contents, and the chip need not
+ * say so: stop it before that is heard.
+ */
+/*ARGSUSED*/
+static void
+snd_late(arg)
+caddr_t arg;
+{
+	register int x = DS_SPL(DS_HI);
+
+	snd_tid = 0;
+	if (snd_due && snd_busy) {
+		if (lbolt - snd_irqat < LATE)
+			snd_tid = timeout(snd_late, (caddr_t)0, (int)(LATE - (lbolt - snd_irqat)));
+		else {
+			snd_due = 0;
+			snd_halt();
+			snd_ev.se_irq |= ASC_IRQSTOP;
+			snd_wake();
+		}
+	}
+	DS_SPLX(x);
+}
+
 /* VIA2 CB1, IPL 2; the edge is acknowledged */
 void
 snd_intr()
 {
 	register int b = ASC(ASC_FIFOIRQ);
 
-	/*
-	 * An empty FIFO would replay stale data until the service refills
-	 * it.  The empty bit also means full; empty is also below half.
-	 */
+	/* where the empty bit also means full, empty is also below half */
 	if ((b & ASC_IRQEMPTY) && (b & ASC_IRQHALF)) {
-		ASC(ASC_MODE) = 0;
+		snd_halt();
 		b |= ASC_IRQSTOP;
+	} else if ((b & ASC_IRQHALF) && snd_busy) {
+		snd_due = 1;
+		snd_irqat = lbolt;
+		if (snd_tid == 0)
+			snd_tid = timeout(snd_late, (caddr_t)0, LATE);
 	}
 	snd_ev.se_irq |= b;
 	snd_ev.se_nirq++;
@@ -75,7 +117,11 @@ struct dssess *s;
 static void
 snd_quiet()
 {
-	ASC(ASC_MODE) = 0;
+	if (snd_tid)
+		untimeout(snd_tid);
+	snd_tid = 0;
+	snd_due = 0;
+	snd_halt();
 	ASC(ASC_IRQMASKA) = 1;
 	ASC(ASC_IRQMASKB) = 1;
 	VIA(VIA2_IER) = VIA_CB1;
@@ -150,6 +196,7 @@ struct cred *cr;
 	e = snd_ev;
 	snd_ev.se_irq = 0;
 	snd_pend = 0;
+	snd_due = 0;
 	DS_SPLX(x);
 	return uiomove((caddr_t)&e, sizeof e, UIO_READ, uio);
 }

@@ -1,7 +1,9 @@
 | pstartmac.s -- pstart for the Quadra (68040), derived from the AMIX 040/060
 | port's pstart040.s (MIT).  Differences from it:
-|   * ITT0/DTT0 match supervisor accesses only (0x003FA000 / 0x003FA060), so
-|     user space below 1 GB goes through the page tables;
+|   * ITT0/DTT0 match supervisor accesses only (0x003FA000 both), so user
+|     space below 1 GB goes through the page tables;
+|   * DTT0 is write-through: below 1 GB the Quadra has only RAM, and the
+|     040's table walker keeps write-through descriptor lines coherent;
 |   * static supervisor mappings in the 1-2 GB pointer-table array:
 |       0x50F00000-0x50FFFFFF  Mac I/O, VA = PA, noncacheable serialized
 |       0x52800000-0x528FFFFF  ROM alias of PA 0x40800000, read-only
@@ -266,8 +268,8 @@ Lkroot:
 	.word	0x4e7b,0x0004		| movec %d0,%itt0  (WT cacheable)
 	clrl	%d0
 	.word	0x4e7b,0x0005		| movec %d0,%itt1
-	movel	&0x003fa060,%d0
-	.word	0x4e7b,0x0006		| movec %d0,%dtt0  (noncacheable)
+	movel	&0x003fa000,%d0
+	.word	0x4e7b,0x0006		| movec %d0,%dtt0  (WT cacheable)
 	movel	&0x807fa060,%d0
 	.word	0x4e7b,0x0007		| movec %d0,%dtt1  (noncacheable)
 

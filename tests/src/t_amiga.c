@@ -46,6 +46,7 @@
 #include "amigaio.h"
 #include "rtgshare.h"
 #include "hostfswire.h"
+#include "dsio.h"
 #include "t.h"
 
 extern int getksym();
@@ -79,6 +80,7 @@ typedef long (*gfn)();
 #define	hexit	G(10)
 #define	hhalt	G(11)
 #define	zdiv	G(12)
+#define	m16	G(13)
 
 static int afd = -1;
 
@@ -401,9 +403,50 @@ g_hostpc()
 	return ioctl(afd, AMIGAIOC_HOSTPC, &h) == 0 || errno != EINVAL ? 8 : 0;
 }
 
-static int (*gtab[])() = { g_enter, g_rte, g_mask, g_stop, g_exit, g_exec, g_fork, g_hostpc };
-static char *gname[] = { "enter_leave", "rte_user", "intmask", "stop", "exit", "exec", "fork", "hostpc" };
-static int gwant[] = { 0, 0, 0, 0, 7, 0, 0, 0 };
+/*
+ * The guest bursts MOVE16 lines into display session pages it never
+ * touched, mapped as the card's memory: a page's first lines, then lines
+ * running from one page into the next.  No access reaches the module.
+ */
+static int
+g_move16()
+{
+	static unsigned long buf[40];
+	unsigned long *src = (unsigned long *)(((unsigned long)buf + 15) & ~15UL);
+	struct fbacq acq;
+	struct fbinfo fi;
+	struct amigastat st;
+	unsigned char *v = (unsigned char *)MIG_RTG_VRAM;
+	int fd, e, i;
+
+	if ((fd = open("/dev/fb0", O_RDWR)) < 0)
+		return 0;
+	memset(&acq, 0, sizeof acq);
+	acq.fa_kind = FBK_USER;
+	acq.fa_flags = FBA_FRONT;
+	strcpy(acq.fa_name, "t_amiga");
+	if (ioctl(fd, FBIOACQUIRE, &acq) < 0 || ioctl(fd, FBIOGINFO, &fi) < 0 ||
+	    fi.fi_size < 4 * 4096)
+		return 0;
+	if (mmap((caddr_t)v, fi.fi_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, fd, 0) ==
+	    (caddr_t)-1)
+		return 1;
+	for (i = 0; i < 32; i++)
+		src[i] = 0x01020304UL * (i + 1) ^ (unsigned long)i << 28;
+	if ((e = enter()) != 0)
+		return e;
+	m16(v + 4096, src, 4L);
+	m16(v + 3 * 4096 - 32, src + 16, 4L);
+	if (memcmp(v + 4096, src, 64) || memcmp(v + 3 * 4096 - 32, src + 16, 64))
+		return 2;
+	if (ioctl(afd, AMIGAIOC_STAT, &st) < 0 || st.as_bad)
+		return 3;
+	return 0;
+}
+
+static int (*gtab[])() = { g_enter, g_rte, g_mask, g_stop, g_exit, g_exec, g_fork, g_hostpc, g_move16 };
+static char *gname[] = { "enter_leave", "rte_user", "intmask", "stop", "exit", "exec", "fork", "hostpc", "move16" };
+static int gwant[] = { 0, 0, 0, 0, 7, 0, 0, 0, 0 };
 
 static void
 guests()

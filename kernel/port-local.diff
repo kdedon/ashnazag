@@ -58,10 +58,60 @@ index 4789c8c..c285ea9 100644
  Ldu_out:
  	moveal	%d0,%a0
 diff --git a/src/hat040.s b/src/hat040.s
-index 62ba9e4..1e7a0d7 100644
+index 62ba9e4..f5e7673 100644
 --- a/src/hat040.s
 +++ b/src/hat040.s
-@@ -481,10 +481,15 @@ Lw_st:
+@@ -33,6 +33,7 @@
+ hat_pteload:
+ 	linkw	%fp,&-56
+ 	moveml	%d2-%d3/%a2-%a4,%sp@-
++	clrl	%fp@(-52)		| bit 1: the slot gets a new frame
+ 	movel	%fp@(12),%d2		| d2 = va
+ 	moveal	%fp@(16),%a2		| a2 = pp
+ | --- btrace 'P' one-shot: the FIRST hat_pteload (exercises the CM-B1 Lcm_sel
+@@ -241,6 +242,14 @@ Lrz_loop:
+ 	oril	&2,%d1			| UDT = 2 (resident pointer descriptor)
+ 	movel	%d1,%a0@(0,%d0:l)	| root[Aidx] = ptable | 2
+ 	movel	%d1,%fp@(-56)		| Adesc = the new descriptor (Lrootok reads fp@(-56))
++| the walker reads the zeroed table and the root entry, which is copyback, from RAM
++	moveal	%fp@(-48),%a1
++	.word	0xf471			| cpushp dc,(%a1)
++	pea	%a0@(0,%d0:l)
++	jsr	svirtophys
++	addqw	&4,%sp
++	moveal	%d0,%a1
++	.word	0xf469			| cpushl dc,(%a1)
+ Lrootok:
+ 	movel	%fp@(-56),%d0
+ 	andil	&0xfffffe00,%d0		| Btable base (ptr table, 512-aligned)
+@@ -313,6 +322,8 @@ Lba_nodbg:
+ 	movel	%a4,%d0
+ 	oril	&2,%d0
+ 	movel	%d0,%a3@
++	.word	0xf46b			| cpushl dc,(%a3) -- the descriptor reaches RAM
++	.word	0xf474			| cpushp dc,(%a4) -- and the zeroed table
+ | leaf address (fresh table): a4 += (C)*4 ,  C = (va>>12) & 0x3F
+ 	movel	%d2,%d0
+ 	moveq	&12,%d3
+@@ -426,9 +437,6 @@ Lp_nolock:
+ 	movel	%fp@(-44),%d3
+ 	orl	%d0,%d3
+ 	movel	%d3,%a4@		| *leaf = (pfn<<12) | status
+-	pea	1
+-	movel	%d2,%sp@-
+-	jsr	flushmmu		| flushmmu(va, 1)
+ 	bra	Lepi
+ 
+ | --- fresh leaf inside an existing page table ---
+@@ -448,6 +456,7 @@ Lfreshleaf:
+ 
+ | --- write the leaf PTE (shared by fresh-table and fresh-in-table paths) ---
+ Lwleaf:
++	bset	&1,%fp@(-49)
+ 	moveq	&7,%d3
+ 	andl	%d3,%fp@(24)		| prot &= 7
+ 	moveq	&2,%d0
+@@ -481,10 +490,15 @@ Lw_st:
  	moveal	%d0,%a0
  	addqb	&1,%a0@(7)
  Lw_nolock:
@@ -81,7 +131,45 @@ index 62ba9e4..1e7a0d7 100644
  Lw_nopp:
  	moveal	%fp@(8),%a0
  	movel	%a0@(12),%d0
-@@ -605,16 +610,39 @@ Lrp_wr:
+@@ -493,17 +507,26 @@ Lw_nopp:
+ 	moveal	%d3,%a0
+ 	addql	&1,%a0@			| (*(seg+16))++
+ Lepi:
+-| 68040 PAGE-TABLE COHERENCY (2026-06-24): the leaf PTE was written with a normal `movel` into a
+-| copyback-cacheable page-table page, so it sits in the D-cache, NOT RAM.  The 68040 hardware
+-| table walker reads descriptors from memory; if the cached PTE line is later invalidated without
+-| write-back, the walker reads the STALE (zero/invalid) RAM descriptor -> the just-faulted user
+-| page maps to a ZERO phys for subsequent accesses (proven: proc 1's icode page at 0x80800000
+-| reads 0x4FFB0170 via the I-fetch ATC but 0x00000000 via a fresh data walk, even after cpusha+
+-| pflusha at use time).  pstart040 and resume040 already cpusha+pflusha after their table writes;
+-| hat_pteload (the per-fault user/kernel PTE installer) did NOT.  Push the write to RAM + flush
+-| the ATC so the walker reloads the fresh descriptor.
+-	.word	0xf4f8			| cpusha bc -- push the new leaf PTE (and ptable/root writes) to RAM
+-	.word	0xf518			| pflusha   -- flush the ATC so the next walk reloads the fresh PTE
++| The walker reads descriptors from RAM: push the leaf's line and drop this
++| page's ATC entries.  A new frame in the slot is pushed from both caches, as
++| its bytes may be code still in dirty data lines, unless the caller says they
++| did not change.
++	moveal	%a4,%a1
++	.word	0xf469			| cpushl dc,(%a1)
++	moveal	%fp@(12),%a1
++	bsrw	Lpfl
++	addql	&1,hat_flpg_n
++	btst	&1,%fp@(-49)
++	beqs	Lepi_out
++	btst	&5,%fp@(31)		| HAT_NOCPUSH
++	bnes	Lepi_out
++	movel	%fp@(20),%d1
++	moveq	&12,%d3
++	lsll	%d3,%d1
++	moveal	%d1,%a1
++	.word	0xf4f1			| cpushp bc,(%a1)
++	addql	&1,hat_fpush_n
++Lepi_out:
+ 	moveml	%fp@(-76),%d2-%d3/%a2-%a4
+ 	moveal	%d0,%a0
+ 	unlk	%fp
+@@ -605,16 +628,53 @@ Lrp_wr:
  	orl	%d0,%d3
  	movel	%d3,%a4@		| *leaf = (newpfn<<12) | status
  | (3) register the NEW page (a2) in its p_mapping list (mirror Lw_nopp).
@@ -99,9 +187,10 @@ index 62ba9e4..1e7a0d7 100644
 +	movel	%a0@(32),%a4@(256)	| leaf->next = new_pp->p_mapping
 +	movel	%a4,%a0@(32)		| new_pp->p_mapping = &leaf
  Lrp_flush:
- 	pea	1
- 	movel	%d2,%sp@-
- 	jsr	flushmmu		| flushmmu(va, 1)
+-	pea	1
+-	movel	%d2,%sp@-
+-	jsr	flushmmu		| flushmmu(va, 1)
++	bset	&1,%fp@(-49)
  	bra	Lepi
  
 +| A device load has no pp, yet unloads take any pfn in [pages_base, pages_end)
@@ -122,10 +211,26 @@ index 62ba9e4..1e7a0d7 100644
 +	moveq	&0,%d0
 +	rts
 +
++| Lpfl: drop the user and supervisor ATC entries for the page at a1.
++| Clobbers d1, a0.
++Lpfl:
++	movew	%sr,%sp@-
++	oriw	&0x0700,%sr
++	.long	0x4e7a1001		| movec %dfc,%d1
++	movew	&1,%a0
++	.long	0x4e7b8001		| movec %a0,%dfc
++	.word	0xf509			| pflush (%a1)
++	movew	&5,%a0
++	.long	0x4e7b8001		| movec %a0,%dfc
++	.word	0xf509			| pflush (%a1)
++	.long	0x4e7b1001		| movec %d1,%dfc
++	movew	%sp@+,%sr
++	rts
++
  | --- Lcm_sel: CM-bit class selector (caches campaign B1, 2026-07-20; spec =
  | docs/contracts/CM-PTE-WRITER-MATRIX.md "Required cache-class selector").
  | Shared by all three complete leaf constructors (Lpfnok / Lwleaf / Lreplace).
-@@ -672,6 +700,16 @@ Lcm_nc:
+@@ -672,6 +732,16 @@ Lcm_nc:
  | bit-for-bit what it was before this change.
  Lcm_dev:
  	movel	%fp@(20),%d0		| pfn being mapped
@@ -142,7 +247,7 @@ index 62ba9e4..1e7a0d7 100644
  	cmpl	hat_cm_fb+0,%d0
  	bcs	Lcm_d1			| pfn < lo0 -> not in slot 0
  	cmpl	hat_cm_fb+4,%d0
-@@ -691,6 +729,8 @@ Lcm_fb:
+@@ -691,6 +761,8 @@ Lcm_fb:
  	addql	&1,cmf_fb_n
  	movel	%a4,cmf_fb_leaf
  	rts
@@ -151,7 +256,7 @@ index 62ba9e4..1e7a0d7 100644
  
  | ===========================================================================
  | hat_cm_fb_add(lo_pfn, hi_pfn) -- register one half-open framebuffer PFN
-@@ -726,13 +766,14 @@ Lcm_fb:
+@@ -726,13 +798,14 @@ Lcm_fb:
  hat_cm_fb_add:
  	linkw	%fp,&0
  	moveml	%d2-%d3/%a2,%sp@-
@@ -168,7 +273,7 @@ index 62ba9e4..1e7a0d7 100644
  Lfa_loop:
  	movel	%a2@(0),%d0
  	orl	%a2@(4),%d0
-@@ -758,6 +799,16 @@ Lfa_out:
+@@ -758,6 +831,16 @@ Lfa_out:
  	unlk	%fp
  	rts
  
@@ -185,7 +290,7 @@ index 62ba9e4..1e7a0d7 100644
  | ===========================================================================
  | hat_unlock (orig 0xb5d1e, GLOBAL T) -- 040 port.
  | Decrements the lock count on the page-table page holding va's leaf PTE, and
-@@ -860,7 +911,7 @@ Lhu_done:
+@@ -860,7 +943,7 @@ Lhu_done:
  | THIS port: the 040 leaf PTE address is ALREADY in p_mapping (hat_pteload set pp->p_mapping=&PTE),
  | so just clrl each PTE (UDT->0 invalid) directly -- no tree walk -- then cpusha+pflusha so the HW
  | walker reloads the invalid descriptor and the next access faults & re-maps.  CONSERVATIVE: does
@@ -194,7 +299,7 @@ index 62ba9e4..1e7a0d7 100644
  | philosophy as hat_free040) -- correctness (no stale resident PTE on a freed page) comes first.
  |
  | 2026-07-18 ISSUE-10 PRODUCER FIX: harvest each PTE's HW U/M bits into pp->p_ref/p_mod BEFORE
-@@ -898,6 +949,32 @@ Lpu_loop:
+@@ -898,6 +981,32 @@ Lpu_loop:
  	bfextu	%a0@{&3:&1},%d1
  	orl	%d1,%d0
  	bfins	%d0,%a2@{&5:&1}		| pp->p_mod |= PTE M
@@ -227,18 +332,99 @@ index 62ba9e4..1e7a0d7 100644
  	clrl	%a3@			| *pte = 0 -> 040 leaf descriptor INVALID (UDT=0)
  	movel	%d3,%d2			| advance to next mapping
  	braw	Lpu_loop
-@@ -1314,6 +1391,7 @@ Lhl_chkmore:
- | routine; the extra flush is a no-op cost when nothing was cleared).
- 	.word	0xf4f8			| cpusha bc
+@@ -965,6 +1074,7 @@ Lhl_nodbg:
+ 	movel	%d2,%d3
+ 	addl	%fp@(16),%d3
+ 	subql	&1,%d3			| d3 = va + size - 1 (inclusive last byte)
++	clrl	%fp@(-88)		| PTEs cleared
+ 	braw	Lhl_chkmore
+ 
+ Lhl_leafwalk:
+@@ -1066,11 +1176,9 @@ Lhl_pageloop:
+ | ----- VERBATIM per-page bookkeeping (orig b47e2-b4978) -----
+ Lhl_unmap:
+ 	addql	&1,%d4
+-	pea	1
+-	movel	%d2,%sp@-
+-	jsr	flushmmu
++	addql	&1,%fp@(-88)
++	.word	0xf46a			| cpushl dc,(%a2): read the walker's U/M from RAM
+ 	bfextu	%a2@{&0:&20},%d0	| pfn (030: {0:21})
+-	addqw	&8,%sp
+ 	cmpl	pages_base,%d0
+ 	bcsw	Lhl_a4zero
+ 	bfextu	%a2@{&0:&20},%d0
+@@ -1222,8 +1330,10 @@ Lhl_dofree:
+ | (whose central cb_page_release hook cleans the page DATA -- no second data
+ | cleanup here by design).  The Lhl_cleared join skips the duplicate clear.
+ 	clrl	%a2@			| retire leaf PTE before allocator exposure
+-	.word	0xf478			| cpusha dc -- publish the descriptor clear
+-	.word	0xf518			| pflusha -- invalidate the stale ATC entry
++	.word	0xf46a			| cpushl dc,(%a2) -- publish the descriptor clear
++	moveal	%d2,%a1
++	bsrw	Lpfl			| invalidate the stale ATC entries
++	addql	&1,hat_flpg_n
+ 	clrl	%sp@-
+ 	movel	%a4,%sp@-
+ 	jsr	page_free
+@@ -1231,6 +1341,16 @@ Lhl_dofree:
+ 	braw	Lhl_cleared		| leaf already cleared -- skip duplicate clrl
+ Lhl_clear:
+ 	clrl	%a2@			| *pte = 0
++	.word	0xf46a			| cpushl dc,(%a2)
++| drop the page's ATC entries, or all of them once at the end past 16 pages
++	btst	&6,%fp@(23)		| HAT_NOPFLUSH
++	bnew	Lhl_cleared
++	moveq	&16,%d0
++	cmpl	%fp@(-88),%d0
++	bcsw	Lhl_cleared
++	moveal	%d2,%a1
++	bsrw	Lpfl
++	addql	&1,hat_flpg_n
+ Lhl_cleared:
+ 	addqw	&4,%a2
+ 	addil	&4096,%d2
+@@ -1301,19 +1421,15 @@ Lhl_freego:
+ Lhl_chkmore:
+ 	cmpl	%d2,%d3
+ 	bccw	Lhl_leafwalk		| d3 >= va -> more to unmap
+-| 040 coherency fix (2026-07-07, Codex HAT-UNLOAD-COHERENCY-AUDIT.md): every OTHER 040 HAT
+-| writer (hat_pteload/hat_chgprot/hat_pageunload/resume) ends with cpusha bc; pflusha before
+-| returning; hat_unload was the outlier -- it clrl's each PTE (Lhl_clear, above) but returned
+-| with no post-clear cache push.  A cleared PTE can sit in copyback data cache while the
+-| hardware table walker still sees the old valid descriptor -- if the caller then frees/
+-| reuses the page (segu_release, segu_softunload, segmap_release, anon_private all do exactly
+-| this), the stale mapping can still translate to the recycled page.  This is a plausible NEW
+-| root cause for ISSUE-7 (u_procp=0 corruption on a second/dirty boot) that was not on the
+-| prior "ruled out" list.  Unconditional on every non-rootnull exit (simplest safe fix per the
+-| audit's own recommendation -- avoids adding a dirty-flag variable to an already delicate
+-| routine; the extra flush is a no-op cost when nothing was cleared).
+-	.word	0xf4f8			| cpusha bc
++	btst	&6,%fp@(23)		| HAT_NOPFLUSH
++	bnew	Lhl_fldone
++	moveq	&16,%d0
++	cmpl	%fp@(-88),%d0
++	bccw	Lhl_fldone
  	.word	0xf518			| pflusha
++	addql	&1,hat_flall_n
++Lhl_fldone:
 +	jsr	cabc060			| unmapped code may be replaced at the same address
  	moveml	%fp@(-116),%d2-%d5/%a2-%a4
  	moveal	%d0,%a0
  	unlk	%fp
-@@ -2060,6 +2138,13 @@ hat_cm_fb:
+@@ -2060,6 +2176,22 @@ hat_cm_fb:
  	.balign 4
  hat_cm_ram:
  	.long	0x00000020		| B2: CM=01 copyback for managed RAM (default since 2026-07-30)
++
++| ATC flushes by hat_pteload/hat_unload: whole, per page; frames pushed
++	.globl	hat_flall_n, hat_flpg_n, hat_fpush_n
++hat_flall_n:
++	.long	0
++hat_flpg_n:
++	.long	0
++hat_fpush_n:
++	.long	0
 +
 +| hat_cm_rom: registered ROM PFN intervals, {lo, hi} half-open, two slots;
 +| written only by hat_cm_rom_add, read only by Lcm_dev.
@@ -422,7 +608,7 @@ index b091d9e..dfa67b5 100644
      return lo, hi
  
 diff --git a/src/wb040.s b/src/wb040.s
-index a0b2172..5fdc27e 100644
+index a0b2172..7d59050 100644
 --- a/src/wb040.s
 +++ b/src/wb040.s
 @@ -71,6 +71,11 @@ usrxmemflt:
@@ -488,7 +674,50 @@ index a0b2172..5fdc27e 100644
  Lwx_none:
  	clrl	%d0			| nothing attempted -> nothing to propagate
  Lwx_ret:
-@@ -1297,6 +1339,18 @@ wb_sfc_changed:
+@@ -724,6 +766,32 @@ wb040_replay:
+ 	clrl	wbf_fa			| resolution records may attribute its denial.  These
+ 					| three are INPUTS with a one-replay lifetime -- read
+ 					| wbf_last_* for what was actually reported.
++	movew	%a2@(76),%d0		| SSW: RW and TT
++	andiw	&0x118,%d0
++	cmpiw	&8,%d0
++	bnew	Lwr_1
++| A faulted MOVE16 write is not rerun by the rte: its line, PD0-PD3, goes
++| to FA's line here as four longs.  d3's high word steps the offset.
++	addql	&1,wb_m16_n
++	moveq	&7,%d3
++	andw	%a2@(76),%d3		| FC = TM
++	orw	&0x80,%d3		| valid, long
++Lwm_next:
++	movel	%d3,%d0
++	clrw	%d0
++	swap	%d0			| 0, 4, 8, 12
++	movel	%a2@(108,%d0:l),%d2	| PD0 shares WB1D's slot
++	movel	%a2@(84),%d1
++	andiw	&0xfff0,%d1
++	addl	%d0,%d1
++	moveal	%d1,%a3
++	movel	&1,wbf_slot
++	bsrw	Lwb_do
++	addil	&0x40000,%d3
++	cmpil	&0x100000,%d3
++	bcsw	Lwm_next
++	braw	Lwr_2
++Lwr_1:
+ 	clrl	%d3
+ 	movew	%a2@(82),%d3		| WB1S
+ 	btst	&7,%d3
+@@ -1272,6 +1340,9 @@ wb_dfc_lastnew:
+ 	.globl	wb_replay_n
+ wb_replay_n:
+ 	.long	0			| write-back replays performed (Lwb_do entries)
++	.globl	wb_m16_n
++wb_m16_n:
++	.long	0			| MOVE16 lines completed
+ 	.globl	wb_replay_odd
+ wb_replay_odd:
+ 	.long	0			| ...of those, replays that set DFC to something != user data
+@@ -1297,6 +1368,18 @@ wb_sfc_changed:
  	.globl	x60_fmt4_n
  x60_fmt4_n:
  	.long	0			| format-4 frames seen by the wrappers (user AND kernel)

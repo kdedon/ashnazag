@@ -84,6 +84,32 @@ kget(char *name, long off)
 	return v;
 }
 
+/* a byte of device registers, through the kernel's I/O map; -1 if unreadable */
+static int
+ioget(unsigned long a)
+{
+	unsigned char v;
+	int fd, r = -1;
+
+	if ((fd = open("/dev/kmem", O_RDONLY)) < 0)
+		return -1;
+	if (lseek(fd, (off_t)a, 0) != -1 && read(fd, (char *)&v, 1) == 1)
+		r = v;
+	close(fd);
+	return r;
+}
+
+/* the chip stopped and muted, its FIFO interrupts masked */
+static void
+idle(char *name)
+{
+	int m = ioget(ASC_PHYS + ASC_MODE), v = ioget(ASC_PHYS + ASC_VOLUME);
+	int ia = ioget(ASC_PHYS + ASC_IRQMASKA), ib = ioget(ASC_PHYS + ASC_IRQMASKB);
+
+	t_check(name, m == 0 && v == 0 && ia == 1 && ib == 1,
+		"mode %d volume %#x masks %d %d", m, v, ia, ib);
+}
+
 /* Sound Manager playback through a startup INIT. */
 static int sstat(int, struct sndstat *);
 static long cpu(pid_t);
@@ -776,6 +802,7 @@ main()
 	}
 	t_check("asc_exclusive", open("/dev/asc", O_RDWR) < 0 && errno == EBUSY,
 		"second open of /dev/asc: %s", T_ERR);
+	idle("idle_open");
 
 	/* one second through the chip */
 	if (!t_check("stat", sstat(a, &s0) == 0, "no STAT reply")) {
@@ -795,6 +822,23 @@ main()
 	t_check("chip_irq", k0 >= 0 && k1 - k0 >= 20, "chip interrupts %ld -> %ld", k0, k1);
 	t_info("underruns", "%lu", s1.ss_under);
 	t_check("fifo_never_full", s1.ss_full == 0, "full %lu times", s1.ss_full);
+	idle("idle_after_play");
+
+	/* a service that misses a refill: the kernel stops the chip */
+	sstat(a, &s0);
+	tone(a, CHIPHZ / 2);
+	poll((struct pollfd *)0, 0UL, 150);
+	kill(sndd, SIGSTOP);
+	poll((struct pollfd *)0, 0UL, 200);
+	k0 = ioget(ASC_PHYS + ASC_MODE);
+	k1 = ioget(ASC_PHYS + ASC_VOLUME);
+	kill(sndd, SIGCONT);
+	ms = drain(a);
+	sstat(a, &s1);
+	t_check("late_stops", k0 == 0 && k1 == 0, "service stopped: mode %ld volume %#lx", k0, k1);
+	t_check("late_resumes", ms >= 0 && s1.ss_heard - s0.ss_heard == CHIPHZ / 2,
+		"heard %lu of %d", s1.ss_heard - s0.ss_heard, CHIPHZ / 2);
+	idle("idle_after_late");
 
 	/* 44.1 kHz 16-bit stereo, a quarter second, resampled */
 	sstat(a, &s0);
@@ -872,5 +916,8 @@ out:
 	t_check("asc_released", fd >= 0, "reopen after sndd exits: %s", T_ERR);
 	if (fd >= 0)
 		close(fd);
+	idle("idle_closed");
+	k0 = ioget(0x50F03C00);
+	t_check("idle_irq_off", k0 >= 0 && !(k0 & 0x10), "VIA2 IER %#lx", k0);
 	return t_done();
 }
