@@ -142,6 +142,9 @@ rtg_init:
  jsr -552(%a6)
  move.l %d0,%d7
  beq rtg_restore
+ move.l %d7,-(%sp)
+ jsr pv_hook
+ addq.l #4,%sp
  move.l %d7,%a6
  /* P96 reads its variables from ENV:; until startup copies the
   * saved environment, ENV: is the saved one */

@@ -3,7 +3,7 @@
 struct guest_ram {
 	unsigned long size, n;
 	unsigned int shift;
-	int held, refs;
+	int held, refs, wt;
 	unsigned long softlocks, reserved;
 	page_t **page;
 	unsigned char *dma;

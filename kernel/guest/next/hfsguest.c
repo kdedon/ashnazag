@@ -470,6 +470,7 @@ hf_pagein(vp, m, off)
 	C->bcopy(b->data, pg, got);
 	for (i = got; i < HF_DATA; i++)
 		pg[i] = 0;
+	__asm__ __volatile__(".short 0xf4f8");		/* cpusha bc: the page may be code */
 	return 0;
 }
 

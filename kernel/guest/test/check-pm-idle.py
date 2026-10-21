@@ -45,7 +45,7 @@ int ui_forceget(void){return force;}
 int sleep(caddr_t p,int flags){assert(p==(caddr_t)ev_q&&flags==(PZERO+1|PCATCH)&&ev_wait==1&&level==DS_HI);sleeps++;lbolt+=step;proc.p_cursig=6;proc.p_sig=0x20;return interrupts;}
 '''
 pre+='\nint ui_macrange(struct guest_proc *gp,unsigned long a,unsigned long n){return gp->gp_proc==u.u_procp&&a>=0x3000&&!(a&1)&&a<sizeof mem&&n&&n<=sizeof mem-a;}\n'
-pre+='\nstatic int pmstate;\n'
+pre+='\nstatic int pmstate;\nstatic int ev_ticks(struct guest_proc *gp){return 1;}\nstatic void ev_owntick(struct guest_proc *gp){}\n'
 f+='\nstatic int pmstubvalid(struct guest_proc *gp){return 0;}\n'
 setup='\n'.join('static unsigned char seed_'+k+'[]={'+','.join(hex(x) for x in v)+'};' for k,v in arrays.items())
 t=r'''

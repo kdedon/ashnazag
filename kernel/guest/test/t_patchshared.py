@@ -21,6 +21,7 @@ static long lbolt;
 #define GR_USP(r) (*(unsigned long *)((r)+4))
 #define GR_D(r,n) G32((r)+8+4*(n))
 #define GR_A(r,n) G32((r)+40+4*(n))
+#define GR_SR(r) 0
 #define bzero(p,n) __builtin_memset(p,0,n)
 #define bcmp(a,b,n) __builtin_memcmp(a,b,n)
 #define NPATCH 3
@@ -39,6 +40,7 @@ static unsigned char mem[0x3000]; static int fault;
 #define P32(p,v) (P16(p,(v)>>16),P16((p)+2,v))
 int copyin(caddr_t src,caddr_t dst,int n) {unsigned long p=(unsigned long)src;if(fault||p+n>sizeof mem)return 1;__builtin_memcpy(dst,mem+p,n);return 0;}
 struct proc {int id;};
+struct proc *prfind(int pid){return 0;}
 struct guest_proc {struct proc *gp_proc; unsigned long gp_flags; unsigned ap_mac;};
 struct uitask {struct proc *t_proc;struct guest_proc *t_gp;};
 struct {int l_state;struct proc *l_proc;struct guest_proc *l_gp;struct uitask l_task[UI_NTASK];} ui;

@@ -16,11 +16,23 @@
  *   +0 word  INTENA master: $C000 enabled, $4000 disabled
  *   +2 word  nonzero while the module holds an interrupt for the master bit
  *   +4 byte  CIA-A timer B high, +5 low, as of the last trap
- *   +6 byte  reads left before Kickstart reads the real timer again
+ * With AMIGAF_PVINT exec takes INTREQ and INTENA from here and acknowledges
+ * here, with AMIGAF_PVICR cia.resource the ICR pending bits:
+ *   +8 word  INTREQ, +10 word INTENA without the master bit
+ *   +12 byte CIA-A ICR pending, +13 CIA-B
+ * With AMIGAF_PVTIMER timer B of CIA-A follows the host clock and
+ * timer.device's interval timer is the host's:
+ *   +14 byte nonzero from its start to its stop
+ * cia.resource's AbleICR keeps the ICR masks, which decide what interrupts:
+ *   +16 byte CIA-A ICR mask, +17 CIA-B
  */
 #define AMIGAF_PV 4
+#define AMIGAF_PVINT 16
+#define AMIGAF_PVICR 32
+#define AMIGAF_PVTIMER 64
 /* the board's SCSI controller at $DD0000, empty bus */
 #define AMIGAF_SCSI 8
+#define AMIGAF_PVALL (AMIGAF_PV | AMIGAF_PVINT | AMIGAF_PVICR | AMIGAF_PVTIMER)
 #define AMIGA_PV_BASE 0x20001f00UL
 #define AMIGA_FEAT_BOOT 1
 #define AMIGA_FEAT_BASE 2
@@ -71,5 +83,14 @@ struct amigainfo {
 struct amigastat {
 	unsigned long as_version, as_pid, as_priv, as_fault, as_intr;
 	unsigned long as_lastpc, as_lastaddr, as_stop;
+	/* accesses neither RAM nor a device answered: count, the first's pc and address */
+	unsigned long as_bad, as_badpc, as_badaddr;
+	/* decoded accesses to INTENAR, INTREQR, INTREQ and the ICRs */
+	unsigned long as_intreg;
+	unsigned long as_intena;	/* INTENA writes that trapped */
+	unsigned long as_cia;		/* decoded CIA accesses */
+	unsigned long as_beam;		/* decoded VPOSR, VHPOSR, JOY0DAT, POTGOR reads */
+	unsigned long as_blit;		/* decoded blitter register and DMACONR accesses */
+	unsigned long as_hw;		/* writes to constant register pages */
 };
 #endif

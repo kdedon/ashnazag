@@ -118,6 +118,10 @@ if [ -n "$BUILD" ]; then
 	fi
 fi
 
+# GROUP=mac: also uinter's host-side unit checks
+UNITS=
+[ "${GROUP:-}" = mac ] && { sh "$T/uinter-units.sh" > "$OUT/units.log" 2>&1 || UNITS=1; }
+
 # sockets in a short directory: a unix socket path holds at most 107 bytes
 SK=$(mktemp -d /tmp/aq.XXXXXX) || exit 2
 trap 'rm -rf "$SK"' EXIT
@@ -231,6 +235,7 @@ wait
 
 python3 "$T/summarize.py" "$OUT/serial.log" "$state" "$OUT/qemu.err" > "$OUT/summary.txt"
 rc=$?
+[ -n "$UNITS" ] && { grep FAIL "$OUT/units.log" >> "$OUT/summary.txt"; [ $rc = 0 ] && rc=1; }
 cat "$OUT/summary.txt"
 echo "results: $OUT"
 exit $rc

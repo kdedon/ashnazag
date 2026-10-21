@@ -114,6 +114,15 @@ sys.stdout.buffer.write(donotwait(open(sys.argv[2], "rb").read()))' \
 	python3 "$KDIR/guest/amiga/rtg/elf2hunk.py" "$O/alerttest.o" "$O/alerttest"
 	echo "f /C/alerttest 755 0 3 $O/alerttest" >> "$M"
 	echo "f /S/alertwait 755 0 3 $T/amiga/alert/alertwait" >> "$M"
+	# timer.device timed on SYS:timego
+	"$BIN/m68k-elf-as" -m68020 -o "$O/timetest.o" "$T/amiga/timer/timetest.s"
+	python3 "$KDIR/guest/amiga/rtg/elf2hunk.py" "$O/timetest.o" "$O/timetest"
+	echo "f /C/timetest 755 0 3 $O/timetest" >> "$M"
+	echo "f /S/timewait 755 0 3 $T/amiga/timer/timewait" >> "$M"
+	# lines and a rectangle drawn into a planar BitMap
+	"$BIN/m68k-elf-as" -m68020 -o "$O/planartest.o" "$T/amiga/planar/planartest.s"
+	python3 "$KDIR/guest/amiga/rtg/elf2hunk.py" "$O/planartest.o" "$O/planartest"
+	echo "f /C/planartest 755 0 3 $O/planartest" >> "$M"
 	# with SYS:fixtures (t_amiga's), User-Startup also runs dragtest and, with IBrowse in SYS:, ibtest;
 	# they poll each second, so other tests see Workbench at rest without them
 	U=$(cd "$AMIGASYS/S" && ls | grep -i '^user-startup$' || :)
@@ -121,6 +130,8 @@ sys.stdout.buffer.write(donotwait(open(sys.argv[2], "rb").read()))' \
 	  echo 'Run >NIL: Execute S:dragtest'
 	  echo 'Run >NIL: Execute S:sndtest'
 	  echo 'Run >NIL: Execute S:alertwait'
+	  echo 'Run >NIL: Execute S:timewait'
+	  echo 'Run >NIL: C:planartest'
 	  echo 'Run >NIL: Execute S:w3dwait'
 	  [ ! -f "$AMIGASYS/IBrowse/IBrowse" ] || echo 'Run >NIL: Execute S:ibtest'
 	  echo 'EndIf'; } > "$O/User-Startup"

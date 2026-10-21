@@ -4,7 +4,7 @@ source=pathlib.Path(sys.argv[1]).read_text() if len(sys.argv)>1 else (pathlib.Pa
 a=source.index('#define MCOFFSPACE 26');b=source.index('#define MCOFFFRONT 21',a)
 unit=source[a:b]
 watch=source[source.index('if ((!uinter_patches && !spacewatch(gp))'):].split(' {',1)[0]
-branch='int uinter_patches=1,uin_pmidle=0,uin_pmidlestub=0,pmstate=0; int ui_forceget(void){return 0;} int ui_forcepollowned(struct guest_proc *gp){return 0;} void completed(struct guest_proc *gp){int todo=0,coffwatch=0,coffbound=0;'+watch+' gp->gp_flags &= ~GPF_AWATCH;}\n'
+branch='int uinter_patches=1,uin_pmidle=0,uin_pmidlestub=0,pmstate=0; int ui_forceget(void){return 0;} int ui_forcepollowned(struct guest_proc *gp){return 0;} int pmwatchneeded(struct guest_proc *gp){return 0;} void completed(struct guest_proc *gp){int todo=0,coffwatch=0,coffbound=0;'+watch+' gp->gp_flags &= ~GPF_AWATCH;}\n'
 head=r'''
 #include <stdio.h>
 #include <stdlib.h>

@@ -26,6 +26,8 @@ extern int as_map(), as_unmap(), as_fault();
 extern void hat_memload(), hat_devload(), hat_unload(), seg_free();
 extern page_t *page_numtookpp();
 extern int guest_ram_at();
+extern void flushmmu();
+extern unsigned long ds_gen;
 __asm__(".weak hat_cm_ram");
 extern long hat_cm_ram;
 static long *__volatile__ gmu_hat4k = &hat_cm_ram;
@@ -43,11 +45,14 @@ struct guest_mmu {
 	unsigned long	tc, srp, urp, tt[4], mmusr;	/* tt: ITT0, ITT1, DTT0, DTT1 */
 	int		space;		/* SR_S of the space loaded */
 	int		nload;		/* above NLOAD: the list overflowed */
+	int		moved;		/* holds frames of a display session, which may move */
+	struct guest_mmu *next;		/* of those */
 	unsigned long	load[NLOAD];
 	unsigned long	nfill, nfault, nswitch, nflush;
 };
 
 static struct seg_ops gmu_ops;
+static struct guest_mmu *gmu_moved;
 
 /* a long of guest physical memory */
 static int
@@ -135,9 +140,9 @@ walk(m, va, rw, s, upd, pap, wpp, mp, ttp)
 	return 0;
 }
 
-/* the host frame at a in the process, or -1 */
-static long
-hostpfn(as, a)
+/* the page descriptor of a in the process, or 0 */
+static unsigned long *
+leaf(as, a)
 	struct as *as;
 	unsigned long a;
 {
@@ -145,14 +150,24 @@ hostpfn(as, a)
 	unsigned long d;
 
 	if (!root || !((d = root[a >> 25]) & 2))
-		return -1;
+		return 0;
 	d = ((unsigned long *)(d & ~0x1ffUL))[a >> 18 & 0x7f];
 	if (!(d & 2))
+		return 0;
+	return (unsigned long *)(d & ~0xffUL) + (a >> 12 & 0x3f);
+}
+
+/* the host frame at a in the process, or -1 */
+static long
+hostpfn(as, a)
+	struct as *as;
+	unsigned long a;
+{
+	unsigned long *d = leaf(as, a);
+
+	if (!d || !(*d & 1))
 		return -1;
-	d = ((unsigned long *)(d & ~0xffUL))[a >> 12 & 0x3f];
-	if (!(d & 1))
-		return -1;
-	return (long)((d & ~(HP - 1)) / HP);
+	return (long)((*d & ~(HP - 1)) / HP);
 }
 
 static void
@@ -187,19 +202,20 @@ setspace(m, s)
 
 /* one host page of the window */
 static faultcode_t
-fill(seg, m, va, rw, reload)
+fill(seg, m, va, rw, reload, lock)
 	struct seg *seg;
 	struct guest_mmu *m;
 	unsigned long va;
 	enum seg_rw rw;
-	int reload;
+	int reload, lock;
 {
 	struct as *as = seg->s_as;
 	unsigned long pa, h;
 	enum seg_rw hrw = S_WRITE;
 	page_t *pp;
+	unsigned long *d, gen = ds_gen;
 	long pf;
-	int e, wp, mod, tt, prot;
+	int e, wp, mod, tt, prot, moved = 0;
 
 	setspace(m, (int)(m->gp->gp_vsr & SR_S));
 	if ((e = walk(m, va, (int)rw, m->space != 0, 1, &pa, &wp, &mod, &tt)) != 0) {
@@ -213,13 +229,17 @@ fill(seg, m, va, rw, reload)
 		hrw = S_OTHER;
 	} else if (as_fault(as, (addr_t)h, (u_int)HP, F_SOFTLOCK, S_WRITE)) {
 		hrw = S_READ;
-		if (as_fault(as, (addr_t)h, (u_int)HP, F_SOFTLOCK, S_READ))
+		if (!as_fault(as, (addr_t)h, (u_int)HP, F_SOFTLOCK, S_READ)) {
+			if (rw == S_WRITE) {
+				(void)as_fault(as, (addr_t)h, (u_int)HP, F_SOFTUNLOCK, S_READ);
+				return FC_PROT;
+			}
+			mod = 0;
+		} else if (lock || as_fault(as, (addr_t)h, (u_int)HP, F_INVAL, S_WRITE) || (pf = hostpfn(as, h)) < 0)
 			return FC_NOMAP;
-		if (rw == S_WRITE) {
-			(void)as_fault(as, (addr_t)h, (u_int)HP, F_SOFTUNLOCK, S_READ);
-			return FC_PROT;
-		}
-		mod = 0;
+		else
+			/* a display session's pages refuse locking; it tells when they move */
+			hrw = S_OTHER, moved = 1;
 	}
 	if (hrw != S_OTHER && (pf = hostpfn(as, h)) < 0) {
 		(void)as_fault(as, (addr_t)h, (u_int)HP, F_SOFTUNLOCK, hrw);
@@ -234,6 +254,21 @@ fill(seg, m, va, rw, reload)
 		hat_devload(seg, (addr_t)va, (u_int)pf, prot, HAT_NOFLAGS);
 	if (hrw != S_OTHER)
 		(void)as_fault(as, (addr_t)h, (u_int)HP, F_SOFTUNLOCK, hrw);
+	if (moved) {
+		/* the session's caching (write-through VRAM) */
+		if ((d = leaf(as, va)) != 0 && (*d & 1) && leaf(as, h)) {
+			*d = (*d & ~0x60UL) | (*leaf(as, h) & 0x60);
+			flushmmu((caddr_t)va, 1);
+		}
+		if (!m->moved) {
+			m->moved = 1;
+			m->next = gmu_moved;
+			gmu_moved = m;
+		}
+		/* moved while loading: the access faults again */
+		if (gen != ds_gen)
+			hat_unload(seg, (addr_t)va, (u_int)HP, HAT_NOFLAGS);
+	}
 	if (m->nload < NLOAD)
 		m->load[m->nload] = va;
 	if (m->nload <= NLOAD)
@@ -259,7 +294,7 @@ gmu_fault(seg, addr, len, type, rw)
 	if (!m)
 		return FC_NOMAP;
 	for (va = (unsigned long)addr & ~(HP - 1); va < (unsigned long)addr + len; va += HP)
-		if ((e = fill(seg, m, va, rw, type == F_PROT)) != 0)
+		if ((e = fill(seg, m, va, rw, type == F_PROT, type == F_SOFTLOCK)) != 0)
 			return e;
 	return 0;
 }
@@ -440,14 +475,30 @@ void
 guest_mmu_free(gp)
 	struct guest_proc *gp;
 {
-	struct guest_mmu *m = gp->gp_mmu;
+	struct guest_mmu *m = gp->gp_mmu, **mp;
 
 	if (!m)
 		return;
 	if (m->seg)
 		m->seg->s_data = 0;
+	for (mp = &gmu_moved; *mp; mp = &(*mp)->next)
+		if (*mp == m) {
+			*mp = m->next;
+			break;
+		}
 	gp->gp_mmu = 0;
 	kmem_free((_VOID *)m, sizeof *m);
+}
+
+/* a display session's pages moved: drop what was loaded from them */
+int
+guest_mmu_dsmoved()
+{
+	struct guest_mmu *m;
+
+	for (m = gmu_moved; m; m = m->next)
+		unload_all(m);
+	return 0;
 }
 
 /* a change of the virtual S bit */

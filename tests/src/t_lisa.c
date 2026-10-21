@@ -400,6 +400,18 @@ boot()
 	lit = steady(log, " faults ", &all);
 	t_check("native", lit == 0, "%ld hardware-page faults in 2 s", lit);
 	t_check("no_hw_access", !strstr(log, "hardware access"), "the guest reached a hardware page");
+	{
+		unsigned long blocks = 0, pushes = 0;
+		char *q, *b, *p;
+
+		for (q = log; (q = strstr(q, "lisa: remaps ")) != 0; q++)
+			if ((b = strstr(q, " blocks ")) != 0 && (p = strstr(b, " pushes ")) != 0) {
+				blocks = strtoul(b + 8, (char **)0, 10);
+				pushes = strtoul(p + 8, (char **)0, 10);
+			}
+		/* every block read may be code: each one pushes the caches */
+		t_check("code_pushed", blocks > 0 && pushes >= blocks, "%lu cache pushes for %lu blocks read", pushes, blocks);
+	}
 	/* bus errors are the OS's own segment loads */
 	t_check("fault_free", alive && all == 0 && !strstr(log, "startlisa:"),
 	    "%s (status 0x%x), %ld hardware-page faults; last line: %s", alive ? "running" : "exited", st, all, s ? s : "");

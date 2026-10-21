@@ -22,10 +22,10 @@ CC="nice -n 19 $TC/bin/m68k-cbm-sysv4-gcc -O -Wall -Wno-comment -D__STDC__=0 -fn
 objs=
 # the guest's filesystem routines, linked for their region, as data for the host
 HFS_CODE=$(sed -n 's/^#define HF_BASE *\(0x[0-9a-f]*\)UL.*/\1/p' "$V/hfswire.h")
-for c in hfsguest sndguest; do
+for c in hfsguest sndguest fbguest; do
 	$TC/bin/m68k-cbm-sysv4-gcc -O -Wall -Wno-implicit -fno-builtin -m68040 -I"$V" -c "$V/$c.c" -o "$O/obj/$c.o"
 done
-$TC/bin/m68k-cbm-sysv4-ld -o "$O/hfsguest.elf" -Ttext=$(printf '0x%x' $((HFS_CODE + 0x8000))) -e hf_init "$O/obj/hfsguest.o" "$O/obj/sndguest.o"
+$TC/bin/m68k-cbm-sysv4-ld -o "$O/hfsguest.elf" -Ttext=$(printf '0x%x' $((HFS_CODE + 0x8000))) -e hf_init "$O/obj/hfsguest.o" "$O/obj/sndguest.o" "$O/obj/fbguest.o"
 $TC/bin/m68k-cbm-sysv4-objcopy -O binary "$O/hfsguest.elf" "$O/hfsguest.bin"
 ENTRY=$($TC/bin/m68k-cbm-sysv4-nm "$O/hfsguest.elf" | sed -n 's/^\([0-9a-f]*\) T hf_init$/\1/p')
 {
@@ -34,6 +34,13 @@ ENTRY=$($TC/bin/m68k-cbm-sysv4-nm "$O/hfsguest.elf" | sed -n 's/^\([0-9a-f]*\) T
 	echo '0};'
 	echo "unsigned long hfs_blob_len = $(wc -c < "$O/hfsguest.bin");"
 	echo "unsigned long hfs_entry = $((0x$ENTRY - HFS_CODE - 0x8000));"
+	# the frame buffer routines: probe, info, nop, cursor, uncursor, map
+	printf 'unsigned long fb_entry[] = {'
+	for f in fb_probe fb_info fb_nop fb_cursor fb_uncursor fb_map; do
+		a=$($TC/bin/m68k-cbm-sysv4-nm "$O/hfsguest.elf" | sed -n "s/^\([0-9a-f]*\) T $f\$/\1/p")
+		printf ' %d,' $((0x$a - HFS_CODE - 0x8000))
+	done
+	echo ' };'
 } > "$O/hfsblob.c"
 for c in "$V"/next.c "$V"/hfshost.c "$O"/hfsblob.c "$NH"/nativehost.c "$G"/sndout.c; do
 	$CC -c "$c" -o "$O/obj/$(basename "$c" .c).o"

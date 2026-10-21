@@ -6,6 +6,7 @@
  * is in the device base.
  */
 #include "../floppyshare.h"
+#include "../hostcall.h"
 typedef unsigned int U;
 typedef int L;
 typedef unsigned char B;
@@ -141,7 +142,7 @@ static L req(struct td *t, U op, U unit, U track, U len, U flags)
     b->error = 0;
     MIG_FD_BARRIER();
     b->state = MIG_FD_REQUEST;
-    *(volatile U *)MIG_FD_BELL = 2;
+    MIG_HOSTCALL(MIG_HOST_RING);
     while (b->state != MIG_FD_REPLY) {
         W16(t->wreq + IO_COMMAND) = 9;		/* TR_ADDREQUEST */
         L32(t->wreq + 32) = 0;

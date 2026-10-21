@@ -31,6 +31,7 @@ static char *amiga_device;
 #include "floppyshare.h"
 #include "earlyshare.h"
 #include "w3dshare.h"
+#include "hostcall.h"
 #include "sysroot.h"
 #include "envroot.h"
 #include "miglog.h"
@@ -61,7 +62,25 @@ static unsigned int get16();
 #define PVSTUB 0x00f7f000UL
 #define PVENABLE PVSTUB
 #define PVECLOCK (PVSTUB + 64)
-static unsigned char pvstub[128];
+#define PVTSTOP (PVSTUB + 0x50)	/* the interval timer stopped */
+#define PVTSTART (PVSTUB + 0x60)	/* started, d0 E-clock ticks */
+#define PVHOST3 (MIG_HOST_PAGE + 24)	/* the interrupt words changed */
+#define PVHOST4 (MIG_HOST_PAGE + 32)	/* the interval timer started */
+#define PVSETREQ (PVSTUB + 0xb0)	/* jsr, then the INTREQ word */
+#define PVSETENA (PVSETREQ + 0x30)	/* the same for INTENA */
+#define PVD0REQ (PVSETENA + 0x30)	/* move.w d0,INTREQ */
+#define PVA1REQ (PVD0REQ + 0x30)	/* move.w 14(a1),INTREQ */
+#define PVLEVEL4 (PVA1REQ + 0x20)	/* the audio levels pending */
+#define PVICRA (PVLEVEL4 + 0x20)	/* move.b CIA-A ICR,d2 */
+#define PVICRB (PVICRA + 0x20)
+#define PVSETICR (PVICRB + 0x20)	/* SetICR's read: either CIA by the resource */
+#define PVGFX (PVSTUB + 0x400)	/* graphics' routines to the CPU, 0x20 each */
+#define PVD0ENA (PVSTUB + 0x600)	/* move.w d0,INTENA */
+#define PVVBENA (PVD0ENA + 0x30)	/* graphics' VERTB enables, 0x10 each */
+#define NVBENA 4
+#define PVABLEICR (PVVBENA + 0x10 * NVBENA)	/* AbleICR's write: the mask in memory */
+#define PV(o) (AMIGA_PV_BASE + (o))
+static unsigned char pvstub[PVABLEICR + 0x30 - PVSTUB];
 static int pvstubbed;
 static char *earlyroot;
 static unsigned long fastlen;
@@ -109,28 +128,121 @@ pvstubs()
 		0x6608,					/* bne.s 1f */
 		0x4a79, AMIGA_PV_BASE,			/* tst.w pv: flags as the write */
 		0x4e75,					/* rts */
-		0x33fc, 0xc000, 0xdff09aUL,		/* 1: move.w #$c000,$dff09a */
-		0x4e75
+		0x4a79, AMIGA_PV_BASE,			/* 1: tst.w pv */
+		0x4ef9, PVHOST3				/* jmp host call */
 	};
-	/*
-	 * timer.device's E-clock read (a1 = $BFE001): timer B high, low, high
-	 * into d3, d4, d2 from the module's copy; every 64th read the chip.
-	 */
+	/* timer.device's E-clock read: timer B high, low, high into d3, d4, d2 */
 	static unsigned long eclock[] = {
-		0x5339, AMIGA_PV_BASE + 6,		/* subq.b #1,pv+6 */
-		0x6510,					/* bcs.s 1f */
-		0x1639, AMIGA_PV_BASE + 4,		/* move.b pv+4,d3 */
-		0x1839, AMIGA_PV_BASE + 5,		/* move.b pv+5,d4 */
+		0x1639, PV(4),				/* move.b pv+4,d3 */
+		0x1839, PV(5),				/* move.b pv+5,d4 */
 		0x1403,					/* move.b d3,d2 */
-		0x4e75,					/* rts */
-		0x13fc, 0x003f, AMIGA_PV_BASE + 6,	/* 1: move.b #63,pv+6 */
-		0x1629, 0x0700,				/* move.b $700(a1),d3 */
-		0x1829, 0x0600,				/* move.b $600(a1),d4 */
-		0x1429, 0x0700,				/* move.b $700(a1),d2 */
 		0x4e75
 	};
+	/* its interval timer: a0 = the timer's control register, then its latch */
+	static unsigned long tstop[] = { 0x51f9, PV(14), 0x4e75 };	/* sf pv+14 */
+	static unsigned long tstart[] = {
+		0x206e, 0x0178,				/* move.l 376(a6),a0 */
+		0x50f9, PV(14),				/* st pv+14 */
+		0x4ef9, PVHOST4				/* jmp host call */
+	};
+	/* host calls: illegal, rts */
+	static unsigned long host[] = { 0x4afc, 0x4e75, 0x4e71, 0x4e71 };
+	/* the word after the jsr ORed into the interrupt word, then the host told */
+	static unsigned long setreq[] = {
+		0x48e7, 0x8080,				/* movem.l d0/a0,-(sp) */
+		0x206f, 0x0008,				/* move.l 8(sp),a0 */
+		0x54af, 0x0008,				/* addq.l #2,8(sp) */
+		0x3010,					/* move.w (a0),d0 */
+		0x0240, 0x7fff,				/* and.w #$7fff,d0 */
+		0x8179, PV(8),				/* or.w d0,pv+8 */
+		0x4cdf, 0x0101,				/* movem.l (sp)+,d0/a0 */
+		0x4ef9, PVHOST3				/* jmp host call */
+	};
+	/* bit 15 sets, else clears */
+	static unsigned long d0req[] = {
+		0x4a40,					/* tst.w d0 */
+		0x6b0e,					/* bmi.s 1f */
+		0x3f00,					/* move.w d0,-(sp) */
+		0x4640,					/* not.w d0 */
+		0xc179, PV(8),				/* and.w d0,pv+8 */
+		0x301f,					/* move.w (sp)+,d0 */
+		0x4e75,					/* rts */
+		0x3f00,					/* 1: move.w d0,-(sp) */
+		0x0240, 0x7fff,				/* and.w #$7fff,d0 */
+		0x8179, PV(8),				/* or.w d0,pv+8 */
+		0x301f,					/* move.w (sp)+,d0 */
+		0x4ef9, PVHOST3				/* jmp host call */
+	};
+	static unsigned long a1req[] = {
+		0x3f00,					/* move.w d0,-(sp) */
+		0x3029, 0x000e,				/* move.w 14(a1),d0 */
+		0x4640,					/* not.w d0 */
+		0xc179, PV(8),				/* and.w d0,pv+8 */
+		0x301f,					/* move.w (sp)+,d0 */
+		0x4e75
+	};
+	static unsigned long level4[] = {
+		0x323c, 0x0780,				/* move.w #$780,d1 */
+		0xc279, PV(10),				/* and.w pv+10,d1 */
+		0xc279, PV(8),				/* and.w pv+8,d1 */
+		0x4e75
+	};
+	/* an ICR read clears what it returns; the host only adds bits */
+	static unsigned long icr[] = {
+		0x1439, PV(12),				/* move.b pv+12,d2 */
+		0xb539, PV(12),				/* eor.b d2,pv+12 */
+		0x4a02,					/* tst.b d2 */
+		0x4e75
+	};
+	static unsigned long seticr[] = {
+		0x206e, 0x0022,				/* move.l 34(a6),a0 */
+		0x3208,					/* move.w a0,d1 */
+		0xb27c, 0xe001,				/* cmp.w #$e001,d1 */
+		0x660e,					/* bne.s 1f */
+		0x1239, PV(12),				/* move.b pv+12,d1 */
+		0xb339, PV(12),				/* eor.b d1,pv+12 */
+		0x4a01,					/* tst.b d1 */
+		0x4e75,					/* rts */
+		0x1239, PV(13),				/* 1: move.b pv+13,d1 */
+		0xb339, PV(13),				/* eor.b d1,pv+13 */
+		0x4a01,					/* tst.b d1 */
+		0x4e75
+	};
+	/* bit 7 of d0 sets the other bits in the CIA's mask, else clears them */
+	static unsigned long ableicr[] = {
+		0x206e, 0x0022,				/* move.l 34(a6),a0 */
+		0x3208,					/* move.w a0,d1 */
+		0xb27c, 0xe001,				/* cmp.w #$e001,d1 */
+		0x43f9, PV(16),				/* lea pv+16,a1 */
+		0x6702,					/* beq.s 1f */
+		0x5249,					/* addq.w #1,a1 */
+		0x1200,					/* 1: move.b d0,d1 */
+		0x0881, 0x0007,				/* bclr #7,d1 */
+		0x6606,					/* bne.s 2f */
+		0x4601,					/* not.b d1 */
+		0xc311,					/* and.b d1,(a1) */
+		0x6002,					/* bra.s 3f */
+		0x8311,					/* 2: or.b d1,(a1) */
+		0x4ef9, PVHOST3				/* 3: jmp host call */
+	};
+	int i;
 	pvcode(pvstub, enable, sizeof enable / sizeof enable[0]);
+	pvcode(pvstub + (PVABLEICR - PVSTUB), ableicr, sizeof ableicr / sizeof ableicr[0]);
+	pvcode(pvstub + (PVSETICR - PVSTUB), seticr, sizeof seticr / sizeof seticr[0]);
+	pvcode(pvstub + (PVSETREQ - PVSTUB), setreq, sizeof setreq / sizeof setreq[0]);
+	setreq[10] = PV(10);
+	pvcode(pvstub + (PVSETENA - PVSTUB), setreq, sizeof setreq / sizeof setreq[0]);
+	pvcode(pvstub + (PVD0REQ - PVSTUB), d0req, sizeof d0req / sizeof d0req[0]);
+	pvcode(pvstub + (PVA1REQ - PVSTUB), a1req, sizeof a1req / sizeof a1req[0]);
+	pvcode(pvstub + (PVLEVEL4 - PVSTUB), level4, sizeof level4 / sizeof level4[0]);
+	pvcode(pvstub + (PVICRA - PVSTUB), icr, sizeof icr / sizeof icr[0]);
+	icr[1] = icr[3] = PV(13);
+	pvcode(pvstub + (PVICRB - PVSTUB), icr, sizeof icr / sizeof icr[0]);
+	for (i = 0; i < 5; i++)
+		pvcode(pvstub + (MIG_HOST_PAGE - PVSTUB) + 8 * i, host, 4);
 	pvcode(pvstub + (PVECLOCK - PVSTUB), eclock, sizeof eclock / sizeof eclock[0]);
+	pvcode(pvstub + (PVTSTOP - PVSTUB), tstop, sizeof tstop / sizeof tstop[0]);
+	pvcode(pvstub + (PVTSTART - PVSTUB), tstart, sizeof tstart / sizeof tstart[0]);
 }
 
 static void
@@ -163,6 +275,9 @@ loadboot(char *path)
         pvstubs();
         memcpy((char *)PVSTUB, (char *)pvstub, sizeof pvstub);
         pvstubbed = 1;
+    } else {
+        miglog(1, "container boot extension %.500s: its last page is not free", path);
+        exit(1);
     }
     if (earlyroot)
         preload(earlyroot);
@@ -186,6 +301,20 @@ get32(p)
 	    (unsigned long)p[2] << 8 | p[3];
 }
 
+static void
+rombuffer()
+{
+	int fd;
+
+	if (rombuf)
+		return;
+	if ((fd = open("/dev/zero", O_RDWR)) < 0 ||
+	    (rombuf = (unsigned char *)mmap((caddr_t)0, ROMSIZE, PROT_READ | PROT_WRITE,
+	    MAP_SHARED, fd, 0)) == (unsigned char *)-1)
+		fail("Kickstart buffer");
+	close(fd);
+}
+
 static int
 readrom(path)
 	char *path;
@@ -194,13 +323,7 @@ readrom(path)
 	int fd, count;
 	unsigned char extra;
 
-	if (!rombuf) {
-		if ((fd = open("/dev/zero", O_RDWR)) < 0 ||
-		    (rombuf = (unsigned char *)mmap((caddr_t)0, ROMSIZE, PROT_READ | PROT_WRITE,
-		    MAP_SHARED, fd, 0)) == (unsigned char *)-1)
-			fail("Kickstart buffer");
-		close(fd);
-	}
+	rombuffer();
 	fd = open(path, O_RDONLY);
 	if (fd < 0)
 		fail(path);
@@ -228,7 +351,7 @@ readrom(path)
 static char kickname[64];		/* the Kickstart last verified */
 static unsigned long kickflags;		/* AMIGAF_* its machine needs */
 
-/* the RomTag named name, whose ID starts with id: 1 if there is one */
+/* the RomTag named name, whose ID starts with id: its offset + 1, or 0 */
 static int
 romtag(b, name, id)
 	unsigned char *b;
@@ -243,7 +366,7 @@ romtag(b, name, id)
 		d = get32(b + i + 18) - ROMBASE;
 		if (n < ROMSIZE - 64 && d < ROMSIZE - 64 &&
 		    !strcmp((char *)b + n, name) && !strncmp((char *)b + d, id, strlen(id)))
-			return 1;
+			return i + 1;
 	}
 	return 0;
 }
@@ -334,7 +457,7 @@ setting(file, key, mb)
  * it; patched only when it matches exactly want times.  Where near is set,
  * only the first match within near bytes after the site before counts.
  */
-static struct { int m, n, near, want; unsigned short was[6], now[6]; } sites[] = {
+static struct { int m, n, near, want; unsigned short was[9], now[9]; } sites[] = {
 	/* timer.device: the two E-clock reads, through the stub */
 	{ 6, 6, 0, 2, { 0x1629, 0x0700, 0x1829, 0x0600, 0x1429, 0x0700 },
 	  { 0x4eb9, PVECLOCK >> 16, PVECLOCK & 0xffff, 0x4e71, 0x4e71, 0x4e71 } },
@@ -343,9 +466,476 @@ static struct { int m, n, near, want; unsigned short was[6], now[6]; } sites[] =
 	 * idle frame so the FPU registers are always saved; frestore skips it.
 	 */
 	{ 3, 4, 0, 1, { 0xf325, 0x4a15, 0x6700 }, { 0x2b3c, 0x4100, 0x0000, 0x4e71 } },
-	{ 1, 1, 256, 1, { 0xf35d }, { 0x588d } }
+	{ 1, 1, 256, 1, { 0xf35d }, { 0x588d } },
+	/* potgo.resource's WritePotgo: nothing reads the pins back */
+	{ 3, 3, 0, 1, { 0x33c0, 0x00df, 0xf034 }, { 0x4e71, 0x4e71, 0x4e71 } },
+	/*
+	 * gameport.device's VBL reads: no buttons, counters still.  The
+	 * pointer comes from the host's input.
+	 */
+	{ 4, 2, 0, 1, { 0x3028, 0x0016, 0xe268, 0x4640 }, { 0x303c, 0xff00 } },
+	{ 4, 2, 0, 1, { 0x3030, 0x100a, 0x3400, 0xe058 }, { 0x4240, 0x4e71 } },
+	{ 4, 2, 0, 1, { 0x3030, 0x000a, 0x0240, 0x0303 }, { 0x4240, 0x4e71 } },
+	{ 4, 3, 0, 1, { 0x0339, 0x00bf, 0xe001, 0x6604 }, { 0x033c, 0x00ff, 0x4e71 } },
+	/*
+	 * The power line frequency, timed by CIA-A's TOD against timer B:
+	 * 50 Hz, 20000 us per tick, as it finds on a PAL machine.
+	 */
+	{ 6, 9, 0, 1, { 0x41f9, 0x00bf, 0xe001, 0x43f9, 0x00bf, 0xe001 },
+	  { 0x303c, 50, 0x323c, 20000, 0x3540, 0x0028, 0x3541, 0x002a, 0x4e75 } }
 };
+#define TODSITE	(NSITE - 1)
 #define NSITE	(sizeof sites / sizeof sites[0])
+
+static unsigned long pvflags;	/* AMIGAF_PVINT, AMIGAF_PVICR, AMIGAF_PVTIMER as patched */
+
+/* the next code at or after *a matching w under mask m (n words); 0 at the end */
+static int
+pvfind(rom, a, w, m, n)
+	unsigned char *rom;
+	unsigned long *a;
+	unsigned short *w, *m;
+	int n;
+{
+	int k;
+	for (; *a + 2 * n <= ROMSIZE; *a += 2) {
+		for (k = 0; k < n && (get16(rom + *a + 2 * k) & m[k]) == w[k]; k++)
+			;
+		if (k == n)
+			return 1;
+	}
+	return 0;
+}
+
+static void
+pvjsr(p, to, len)
+	unsigned char *p;
+	unsigned long to;
+	int len;
+{
+	put16(p, 0x4eb9);
+	put32(p + 2, to);
+	for (len -= 6; len > 0; len -= 2, p += 2)
+		put16(p + 6, 0x4e71);
+}
+
+static unsigned long pagesize;
+
+/*
+ * INTENA writes of d0 (exec's AddIntServer) and graphics' VERTB set and
+ * clear through its custom base, to stubs on the interrupt words.
+ */
+static int
+pvenable(rom)
+	unsigned char *rom;
+{
+	/* move.w d0,INTENA; move.l 44(sp),a0; move.w #imm,$9a(a0) */
+	static unsigned short d0ena[] = { 0x33c0, 0x00df, 0xf09a },
+	    vb[] = { 0x206f, 0x002c, 0x317c, 0, 0x009a }, vbm[] = { 0xffff, 0xffff, 0xffff, 0, 0xffff },
+	    full[] = { 0xffff, 0xffff, 0xffff };
+	/* bit 15 sets, else clears; d0 kept */
+	static unsigned long d0[] = {
+		0x4a40,					/* tst.w d0 */
+		0x6b0e,					/* bmi.s 1f */
+		0x3f00,					/* move.w d0,-(sp) */
+		0x4640,					/* not.w d0 */
+		0xc179, PV(10),				/* and.w d0,pv+10 */
+		0x301f,					/* move.w (sp)+,d0 */
+		0x4e75,					/* rts */
+		0x3f00,					/* 1: move.w d0,-(sp) */
+		0x0240, 0x3fff,				/* and.w #$3fff,d0 */
+		0x8179, PV(10),				/* or.w d0,pv+10 */
+		0x301f,					/* move.w (sp)+,d0 */
+		0x4ef9, PVHOST3				/* jmp host call */
+	};
+	unsigned long a, at[NVBENA], pg = PVSTUB & ~(pagesize - 1), w[4];
+	int i, k = 0, n = 0;
+	unsigned int v;
+
+	for (a = 0; pvfind(rom, &a, vb, vbm, 5); a += 2)
+		if (k < NVBENA)
+			at[k++] = a + 4;
+	if (mprotect((caddr_t)pg, BOOTBASE + BOOTSIZE - pg, PROT_READ | PROT_WRITE) < 0)
+		return 0;
+	pvcode((unsigned char *)PVD0ENA, d0, sizeof d0 / sizeof d0[0]);
+	for (a = 0; pvfind(rom, &a, d0ena, full, 3); a += 6, n++)
+		pvjsr(rom + a, PVD0ENA, 6);
+	for (i = 0; i < k; i++, n++) {
+		v = get16(rom + at[i] + 2);
+		/* or.w #v,pv+10; jmp host call, or and.w #~v,pv+10; rts */
+		w[0] = v & 0x8000 ? 0x0079 : 0x0279;
+		w[1] = v & 0x8000 ? v & 0x3fff : ~v & 0xffff;
+		w[2] = PV(10);
+		w[3] = v & 0x8000 ? 0x4ef9 : 0x4e75;
+		pvcode((unsigned char *)PVVBENA + 0x10 * i, w, 4);
+		if (v & 0x8000)
+			put32((unsigned char *)PVVBENA + 0x10 * i + 10, PVHOST3);
+		pvjsr(rom + at[i], PVVBENA + 0x10 * i, 6);
+	}
+	if (mprotect((caddr_t)pg, BOOTBASE + BOOTSIZE - pg, PROT_READ | PROT_EXEC) < 0)
+		fail("boot extension protection");
+	return n;
+}
+
+/*
+ * Exec's interrupt entry and acknowledges on the interrupt words in guest
+ * memory, all or none; cia.resource's ICR reads on its pending bytes.
+ */
+static int
+pvints(rom)
+	unsigned char *rom;
+{
+	/* move.w $1c(a0),d1; btst #14,d1; beq.s; and.w $1e(a0),d1 */
+	static unsigned short entry[] = { 0x3228, 0x001c, 0x0801, 0x000e, 0x6700, 0xc268, 0x001e },
+	    entrym[] = { 0xffff, 0xffff, 0xffff, 0xffff, 0xff00, 0xffff, 0xffff },
+	    l4[] = { 0x323c, 0x0780, 0xc268, 0x001c, 0xc268, 0x001e },
+	    a1req[] = { 0x33e9, 0x000e, 0x00df, 0xf09c },
+	    full[] = { 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff },
+	    /* move.w #imm,INTREQ or INTENA; move.w d0,INTREQ; tst.w INTREQR */
+	    imm[] = { 0x33fc, 0, 0x00df, 0xf098 }, immm[] = { 0xffff, 0, 0xffff, 0xfff9 },
+	    d0req[] = { 0x33c0, 0x00df, 0xf09c }, tst[] = { 0x4a79, 0x00df, 0xf01e },
+	    icra[] = { 0x1439, 0x00bf, 0xed01 }, icrb[] = { 0x1439, 0x00bf, 0xdd00 },
+	    /* SetICR: move.l 34(a6),a0; move.b $d00(a0),d1 */
+	    seticr[] = { 0x206e, 0x0022, 0x1228, 0x0d00 },
+	    /* AbleICR: move.l 34(a6),a0; move.b d0,$d00(a0) */
+	    ableicr[] = { 0x206e, 0x0022, 0x1140, 0x0d00 },
+	    enar[] = { 0, 0x00df, 0xf01c }, enarop[] = { 0x3039, 0x3239, 0x3f39, 0x3d79, 0x4a79 };
+	unsigned long a, at[4], v, pv;
+	int n = 0, ne = 0, nl = 0, na = 0, k;
+
+	for (a = 0; pvfind(rom, &a, entry, entrym, 7); a += 2)
+		ne++;
+	for (a = 0; pvfind(rom, &a, l4, full, 6); a += 2)
+		nl++;
+	for (a = 0; pvfind(rom, &a, a1req, full, 4); a += 2)
+		na++;
+	if (ne != 6 || nl != 1 || na != 1) {
+		miglog(0, "Kickstart copy: interrupt entry found %d, %d, %d times, left alone", ne, nl, na);
+		return 0;
+	}
+	for (a = 0; pvfind(rom, &a, entry, entrym, 7); a += 14, n++) {
+		put16(rom + a, 0x3239); put32(rom + a + 2, PV(10));
+		put16(rom + a + 6, 0xc279); put32(rom + a + 8, PV(8));
+		put16(rom + a + 12, 0x4e71);
+	}
+	for (a = 0; pvfind(rom, &a, l4, full, 6); a += 12, n++)
+		pvjsr(rom + a, PVLEVEL4, 12);
+	for (a = 0; pvfind(rom, &a, a1req, full, 4); a += 8, n++)
+		pvjsr(rom + a, PVA1REQ, 8);
+	for (a = 0; pvfind(rom, &a, d0req, full, 3); a += 6, n++)
+		pvjsr(rom + a, PVD0REQ, 6);
+	n += pvenable(rom);
+	for (a = 0; pvfind(rom, &a, tst, full, 3); a += 6, n++)
+		put32(rom + a + 2, PV(8));
+	/* INTENAR reads (move.w to d0, d1, -(sp), d16(a6); tst.w) read the INTENA word */
+	for (k = 0; k < 5; k++) {
+		enar[0] = enarop[k];
+		for (a = 0; pvfind(rom, &a, enar, full, 3); a += 6, n++)
+			put32(rom + a + 2, PV(10));
+	}
+	/* immediates: a clear in place, a set through its stub; the master bit is Enable's */
+	for (a = 0; pvfind(rom, &a, imm, immm, 4); a += 2) {
+		v = get16(rom + a + 2);
+		pv = get16(rom + a + 6) == 0xf09c ? PV(8) : PV(10);
+		if (get16(rom + a + 6) != 0xf09c && get16(rom + a + 6) != 0xf09a)
+			continue;
+		if (pv == PV(10) && (v & 0x4000))
+			continue;
+		if (v & 0x8000) {
+			pvjsr(rom + a, pv == PV(8) ? PVSETREQ : PVSETENA, 6);
+			put16(rom + a + 6, v);
+		} else {
+			put16(rom + a, 0x0279);
+			put16(rom + a + 2, ~v & 0xffff);
+			put32(rom + a + 4, pv);
+		}
+		a += 6;
+		n++;
+	}
+	pvflags = AMIGAF_PVINT;
+	for (k = 0, a = 0; pvfind(rom, &a, icra, full, 3); a += 2)
+		at[0] = a, k++;
+	if (k == 1) {
+		for (k = 0, a = 0; pvfind(rom, &a, icrb, full, 3); a += 2)
+			at[1] = a, k++;
+	} else
+		k = 0;
+	if (k == 1) {
+		for (k = 0, a = 0; pvfind(rom, &a, seticr, full, 4); a += 2)
+			at[2] = a, k++;
+	}
+	if (k == 1) {
+		for (k = 0, a = 0; pvfind(rom, &a, ableicr, full, 4); a += 2)
+			at[3] = a, k++;
+	}
+	if (k == 1) {
+		pvjsr(rom + at[0], PVICRA, 6);
+		pvjsr(rom + at[1], PVICRB, 6);
+		pvjsr(rom + at[2], PVSETICR, 8);
+		pvjsr(rom + at[3], PVABLEICR, 8);
+		pvflags |= AMIGAF_PVICR;
+		n += 4;
+	} else
+		miglog(0, "Kickstart copy: cia.resource ICR accesses not found, left alone");
+	return n;
+}
+
+/*
+ * timer.device's interval timer: its stops and its start through the
+ * stubs, so the host runs it; both forms or neither.
+ */
+static int
+pvtimer(rom)
+	unsigned char *rom;
+{
+	/* move.l 372(a6),a0; and.b #$ce,(a0); or.b #8,(a0) */
+	static unsigned short stop[] = { 0x206e, 0x0174, 0x0210, 0x00ce, 0x0010, 0x0008 },
+	    /* move.l 376(a6),a0; move.b d0,(a0); lsr.w #8,d0; move.b d0,$100(a0) */
+	    start[] = { 0x206e, 0x0178, 0x1080, 0xe048, 0x1140, 0x0100 },
+	    full[] = { 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff };
+	unsigned long a;
+	int ns = 0, nt = 0;
+
+	for (a = 0; pvfind(rom, &a, stop, full, 6); a += 2)
+		ns++;
+	for (a = 0; pvfind(rom, &a, start, full, 6); a += 2)
+		nt++;
+	if (ns != 2 || nt != 1) {
+		miglog(0, "Kickstart copy: interval timer found %d, %d times, left alone", ns, nt);
+		return 0;
+	}
+	for (a = 0; pvfind(rom, &a, stop, full, 6); a += 12)
+		pvjsr(rom + a + 4, PVTSTOP, 8);
+	for (a = 0; pvfind(rom, &a, start, full, 6); a += 12)
+		pvjsr(rom + a, PVTSTART, 12);
+	pvflags |= AMIGAF_PVTIMER;
+	return 3;
+}
+
+/*
+ * graphics.library's drawing cores: their first 10 bytes jump to a stub
+ * that calls the boot extension's CPU version, and runs them and the rest
+ * when it declines.  The area fill sits inside AreaEnd: when drawn it goes
+ * on past the blit.
+ */
+static unsigned long pagesize;
+
+#define NGFX 7
+
+static int
+pvgfx(rom)
+	unsigned char *rom;
+{
+	/* movem.l d2-d7/a2-a3,-(sp); movem.w 36(a1),d2-d3; movem.w d0-d1,36(a1); move.l 4(a1),a2 */
+	static unsigned short line[] = { 0x48e7, 0x3f30, 0x4ca9, 0x000c, 0x0024, 0x48a9, 0x0003, 0x0024,
+	    0x2469, 0x0004 },
+	    /* movem.l d2-d7/a2-a6,-(sp); move.l 16(a0),a6; move.l a1,a3; addq.w #1,170(a6) */
+	    rect[] = { 0x48e7, 0x3f3e, 0x2c68, 0x0010, 0x2649, 0x526e, 0x00aa },
+	    /* BltClear: move.l d6,-(sp); lea $dff000,a0; clr.w d6; addq.w #1,170(a6); beq.s */
+	    clear[] = { 0x2f06, 0x41f9, 0x00df, 0xf000, 0x4246, 0x526e, 0x00aa, 0x6704 },
+	    /* BltPattern per rectangle: sub.w #76,sp; movem.l; move.l d0,d7; move.l 124(sp),a3; ... */
+	    pattern[] = { 0x9efc, 0x004c, 0x48e7, 0x3f3c, 0x2e00, 0x266f, 0x007c, 0x2849, 0x2a48, 0x302b,
+	    0x0006 },
+	    /* AreaEnd's fill: lea $dff000,a0; add.l d4,a1; subq.l #2,a1; moveq #-1,d0; d5 = -2 * d4 */
+	    fill[] = { 0x41f9, 0x00df, 0xf000, 0xd3c4, 0x5589, 0x70ff, 0x3a04, 0xda45, 0x4445, 0x526e,
+	    0x00aa },
+	    /* BltBitMap's core: movem.l d2-a5,-(sp); sub.w #18,sp; move.l sp,a5; moveq #0,d6; depth */
+	    bbm[] = { 0x48e7, 0x3ffc, 0x9efc, 0x0012, 0x2a4f, 0x7c00, 0x1c28, 0x0005 },
+	    /* BltTemplate per rectangle: move.l a4,-(sp); tst.b 5(a4); beq.s; movem.l a0-a1,-(sp); ... */
+	    tmpl[] = { 0x2f0c, 0x4a2c, 0x0005, 0x6700, 0x48e7, 0x00c0, 0x3654, 0x226c, 0x0008 },
+	    tmplm[] = { 0xffff, 0xffff, 0xffff, 0xff00, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff },
+	    /* the fill's DisownBlitter: subq.w #1,170(a6); blt.s; jsr */
+	    disown[] = { 0x536e, 0x00aa, 0x6d04, 0x4eba },
+	    /* BltTemplate's end: DisownBlitter; move.l (sp)+,a4; rts */
+	    tmplend[] = { 0x4eae, 0xfe32, 0x285f, 0x4e75 },
+	    full[] = { 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff,
+	    0xffff };
+	static unsigned short *form[] = { line, rect, clear, pattern, fill, bbm, tmpl },
+	    *mask[] = { full, full, full, full, full, full, tmplm },
+	    /* where the stub goes on when drawn, after the copied code (0: rts) */
+	    *end[] = { 0, 0, 0, 0, disown, 0, tmplend };
+	/* the patch's offset in the form and the end's past its form */
+	static int len[] = { 10, 7, 8, 11, 11, 8, 9 }, skip[] = { 0, 0, 0, 0, 0, 0, 8 },
+	    past[] = { 0, 0, 0, 0, 10, 0, 4 };
+	static char *what[] = { "line", "rectangle", "BltClear", "BltPattern", "area fill", "BltBitMap",
+	    "BltTemplate" };
+	unsigned char *s = (unsigned char *)PVGFX;
+	unsigned long a, at[NGFX], done[NGFX], pg = PVSTUB & ~(pagesize - 1);
+	int i, k, n = 0;
+	for (i = 0; i < NGFX; i++) {
+		for (k = 0, a = 0; pvfind(rom, &a, form[i], mask[i], len[i]); a += 2)
+			at[i] = a + skip[i], k++;
+		done[i] = 0;
+		if (k == 1 && end[i]) {
+			a = at[i];
+			if (pvfind(rom, &a, end[i], full, 4) && a - at[i] < 0x100)
+				done[i] = ROMBASE + a + past[i];
+			else
+				k = 0;
+		}
+		if (k != 1) {
+			miglog(0, "Kickstart copy: graphics %s found %d times, left alone", what[i], k);
+			at[i] = 0;
+		}
+	}
+	for (i = 0; i < NGFX && !at[i]; i++)
+		;
+	if (i == NGFX)
+		return 0;
+	if (mprotect((caddr_t)pg, BOOTBASE + BOOTSIZE - pg, PROT_READ | PROT_WRITE) < 0)
+		return 0;
+	for (i = 0; i < NGFX; i++, s += 0x20) {
+		if (!at[i])
+			continue;
+		/* jsr entry; beq.s 1f; rts or jmp past; 1: the first 10 bytes; jmp the rest */
+		put16(s, 0x4eb9); put32(s + 2, MIG_PVVEC + 6 * i);
+		put16(s + 6, 0x6706);
+		if (done[i]) {
+			put16(s + 8, 0x4ef9); put32(s + 10, done[i]);
+		} else
+			put16(s + 8, 0x4e75);
+		memcpy(s + 14, rom + at[i], 10);
+		put16(s + 24, 0x4ef9); put32(s + 26, ROMBASE + at[i] + 10);
+		pvjsr(rom + at[i], PVGFX + 0x20 * i, 10);
+		put16(rom + at[i], 0x4ef9);
+		n++;
+	}
+	if (mprotect((caddr_t)pg, BOOTBASE + BOOTSIZE - pg, PROT_READ | PROT_EXEC) < 0)
+		fail("boot extension protection");
+	return n;
+}
+
+/*
+ * The blitter is idle whenever the CPU looks, graphics drawing on the
+ * CPU: WaitBlit returns at once, and its inline form (tst.b and btst of
+ * DMACONR through an address register, beq.s, bsr.w WaitBlit) branches past.
+ */
+static int
+pvwaits(rom)
+	unsigned char *rom;
+{
+	/* tst.b $dff002; btst #6,$dff002; bne.s; rts */
+	static unsigned short wb[] = { 0x4a39, 0x00df, 0xf002, 0x0839, 0x0006, 0x00df, 0xf002, 0x6602, 0x4e75 },
+	    full[] = { 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff };
+	unsigned long a = 0, w = 0;
+	int k, n = 0, r;
+	for (k = 0; pvfind(rom, &a, wb, full, 9); a += 2)
+		w = a, k++;
+	if (k != 1) {
+		miglog(0, "Kickstart copy: WaitBlit found %d times, left alone", k);
+		return 0;
+	}
+	for (a = 0; a + 16 <= ROMSIZE; a += 2) {
+		r = get16(rom + a) - 0x4a28;
+		if (r < 0 || r > 6 || get16(rom + a + 2) != 2 || get16(rom + a + 4) != 0x0828 + r ||
+		    get16(rom + a + 6) != 6 || get16(rom + a + 8) != 2 || get16(rom + a + 10) != 0x6704 ||
+		    get16(rom + a + 12) != 0x6100 || a + 14 + (short)get16(rom + a + 14) != w)
+			continue;
+		put16(rom + a, 0x600e);
+		n++;
+	}
+	put16(rom + w, 0x4e75);
+	return n + 1;
+}
+
+/*
+ * The beam stands still at line 0.  Graphics' waits on it fall through:
+ * for a horizontal position (moveq #24,d2; add.b d5,d2; 1: move.w (a4),d1;
+ * cmp.b d2,d1; bls.s 1b) and, at its start, for a line from 20 to 160
+ * (1: bsr.w vpos; moveq #80,d1; add.l d1,d1; cmp.l d1,d0; bhi.s 1b;
+ * bsr.w vpos; moveq #20,d1; cmp.l d1,d0; bcs.s 1b).  So does its sync
+ * test's wait for CIA-A timer A (1: tst.b TODLO; beq.s 2f; bset #3,207(a6);
+ * 2: move.b TAHI,d0; bmi.s 1b), and every wait for the next line
+ * (jsr VBeamPos(a6); move.l d0,d5; 1: jsr VBeamPos(a6); cmp.l d5,d0; beq.s 1b).
+ */
+static int
+pvbeam(rom)
+	unsigned char *rom;
+{
+	static unsigned short h[] = { 0x7418, 0xd405, 0x3214, 0xb202, 0x63fa },
+	    full[] = { 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff,
+		0xffff, 0xffff, 0xffff, 0xffff, 0xffff },
+	    v[] = { 0x6100, 0, 0x7250, 0xd281, 0xb081, 0x62f4, 0x6100, 0, 0x7214, 0xb081, 0x65ea },
+	    vm[] = { 0xffff, 0, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0, 0xffff, 0xffff, 0xffff },
+	    t[] = { 0x4a39, 0x00bf, 0xe801, 0x6706, 0x08ee, 0x0003, 0x00cf, 0x1039, 0x00bf, 0xe501, 0x6bea },
+	    l[] = { 0x4eae, 0xfe80, 0x2a00, 0x4eae, 0xfe80, 0xb085, 0x67f8 };
+	static struct { unsigned short *w, *m; int n, b[2]; char *what; } f[] = {
+		{ h, full, 5, { 4, 4 }, "horizontal" },
+		{ v, vm, 11, { 5, 10 }, "vertical" },
+		{ t, full, 11, { 10, 10 }, "timer" },
+		{ l, full, 7, { 6, 6 }, "next line" }
+	};
+	unsigned long a, at = 0;
+	int i, k, n = 0;
+
+	for (i = 0; i < 4; i++) {
+		for (k = 0, a = 0; pvfind(rom, &a, f[i].w, f[i].m, f[i].n); a += 2)
+			at = a, k++;
+		/* the next-line wait has several sites */
+		if (i == 3 && k > 0) {
+			for (a = 0; pvfind(rom, &a, l, full, 7); a += 14, n++)
+				put16(rom + a + 12, 0x4e71);
+			continue;
+		}
+		if (k != 1) {
+			miglog(0, "Kickstart copy: %s wait found %d times, left alone", f[i].what, k);
+			continue;
+		}
+		put16(rom + at + 2 * f[i].b[0], 0x4e71);
+		put16(rom + at + 2 * f[i].b[1], 0x4e71);
+		n++;
+	}
+	return n;
+}
+
+/* pvpatch's forms for code loaded from disk, as hostcall.h lays them out */
+static unsigned long pvseg[] = {
+	4, 0x33fc, 0x4000, 0x00df, 0xf09a, 0x33fc, 0x4000, AMIGA_PV_BASE >> 16, AMIGA_PV_BASE & 0xffff,
+	4, 0x33fc, 0xc000, 0x00df, 0xf09a, 0x4eb9, PVENABLE >> 16, PVENABLE & 0xffff, 0x4e71,
+	3, 0x33c0, 0x00df, 0xf09c, 0x4eb9, PVD0REQ >> 16, PVD0REQ & 0xffff,
+	3, 0x33c0, 0x00df, 0xf09a, 0x4eb9, PVD0ENA >> 16, PVD0ENA & 0xffff,
+	3, 0x4a79, 0x00df, 0xf01e, 0x4a79, PV(8) >> 16, PV(8) & 0xffff,
+	/*
+	 * A VBL server driving the native display: its long-frame bit,
+	 * vertical blank start, copper list, total and the line count in
+	 * CIA-B's TOD, which nothing reads, skipped.
+	 */
+	14, 0x3028, 0x0004, 0x6b0c, 0x3028, 0x0004, 0x807c, 0x8000, 0x3140, 0x002a,
+	0x2142, 0x01cc, 0x2169, 0x0032, 0x0084,
+	0x601a, 0x0004, 0x6b0c, 0x3028, 0x0004, 0x807c, 0x8000, 0x3140, 0x002a,
+	0x2142, 0x01cc, 0x2169, 0x0032, 0x0084,
+	6, 0x2c42, 0x317c, 0x020c, 0x01c8, 0x382e, 0x0028,
+	0x2c42, 0x4e71, 0x4e71, 0x4e71, 0x382e, 0x0028,
+	17, 0x4df9, 0x00bf, 0xd000, 0x022e, 0x007f, 0x0f00, 0x7000, 0x1d40, 0x0a00,
+	0x1d40, 0x0900, 0x1d68, 0x0006, 0x0800, 0x002e, 0x0080, 0x0f00,
+	0x4df9, 0x00bf, 0xd000, 0x601a, 0x007f, 0x0f00, 0x7000, 0x1d40, 0x0a00,
+	0x1d40, 0x0900, 0x1d68, 0x0006, 0x0800, 0x002e, 0x0080, 0x0f00,
+	0
+};
+
+#define PVSEGINT	(2 * 9)	/* the forms before need only AMIGAF_PV */
+#define PVSEGVBL	(PVSEGINT + 3 * 7)
+
+/* graphics' own native-display VBL forms, as in code loaded from disk */
+static int
+pvforms(rom)
+	unsigned char *rom;
+{
+	unsigned long a;
+	int i, k, w, n = 0;
+
+	for (i = PVSEGVBL; (w = pvseg[i]) != 0; i += 1 + 2 * w)
+		for (a = 0; a + 2 * w <= ROMSIZE; a += 2) {
+			for (k = 0; k < w && get16(rom + a + 2 * k) == pvseg[i + 1 + k]; k++)
+				;
+			if (k < w)
+				continue;
+			for (k = 0; k < w; k++)
+				put16(rom + a + 2 * k, pvseg[i + 1 + w + k]);
+			n++;
+		}
+	return n;
+}
 
 /*
  * Patches the loaded Kickstart copy: inline Disable and Enable write the
@@ -394,6 +984,15 @@ pvpatch(rom)
 		if (found[j] != sites[j].want)
 			miglog(0, "Kickstart copy: site %d found %d times, left alone", j, found[j]);
 	}
+	n += pvints(rom);
+	n += pvforms(rom);
+	n += pvgfx(rom);
+	n += pvwaits(rom);
+	n += pvbeam(rom);
+	/* the host's E-clock and interval timer need the ICR bits in memory */
+	if (found[0] == sites[0].want && found[TODSITE] == sites[TODSITE].want &&
+	    (pvflags & AMIGAF_PVICR))
+		n += pvtimer(rom);
 	/* fsave and frestore change the frame together */
 	if ((found[1] == sites[1].want) != (found[2] == sites[2].want)) {
 		miglog(0, "Kickstart copy: fsave and frestore not both found, both left alone");
@@ -403,6 +1002,11 @@ pvpatch(rom)
 		for (i = 0; found[j] == sites[j].want && i < found[j]; i++, n++)
 			for (k = 0; k < sites[j].n; k++)
 				put16(rom + at[j][i] + 2 * k, sites[j].now[k]);
+	/* the A3000's SCSI driver would find no chip: it is not started */
+	if ((kickflags & AMIGAF_SCSI) && (a = romtag(rom, "scsi.device", "scsidisk")) != 0) {
+		rom[a - 1 + 10] &= ~1;
+		n++;
+	}
 	memset(rom + 0x7ffe8, 0, 4);
 	for (sum = 0, i = 0; i < ROMSIZE; i += 4) {
 		prev = sum;
@@ -412,6 +1016,24 @@ pvpatch(rom)
 	}
 	put32(rom + 0x7ffe8, ~sum);
 	return n;
+}
+
+static void
+pvsegs()
+{
+	unsigned char *p = (unsigned char *)MIG_PVSEG;
+	unsigned long at = MIG_PVSEG & ~(pagesize - 1), len = BOOTBASE + BOOTSIZE - at;
+	int i, n = sizeof pvseg / sizeof pvseg[0];
+	if (!(pvflags & AMIGAF_PVINT))
+		n = PVSEGINT;
+	if (mprotect((caddr_t)at, len, PROT_READ | PROT_WRITE) < 0)
+		return;
+	for (i = 0; i < n; i++)
+		put16(p + 4 + 2 * i, pvseg[i]);
+	put16(p + 4 + 2 * n, 0);
+	put32(p, MIG_PVSEG_MAGIC);
+	if (mprotect((caddr_t)at, len, PROT_READ | PROT_EXEC) < 0)
+		fail("boot extension protection");
 }
 
 static void
@@ -1208,7 +1830,7 @@ main(argc, argv)
 	static char *envs[] = { "3.2", 0 };
 	struct stat sb;
 	struct passwd *pw;
-	int list = 0, refresh = 0, readonly = 0, rootreadonly = 0, census = 0, kick = 1, romarg = 0, hostrom = 0;
+	int list = 0, refresh = 0, readonly = 0, rootreadonly = 0, census = 0, kick = 1, romarg = 0;
 	unsigned long fastmb = 64;
 	char envfile[1100];
 	int fastarg = 0, fit = 0, pv = 1, n, dfd, direct, go[2], ack[2];
@@ -1360,7 +1982,10 @@ main(argc, argv)
 	}
 	if (!romarg) {
 		if (ioctl(fd, AMIGAIOC_MAPROM, 0) > 0 && romok((unsigned char *)ROMBASE, "the machine's Kickstart")) {
-			hostrom = 1;
+			/* patched as a copy */
+			rombuffer();
+			memcpy((char *)rombuf, (char *)ROMBASE, ROMSIZE);
+			munmap((caddr_t)ROMBASE, ROMSIZE);
 			miglog(0, "Kickstart: the machine's own");
 		} else {
 			if (!readrom(rom))
@@ -1460,19 +2085,28 @@ main(argc, argv)
 		earlyroot = sysroot;
 		loadboot(boot);
 	}
-	if (!hostrom) {
-		region(ROMBASE, ROMSIZE, 0);
-		memcpy((char *)ROMBASE, rombuf, ROMSIZE);
-		munmap((caddr_t)rombuf, ROMSIZE);
-		if (!probe && pv && pvstubbed) {
-			n = pvpatch((unsigned char *)ROMBASE);
-			miglog(0, "Kickstart copy: %d changes", n);
-			if (n)
-				ae.ae_flags |= AMIGAF_PV;
+	region(ROMBASE, ROMSIZE, 0);
+	memcpy((char *)ROMBASE, rombuf, ROMSIZE);
+	munmap((caddr_t)rombuf, ROMSIZE);
+	if (!probe) {
+		/* the guest touches no hardware: every patch, or no session */
+		if (!pv || !pvstubbed) {
+			miglog(1, "the Amiga environment needs its Kickstart copy patched%s",
+			    pv ? " and a boot extension" : ": --nopv is not supported");
+			return 1;
 		}
-		if (mprotect((caddr_t)ROMBASE, ROMSIZE, PROT_READ | PROT_EXEC) < 0)
-			fail("mprotect");
-	}
+		n = pvpatch((unsigned char *)ROMBASE);
+		miglog(0, "Kickstart copy: %d changes", n);
+		if ((AMIGAF_PV | pvflags) != AMIGAF_PVALL) {
+			miglog(1, "%s: its hardware access is not all patchable; it cannot run here", kickname);
+			return 1;
+		}
+		ae.ae_flags |= AMIGAF_PVALL;
+		pvsegs();
+	} else
+		ae.ae_flags |= AMIGAF_PVALL;	/* attached and detached only */
+	if (mprotect((caddr_t)ROMBASE, ROMSIZE, PROT_READ | PROT_EXEC) < 0)
+		fail("mprotect");
 	/* SIGUSR2 carries virtual interrupts and must be caught */
 	memset((char *)&sa, 0, sizeof sa);
 	sa.sa_handler = nothing;

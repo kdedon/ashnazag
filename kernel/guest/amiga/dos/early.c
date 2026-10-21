@@ -5,6 +5,7 @@
  * files until the real libraries exist and pass every call on after.
  */
 #include "../earlyshare.h"
+#include "../hostcall.h"
 #include "../inputshare.h"
 typedef unsigned int U;
 typedef int L;
@@ -13,6 +14,7 @@ typedef unsigned short W;
 
 /* r: d0-d7, a0-a5 in, out; the call's a6 and address */
 extern U xcall(void *, void *, U *);
+extern void pv_seg(U);
 extern void fake_vectors(void), osl_stub(void), os_stub(void), sp_stub(void), alert_stub(void), talert_stub(void);
 #define EXEC execbase()
 #define D0 0
@@ -33,8 +35,6 @@ extern void fake_vectors(void), osl_stub(void), os_stub(void), sp_stub(void), al
 #define SA_LikeWorkbench 0x80000047U
 #define SA_Title 0x80000028U
 #define WBENCHSCREEN 1
-/* a write here wakes the host's helpers */
-#define MIG_FS_RING 0x00f7fffcUL
 
 struct state {
     U succ, pred;
@@ -193,6 +193,7 @@ static U loadseg(const B *f, U size, U *code)
         }
     }
     ex(-636, 0, 0, 0, 0);
+    pv_seg(seg);
     return seg;
 bad:
     unloadseg(seg);
@@ -605,7 +606,7 @@ U early_alert(U number, const B *str, U height, U frames)
     a->click = 0;
     seq = a->done + 1;
     a->seq = seq;
-    *(volatile U *)MIG_FS_RING = 2;
+    MIG_HOSTCALL(MIG_HOST_RING);
     while (a->done != seq)
         ;
     return a->answer;

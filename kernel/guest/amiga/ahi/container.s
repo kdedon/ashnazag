@@ -8,7 +8,7 @@
 .equ MAGIC, 0x4d534e44
 .equ RING, 0x40000
 .equ RINGDATA, BASE+4096
-.equ BELL, 0xf7fff8
+.equ BELL, 0xf7f090
 .equ s_ready, 8
 .equ s_play, 12
 .equ s_gen, 16
@@ -264,7 +264,7 @@ start:
  move.l s_tail(%a5),s_head(%a5)
  addq.l #1,s_gen(%a5)
  move.l #1,s_play(%a5)
- move.l #1,BELL
+ jsr BELL
  move.l %a1,task
  move.l %a1,sigtask
  move.l #1<<SIGKICK,sigmask
@@ -308,7 +308,7 @@ stop_play:
  jsr -174(%a6)
  move.l #BASE,%a0
  clr.l s_play(%a0)
- move.l #1,BELL
+ jsr BELL
  sub.l %a1,%a1
  jsr -294(%a6)
  move.l %d0,stopper

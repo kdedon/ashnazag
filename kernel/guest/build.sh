@@ -54,6 +54,8 @@ case "$1" in
 		printf '#include "kinc.h"\n#include "%s"\n' "$h" > "$O/h.c"
 		kcc "$O/h.c" "$O/h.o"
 	done
+	printf '#include "kinc.h"\n#include "guest_rpage.h"\n#include "guest_env.h"\n' > "$O/h.c"
+	kcc "$O/h.c" "$O/h.o"
 	printf '#include "kinc.h"\n#include "guest_rpage.h"\n#include "guest_rom.h"\nstruct guest_ctr c; struct guest_rpage rp; struct guest_romdesc rd; struct guest_profile pf;\n' > "$O/h.c"
 	kcc "$O/h.c" "$O/h.o"
 	python3 "$G/test/lone/run.py"
@@ -64,6 +66,9 @@ case "$1" in
 	${HOSTCC:-cc} -std=gnu89 -w -o "$O/t_gframe" "$G/test/t_gframe.c" \
 		"$G/mod/guestcore/gframe.c"
 	"$O/t_gframe"
+	${HOSTCC:-cc} -std=gnu89 -w -I"$G/test/genv" -I"$G/include" -I"$G/mod/guestcore" \
+		-o "$O/t_genv" "$G/test/t_genv.c"
+	"$O/t_genv"
 	;;
 *)
 	echo "usage: build.sh -k base outdir | -m kernel.elf outdir | -t" >&2

@@ -4,7 +4,7 @@
 | guest mode with the AMIX calling convention.  Vectors use VBR 0.
 |   getsr()             SR the guest sees
 |   setsr(sr)           with S kept set
-|   wr16(addr, v)       custom/CIA register writes through the fault path
+|   wr16(addr, v)
 |   rd16(addr)
 |   urte(usp)           0, or the failing check (below)
 |   stopit()            STOP #$2000, then IPL 7
@@ -98,11 +98,11 @@ utrap:
 	movem.l	(sp)+,d2-d7/a2-a6
 	rts
 
-| dis(n): n Disable/Enable pairs; trp(n): n trap #2 round trips
+| dis(n): n Disable/Enable pairs on the master word; trp(n): n trap #2 round trips
 dis:
 	move.l	4(sp),d0
-1:	move.w	#0x4000,0xdff09a
-	move.w	#0xc000,0xdff09a
+1:	move.w	#0x4000,0x20001f00
+	move.w	#0xc000,0x20001f00
 	subq.l	#1,d0
 	bne.s	1b
 	rts
@@ -161,13 +161,10 @@ vblon:
 	move.l	#vbl,0x6c
 	rts
 
-| level 3 autovector: count, acknowledge VERTB
+| level 3 autovector: count, acknowledge VERTB in the INTREQ word
 vbl:
 	addq.l	#1,vblcount
-	move.l	a0,-(sp)
-	lea	0xdff000,a0
-	move.w	#0x0020,0x9c(a0)
-	move.l	(sp)+,a0
+	andi.w	#0xffdf,0x20001f08
 	rte
 
 	.data

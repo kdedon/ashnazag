@@ -106,8 +106,10 @@ find_card:
  bne return_zero
  cmp.l #RTG_HEADER_SIZE,rtg_header_size(%a1)
  bne return_zero
+ move.l #1,rtg_card(%a1)
  btst #1,rtg_formats+3(%a1)
- beq return_zero
+ beq 9f
+ move.l #3,rtg_card(%a1)
  move.l #1,lib_claimed(%a6)
  move.l %a1,gbi_RegisterBase(%a0)
  | the display session's memory, mapped by the launcher
@@ -117,6 +119,8 @@ find_card:
  move.l rtg_memory_size(%a1),gbi_MemorySpaceSize(%a0)
  moveq #1,%d0
  rts
+9: move.l #2,rtg_card(%a1)
+ bra return_zero
 
 .macro callback field, target
  move.l #\target,\field(%a0)
@@ -129,9 +133,13 @@ find_card:
 1: move.l #\target,\field(%a0)
 .endm
 init_card:
- | MOVE16 rows on a 68040 or 68060 (AttnFlags)
+ move.l #4,RTG_BASE+rtg_card
+ | MOVE16 rows on a 68040 or 68060 (AttnFlags), into RAM only: the
+ | display takes no burst writes
  move.l 4,%a1
  moveq #30,%d1
+ tst.l RTG_BASE+rtg_copy
+ beq 1f
  move.w 296(%a1),%d0
  and.w #0x88,%d0
  beq 1f
@@ -218,6 +226,7 @@ init_card:
  drawfn gbi_BlitRect, gbi_BlitRectDefault, blit_rect
  drawfn gbi_BlitTemplate, gbi_BlitTemplateDefault, blit_template
  drawfn gbi_BlitRectNoMaskComplete, gbi_BlitRectNoMaskCompleteDefault, blit_complete
+ move.l #5,RTG_BASE+rtg_card
  moveq #1,%d0
  rts
 | d0 pixels wide: the rows of the smaller mode that wide in a1, else 0 (flags set)
@@ -494,8 +503,7 @@ palette_done:
  rts
 | wakes the host display for the new state: the write faults; 1 is the SYS: handler's
 ring:
- move.l #2,0xf7fffc
- rts
+ jmp 0xf7f088
 | rows on four-byte boundaries; as the display's when the card's memory
 | is the display and an 8-bit bitmap is as wide as it
 bytes_per_row:

@@ -94,6 +94,7 @@ struct lisastat {
 	unsigned long	ls_ctxsw;	/* context switches on S changes */
 	unsigned long	ls_aline;	/* user-mode A-lines taken through supervisor mode */
 	unsigned long	ls_alias;	/* windows mapped above 16 MB */
+	unsigned long	ls_cpush;	/* cache pushes after code was written */
 };
 
 #endif

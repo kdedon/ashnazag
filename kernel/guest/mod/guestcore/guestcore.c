@@ -14,7 +14,7 @@
 #include "kinc.h"
 #include "guest_native.h"
 
-extern int guest_fsig(), guest_unote();
+extern int guest_fsig(), guest_unote(), guest_mmu_dsmoved();
 extern int gc_gate_c(), gc_linea(), gc_ftrap(), gc_fpriv();
 
 static struct guest_profile *gc_profiles;
@@ -353,6 +353,7 @@ struct mod_hook_data guestcore_hookdata[] = {
 	{ "guest_vur",		gc_vur },
 	{ "guest_fsig",		guest_fsig },
 	{ "guest_unote",	guest_unote },
+	{ "ds_moved",		guest_mmu_dsmoved },
 	{ 0, 0 }
 };
 

@@ -381,6 +381,38 @@ static void earlylog(volatile struct mig_early_status *e)
     miglog(0, "input %s", ((struct mig_input *)MIG_INPUT_BASE)->ready == 1 ? "taken" : "not taken");
 }
 
+/* Workbench is starting: SYS: was last asked for LoadWB */
+static int wbstart(void)
+{
+    volatile struct mig_fs_status *st = (struct mig_fs_status *)MIG_FS_STATUS;
+    char path[sizeof st->path];
+    unsigned int i;
+    for (i = 0; i < sizeof path - 1 && st->path[i]; i++)
+        path[i] = st->path[i] >= 'A' && st->path[i] <= 'Z' ? st->path[i] + 32 : st->path[i];
+    path[i] = 0;
+    return strstr(path, "loadwb") != 0;
+}
+
+/* why the card is not shown yet, and the first guest access that failed */
+static void notbound(pid_t guest)
+{
+    static const char *why[] = { "rtg.library did not call the card's FindCard",
+        "FindCard stopped", "the card refused: the display has no 8-bit format",
+        "InitCard was not called", "InitCard did not finish",
+        "the card is ready, no screen opened on it" };
+    unsigned int c = ((volatile struct mig_rtg *)MIG_RTG_BASE)->card;
+    struct amigawait w;
+    struct amigastat st;
+    miglog(0, "Picasso96 not bound at Workbench start: %s", c <= MIG_CARD_READY ? why[c] : "?");
+    memset(&w, 0, sizeof w);
+    memset(&st, 0, sizeof st);
+    w.aw_pid = guest;
+    w.aw_stat = &st;
+    if (ioctl(mig_fs_bell, AMIGAIOC_GSTAT, &w) == 0 && st.as_bad)
+        miglog(0, "%lu guest accesses failed, the first at pc %#lx address %#lx",
+            st.as_bad, st.as_badpc, st.as_badaddr);
+}
+
 /*
  * The guest's alert as a band of text at the top of the display, until a
  * button or its time; the pixels under it come back after.
@@ -440,7 +472,7 @@ static void watch(int fd, int go, int ack, unsigned char *fb, struct fbinfo *fi,
     const unsigned char *src;
     char path[32];
     int other, away = 0, proc = -1, z;
-    int status, bound = 0, warned = 0, bad = 0, last = -1;
+    int status, bound = 0, warned = 0, bad = 0, last = -1, toldwhy = 0;
     int moved, changed, laststatus = -1, copying = 0, full, rows, idle = 0;
     unsigned int lastw = 0, lasth = 0, lastfmt = 0, fmt = MIG_RTG_INDEX8, bpp, shows = 0;
     struct fbinfo *m = fi, *dm;
@@ -494,6 +526,10 @@ static void watch(int fd, int go, int ack, unsigned char *fb, struct fbinfo *fi,
             last = status;
         }
         if (!bound && status == MIG_RTG_NATIVE) {
+            if (!toldwhy && wbstart()) {
+                notbound(guest);
+                toldwhy = 1;
+            }
             if (miglog_ms() >= next) {
                 drawstatus(fb, fi);
                 next = miglog_ms() + 250;

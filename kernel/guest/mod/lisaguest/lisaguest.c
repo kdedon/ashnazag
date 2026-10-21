@@ -28,6 +28,8 @@ extern timestruc_t hrestime;
 extern int as_unmap();
 extern struct seg *as_segat();
 extern void dlm_cacheflush();
+__asm__(".weak cputype");
+extern long lisa_cputype __asm__("cputype");
 extern struct modwrapper lisaguest_wrapper;
 
 struct lisactr lisac;
@@ -623,6 +625,7 @@ static int
 ram(size)
 	unsigned long size;
 {
+	long *__volatile__ ct = &lisa_cputype;
 	int e;
 
 	if (GUESTP(curproc))
@@ -631,7 +634,8 @@ ram(size)
 		return EBUSY;
 	if (size < 0x80000 || size > LISA_RAMMAX || (size & 0x7fff))
 		return EINVAL;
-	if ((e = guest_ram_new(size, 0, 0UL, &lisa_ram)) != 0)
+	/* the Lisa's code copies code and runs it with no cache push: on a 68040 the RAM writes through */
+	if ((e = guest_ram_new(size, ct && *ct >= 40 ? GMR_WT : 0, 0UL, &lisa_ram)) != 0)
 		return e;
 	if ((e = guest_ram_new((unsigned long)LISA_ROMSZ, 0, 0UL, &lisa_romram)) != 0) {
 		guest_ram_free(lisa_ram);
@@ -764,8 +768,10 @@ mem(arg)
 		    copyin((caddr_t)(t->l_phys + o), (caddr_t)m.lm_data + i, n))
 			return EFAULT;
 	}
-	if (m.lm_flags & LM_FLUSH)
+	if (m.lm_flags & LM_FLUSH) {
 		dlm_cacheflush();
+		t->l_st.ls_cpush++;
+	}
 	if (m.lm_flags & LM_BLOCK) {
 		t->l_st.ls_pfreads++;
 		t->l_st.ls_pfblock = m.lm_blk;

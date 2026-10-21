@@ -984,6 +984,11 @@ guest_fault(p, gp, n)
 		return 1;
 	fl = guest_bframe(f, GR_SR(r) | gp->gp_vsr, GR_PC(r), gp->gp_fea, gp->gp_fssw,
 	    (gp->gp_flags & GPF_CPU030) || !&g_cputype || g_cputype < 40);
+	/* a 68040's pending writes, a faulted one among them, are the guest handler's to finish */
+	if (fl == 60 && GR_FV(r) >> 12 == 7) {
+		bcopy(r + 64 + 14, f + 14, 6);
+		bcopy(r + 64 + 24, f + 24, 36);
+	}
 	if (gp->gp_mmu) {
 		/* a translation fault (ATC) in the guest's own mode, entered as an exception */
 		P16(f + 12, G16(f + 12) | 0x400 | (gp->gp_vsr & SR_S ? 4 : 0));

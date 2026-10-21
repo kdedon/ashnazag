@@ -957,10 +957,12 @@ hcunpack(r)
 			break;
 	if (i == n && (k = codepatch(c, n)) > 0) {
 		for (i = 0; i < n; i += k)
-			gmem(dst + i, c + i, (int)(k = n - i > 512 ? 512 : n - i), LM_WRITE | (k == n - i ? LM_FLUSH : 0), 0L);
+			gmem(dst + i, c + i, (int)(k = n - i > 512 ? 512 : n - i), LM_WRITE, 0L);
 		if (verbose)
 			fprintf(stderr, "lisa: unpacked code at %#lx patched\n", dst);
 	}
+	/* the unpacker's output reaches the instruction cache, patched or not */
+	gmem(dst, c, 0, LM_WRITE | LM_FLUSH, 0L);
 }
 
 /* the patches for the file of a block's tag, worked out on its first block from the whole file */
@@ -1058,7 +1060,7 @@ hcread(r)
 		return;
 	else
 		patchblock(b);
-	if (gmem(r[10], b + 20, 512, LM_WRITE | LM_BLOCK, blk) < 0 || (r[9] && gmem(r[9], b, 20, LM_WRITE, 0L) < 0))
+	if (gmem(r[10], b + 20, 512, LM_WRITE | LM_BLOCK | LM_FLUSH, blk) < 0 || (r[9] && gmem(r[9], b, 20, LM_WRITE, 0L) < 0))
 		return;
 	r[0] = 0;
 }
@@ -1123,7 +1125,7 @@ hcxfer(r)
 			if (x)
 				e = -663;
 		}
-		if (gmem(data, b + 20, 512, LM_WRITE, 0L) < 0 || gmem(tag, m, 24, LM_WRITE, 0L) < 0)
+		if (gmem(data, b + 20, 512, LM_WRITE | LM_FLUSH, 0L) < 0 || gmem(tag, m, 24, LM_WRITE, 0L) < 0)
 			e = 1885;
 	} else if (cmd == 1 || cmd == 2) {
 		if (gmem(data, b + 20, 512, 0, 0L) < 0 || gmem(tag, m, 24, 0, 0L) < 0) {
@@ -1895,9 +1897,9 @@ show(fd)
 		if (st.ls_hwfault != was.ls_hwfault)
 			fprintf(stderr, "lisa: hardware access at %#lx, pc %#lx\n", st.ls_hwaddr, st.ls_hwpc);
 		if (verbose && n % 40 == 0)
-			fprintf(stderr, "lisa: remaps %lu intr %lu blocks %lu last %lu faults %lu switches %lu a-line %lu alias %lu\n",
+			fprintf(stderr, "lisa: remaps %lu intr %lu blocks %lu last %lu faults %lu switches %lu a-line %lu alias %lu pushes %lu\n",
 			    st.ls_remap, st.ls_intr, st.ls_pfreads, st.ls_pfblock,
-			    st.ls_hwfault, st.ls_ctxsw, st.ls_aline, st.ls_alias);
+			    st.ls_hwfault, st.ls_ctxsw, st.ls_aline, st.ls_alias, st.ls_cpush);
 		was = st;
 		if (!(st.ls_flags & LSF_VIDEO) || (unsigned long)st.ls_vid * 0x8000 + SCRB > RAMSZ)
 			continue;

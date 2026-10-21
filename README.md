@@ -32,7 +32,7 @@ environments missing there, are tracked in #243.
 | Windows 3.x programs (Win16) | `startwin` | Quadra | Works for Program Manager and the tested programs. Windows for Workgroups 3.11 by default, Windows 3.11 with `-e win311`. Each user installs their own Windows and Wabi 2.2 with `startwin -install`. |
 | Apple Lisa (Office System 3.1) | `startlisa` | Quadra | Partial: your Lisa ROM boots your ProFile volume to the Office desktop at any screen size. The ProFile is read only, writes go to a file beside it. |
 | TI Voyage 200 (AMS 2.09, 3.10) | `startvoyage200` | Quadra | Works: your Flash dump boots to the AMS desktop; archived variables are TI variable files on the host; OFF/ON. |
-| NeXTSTEP / OPENSTEP | `startnext` | Quadra | In progress: your OPENSTEP install boots to the Workspace Manager, with sound, login panel and text console; no network yet. |
+| NeXTSTEP / OPENSTEP | `startnext` | Quadra | In progress: your OPENSTEP install boots to the Workspace Manager, drawn 1:1 at the screen's size (8-bit gray), with sound, login panel and text console; no network yet. |
 | X11R6.3 | `startx`, `xsession` | Quadra, Falcon, Amiga | Works: twm, XView, xdm session chooser; sessions for each environment. OpenGL through Mesa 5, in software or on a Voodoo3 through DRI; `glxgears`. |
 
 Software Quake runs on the display service; the game data is yours. The display service

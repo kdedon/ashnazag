@@ -10,7 +10,8 @@
  * ROM is not needed.  RAM is cleared at every start;
  * VRAM is $NATIVEHOST_ROOT.vram and NVRAM $NATIVEHOST_ROOT.nvram.  This
  * process becomes the machine (nextguest); a child shows the 2-bit
- * framebuffer and keeps the NVRAM file.  Cmd-Q quits.
+ * framebuffer and keeps the NVRAM file.  On an 8-bit host screen the
+ * kernel draws 8-bit gray into the screen itself.  Cmd-Q quits.
  */
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -35,18 +36,27 @@
 #include "sndout.h"
 
 extern unsigned char hfs_blob[];
-extern unsigned long hfs_blob_len, hfs_entry;
+extern unsigned long hfs_blob_len, hfs_entry, fb_entry[];
+#define FB_PROBE 0
+#define FB_INFO 1
+#define FB_NOP 2
+#define FB_CURSOR 3
+#define FB_UNCURSOR 4
+#define FB_MAP 5
 int hf_open();
 void hf_serve();
 
 #define L(a) (*(volatile unsigned long *)(a))
 static unsigned long width, height, rowbytes;	/* the guest's screen: the host's, 2 bits per pixel */
 static unsigned long shownw, shownh, shownox, shownoy;	/* where the host screen shows it */
+static int direct;		/* the guest draws 8 bits a pixel into the host screen */
+static unsigned long frame, vramend;	/* the guest's frame address, the end of the screen memory mapped */
 
-/* the window server draws 1120x832 */
-#define MIN_WIDTH 1120
-#define MIN_HEIGHT 832
+#define NX_PAGE 8192UL
+#define MIN_WIDTH 640
+#define MIN_HEIGHT 480
 static unsigned long ramsize;	/* the largest of 32, 16, 8 MB that free memory holds */
+static unsigned long kmconi;		/* the console info the kernel took from the frame buffer driver */
 
 static struct nh_display display;
 static int bridge = -1;
@@ -66,6 +76,7 @@ present(vram, shown)
 {
 	static unsigned short colx[2032];
 	static unsigned char line[2032];
+	static unsigned long passes;
 	unsigned char *fb = (unsigned char *)display.mapping + display.info.fi_offset +
 	    shownoy * display.info.fi_rowbytes + shownox, *s;
 	unsigned long x, y, e, r, oy, rb = display.info.fi_rowbytes;
@@ -81,6 +92,8 @@ present(vram, shown)
 		if (!memcmp(shown + y * rowbytes, vram + y * rowbytes, (e - y) * rowbytes))
 			continue;
 		memcpy(shown + y * rowbytes, vram + y * rowbytes, (e - y) * rowbytes);
+		if (!passes++)
+			fprintf(stderr, "next: present pass\n");
 		memset(line, 0, shownw);
 		for (r = y; r < e; r++)
 			for (s = vram + r * rowbytes, x = 0; x < width; x++)
@@ -92,18 +105,44 @@ present(vram, shown)
 }
 
 /* the host screen's size, the guest's within its video memory */
+/* the host screen's frame in ROOT.vram, as the 2-bit path keeps it, for the census */
+static void
+dumpscreen(root)
+	char *root;
+{
+	char path[1100];
+	int fd;
+
+	sprintf(path, "%s.vram", root);
+	if ((fd = open(path, O_WRONLY | O_CREAT, 0600)) >= 0) {
+		(void)write(fd, (char *)frame, rowbytes * height);
+		close(fd);
+	}
+}
+
 static int
 screen()
 {
 	struct fbinfo fi;
-	int fd = open("/dev/fb0", O_RDWR);
+	int fd = direct ? -1 : open("/dev/fb0", O_RDWR);
 
-	if (fd < 0 || ioctl(fd, FBIOGINFO, &fi) < 0) {
+	if (direct)
+		fi = display.info;
+	else if (fd < 0 || ioctl(fd, FBIOGINFO, &fi) < 0) {
 		if (fd >= 0)
 			close(fd);
 		return -1;
+	} else
+		close(fd);
+	if (direct && fi.fi_depth == 8 && fi.fi_offset % NX_PAGE + fi.fi_rowbytes * fi.fi_height <= NX_VRAM_SIZE &&
+	    fi.fi_width >= MIN_WIDTH && fi.fi_height >= MIN_HEIGHT) {
+		width = fi.fi_width;
+		height = fi.fi_height;
+		rowbytes = fi.fi_rowbytes;
+		frame = NX_VRAM + fi.fi_offset % NX_PAGE;
+		return 0;
 	}
-	close(fd);
+	direct = 0;
 	/* at most 127 longs a row: the cursor's row length is a moveq */
 	width = (fi.fi_width > 2032 ? 2032 : fi.fi_width < MIN_WIDTH ? MIN_WIDTH : fi.fi_width) & ~15UL;
 	rowbytes = width / 4;
@@ -310,6 +349,8 @@ pump()
 		sd->tail++;
 }
 
+static void console();
+
 static int
 host(root)
 	char *root;
@@ -324,11 +365,11 @@ host(root)
 	int buttons = 0;
 	struct evinfo ei;
 	char *map;
-	unsigned long seq = 0, shownc = 0;
+	unsigned long seq = 0, shownc = 0, coni = 0;
 	unsigned char *vram = (unsigned char *)NX_VRAM;
 	int i, n, mods = 0, loops = 0, dump = getenv("NEXT_CENSUS") != 0;
 
-	if (nh_display_open(&display, "/dev/fb0", "NeXT", 1) < 0 || display.info.fi_depth != 8) {
+	if ((!direct && nh_display_open(&display, "/dev/fb0", "NeXT", 1) < 0) || display.info.fi_depth != 8) {
 		perror("next: display (8 bits per pixel)");
 		kill(machine, SIGTERM);
 		return 1;
@@ -339,7 +380,8 @@ host(root)
 	colors.cm_count = 256;
 	colors.cm_red = colors.cm_green = colors.cm_blue = grey;
 	ioctl(display.framebuffer, FBIOPUTCMAP, &colors);
-	memset(display.mapping, 255, display.info.fi_size);
+	if (!direct)
+		memset(display.mapping, 255, display.info.fi_size);
 	memset(shown, 0, sizeof shown);
 	if (ioctl(display.keyboard, EVIOCGINFO, &ei) < 0)
 		ei.ei_kset = EVK_ADB;
@@ -380,19 +422,29 @@ host(root)
 				buttons = ev.ie_value ? buttons | ev.ie_code : buttons & ~ev.ie_code;
 		if (dx || dy || buttons != i)
 			mouseword(dx, dy, buttons);
-		present(vram, shown);
+		if (!direct)
+			present(vram, shown);
 		pump();
+		console();
 		if (++loops % 10 == 0 && ioctl(bridge, NX_INFO, &info) == 0) {
 			if (info.nvseq != seq) {
 				seq = info.nvseq;
 				savenv(root, &info);
 			}
+			if (dump && kmconi >= NX_RAM && kmconi < NX_RAM + ramsize && L(NX_PHYS + kmconi + 8) != coni) {
+				coni = L(NX_PHYS + kmconi + 8);
+				fprintf(stderr, "next: console %lux%lu, %lu pixels a long\n", coni,
+				    L(NX_PHYS + kmconi + 16), L(NX_PHYS + kmconi));
+			}
+			if (dump && direct && loops % 50 == 0)
+				dumpscreen(root);
 			if (dump && info.ncensus != shownc && loops % 100 == 0) {
 				shownc = info.ncensus;
 				census(&info);
 			}
 		}
 	}
+	console();
 	if (dump && ioctl(bridge, NX_INFO, &info) == 0)
 		census(&info);
 	nh_display_close(&display);
@@ -477,7 +529,7 @@ memory(root, rom)
 	char path[1100];
 	struct stat st;
 	struct rlimit rl;
-	unsigned long size, off;
+	unsigned long size, off, sum = 0;
 	int fd, zero, i;
 
 	if ((zero = open("/dev/zero", O_RDWR)) < 0)
@@ -518,6 +570,18 @@ memory(root, rom)
 	for (i = 0, off = ramsize + HF_SIZE; i < sizeof windows / sizeof windows[0]; off += windows[i++].n)
 		if (twice(windows[i].a, windows[i].n, PROT_READ | PROT_WRITE, MAP_SHARED, bridge, (off_t)off) < 0)
 			return -1;
+	if (direct) {
+		off = display.info.fi_offset / NX_PAGE * NX_PAGE;
+		size = display.info.fi_size - off < NX_VRAM_SIZE ? display.info.fi_size - off : NX_VRAM_SIZE;
+		vramend = NX_VRAM + size;
+		if (twice(NX_VRAM, (size + 4095) & ~4095UL, PROT_READ | PROT_WRITE, MAP_SHARED,
+		    display.framebuffer, (off_t)off) < 0)
+			return -1;
+		/* the guest's MMU finds only pages the host has mapped in */
+		for (off = 0; off < size; off += 4096)
+			sum += *(volatile unsigned char *)(NX_VRAM + off) + *(volatile unsigned char *)(NX_PHYS + NX_VRAM + off);
+		return 0;
+	}
 	sprintf(path, "%s.vram", root);
 	if ((fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0600)) < 0 ||
 	    ftruncate(fd, (off_t)NX_VRAM_SIZE) < 0 ||
@@ -538,6 +602,7 @@ memory(root, rom)
 static unsigned long adbinit;	/* the desktop-bus driver's start routine */
 static unsigned long kmsend;	/* the keyboard unit's command sender */
 static unsigned long kmpaint;	/* the console's character painter */
+static unsigned long kmpopup, kmbig;	/* the console panel's placement and its large size */
 static unsigned long kminput, timeout, hz;	/* the console's input, the callout, its rate */
 static unsigned long evkintr, evmintr, evopen;	/* the event driver's keyboard and mouse entries, its open flag */
 static unsigned long vidon, vidoff;	/* the frame buffer's retrace interrupt enable and disable */
@@ -682,6 +747,9 @@ loadkernel(path)
 			adbinit = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16), BE(cmd + 20),
 			    "_adb_initialize");
 			kmpaint = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16), BE(cmd + 20), "_kmpaint");
+			kmpopup = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16), BE(cmd + 20), "_kmpopup");
+			kmbig = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16), BE(cmd + 20), "_km_big");
+			kmconi = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16), BE(cmd + 20), "_km_coni");
 			kmsend = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16), BE(cmd + 20), "_km_send");
 			kminput = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16), BE(cmd + 20), "_km_input");
 			timeout = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16), BE(cmd + 20), "_timeout");
@@ -760,7 +828,7 @@ carrier(sig)
  * The kernel's console is its own text drawing on the frame buffer, and its
  * printf text also lands in a message ring.  The host console shows that
  * ring: the address of the ring's pointer comes from the kernel's symbols,
- * and the timer tick (and any fault) copies out what is new.
+ * and the display loop, apart from the guest's process, copies out what is new.
  */
 #define MSGMAGIC 0x63061UL
 #define MSGSIZE 4084UL
@@ -770,6 +838,7 @@ carrier(sig)
 #define KMRING (KMHEAD + 4)
 #define KMSIZE 0x800UL
 static unsigned long kmdone;
+static int kmlive;
 
 static void
 console()
@@ -777,8 +846,9 @@ console()
 	unsigned char *ring;
 	unsigned long end;
 
-	/* once the screen console runs, it has all the text */
-	if ((end = kmpaint ? L(NX_PHYS + KMHEAD) : 0) != 0 || kmdone) {
+	/* once the screen console runs, it has all the text; the head may wrap to 0 */
+	if (kmpaint && ((end = L(NX_PHYS + KMHEAD)) != 0 || kmlive)) {
+		kmlive = 1;
 		ring = (unsigned char *)(NX_PHYS + KMRING);
 		if (end < kmdone) {
 			write(1, ring + kmdone, KMSIZE - kmdone);
@@ -816,7 +886,6 @@ tick(sig, si, uc)
 	static int n;
 	char line[60];
 
-	console();
 	if (getenv("NEXT_PC") && ++n % 100 == 0) {
 		sprintf(line, "next: pc %lx sp %lx\n", (unsigned long)uc->uc_mcontext.gregs[R_PC], (unsigned long)uc->uc_mcontext.gregs[R_SP]);
 		write(2, line, strlen(line));
@@ -832,7 +901,6 @@ leave(sig)
 	char line[120];
 	unsigned long a;
 
-	console();
 	if (ioctl(bridge, NX_INFO, &info) == 0) {
 		a = info.monexit & 0x7fffffffUL;
 		sprintf(line, "next: the kernel returned to the monitor: %.60s\n",
@@ -846,7 +914,7 @@ leave(sig)
 	_exit(0);
 }
 
-/* a fault of the guest: the console first, then where it was */
+/* a fault of the guest: where it was */
 static void
 trap(sig, si, uc)
 	int sig;
@@ -855,7 +923,6 @@ trap(sig, si, uc)
 {
 	char line[80];
 
-	console();
 	/* a fault of the guest that could not be sent to its own handler */
 	if ((unsigned long)uc->uc_mcontext.gregs[R_PC] < NX_TOP)
 		sprintf(line, "next: double fault at %lx pc %lx sp %lx\n", (unsigned long)si->si_addr,
@@ -864,6 +931,18 @@ trap(sig, si, uc)
 		sprintf(line, "next: signal %d addr %lx pc %lx sp %lx\n", sig, (unsigned long)si->si_addr,
 		    (unsigned long)uc->uc_mcontext.gregs[R_PC], (unsigned long)uc->uc_mcontext.gregs[R_SP]);
 	write(2, line, strlen(line));
+	/* the boot stack ends at the kernel's start: the first access fault's frame is its highest */
+	{
+		unsigned short *f;
+
+		for (f = (unsigned short *)(NX_PHYS + NX_RAM + 0x300); f > (unsigned short *)(NX_PHYS + NX_RAM); f--)
+			if (f[3] == 0x7008) {
+				sprintf(line, "next: access fault pc %lx address %lx\n", *(unsigned long *)(f + 1),
+				    *(unsigned long *)(f + 10));
+				write(2, line, strlen(line));
+				break;
+			}
+	}
 	{
 		unsigned long *sp = (unsigned long *)(uc->uc_mcontext.gregs[R_SP] & ~3UL) - 8;
 		int i;
@@ -891,6 +970,7 @@ struct hctx {
 };
 
 static int inkernel(), framed();
+static void fbentry();
 static unsigned short *find();
 
 static int
@@ -974,7 +1054,8 @@ hostfs(folder)
  * Each character the console paints also goes to a ring the host reads:
  * the painter's frame setup (link, movem) moves into a stub that stores
  * the character first.  The head moves by compare-and-swap: a painter
- * that interrupts another (key echo) must not reuse its slot.
+ * that interrupts another (key echo) must not reuse its slot.  A NUL
+ * is a blank cell repainted: it stays out of the ring.
  */
 static void
 kmhook()
@@ -983,6 +1064,8 @@ kmhook()
 	static unsigned short code[] = {
 		0x207c, 0, 0,			/* movea.l #KMHEAD,a0 */
 		0x227c, 0, 0,			/* movea.l #KMRING,a1 */
+		0x4a2f, 0x0007,			/* tst.b 7(sp): a blank cell's repaint */
+		0x6718,				/* beq.s past the loop */
 		0x2010,				/* 1: move.l (a0),d0 */
 		0x13af, 0x0007, 0x0800,		/* move.b 7(sp),(a1,d0.l) */
 		0x2200,				/* move.l d0,d1 */
@@ -1008,6 +1091,93 @@ kmhook()
 	k[0] = 0x4ef9;				/* jmp KMSTUB */
 	k[1] = KMSTUB >> 16;
 	k[2] = (unsigned short)KMSTUB;
+}
+
+/*
+ * The console panel is 100x48 characters of 8x12 pixels, 80x40 when large,
+ * centred with no check that it fits: on a smaller screen its border lands
+ * outside the frame.  The sizes are word immediates: move.w #n,(a0) in
+ * kmpopup, move.w #n,abs.l in km_big.
+ */
+static void
+kmfit()
+{
+	unsigned short *p;
+	unsigned long cols = (width - 48) / 8, rows = (height - 60) / 12;
+	int i, n = 0;
+
+	for (p = (unsigned short *)kmpopup, i = 0; inkernel(kmpopup) && i < 120; i++)
+		if (p[i] == 0x30bc && p[i + 1] == 100 && cols < 100)
+			p[i + 1] = cols, n++;
+		else if (p[i] == 0x30bc && p[i + 1] == 48 && rows < 48)
+			p[i + 1] = rows, n++;
+	for (p = (unsigned short *)kmbig, i = 0; inkernel(kmbig) && i < 40; i++)
+		if (p[i] == 0x33fc && p[i + 1] == 80 && cols < 80)
+			p[i + 1] = cols, n++;
+		else if (p[i] == 0x33fc && p[i + 1] == 40 && rows < 40)
+			p[i + 1] = rows, n++;
+	if (getenv("NEXT_CENSUS"))
+		fprintf(stderr, "next: console panel %lux%lu, %d of 4 sizes\n", cols, rows, n);
+}
+
+/*
+ * The frame buffer drivers' table (as cursorrow finds it): the last entry,
+ * probed first, becomes the host screen's, from the turbo colour entry
+ * with the probe, console info, set-up, mapping, brightness and the pointer's
+ * drawing replaced.  The pointer routines' variables are read from the
+ * colour entry's: movea.l abs,a0 (event globals), movea.l abs,a5 (row),
+ * move.l a2,abs (drawn range), or.l d7,abs (flags), move.l a0,abs
+ * (restored range).
+ */
+static void
+fbentry()
+{
+	static unsigned short lea = 0x47f9, ev = 0x2079, row = 0x2a79, a2 = 0x23ca, or = 0x8fb9, a0 = 0x23c8;
+	struct hf_fb *f = (struct hf_fb *)HF_FB;
+	unsigned short *p, *d, *r;
+	unsigned long *e, *c;
+	int i;
+
+	if (!inkernel(vidprobe) || !(p = find((unsigned short *)vidprobe, 16, &lea, 1)) ||
+	    (p[-1] & 0xff00) != 0x7400 || (p[-1] & 0x7f) < 2 || p[4] != 0xc7fc || p[5] != 44) {
+		fprintf(stderr, "next: no frame buffer table\n");
+		return;
+	}
+	c = (unsigned long *)((unsigned long)p[1] << 16 | p[2]) + 11;
+	e = c + 11 * ((p[-1] & 0x7f) - 1);
+	if (!inkernel(c[5]) || !inkernel(c[6]) ||
+	    !(d = find((unsigned short *)c[5], 16, &ev, 1)) || !(f->evp = (unsigned long *)L(d + 1)) ||
+	    !(d = find(d, 40, &row, 1)) || !(f->rowpix = (unsigned long *)L(d + 1)) ||
+	    !(d = find(d, 80, &a2, 1)) || !(f->drawn[0] = (unsigned long *)L(d + 1)) ||
+	    !(d = find(d + 3, 120, &a2, 1)) || !(f->drawn[1] = (unsigned long *)L(d + 1)) ||
+	    !(d = find(d, 8, &or, 1)) || !(f->flags = (unsigned long *)L(d + 1)) ||
+	    !(r = find((unsigned short *)c[6], 80, &a0, 1)) || !(f->restored[0] = (unsigned long *)L(r + 1)) ||
+	    !(r = find(r + 3, 80, &a0, 1)) || !(f->restored[1] = (unsigned long *)L(r + 1))) {
+		fprintf(stderr, "next: no pointer routines\n");
+		return;
+	}
+	memset(f->info, 0, sizeof f->info);
+	f->info[0] = 4;			/* pixels a long */
+	f->info[1] = rowbytes;
+	f->info[2] = width;
+	f->info[3] = rowbytes;		/* the row in pixels */
+	f->info[4] = height;
+	f->info[6] = 0xffffffffUL;	/* white, light and dark gray, black */
+	f->info[7] = 0xaaaaaaaaUL;
+	f->info[8] = 0x55555555UL;
+	f->info[16] = f->info[17] = frame;
+	f->info[18] = rowbytes * height;
+	f->info[19] = f->info[20] = frame + rowbytes * height;
+	f->info[21] = vramend - f->info[19];	/* the console's spare memory after the frame */
+	for (i = 0; i < 11; i++)
+		e[i] = c[i];
+	e[0] = HF_CODE + fb_entry[FB_PROBE];
+	e[1] = HF_CODE + fb_entry[FB_INFO];
+	e[2] = e[7] = HF_CODE + fb_entry[FB_NOP];
+	f->map = (long (*)())c[3];
+	e[3] = HF_CODE + fb_entry[FB_MAP];
+	e[5] = HF_CODE + fb_entry[FB_CURSOR];
+	e[6] = HF_CODE + fb_entry[FB_UNCURSOR];
 }
 
 /*
@@ -1460,6 +1630,13 @@ main(argc, argv)
 		perror("next: /dev/nextguest");
 		return 1;
 	}
+	direct = kernel && !getenv("NEXT_2BIT") && nh_display_open(&display, "/dev/fb0", "NeXT", 1) == 0;
+	if (screen() < 0) {
+		perror("next: the host screen");
+		return 1;
+	}
+	if (!direct && display.framebuffer >= 0)
+		nh_display_close(&display);
 	if (conflicts() < 0 || memory(root, kernel ? 0 : media) < 0) {
 		perror("next: memory or ROM (128 KB)");
 		return 1;
@@ -1477,14 +1654,12 @@ main(argc, argv)
 	} else
 		defaults(ne.nvram);
 	ne.ramsize = ramsize;
-	if (screen() < 0) {
-		perror("next: the host screen");
-		return 1;
-	}
 	ne.width = width;
 	ne.height = height;
 	if (getenv("NEXT_CENSUS"))
 		fprintf(stderr, "next: RAM %lu MB\n", ramsize >> 20);
+	fprintf(stderr, direct ? "next: screen %lux%lu, %lu bytes a row, 8-bit gray direct\n" :
+	    "next: screen %lux%lu, %lu bytes a row, 2-bit\n", width, height, rowbytes);
 	ne.flags = (getenv("NEXT_CENSUS") ? NXF_CENSUS : 0) | NXF_HOST;
 	memset(&sa, 0, sizeof sa);
 	sa.sa_handler = carrier;
@@ -1507,7 +1682,11 @@ main(argc, argv)
 		else {
 			fprintf(stderr, "next: root filesystem installed\n");
 			kmhook();
-			cursorrow();
+			kmfit();
+			if (direct)
+				fbentry();
+			else
+				cursorrow();
 			if (audio() < 0)
 				fprintf(stderr, "next: no sound out\n");
 			sa.sa_handler = hostcall;
@@ -1534,11 +1713,7 @@ main(argc, argv)
 		it.it_interval.tv_usec = it.it_value.tv_usec = 20000;
 		setitimer(ITIMER_REAL, &it, (struct itimerval *)0);
 	}
-	if (ioctl(bridge, NX_ENTER, &ne) < 0) {
-		perror("next: enter");
-		kill(child, SIGTERM);
-		return 1;
-	}
+	/* code written before the enter, whose cache push takes it to the instruction cache */
 	if (entry) {
 		/* no desktop-bus controller: its driver would wait on it without end */
 		if (adbinit >= NX_RAM && adbinit < NX_RAM + ramsize)
@@ -1551,8 +1726,15 @@ main(argc, argv)
 			((unsigned short *)kmsend)[3] = 0x4e75;	/* rts */
 		}
 		monitor();
+	}
+	if (ioctl(bridge, NX_ENTER, &ne) < 0) {
+		perror("next: enter");
+		kill(child, SIGTERM);
+		return 1;
+	}
+	if (entry)
 		enter(bootframe(kernel), entry);
-	} else
+	else
 		reset();
 	return 1;
 }

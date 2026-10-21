@@ -5,7 +5,7 @@ def function(s,name):
  a=s.index('\n'+name+'(');a=s.rfind('\n',0,a);a=s.rfind('\n',0,a);b=s.index('{',a);n=1;j=b+1
  while n:n+=(s[j]=='{')-(s[j]=='}');j+=1
  return s[a:j]
-a=function((p/'uipatch.c').read_text(),'ui_watchneeded');b=function((p/'uievent.c').read_text(),'ui_forcewatch')
+u=(p/'uipatch.c').read_text();a=function(u,'pmwatchneeded')+function(u,'ui_watchneeded');b=function((p/'uievent.c').read_text(),'ui_forcewatch')
 pre=r'''
 #include <assert.h>
 #include <stdio.h>

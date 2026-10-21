@@ -6,8 +6,6 @@ if [ "$#" -gt 1 ]; then
 	echo 'usage: check.sh [kicka4000.rom]' >&2
 	exit 2
 fi
-sh "$D/run.sh"
-sh "$D/fault.sh"
 sh "$D/rtgtransport.sh"
 sh "$D/hostfs.sh"
 sh "$D/broker.sh"

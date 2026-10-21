@@ -48,7 +48,7 @@ int main(void){struct proc p={1},other={2};struct guest_proc gp={&p},foreign={&o
 }
 '''
 # Closing tasks must neither reserve another stub nor enter fallback polling.
-assert '(pmstate==3 && pmowner==gp)' in block('static int\npmidleowned(')
+assert '(pmstate==3 && pmowner==gp)' in block('static int\npmidleframe(') and 'pmidleframe(gp,r,0)' in block('static int\npmidleowned(')
 assert 'pmwatchneeded(gp)' in block('void\nui_fronttick(')
 assert 'pmstate==3 || (uin_pmidlestub && pmstate==2)' in block('static int\npmwatchneeded(')
 with tempfile.TemporaryDirectory() as d:

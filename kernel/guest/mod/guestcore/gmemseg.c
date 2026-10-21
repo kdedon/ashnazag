@@ -198,7 +198,7 @@ u_int len;
 	return e;
 }
 
-/* DMA writes must reach RAM without a cache push from the guest. */
+/* DMA writes, and a write-through guest's, must reach RAM without a cache push from the guest. */
 static void
 gm_writethrough(seg, va)
 struct seg *seg;
@@ -270,8 +270,8 @@ enum seg_rw rw;
 			m->locks[(va - (unsigned long)seg->s_base) >> m->ram->shift] = 1;
 			m->ram->softlocks++;
 		}
-		if (m->ram->shift == 12 &&
-		    m->ram->dma[(sd->offset + va - (unsigned long)seg->s_base) >> 12])
+		if (m->ram->shift == 12 && (m->ram->wt ||
+		    m->ram->dma[(sd->offset + va - (unsigned long)seg->s_base) >> 12]))
 			gm_writethrough(seg, va);
 	}
 	if (error && type == F_SOFTLOCK)

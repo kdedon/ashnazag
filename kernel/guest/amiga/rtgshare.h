@@ -17,6 +17,12 @@
 #define MIG_RTG_A8R8G8B8 6U
 #define MIG_RTG_R5G6B5PC 4U
 #define MIG_RTG_R5G6B5 10U
+/* card progress, for the log when Picasso96 does not bind */
+#define MIG_CARD_FOUND 1U	/* FindCard saw this header */
+#define MIG_CARD_NOFORMAT 2U	/* refused: no CLUT format */
+#define MIG_CARD_CLAIMED 3U
+#define MIG_CARD_INIT 4U	/* in InitCard */
+#define MIG_CARD_READY 5U	/* InitCard done */
 #define MIG_RTG_NATIVE 0U
 #define MIG_RTG_VISIBLE 1U
 #define MIG_RTG_BLANK 2U
@@ -82,6 +88,8 @@ struct mig_rtg {
     volatile unsigned int hidden;
     /* modes smaller than the display, width and height, 0 at the end; their bitmaps get the display's rows */
     unsigned int small[4][2];
+    /* how far the card got: MIG_CARD_* */
+    volatile unsigned int card;
 };
 typedef char mig_rtg_fits[sizeof(struct mig_rtg) <= MIG_RTG_HEADER_SIZE - 256 ? 1 : -1];
 

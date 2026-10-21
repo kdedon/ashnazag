@@ -1851,6 +1851,8 @@ int btn, dx, dy;
 
 /* ------------------------------------------------------------- init */
 
+int	ds_trace = 0;	/* 1: print the screen at first open */
+
 /*
  * First open: take the screen fbcons found as display 0.  Process
  * context.
@@ -2046,9 +2048,10 @@ ds_init()
 	(void)adb_mousehook(ds_mouse);
 	ds_disp.d_on = 1;
 	timeout(ds_tick, (caddr_t)0, 1);
-	printf("ds: %s %dx%dx%d at 0x%x, row %d, map 0x%x\n", fi->fi_name,
-	    (int)fi->fi_width, (int)fi->fi_height, (int)d, (int)ds_disp.d_base,
-	    (int)fi->fi_rowbytes, (int)fi->fi_size);
+	if (ds_trace)
+		printf("ds: %s %dx%dx%d at 0x%x, row %d, map 0x%x\n", fi->fi_name,
+		    (int)fi->fi_width, (int)fi->fi_height, (int)d,
+		    (int)ds_disp.d_base, (int)fi->fi_rowbytes, (int)fi->fi_size);
 	return 0;
 }
 
@@ -2112,6 +2115,7 @@ struct dsevh ds_evh[DS_NEVH];
 int (*ds_evpost_hook)();
 int (*ds_unloadsess_hook)();
 int (*ds_segcount_hook)();
+int (*ds_moved_hook)();		/* translations taken from a session's pages outside its segments */
 
 void
 ds_evpost(s, mouse, type, code, value, sec, usec)
@@ -2129,6 +2133,8 @@ struct dssess *s;
 {
 	if (ds_unloadsess_hook)
 		(*ds_unloadsess_hook)(s);
+	if (ds_moved_hook)
+		(*ds_moved_hook)(s);
 }
 
 int

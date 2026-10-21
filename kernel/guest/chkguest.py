@@ -128,7 +128,7 @@ for v, bit, off, f in ((8, 1, 15, 'guest_fpriv'), (33, 0, 14, 'guest_ftrap'),
           'gate %d: gp_flags bit %d at %d selects %s' % (v, bit, off, f))
 hs = sym['hooksw'][0]
 names, ok = [], True
-for i in range(16):
+for i in range(24):
     n = L(hs + 16 * i)
     if n == 0:
         break
@@ -136,7 +136,7 @@ for i in range(16):
     names.append(s[:s.index(b'\0')].decode())
     p = L(hs + 16 * i + 4)
     ok = ok and byaddr.get(p) == names[-1] + '_hook' and L(p) == 0 and L(hs + 16 * i + 12) == 0
-check(ok and names == ['ds_evpost', 'ds_unloadsess', 'ds_segcount', 'guest_gate_c', 'guest_linea', 'guest_ftrap', 'guest_fpriv', 'guest_trap', 'guest_exec', 'guest_fork', 'guest_exit',
+check(ok and names == ['ds_evpost', 'ds_unloadsess', 'ds_segcount', 'ds_moved', 'guest_gate_c', 'guest_linea', 'guest_ftrap', 'guest_fpriv', 'guest_trap', 'guest_exec', 'guest_fork', 'guest_exit',
                        'guest_sendsig', 'guest_vur', 'guest_fsig', 'guest_unote'],
       'hooksw: %s, pointers 0, no owner' % ' '.join(names))
 

@@ -165,6 +165,28 @@ logfind(text)
 }
 
 
+static int scrw = 1152, scrh = 870, scrrow = 288, direct;	/* the guest's screen, from the launcher */
+static pid_t machine;
+
+/* the launcher's screen line: size, row, whether the guest draws into the host screen */
+static void
+geometry()
+{
+	char *q = strstr(errhead, "next: screen ");
+
+	if (q && sscanf(q, "next: screen %dx%d, %d", &scrw, &scrh, &scrrow) == 3)
+		direct = strncmp(q + strcspn(q, "\n") - 6, "direct", 6) == 0;
+}
+
+/* a point of the desktop in a shot: below the File Viewer, or between the dock's tiles on a small screen */
+static long pix();
+static long
+desktop(name)
+	char *name;
+{
+	return scrw < 1120 ? pix(name, scrw - 32, scrh - 110) : pix(name, 600, 700);
+}
+
 static int hfd = -1;		/* the host line, -1 none */
 static int hseq;
 static char hrep[128];
@@ -324,15 +346,15 @@ pix(name, x, y)
 static int
 logout()
 {
-	long desk, c;
-	int x0 = 0, y0 = 0, y, run = 0;
+	long desk;
+	int x0 = 0, y0 = 0, y;
 
 	host("key ret");
 	nap(5000);
 	shot("next_menu");
-	desk = pix("next_menu", x0 + 600, y0 + 700);
+	desk = desktop("next_menu");
 	if (pix("next_menu", x0 + 4, y0 + 4) == desk) {
-		if (!moveto(1152 - 32, 30))
+		if (!moveto(scrw - 32, 30))
 			return 0;
 		host("click 2");
 		nap(30000);
@@ -340,11 +362,11 @@ logout()
 	}
 	if (pix("next_menu", x0 + 4, y0 + 4) == desk)
 		return 0;
-	/* the menu's end: two samples of desktop, 4 apart, below the title */
-	for (y = y0 + 30; y < y0 + 500 && run < 2; y += 4)
-		run = (c = pix("next_menu", x0 + 4, y)) == desk ? run + 1 : c < 0 ? 2 : 0;
-	t_info("menu", "ends at %d", y - 4 * run);
-	if (y >= y0 + 500 || !moveto(x0 + 30, y - 4 * run - 10))
+	/* items of 20 rows below the 22-row title, each with a white top edge; Log Out is the last */
+	for (y = y0 + 22; pix("next_menu", x0 + 4, y) == 0xffffff && pix("next_menu", x0 + 4, y + 1) == 0xaaaaaa; y += 20)
+		;
+	t_info("menu", "ends at %d", y);
+	if (y == y0 + 22 || !moveto(x0 + 30, y - 10))
 		return 0;
 	host("click 1");
 	/* the confirmation panel takes a while: the Workspace is busy */
@@ -352,6 +374,47 @@ logout()
 	shot("next_logout");
 	host("key ret");
 	return 1;
+}
+
+/* the dumps' difference in pixels, -1 if none */
+static int
+diff(a, b)
+	char *a, *b;
+{
+	char req[60];
+	int n = -1;
+
+	sprintf(req, "cmp %s %s", a, b);
+	if (host(req) && strcmp(hrep, "same") == 0)
+		n = 0;
+	else
+		sscanf(hrep, "diff %d", &n);
+	return n;
+}
+
+/*
+ * With the console in front the running NeXT draws nothing there; back in
+ * front its screen returns (its clock may have moved on).
+ */
+static void
+switchback()
+{
+	int n, m;
+
+	host("key ctrl+alt+meta_l+0");
+	nap(2000);
+	/* the console shows this test's lines: no line between the two */
+	host("shot next_console0");
+	nap(5000);
+	host("shot next_console1");
+	n = diff("next_console0", "next_console1");
+	m = diff("next_workspace", "next_console0");
+	t_check("back_draws_nothing", n == 0 && m > 10000, "console changed by %d, %d from the NeXT's", n, m);
+	host("key ctrl+alt+meta_l+1");
+	nap(3000);
+	shot("next_front");
+	n = diff("next_workspace", "next_front");
+	t_check("front_redrawn", n >= 0 && n < 1500, "%d pixels differ from before the switch", n);
 }
 
 /* type a line on the host keyboard */
@@ -370,10 +433,30 @@ typeline(text)
 	host("key ret");
 }
 
+/* the Name field's caret blinking: two shots differ in a thin upright box only */
+static int
+caret()
+{
+	int k, x0, y0, x1, y1;
+
+	for (k = 0; k < 60; k++) {
+		host("shot nc0");
+		nap(300);
+		host("shot nc1");
+		if (host("box nc0 nc1") && sscanf(hrep, "%d %d %d %d", &x0, &y0, &x1, &y1) == 4 && x1 - x0 <= 4 &&
+		    y1 - y0 >= 8 && y1 - y0 <= 30)
+			return 1;
+	}
+	return 0;
+}
+
 /* "console" as the panel's name: the login window exits to the text console */
 static void
 console()
 {
+	/* the panel takes keys once its Name field has the caret */
+	if (!caret())
+		t_info("caret", "none in the panel");
 	typeline("console");
 	shot("next_console");
 }
@@ -433,19 +516,31 @@ sidefile(name)
 	return path;
 }
 
+/* the guest's screen memory, from its file; the bytes read */
+static unsigned char screenmem[NX_VRAM_SIZE];
+
+static int
+screen()
+{
+	int fd, n;
+
+	if ((fd = open(sidefile("vram"), O_RDONLY)) < 0)
+		return -1;
+	n = read(fd, screenmem, direct ? scrrow * scrh : sizeof screenmem);
+	close(fd);
+	return n;
+}
+
 /* bytes of the screen memory that are not zero */
 static int
 vramset()
 {
-	static unsigned char b[NX_VRAM_SIZE];
-	int fd, n = 0, i;
+	int n = 0, i = screen();
 
-	if ((fd = open(sidefile("vram"), O_RDONLY)) < 0)
+	if (i < 0)
 		return -1;
-	i = read(fd, b, sizeof b);
-	close(fd);
 	while (i-- > 0)
-		n += b[i] != 0;
+		n += screenmem[i] != 0;
 	return n;
 }
 
@@ -453,16 +548,14 @@ vramset()
 static int
 panel()
 {
-	static unsigned char b[NX_VRAM_SIZE];
-	int fd, n = 0, i, k;
+	int n = 0, i = screen(), k;
 
-	if ((fd = open(sidefile("vram"), O_RDONLY)) < 0)
-		return 0;
-	i = read(fd, b, sizeof b);
-	close(fd);
 	while (i-- > 0)
-		for (k = 0; k < 8; k += 2)
-			n += (b[i] >> k & 3) == 1;
+		if (direct)
+			n += screenmem[i] >= 0x80 && screenmem[i] <= 0xaa;	/* the panel is a gradient */
+		else
+			for (k = 0; k < 8; k += 2)
+				n += (screenmem[i] >> k & 3) == 1;
 	return n > 20000;
 }
 
@@ -482,7 +575,7 @@ kernel()
 	struct stat st;
 	unsigned long io0 = 0, priv0 = 0;
 	pid_t pid;
-	int i, k, gone = 0, status, banner, typed = 0, after = 0, nopanel = 0, panelkeys = 0, held = 0, again = 0;
+	int i, k, hw, hh, gone = 0, status, banner, typed = 0, after = 0, nopanel = 0, panelkeys = 0, held = 0, again = 0;
 	char *q;
 	long t0 = t_now_ms(), login = 0;
 
@@ -526,6 +619,7 @@ kernel()
 		execl(MNT "/native", "native", "-k", full ? FULLROOT "/mach_kernel" : MNT "/mach_kernel", (char *)0);
 		_exit(127);
 	}
+	machine = pid;
 	/*
 	 * The module forgets the machine when it ends: keep the last look.
 	 * The whole tree: the first boot's language panel and its confirmation take a return each; at
@@ -542,11 +636,17 @@ kernel()
 		 * restarts after a logout or the console's exit and learns the button from events: hold it
 		 * and drag a pixel each second until the panel shows.
 		 */
-		if ((typed == 4 || (typed == 11 && strstr(logbuf, "exiting in window server"))) && held >= 0 &&
-		    i % 10 == 0)
+		if ((typed == 4 || typed == 11) && held >= 0 &&
+		    i % 10 == 0) {
+			/* the old Workspace's own lookups are not a new login */
+			if (held == 0)
+				errmark = stat(ERRLOG, &st) == 0 ? st.st_size : 0;
 			host(held++ == 0 ? "button 1 30" : held & 1 ? "move 1 0" : "move -1 0");
+		}
 		if (i % 20 == 19) {
 			logread();
+			if (i == 19)
+				geometry();
 			if (full && (!typed || typed == 7 || typed == 8) && strstr(errbuf, "result 0 Workspace\n")) {
 				/* the first boot, and later ones, log in by themselves */
 				t_info("workspace", "after %ld s", (t_now_ms() - t0) / 1000);
@@ -554,8 +654,8 @@ kernel()
 				nopanel = i;
 			} else if (typed == 9 && i > nopanel + 600) {
 				t_rearm(900);
-				errmark = stat(ERRLOG, &st) == 0 ? st.st_size : 0;
 				typed = logout() ? 10 : 6;
+				errmark = stat(ERRLOG, &st) == 0 ? st.st_size : 0;
 				t_info("logout", "%s", typed == 10 ? "done" : "no Workspace menu");
 				nopanel = i;
 			} else if (typed == 11 && errsince("result 0 Workspace\n")) {
@@ -673,6 +773,17 @@ kernel()
 	if (login)
 		t_info("login", "prompt after %ld s", login);
 	t_check("km_on_screen", vramset() > 1000, "the kernel's console drew nothing on the screen");
+	geometry();
+	if (host("shot next_end") && sscanf(hrep, "%d %d", &hw, &hh) == 2) {
+		char want[40];
+
+		t_check("screen_host", scrw == hw && scrh == hh, "screen %dx%d on a %dx%d host", scrw, scrh, hw, hh);
+		t_check("direct", direct || hw * hh > NX_VRAM_SIZE, "a %dx%d host screen is not drawn into directly", hw, hh);
+		sprintf(want, "next: console %dx%d,", hw, hh);
+		t_check("console_size", logfind(want), "the kernel's console is not %dx%d", hw, hh);
+	}
+	if (direct)
+		t_check("no_present", !logfind("next: present pass"), "the host screen was copied from a frame of its own");
 	banner = logfind("NeXT Mach ");
 	t_check("kernel_banner", banner, "no version line from the kernel's console");
 	t_check("root_installed", logfind("next: root filesystem installed"), "the host filesystem was not installed");
@@ -701,11 +812,21 @@ kernel()
 	}
 	if (full) {
 		t_check("workspace", typed == 6 && !again, "no Workspace Manager after root's login");
+		if (typed == 6 && after > 899) {
+			long desk = desktop("next_workspace");
+
+			/* the menu's title, black, at the host screen's top left at 1:1 */
+			t_check("menu_topleft", pix("next_workspace", 4, 4) == 0 && pix("next_workspace", 4, 30) != desk,
+			    "no Workspace menu at the screen's top left");
+			switchback();
+		}
 	}
 	if (after > 1) {
 		t_check("io_steady", iofaults(&info) == io0, "%lu hardware-page faults in the %d s after %s",
 		    iofaults(&info) - io0, (after - 1) / 10, full ? "the login" : "the command");
-		t_info("privileged_emulated", "%lu", info.mmu[4] - priv0);
+		/* Mach's MMU and cache instructions are still emulated: reported, not checked */
+		t_info("emulated_steady", "%lu privileged instructions emulated in the %d s after %s",
+		    info.mmu[4] - priv0, (after - 1) / 10, full ? "the login" : "the command");
 	}
 	if (full) {
 		/* rc.boot's text with today's date, then init starts /etc/rc */
@@ -739,6 +860,13 @@ kernel()
 	}
 	t_check("timer_ints", info.ints > 0 && info.hcalls[5] > 0, "no timer interrupts");
 	t_info("vram", "%d bytes set", vramset());
+	if (direct && (i = screen()) > 0) {
+		long h[4] = { 0, 0, 0, 0 };
+
+		while (i-- > 0)
+			h[screenmem[i] / 85 % 4] += screenmem[i] % 85 == 0;
+		t_info("gray", "black %ld dark %ld light %ld white %ld", h[0], h[1], h[2], h[3]);
+	}
 	if (!gone)
 		kill(-pid, SIGTERM);
 	waitpid(pid, &status, 0);

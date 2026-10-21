@@ -123,11 +123,12 @@ struct guest_ram **out;
 
 	*out = 0;
 	if (!size || size > 0x4000000UL || (size & ((1UL << shift) - 1)) ||
-	    (flags & ~GMR_CONTIG))
+	    (flags & ~(GMR_CONTIG | GMR_WT)))
 		return EINVAL;
 	m = (struct guest_ram *)kmem_zalloc(sizeof *m, KM_SLEEP);
 	m->size = size;
 	m->refs = 1;
+	m->wt = (flags & GMR_WT) != 0;
 	m->shift = shift;
 	m->n = size >> shift;
 	m->page = (page_t **)kmem_zalloc(m->n * sizeof *m->page, KM_SLEEP);

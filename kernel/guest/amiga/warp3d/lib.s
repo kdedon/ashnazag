@@ -122,7 +122,7 @@ glue:
  tst.l T_RING(%a3)
  beq.s 3f
  clr.l T_RING(%a3)
- move.l #2,0xf7fffc		| the display's doorbell: it copies the screen
+ jsr 0xf7f088			| the display's doorbell: it copies the screen
 3: movem.l (%sp)+,%d0-%d7/%a0-%a6
  rts
 

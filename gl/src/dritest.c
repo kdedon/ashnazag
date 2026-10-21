@@ -14,8 +14,8 @@
  * free, and so must one killed holding the drawable lock.  The server's
  * GL configurations must name its visuals, with
  * depth-less, single-buffered and (at 32 bits) stencil and alpha sets
- * on a TrueColor screen.  A second child, with no driver linked for the screen, draws
- * with Mesa's Xlib renderer: a red square.  The windows stay up for
+ * on a TrueColor screen.  A second child, kept indirect even where a
+ * driver is installed, draws with Mesa's Xlib renderer: a red square.  The windows stay up for
  * `seconds' (default 0).  Output: one line per check, then PASS or FAIL.
  */
 #include <signal.h>
@@ -425,7 +425,7 @@ alarmed(int sig)
 {
 }
 
-/* Mesa's own renderer, where no driver takes the screen */
+/* Mesa's own renderer, bypassing any DRI driver */
 static void
 software(int hold, int out)
 {
@@ -437,6 +437,7 @@ software(int hold, int out)
     XColor c;
     int ok;
 
+    putenv("LIBGL_ALWAYS_INDIRECT=1");
     if ((dpy = XOpenDisplay(NULL)) == 0) {
 	printf("dritest: FAIL software: no display\n");
 	write(out, "F", 1);

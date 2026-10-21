@@ -419,6 +419,40 @@ moveids(old, new)
 	}
 }
 
+/*
+ * The window server's pointer setup copies an 8-bit pointer's image and mask
+ * into the event globals under a second test for 2 bits, never true there:
+ *
+ *	moveq #3,d7; cmpl a0@,d7; bnes; pea 0x200 ...	16 bits
+ *	moveq #1,d1; cmpl a0@,d1; bnes; pea 0x100 ...	8 bits (should be #2)
+ *
+ * Its code as read gets the 8-bit test; the file stays as it is.
+ */
+static void
+wsfix(fd, off, buf, n)
+	int fd;
+	long off;
+	unsigned char *buf;
+	int n;
+{
+	static unsigned char p16[] = { 0x7e, 0x03, 0xbe, 0x90, 0x66, 0x16, 0x48, 0x78, 0x02, 0x00 };
+	static unsigned char p8[] = { 0x72, 0x01, 0xb2, 0x90, 0x66, 0x22, 0x48, 0x78, 0x01, 0x00 };
+	unsigned char t[48 + HF_DATA + 10];
+	int h = off < 48 ? (int)off : 48, m, k;
+
+	/* the read with the bytes either side, for a match across its edges */
+	memcpy(t + h, buf, n);
+	m = h + n;
+	if (h && (lseek(fd, (off_t)(off - h), SEEK_SET) < 0 || read(fd, t, h) != h))
+		return;
+	if (lseek(fd, (off_t)(off + n), SEEK_SET) >= 0 && (k = read(fd, t + m, 10)) > 0)
+		m += k;
+	for (k = 36; k + 10 <= m; k++)
+		if (t[k] == 0x72 && !memcmp(t + k, p8, sizeof p8) && !memcmp(t + k - 36, p16, sizeof p16) &&
+		    k + 1 >= h && k + 1 < h + n)
+			buf[k + 1 - h] = 2;
+}
+
 /* one request */
 void
 hf_serve(b)
@@ -493,6 +527,8 @@ hf_serve(b)
 			e = errmap(errno);
 		else
 			b->result = n;
+		if (op == HF_READ && n > 0)
+			wsfix(fd, (long)b->offset, b->data, n);
 		close(fd);
 		break;
 	case HF_READDIR: {

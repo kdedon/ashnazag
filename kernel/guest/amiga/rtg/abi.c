@@ -14,7 +14,7 @@ int main(void)
     FIELD(cw); FIELD(ch); FIELD(crgb); FIELD(cimg); FIELD(vram); FIELD(vstride); FIELD(copy);
     FIELD(plock); FIELD(pad); FIELD(drawn); FIELD(pwant); FIELD(pshown); FIELD(porigin); FIELD(pstride);
     FIELD(px0); FIELD(py0); FIELD(px1); FIELD(py1); FIELD(psave); FIELD(pdrawn);
-    FIELD(track); FIELD(formats); FIELD(small);
+    FIELD(track); FIELD(formats); FIELD(small); FIELD(card);
     printf(".equ RTG_HEADER_SIZE, %lu\n", MIG_RTG_HEADER_SIZE);
     return 0;
 }

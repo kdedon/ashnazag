@@ -15,6 +15,7 @@
 #define HF_TRAMP (HF_BASE + 0x6600UL)	/* a routine's first words, moved for a host call at its entry */
 #define HF_KEYS (HF_BASE + 0x7800UL)
 #define HF_SND (HF_BASE + 0x7c00UL)
+#define HF_FB (HF_BASE + 0x7e00UL)
 #define HF_CODE (HF_BASE + 0x8000UL)
 #define HF_MAGIC 0x48465331UL
 #define HF_NAME 256
@@ -118,6 +119,17 @@ struct hf_snd {
 	unsigned long chan, done, abort, polling, server, wait;
 	unsigned long other;		/* the last server searched that is not the Audio server */
 	unsigned long sub[HF_SNDBUFS];	/* the queued buffers' descriptors */
+};
+
+/*
+ * The host screen as the frame buffer driver's: its console info, and the
+ * kernel variables the cursor routines keep (the event globals' pointer,
+ * the drawn and restored ranges, which the driver flushes).
+ */
+struct hf_fb {
+	unsigned long info[32];
+	unsigned long *evp, *rowpix, *drawn[2], *restored[2], *flags;
+	long (*map)();			/* the colour driver's: maps the screen memory at its start */
 };
 
 /* the kernel's types (vtype) the host reports */

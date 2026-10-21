@@ -9,10 +9,8 @@
  * VERTB, STOP, exit, exec, fork, two guests at once and unload while a
  * guest holds the module.  The session's host calls: a user's halt is
  * refused, root's reaches uadmin (recorded, not run) and the exit ends
- * the session.  With the local A4000 ROM, Kickstart runs
- * unpatched in a guest with AMIGAF_CENSUS for 40 s; the kernel logs
- * each custom-chip, CIA and other I/O register it touched at exit
- * ("amiga census" lines) and the guest's last fault.
+ * the session.  A session without the whole Kickstart patch set is
+ * refused.
  * With SYS: on a ufs volume (SCSI disk 0), startamiga boots it from
  * /amiga/sys; host-side access times show DOS reading Startup-Sequence
  * and Workbench loading.  The boot extension binds container.card
@@ -59,8 +57,12 @@ extern int getksym();
 #define	SYS	"/amiga/sys"
 #define	BSDSRV	"/tests/amiga/bsdsrv"
 #define	LOAD	0x1000L
-#define	INTENA	0xdff09aL
+/* the interrupt words in guest memory: master bit, INTENA without it */
+#define	PVMASTER	AMIGA_PV_BASE
+#define	PVENA	(AMIGA_PV_BASE + 10)
+#define	HOSTCALL3	0xf7f098L
 #define	INTENAR	0xdff01cL
+#define	ABSENT	0xe90000L	/* no page: a bus error */
 
 typedef long (*gfn)();
 #define	G(i)	((gfn)((long *)LOAD)[i])
@@ -135,6 +137,15 @@ enterf(flags)
 	if ((fd = open(GUEST, O_RDONLY)) < 0 || (n = read(fd, (char *)LOAD, 0x8000)) < 64)
 		return 91;
 	close(fd);
+	/* the interrupt words, and host call 3 (illegal; rts) that reads them */
+	if ((fd = open("/dev/zero", O_RDWR)) < 0 ||
+	    mmap((caddr_t)(AMIGA_PV_BASE & ~0xfffUL), 0x1000, PROT_READ | PROT_WRITE,
+	    MAP_PRIVATE | MAP_FIXED, fd, 0) == (caddr_t)-1 ||
+	    mmap((caddr_t)(HOSTCALL3 & ~0xfffL), 0x1000, PROT_READ | PROT_WRITE | PROT_EXEC,
+	    MAP_PRIVATE | MAP_FIXED, fd, 0) == (caddr_t)-1)
+		return 90;
+	close(fd);
+	*(unsigned long *)HOSTCALL3 = 0x4afc4e75UL;
 	memset((char *)&sa, 0, sizeof sa);
 	sa.sa_handler = nothing;
 	sa.sa_flags = SA_NODEFER;
@@ -144,7 +155,7 @@ enterf(flags)
 	ae.ae_version = AMIGA_ABI_VERSION;
 	ae.ae_chipsize = AMIGA_CHIP_SIZE;
 	ae.ae_fastsize = 0;
-	ae.ae_flags = flags;
+	ae.ae_flags = flags | AMIGAF_PVALL;
 	return ioctl(afd, AMIGAIOC_ENTER, &ae) < 0 ? 93 : 0;
 }
 
@@ -159,7 +170,9 @@ static void
 vbl()
 {
 	vblon();
-	wr16(INTENA, 0xc020L);
+	*(volatile unsigned short *)PVENA |= 0x0020;
+	*(volatile unsigned short *)PVMASTER = 0xc000;
+	((gfn)HOSTCALL3)();
 }
 
 static int
@@ -178,7 +191,7 @@ g_enter()
 	ae.ae_version = AMIGA_ABI_VERSION;
 	ae.ae_chipsize = AMIGA_CHIP_SIZE;
 	ae.ae_fastsize = 0;
-	ae.ae_flags = 0;
+	ae.ae_flags = AMIGAF_PAL | AMIGAF_PVALL;
 	if (ioctl(afd, AMIGAIOC_ENTER, &ae) == 0)
 		return 3;
 	if (ioctl(afd, AMIGAIOC_LEAVE, 0) < 0)
@@ -214,7 +227,7 @@ g_mask()
 	if ((e = enter()) != 0)
 		return e;
 	vbl();
-	if (rd16(INTENAR) != 0x4020)
+	if (rd16(PVENA) != 0x0020)
 		return 1;
 	nap(300);
 	if (vblcount != 0)
@@ -380,7 +393,7 @@ g_hostpc()
 	if (ioctl(afd, AMIGAIOC_HOSTPC, &h) < 0)
 		return 6;
 	if (sigsetjmp(hjb, 1) == 0) {
-		(void)*(volatile unsigned short *)INTENAR;
+		(void)*(volatile unsigned short *)ABSENT;
 		return 7;
 	}
 	h.ah_lo = 1;
@@ -508,7 +521,7 @@ exits()
 	setsym("guest_adtest", 0L);
 }
 
-/* microseconds per INTENA write and per reflected trap */
+/* microseconds per Disable/Enable write pair and per reflected trap */
 static void
 cost()
 {
@@ -524,7 +537,7 @@ cost()
 		t1 = t_now_ms();
 		trp(4000L);
 		t2 = t_now_ms();
-		printf("INFO amiga.cost: INTENA write %ld us, trap round trip %ld us\n",
+		printf("INFO amiga.cost: master bit write %ld us, trap round trip %ld us\n",
 		    (t1 - t0) / 4, (t2 - t1) / 4);
 		fflush(stdout);
 		_exit(0);
@@ -573,7 +586,7 @@ two()
 			nap(500);
 			if (i == 0)
 				_exit(vblcount > 5 ? 0 : 1);
-			_exit(vblcount == 0 && rd16(INTENAR) == 0 ? 0 : 2);
+			_exit(vblcount == 0 && rd16(PVENA) == 0 ? 0 : 2);
 		}
 	ok = rd1(rdy[0]) && rd1(rdy[0]);
 	t_check("two_entered", ok, "a guest did not enter");
@@ -648,6 +661,9 @@ ioctls()
 	ae.ae_fastsize = 0;
 	ae.ae_flags = 0x80;
 	t_check("enter_flags", E(ioctl(afd, AMIGAIOC_ENTER, &ae)) == EINVAL, "%s", T_ERR);
+	/* a Kickstart that touches hardware has no session */
+	ae.ae_flags = AMIGAF_PAL | AMIGAF_PV;
+	t_check("enter_unpatched", E(ioctl(afd, AMIGAIOC_ENTER, &ae)) == EINVAL, "%s", T_ERR);
 	t_check("enter_efault", E(ioctl(afd, AMIGAIOC_ENTER, (char *)1)) == EFAULT, "%s", T_ERR);
 	unlink("/tmp/amiga1");
 	t_check("open_minor", mknod("/tmp/amiga1", S_IFCHR | 0600, makedev(AMIGA_MAJOR, 1)) == 0 &&
@@ -660,46 +676,6 @@ ioctls()
 	t_check("unload", id > 0 && moduload(id) == 0 && modid("amigaguest") < 0, "%s", T_ERR);
 	t_check("reload", (afd = open("/dev/amiga", O_RDWR)) >= 0 && modid("amigaguest") > 0,
 	    "%s", T_ERR);
-}
-
-/*
- * Kickstart in a guest of its own, chip RAM only and no boot extension,
- * for the register census; it runs until it waits for a boot device.
- */
-static int
-g_rom()
-{
-	int fd, e;
-
-	if (mmap((caddr_t)0xf80000, 0x80000, PROT_READ | PROT_WRITE | PROT_EXEC,
-	    MAP_PRIVATE | MAP_FIXED, open("/dev/zero", O_RDWR), 0) == (caddr_t)-1)
-		return 94;
-	if ((fd = open(ROM, O_RDONLY)) < 0 || read(fd, (char *)0xf80000, 0x80000) != 0x80000)
-		return 95;
-	close(fd);
-	if ((e = enterf(AMIGAF_PAL | AMIGAF_CENSUS)) != 0)
-		return e;
-	__asm__ __volatile__("mov.l %0,%%sp\n\tjmp (%1)" : : "d" (0x400L),
-	    "a" (*(long *)0xf80004));
-	return 96;
-}
-
-static void
-rom()
-{
-	int st, i;
-	pid_t p;
-
-	if ((p = fork()) == 0)
-		_exit(g_rom());
-	for (i = 0; i < 40 && waitpid(p, &st, WNOHANG) != p; i++)
-		sleep(1);
-	if (i == 40) {
-		kill(p, SIGKILL);
-		t_waitchild(p, &st, 10);
-		t_info("rom", "Kickstart ran 40 s (census above)");
-	}
-	t_check("rom_census", i == 40, "Kickstart ended after %d s: status 0x%x", i, st);
 }
 
 /* nonzero once the guest has read SYS:path since t0 */
@@ -1160,6 +1136,74 @@ alert()
 	unlink(b);
 }
 
+static char *miglogline();
+
+/* timetest's value named n from the session log, as a failed open of "timeres n v" */
+static int
+timeval(n, v)
+	char *n;
+	long *v;
+{
+	char k[32], *l;
+
+	sprintf(k, "timeres %s ", n);
+	return (l = miglogline(k)) != 0 && sscanf(strstr(l, k) + strlen(k), "%ld", v) == 1;
+}
+
+/*
+ * planartest's lines and rectangle in a planar BitMap: both planes' words
+ * at the line ends, the rectangle and the diagonal's end, and the set bits.
+ * Then a 0xF000-patterned line, a template, an AreaEnd square and an "X".
+ */
+static void
+planar()
+{
+	char *l;
+	int k;
+
+	for (k = 0; k < 20 && (l = miglogline("planar ")) == 0; k++)
+		sleep(1);
+	t_check("planar_bits", l && strstr(l, "planar FFFFFFFF 10001 FFFF0000 1000100 126") != 0,
+	    "%s", l ? l : "no result");
+	l = miglogline("planar2 ");
+	t_check("planar_more", l && strstr(l, "planar2 F000F000 2F80784 FF000000 1A") != 0,
+	    "%s", l ? l : "no result");
+}
+
+/*
+ * SYS:timego: timer.device's E-clock is the host clock, so a one-second
+ * MICROHZ request and Delay(50) measure within a host tick (Delay a frame
+ * less), and the E-clock never steps back.
+ */
+static void
+timers()
+{
+	char b[64];
+	long f = 0, us = 0, dl = 0, back = -1, tick;
+	time_t t0;
+	int k;
+
+	t0 = time((time_t *)0);
+	sprintf(b, "%s/timego", SYS);
+	close(creat(b, 0644));
+	for (k = 0; k < 40 && !timeval("back", &back); k++)
+		sleep(1);
+	unlink(b);
+	timeval("freq", &f);
+	timeval("micro", &us);
+	timeval("delay", &dl);
+	if (!t_check("timer_result", k < 40 && f > 0, "after %ld s: %s%s%s%s, %s", (long)(time((time_t *)0) - t0),
+	    miglogline("timeres start") ? "started" : "not started", f ? ", freq" : "", us ? ", micro" : "",
+	    dl ? ", delay" : "", used("C/timetest", t0) ? "run" : "never run"))
+		return;
+	tick = (f + sysconf(_SC_CLK_TCK) - 1) / sysconf(_SC_CLK_TCK);
+	t_info("timer_result", "E-clock %ld Hz: 1 s request %ld, Delay(50) %ld, %ld steps back",
+	    f, us, dl, back);
+	t_check("timer_micro", us >= f - tick && us <= f + tick, "%ld ticks for %ld", us, f);
+	t_check("timer_delay", dl >= f - f / 50 - tick && dl <= f + tick, "%ld ticks for %ld", dl, f);
+	t_check("timer_eclock", back == 0, "%ld steps back in 20000 reads", back);
+}
+
 /* the startamiga log's last line holding s, or 0 */
 static char *
 miglogline(s)
@@ -1179,6 +1223,31 @@ miglogline(s)
 	if (b[0] && b[strlen(b) - 1] == '\n')
 		b[strlen(b) - 1] = 0;
 	return b[0] ? b : 0;
+}
+
+/* the startamiga log's line number holding s, case ignored past the time; 0 if none */
+static int
+miglogat(s)
+	char *s;
+{
+	char l[512], *c;
+	FILE *f;
+	int n = 0;
+
+	if ((f = fopen("/tmp/startamiga.0.log", "r")) == 0)
+		return 0;
+	while (fgets(l, sizeof l, f)) {
+		n++;
+		for (c = l; *c; c++)
+			if (*c >= 'A' && *c <= 'Z')
+				*c += 32;
+		if (strstr(l, s)) {
+			fclose(f);
+			return n;
+		}
+	}
+	fclose(f);
+	return 0;
 }
 
 /*
@@ -1329,7 +1398,7 @@ static void cpu();
 static void
 traps(p, v)
 	pid_t p;
-	long v[4];
+	long v[11];
 {
 	struct amigawait aw;
 	struct amigastat st;
@@ -1340,12 +1409,21 @@ traps(p, v)
 	aw.aw_stat = &st;
 	v[0] = v[1] = v[2] = 0;
 	v[3] = t_now_ms();
+	v[4] = v[5] = v[6] = v[7] = v[8] = -1;
+	v[9] = v[10] = 0;
 	if ((fd = open("/dev/amiga", O_RDWR)) < 0)
 		return;
 	if (ioctl(fd, AMIGAIOC_GSTAT, &aw) == 0) {
 		v[0] = st.as_fault;
 		v[1] = st.as_priv;
 		v[2] = st.as_intr;
+		v[4] = st.as_intreg;
+		v[5] = st.as_intena;
+		v[6] = st.as_cia;
+		v[7] = st.as_beam;
+		v[8] = st.as_blit;
+		v[9] = st.as_lastpc;
+		v[10] = st.as_lastaddr;
 	} else
 		t_info("traps", "%s", T_ERR);
 	close(fd);
@@ -1356,9 +1434,9 @@ static void
 trapinfo(name, p, v0)
 	char *name;
 	pid_t p;
-	long v0[4];
+	long v0[11];
 {
-	long v[4], ms;
+	long v[11], ms;
 
 	traps(p, v);
 	ms = v[3] - v0[3] > 0 ? v[3] - v0[3] : 1;
@@ -1375,7 +1453,7 @@ pointer(p)
 	pid_t p;
 {
 	char *r;
-	long t0, g0[2], g1[2], h0[2], h1[2], tv[4];
+	long t0, g0[2], g1[2], h0[2], h1[2], tv[11];
 	int k;
 
 	settle("amiga_p0");
@@ -1516,15 +1594,34 @@ idle(p)
 {
 	static struct mig_rtg r0, r1;
 	struct mig_fs_status f0, f1;
-	long dw, bw;
+	long dw, bw, t0[11], t1[11];
 
 	settle("amiga_idle");
+	traps(p, t0);
 	if (peek(p, MIG_RTG_BASE, (char *)&r0, sizeof r0) < 0 ||
 	    peek(p, MIG_FS_STATUS, (char *)&f0, sizeof f0) < 0) {
 		t_check("direct_default", 0, "guest memory: %s", T_ERR);
 		return;
 	}
 	nap(5000);
+	traps(p, t1);
+	/* exec and cia.resource keep interrupt state in guest memory */
+	t_check("idle_intreg", t0[4] >= 0 && t1[4] == t0[4], "%ld interrupt register accesses in 5 s",
+	    t1[4] - t0[4]);
+	/* code loaded from disk has its Disable and Enable patched too */
+	t_check("idle_intena", t0[5] >= 0 && t1[5] == t0[5], "%ld INTENA writes trapped in 5 s",
+	    t1[5] - t0[5]);
+	/* timer.device's E-clock and interval timer are the host's */
+	t_check("idle_cia", t0[6] >= 0 && t1[6] == t0[6], "%ld CIA accesses decoded in 5 s",
+	    t1[6] - t0[6]);
+	/* nor the gameport and VBL servers' beam and port reads */
+	t_check("idle_beam", t0[7] >= 0 && t1[7] == t0[7], "%ld beam and port reads decoded in 5 s",
+	    t1[7] - t0[7]);
+	t_check("idle_blit", t0[8] >= 0 && t1[8] == t0[8], "%ld blitter accesses decoded in 5 s",
+	    t1[8] - t0[8]);
+	/* nor anything else: register pages are constants, their code patched */
+	t_check("idle_faults", t1[0] == t0[0], "%ld faults in 5 s, the last at pc %lx address %lx",
+	    t1[0] - t0[0], t1[9], t1[10]);
 	if (peek(p, MIG_RTG_BASE, (char *)&r1, sizeof r1) < 0 ||
 	    peek(p, MIG_FS_STATUS, (char *)&f1, sizeof f1) < 0) {
 		t_check("idle_wakeups", 0, "guest memory: %s", T_ERR);
@@ -1552,7 +1649,7 @@ drag(p)
 	pid_t p;
 {
 	char b[64], *r, prev[16], cur[16];
-	long t0, t1, t2, g0[2], g1[2], h0[2], h1[2], tv[4];
+	long t0, t1, t2, g0[2], g1[2], h0[2], h1[2], tv[11], t[11];
 	int k, v[4];
 
 	sprintf(b, "%s/draggo", SYS);
@@ -1629,6 +1726,11 @@ drag(p)
 	close(creat(b, 0644));
 	busy(10, "cover");
 	trapinfo("cover_traps", p, tv);
+	/* Workbench redrew what the window covered */
+	traps(p, t);
+	t_check("cover_blit", tv[8] >= 0 && t[8] == tv[8], "%ld blitter accesses decoded", t[8] - tv[8]);
+	t_check("cover_faults", t[0] == tv[0], "%ld faults, the last at pc %lx address %lx",
+	    t[0] - tv[0], t[9], t[10]);
 	host("shot amiga_uncover");
 }
 
@@ -1722,7 +1824,7 @@ logout(p, stp, o)
 static void
 menu()
 {
-	int i, st, fd, w = 0, h = 0, alive = 1;
+	int i, k, st, fd, w = 0, h = 0, alive = 1;
 	char line[256];
 	FILE *f;
 	char *r = 0;
@@ -1733,8 +1835,8 @@ menu()
 		t_skip("boot_menu", "mount " SYSDEV " failed");
 		return;
 	}
-	/* the last session's picture can stay up until this one draws */
-	host("shot amiga_menu0");
+	/* the last session's picture stays up until this one clears it */
+	unlink("/tmp/startamiga.0.log");
 	t0 = time((time_t *)0);
 	if ((p = fork()) == 0) {
 		fd = open("/tmp/startamiga.menu.log", O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -1745,17 +1847,18 @@ menu()
 		    "-boot", "/etc/amiga/boot.rom", (char *)0);
 		_exit(127);
 	}
-	/* the status line lights a few pixels; the menu's screen most */
+	/*
+	 * Once the session has cleared the screen, the status line lights a
+	 * few pixels; the menu's screen most.
+	 */
 	for (i = 0; p > 0 && i < 30; i++) {
 		sleep(1);
+		k = miglogline("display session") != 0;
 		if ((r = host("shot amiga_menu")) == 0 || sscanf(r, "%d %d", &w, &h) != 2 ||
 		    (r = host("lit amiga_menu")) == 0)
 			break;
-		if (atoi(r) > w * h / 8 && ((r = host("cmp amiga_menu0 amiga_menu")) == 0 ||
-		    strncmp(r, "diff", 4) == 0)) {
-			r = host("lit amiga_menu");
+		if (k && atoi(r) > w * h / 8)
 			break;
-		}
 	}
 	if (p < 0)
 		t_check("boot_menu", 0, "fork: %s", T_ERR);
@@ -1899,8 +2002,14 @@ boot()
 	for (k = 0; k < 5; k++)
 		t_check(name[k], seen[k], "SYS:%s never read", mark[k]);
 	t_check("boot_alive", i < 180 ? kill(p, 0) == 0 : 1, "startamiga ended: status 0x%x", st);
+	/* the card binds before DOS or early in the Startup-Sequence */
+	k = miglogat("picasso96 bound");
+	n = miglogat("iprefs");
+	t_check("boot_bind", k && (!n || k < n) && !miglogat("picasso96 not bound"),
+	    "Picasso96 bound at log line %d, IPrefs at %d%s", k, n,
+	    (r = miglogline("not bound")) != 0 ? r : "");
 	{
-		long z[4];
+		long z[5];
 
 		z[0] = z[1] = z[2] = 0;
 		z[3] = t_now_ms() - (time((time_t *)0) - t0) * 1000L;
@@ -1970,6 +2079,8 @@ boot()
 		drag(p);
 		sound();
 		alert();
+		timers();
+		planar();
 		warp3d();
 		idle(p);
 	}
@@ -2143,7 +2254,6 @@ main(argc, argv)
 		t_skip("rom", "no Kickstart ROM on this root");
 		return t_done();
 	}
-	rom();
 	if (stat(SYSDEV, &sb) < 0 || stat("/tests/amiga/startamiga", &sb) < 0) {
 		t_skip("boot", "no SYS: volume on this root");
 		return t_done();
