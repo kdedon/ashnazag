@@ -9,7 +9,8 @@ struct sdev {
 	unsigned char q[64];
 	int	nq;
 	int	leds;
-	int	mdx, mdy, mbtn, mlast;
+	int	mdx, mdy, mbtn, mlast;	/* mbtn: bit 0 button 1, bit 1 button 2 */
+	int	nbtn;			/* R1 button count */
 };
 
 extern struct sdev sim_dev[];

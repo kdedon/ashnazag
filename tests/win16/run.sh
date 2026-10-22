@@ -20,6 +20,10 @@ WATCOM=${WATCOM:-$AUX/toolchain/watcom}
 mkdir -p "$B/progs" "$B/shots"
 sh "$T/win16/host.sh" "$B"
 echo "[ok] startwin for this host"
+# text widths against the glyphs drawn, on startwin's own objects
+cc -std=gnu89 -O1 -w -I"$G" $(sh "$G/ft/freetype.sh" flags) -o "$B/textw" "$T/win16/textw.c" \
+	$(ls "$B"/obj/*.o | grep -v /startwin.o) "$B"/ftobj/*.o -lm
+"$B/textw"
 # -install from setup disks: SETUP.INF placing the files, SZDD expanded,
 # our own modules (USER.EXE) left out
 I=$B/install

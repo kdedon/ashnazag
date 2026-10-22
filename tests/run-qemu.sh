@@ -17,7 +17,8 @@
 # line), screen.png, summary.txt.
 # AMIGANET=1 (direct boot): the root also has TCP/IP, for t_amiga's
 # bsdsocket.library checks (user-mode network, no echo service).
-# GROUP=smoke|core|mac|tos|mint|cpm|smsqe|amiga|display|sound|win16|gl|quake|native|lisa|v200|next|stable runs that set only.
+# GROUP=smoke|core|mac|tos|mint|cpm|smsqe|amiga|display|sound|win16|gl|quake|native|lisa|v200|next|stable|scsi runs that set only.
+# GROUP=scsi: a blank scratch disk at ID 1 and SCSIROOT (default images/q800-unix-disk.img) read-only at ID 0.
 # Exit: 0 all PASS, 1 any FAIL, 2 timeout, panic or no TESTS DONE.
 # up to QSLOTS QEMUs at once (tools/qslot.sh)
 # one run per checkout at a time: they share tests/build
@@ -68,7 +69,8 @@ lisa)	G="t_lisa t_natenv" ;;
 v200)	G="t_v200 t_natenv" ;;
 next)	G="t_gmmu t_next"; GEOM=${GEOM:-1152x870x8} ;;
 stable)	G="t_stable"; TMO=${TMO0:-14400} ;;
-*)	echo "GROUP: smoke core mac tos mint cpm smsqe amiga display sound win16 gl quake native lisa v200 next stable"; exit 2 ;;
+scsi)	G="t_scsi"; SCSIT=1 ;;
+*)	echo "GROUP: smoke core mac tos mint cpm smsqe amiga display sound win16 gl quake native lisa v200 next stable scsi"; exit 2 ;;
 esac
 if [ -n "${G:-}" ]; then
 	ONLY="$T/src/runall.c"
@@ -144,12 +146,25 @@ if [ $MODE = direct ]; then
 	[ -f "$T/build/ufs/ufs.img" ] && set -- "$@" \
 		-drive file="$T/build/ufs/ufs.img",format=raw,if=none,id=hd2,snapshot=on \
 		-device scsi-hd,scsi-id=2,drive=hd2
+	# t_scsi's disks: a fresh scratch disk, the root disk read-only
+	if [ -n "${SCSIT:-}" ]; then
+		SCSIROOT=${SCSIROOT:-$AUX/images/q800-unix-disk.img}
+		mkdir -p "$T/build/scsi"
+		rm -f "$T/build/scsi/scratch.img"
+		dd if=/dev/zero of="$T/build/scsi/scratch.img" bs=1M count=16 2>/dev/null
+		printf 'ASHNAZAG SCSI SCRATCH\n' | dd of="$T/build/scsi/scratch.img" conv=notrunc 2>/dev/null
+		set -- "$@" -drive file="$T/build/scsi/scratch.img",format=raw,if=none,id=hd1,snapshot=on \
+			-device scsi-hd,scsi-id=1,drive=hd1
+		[ -f "$SCSIROOT" ] && set -- "$@" \
+			-drive file="$SCSIROOT",format=raw,if=none,id=hd0,snapshot=on,readonly=on \
+			-device scsi-hd,scsi-id=0,drive=hd0
+	fi
 	# t_amiga's SYS: volume, writes discarded
-	[ -f "$T/build/amiga/sys.img" ] && set -- "$@" \
+	[ -z "${SCSIT:-}" ] && [ -f "$T/build/amiga/sys.img" ] && set -- "$@" \
 		-drive file="$T/build/amiga/sys.img",format=raw,if=none,id=hd0,snapshot=on \
 		-device scsi-hd,scsi-id=0,drive=hd0
 	# the Mac System Folders' volume, writes discarded
-	[ -f "$T/build/aux/macsys.img" ] && set -- "$@" \
+	[ -z "${SCSIT:-}" ] && [ -f "$T/build/aux/macsys.img" ] && set -- "$@" \
 		-drive file="$T/build/aux/macsys.img",format=raw,if=none,id=hd1,snapshot=on \
 		-device scsi-hd,scsi-id=1,drive=hd1
 	# t_win16's volume, writes discarded

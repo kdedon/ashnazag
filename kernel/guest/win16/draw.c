@@ -728,7 +728,7 @@ text_width(f, s, n)
 		c = (u8)*s++;
 		if (c < f->f_first || c > f->f_last)
 			c = f->f_first == 0x20 ? '?' : f->f_first;
-		w += f->f_tt ? ttf_adv(f, c - f->f_first) : f->f_w[c - f->f_first];
+		w += (f->f_tt ? ttf_adv(f, c - f->f_first) : f->f_w[c - f->f_first]) + f->f_embold;
 	}
 	return w;
 }
@@ -760,13 +760,14 @@ glyphs(dc, f, x, y, s, n, dx, bold, underline, strike)
 		if (f->f_tt) {
 			struct ttglyph *t;
 
-			w = ttf_adv(f, c);
+			w = ttf_adv(f, c) + f->f_embold;
 			t = ttf_glyph(f, c);
 			bits = t->bits;
 			bw = t->bw;
 			ox = t->ox;
 		} else {
-			w = bw = f->f_w[c];
+			bw = f->f_w[c];
+			w = bw + f->f_embold;
 			bits = f->f_bits + f->f_off[c];
 			ox = 0;
 		}
@@ -789,7 +790,7 @@ glyphs(dc, f, x, y, s, n, dx, bold, underline, strike)
 					}
 				}
 			}
-		x += dx ? dx[k] : w;	/* a fake bold strikes one pixel over, the advance as it is */
+		x += dx ? dx[k] : w;
 	}
 	if (underline || strike) {
 		r_set(&m, x0, y + (underline ? f->f_ascent + 1 : f->f_ascent * 2 / 3), x,

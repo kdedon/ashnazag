@@ -162,6 +162,14 @@ main(int argc, char **argv)
             prog, executable, strerror(errno));
         return 1;
     }
+    if (media == image && stat(media, &st) < 0 && errno == ENOENT) {
+        fprintf(stderr, "%s: no %s environment for this user in %s (the image sets one up for guest); %s\n",
+            prog, family, root, !strcmp(family, "lisa") ?
+            "install your ProFile image there with tools/makelisa.sh ENV IMAGE and put your Lisa ROM in it as lisa.rom" :
+            !strcmp(family, "next") ? "install your OPENSTEP CD there with tools/makenext.sh" :
+            "put your Flash dump there as media");
+        return 1;
+    }
     if (stat(media, &st) < 0 || (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode)) ||
         access(media, R_OK) < 0) {
         fprintf(stderr, "%s: %s: readable media file or directory required\n", prog, media);

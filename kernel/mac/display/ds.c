@@ -1492,16 +1492,11 @@ register struct dssess *s;
 	}
 	x = DS_SPL(DS_HI);
 	if (s->s_btn) {
-#ifdef DS_ATARI
 		if (s->s_btn & 2)
 			ds_evpost(s, 1, IE_BTN, 3, 0L, sec, us);
 		if (s->s_btn & 1)
 			ds_evpost(s, 1, IE_BTN, 1, 0L, sec, us);
 		s->s_btn = 0;
-#else
-		s->s_btn = 0;
-		ds_evpost(s, 1, IE_BTN, 1, 0L, sec, us);
-#endif
 		ds_evpost(s, 1, IE_SYN, 0, 0L, sec, us);
 	}
 	DS_SPLX(x);
@@ -1792,21 +1787,26 @@ int unit, kind, r0, changed;
 {
 	register struct dssess *s = ds_front;
 	register long dx, dy, btn;
+	register int b, c;
 	long sec, us;
 
 	if (s == &ds_sess[0])
 		return;
 	ds_now(&sec, &us);
-	btn = (r0 & 0x8000) ? 0 : 1;
+	btn = (r0 & 0x8000 ? 0 : 1) | (r0 & 0x80 ? 0 : 2);
 	dy = ds_sext7((long)(r0 >> 8));
 	dx = ds_sext7((long)r0);
-	if (changed & 1) {
-		if (btn && !s->s_btn) {
-			s->s_btn = 1;
-			ds_evpost(s, 1, IE_BTN, 1, 1L, sec, us);
-		} else if (!btn && s->s_btn) {
-			s->s_btn = 0;
-			ds_evpost(s, 1, IE_BTN, 1, 0L, sec, us);
+	/* changed: 1 first button, 4 second (posted as 3) */
+	for (b = 1; b <= 2; b++) {
+		if (!(changed & (b == 1 ? 1 : 4)))
+			continue;
+		c = b == 1 ? 1 : 3;
+		if ((btn & b) && !(s->s_btn & b)) {
+			s->s_btn |= b;
+			ds_evpost(s, 1, IE_BTN, c, 1L, sec, us);
+		} else if (!(btn & b) && (s->s_btn & b)) {
+			s->s_btn &= ~b;
+			ds_evpost(s, 1, IE_BTN, c, 0L, sec, us);
 		}
 	}
 	if (changed & 2) {

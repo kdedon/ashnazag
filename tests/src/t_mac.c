@@ -1158,6 +1158,42 @@ long ms;
 #ifdef SYS76
 #define	COFFOUT	"/tmp/coffout"
 
+/* the cursor shows and follows the mouse; logs CrsrVis to CrsrObscure */
+static void
+cursorshown(label)
+char *label;
+{
+	unsigned char lm[8];
+	char path[48], a[48], b[48], cmd[112], *r;
+	int fd, n = -1;
+	long c0;
+
+	sprintf(path, "/proc/%d", (int)macpid);
+	if ((fd = open(path, O_RDONLY)) >= 0) {
+		if (lseek(fd, (off_t)0x8cc, 0) != -1 && read(fd, (char *)lm, 8) == 8)
+			t_info(label, "vis %d busy %d new %d couple %d state %d obscure %d",
+			    lm[0], lm[1], lm[2], lm[3], (short)(lm[4] << 8 | lm[5]), lm[6]);
+		close(fd);
+	}
+	sprintf(a, SHOT "%s_c1", label);
+	sprintf(b, SHOT "%s_c2", label);
+	sprintf(cmd, "shot %s", a);
+	host(cmd);
+	c0 = getsym("uin_ncur");
+	host("move 24 12");
+	pause_ms(500L);
+	sprintf(cmd, "shot %s", b);
+	host(cmd);
+	sprintf(cmd, "cmp %s %s", a, b);
+	r = host(cmd);
+	if (r && sscanf(r, "diff %d", &n) != 1)
+		n = 0;
+	t_check(label, getsym("uin_ncur") > c0 && n > 0 && n <= 1000, "draws %ld, %d pixels",
+	    getsym("uin_ncur") - c0, n);
+	host("move -24 -12");
+	pause_ms(300L);
+}
+
 /* CommandShell's console window takes console output while it runs: results go to a file */
 static int
 coffcapture()
@@ -3150,6 +3186,7 @@ commanddirect81once()
     setsym("aux_trace",16L);
     n=waitshot(SHOT "coff_open",SHOT "coff_desktop",10000,1 << 30,40);
     t_info("coff_window_pixels","%d pixels changed",n);
+    cursorshown("coff_cursor_open");
     coffsnapshot(pid);
     coffordinary(pid);
     setsym("aux_trace",16L);
@@ -3194,6 +3231,7 @@ commanddirect81once()
     t_check("coff_normal_status",io && quit && reaped==pid && done && status==0,"quit %d Unix status %ld",quit,status);
     n=waitshot(SHOT "coff_closed",SHOT "coff_desktop",0,1999,40);
     t_check("coff_desktop",n>=0 && n<2000,"%d pixels changed",n);
+    cursorshown("coff_cursor_closed");
     t_check("coff_finder_alive",alive76(),"");
     t_info("coff_adapter_state","launch %ld front %ld exit %ld refused %ld",getsym("uin_cofflaunch"),getsym("uin_cofffront"),getsym("uin_coffexit"),getsym("uin_coffrefused"));
     t_info("coff_diag_state","seen %ld closed %ld old55 %ld",getsym("uin_coffseen"),getsym("uin_coffclosed"),getsym("uin_coffcalls"));
@@ -3206,13 +3244,15 @@ commanddirect81()
 {
     char *opt=getenv("COFFNATIVE47");
     long saved=getsym("uinter_coffnative47");
-    int i,native47=opt ? !strcmp(opt,"1") : saved;
+    int i,save,native47=opt ? !strcmp(opt,"1") : saved;
     t_check("coff_native47_mode",setsym("uinter_coffnative47",native47)==0,"");
     for(i=0;i<2;i++) {
         t_info("coff_launch_iteration","%d",i+1);
+        save=coffcapture();
         consecho(0);
         commanddirect81once();
         consecho(1);
+        coffrelease(save);
     }
     setsym("uinter_coffnative47",saved);
 }
@@ -3738,6 +3778,7 @@ command76once()
     setsym("aux_trace",16L);
     n=waitshot(SHOT "coff_open",SHOT "coff_desktop",10000,1 << 30,40);
     t_info("coff_window_pixels","%d pixels changed",n);
+    cursorshown("coff_cursor_open");
     coffsnapshot(pid);
     coffordinary(pid);
     setsym("aux_trace",16L);
@@ -3783,6 +3824,7 @@ command76once()
     t_check("coff_normal_status",io && quit && reaped==pid && done && status==0,"quit %d Unix status %ld",quit,status);
     n=waitshot(SHOT "coff_closed",SHOT "coff_desktop",0,1999,40);
     t_check("coff_desktop",n>=0 && n<2000,"%d pixels changed",n);
+    cursorshown("coff_cursor_closed");
     t_check("coff_finder_alive",alive76(),"");
     t_info("coff_adapter_state","launch %ld front %ld exit %ld refused %ld",getsym("uin_cofflaunch"),getsym("uin_cofffront"),getsym("uin_coffexit"),getsym("uin_coffrefused"));
     t_info("coff_diag_state","seen %ld closed %ld old55 %ld",getsym("uin_coffseen"),getsym("uin_coffclosed"),getsym("uin_coffcalls"));

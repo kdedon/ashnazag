@@ -245,14 +245,14 @@ mac() {
 	d=$O/src/ncr96
 	rm -rf "$d"; mkdir -p "$d"
 	objs=
-	for c in ncr96 ncr96mod; do
+	for c in ncr96 ncr96mod sdclust; do
 		$KC -m68040 -Wno-comment -I"$K/include/amiga/alien" -I"$M" -I"$DLM/include" \
 			-c "$M/$c.c" -o "$d/$c.o" 2> "$d/$c.warn" || { cat "$d/$c.warn"; exit 1; }
 		warn "$M/$c.c" "$d/$c"
 		objs="$objs $d/$c.o"
 	done
 	$NICE m68k-cbm-sysv4-gcc -m68040 -c "$M/ncr96pdma.s" -o "$d/ncr96pdma.o"
-	m68k-cbm-sysv4-ld -r -o "$d/Driver.o" "$d/ncr96.o" "$d/ncr96pdma.o" "$d/ncr96mod.o"
+	m68k-cbm-sysv4-ld -r -o "$d/Driver.o" "$d/ncr96.o" "$d/ncr96pdma.o" "$d/ncr96mod.o" "$d/sdclust.o"
 	cp "$M/mod/ncr96/Master" "$d/"
 	mkmod "$d"
 }

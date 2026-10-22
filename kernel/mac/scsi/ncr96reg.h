@@ -27,6 +27,8 @@ extern void	sim_wr(), sim_pwr(), sim_via_wr();
 #define PDMA_WR(p, w)	sim_pwr(w)
 #define VIA2_RD(r)	((unsigned char)sim_via_rd(r))
 #define VIA2_WR(r, v)	sim_via_wr(r, v)
+#define T1_HI()		sim_t1hi()
+#define T1_IFR()	0
 #else
 #define NCR_RD(r)	(*(__volatile__ unsigned char *)NCR_ADDR(r))
 #ifdef BOOTDIAG
@@ -40,6 +42,8 @@ extern unsigned long diag_scmd;
 #define PDMA_RD(p)	(*(p))
 #define PDMA_WR(p, w)	(*(p) = (w))
 #define VIA2_RD(r)	(*(__volatile__ unsigned char *)(VIA2_BASE + (r)))
+#define T1_HI()		(*(__volatile__ unsigned char *)0x50F00A00)
+#define T1_IFR()	(*(__volatile__ unsigned char *)0x50F01A00 & 0x40)
 #define VIA2_WR(r, v)	(*(__volatile__ unsigned char *)(VIA2_BASE + (r)) = (v))
 #endif
 
@@ -99,6 +103,10 @@ extern unsigned long diag_scmd;
 #define P_STATUS	3
 #define P_MSGOUT	6
 #define P_MSGIN		7
+
+/* VIA1 timer 1 (the 60 Hz clock): period in 256-count units, us per unit */
+#define T1_PERIOD	51
+#define T1_US256	327
 
 /* the Q800 chip clock is 16.5 MHz (CCF 5 covers 15-20 MHz) */
 #define NCR_CCF		5

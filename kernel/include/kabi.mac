@@ -98,6 +98,7 @@ hat_memload
 hat_unload
 hat_unlock
 hrestime
+iodone
 issig
 kmem_alloc
 kmem_free
@@ -145,8 +146,14 @@ rootdir
 runrun
 scsi_intrfn
 sd_attach
+sdblkno
+sddevsize
+sdhardwarename
 sdopen
 sdqueue
+sd_rawhook
+sd_strathook
+sdvalid
 segdev_create
 seg_free
 segvn_create
@@ -180,6 +187,7 @@ u
 uadmin
 ufalloc
 uiomove
+uiophysio
 untimeout
 ureturn
 utsname

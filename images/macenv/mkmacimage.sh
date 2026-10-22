@@ -111,16 +111,15 @@ if [ -f "$V200ZIP" ]; then
 	printf 't\t/home/guest/Voyage200\t100\t1\t%s\n' "$P/v200" >> "$I"
 	echo "l /home/guest/Voyage200/native /usr/lib/voyage200/native" >> "$I"
 fi
-# the user's Lisa ROM and ProFile image (LISAMEDIA, default
-# media/lisa/imported: H.rom, profile.dc42) as guest's ~/Lisa
+# the user's Lisa ROM and the files of their ProFile image (LISAMEDIA,
+# default media/lisa/imported: H.rom, profile.dc42) as guest's ~/Lisa
 LISAMEDIA=${LISAMEDIA:-$AUX/media/lisa/imported}
 if [ -f "$LISAMEDIA/H.rom" ] && [ -f "$LISAMEDIA/profile.dc42" ]; then
-	mkdir -p "$P/lisa"
-	cp "$LISAMEDIA/H.rom" "$P/lisa/lisa.rom"
-	cp "$LISAMEDIA/profile.dc42" "$P/lisa/"
-	printf 't\t/home/guest/Lisa\t100\t1\t%s\n' "$P/lisa" >> "$I"
+	HOME=$P/lisa sh "$AUX/tools/makelisa.sh" office "$LISAMEDIA/profile.dc42"
+	cp "$LISAMEDIA/H.rom" "$P/lisa/Lisa/lisa.rom"
+	printf 't\t/home/guest/Lisa\t100\t1\t%s\n' "$P/lisa/Lisa" >> "$I"
 	echo "l /home/guest/Lisa/native /usr/lib/lisa/native" >> "$I"
-	echo "l /home/guest/Lisa/media profile.dc42" >> "$I"
+	echo "l /home/guest/Lisa/media lisa.rom" >> "$I"
 fi
 # the user's OPENSTEP 4.2 CD (NEXTCD, default media/openstep's) as
 # guest's ~/NeXT/openstep, as makenext.sh installs it

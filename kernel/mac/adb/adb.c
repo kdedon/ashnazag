@@ -631,6 +631,27 @@ adb_resolve()
 		}
 }
 
+/* a mouse that takes the extended handler (4) gives its button count in R1 */
+static void
+extmouse(a)
+int a;
+{
+	struct adbreq r;
+	int h;
+
+	if (listen3(a, 0x60 | a, 4) == -2)
+		return;
+	adb_delay(1000);
+	if (talk3(a, &h) < 2 || h != 4)
+		return;
+	adb_dev[a].d_handler = 4;
+	r.r_cmd = ADB_TALK(a, 1);
+	r.r_len = 0;
+	r.r_done = 0;
+	if (adb_op_sync(&r) >= 8)
+		adb_mouse_nbtn = r.r_data[7];
+}
+
 static char *
 devname(o)
 int o;
@@ -654,6 +675,7 @@ adb_init()
 
 	adb_ready = 0;
 	adb_ndev = 0;
+	adb_mouse_nbtn = 0;
 	for (a = 0; a < 16; a++)
 		adb_dev[a].d_orig = adb_dev[a].d_handler = 0;
 	adb_qh = adb_qt = adb_rh = adb_rt = 0;
@@ -704,10 +726,14 @@ adb_init()
 	for (a = 1; a <= 15; a++)
 		if (adb_dev[a].d_orig) {
 			adb_ndev++;
+			if (adb_dev[a].d_orig == ADB_ADDR_MOUSE)
+				extmouse(a);
 			printf("adb: %s at %d (default %d, handler %d)\n",
 			    devname(adb_dev[a].d_orig), a, adb_dev[a].d_orig,
 			    adb_dev[a].d_handler);
 		}
+	if (adb_mouse_nbtn)
+		printf("adb: mouse has %d buttons\n", adb_mouse_nbtn);
 	adb_polladdr = ADB_ADDR_KBD;
 	if (!adb_dev[ADB_ADDR_KBD].d_orig) {
 		printf("adb: no keyboard found");

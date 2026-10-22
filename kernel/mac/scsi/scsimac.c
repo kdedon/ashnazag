@@ -169,3 +169,50 @@ dev_t	dev;
 {
 	return partab[MINOR(dev)].len ? partab[MINOR(dev)].len : 1234567;
 }
+
+/*
+ * Disk entry points.  The controller module may take a request (merged
+ * block I/O, read-ahead, 64 KB raw transfers); it gets the stock routine
+ * for what it leaves alone.
+ */
+int	(*__volatile__ sd_strathook)();	/* (bp, stock) */
+int	(*__volatile__ sd_rawhook)();	/* (dev, uio, rw, stock, cr) */
+
+extern int	ddstrategy(), ddread(), ddwrite();
+
+int
+sdstrategy(bp)
+struct buf	*bp;
+{
+	int	(*f)() = sd_strathook;
+
+	if (f)
+		return (*f)(bp, ddstrategy);
+	return ddstrategy(bp);
+}
+
+int
+sdread(dev, uio, cr)
+dev_t	dev;
+struct uio	*uio;
+struct cred	*cr;
+{
+	int	(*f)() = sd_rawhook;
+
+	if (f)
+		return (*f)(dev, uio, B_READ, ddread, cr);
+	return ddread(dev, uio, cr);
+}
+
+int
+sdwrite(dev, uio, cr)
+dev_t	dev;
+struct uio	*uio;
+struct cred	*cr;
+{
+	int	(*f)() = sd_rawhook;
+
+	if (f)
+		return (*f)(dev, uio, B_WRITE, ddwrite, cr);
+	return ddwrite(dev, uio, cr);
+}

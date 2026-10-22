@@ -12,6 +12,7 @@
 
 extern void ncr96init(), ncr96queue(), ncr96intr(), dlm_cachepush();
 extern int sd_attach();
+extern void sdc_attach();
 extern void (*__volatile__ scsi_intrfn)();
 
 static int
@@ -28,7 +29,8 @@ uint c;
 struct sdcom *cp;
 {
 	/* the transfer runs through the physical window */
-	dlm_cachepush(cp->addr, cp->nbyte);
+	if (!(cp->reading & 2))
+		dlm_cachepush(cp->addr, cp->nbyte);
 	ncr96queue(cp);
 	return TRUE;
 }
@@ -42,8 +44,10 @@ ncr96_load()
 	int e;
 
 	if ((e = sd_attach(ncr96open, ncr96q, 0, (char *)NCR_BASE,
-	    "Quadra 53C96 SCSI")) == 0)
+	    "Quadra 53C96 SCSI")) == 0) {
 		scsi_intrfn = ncr96intr;
+		sdc_attach();
+	}
 	return e;
 }
 

@@ -22,6 +22,7 @@ struct bfont {
 	/* TrueType (ttf.c): advances here, glyphs rendered when first drawn */
 	struct ttsize *f_tt;
 	unsigned short *f_adv;
+	int	f_embold;		/* GDI's bold: each advance a pixel wider, overstruck */
 };
 
 /* a TrueType glyph as drawn: bw pixels wide, from ox left of the pen */

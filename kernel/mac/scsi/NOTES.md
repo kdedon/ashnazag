@@ -10,13 +10,14 @@ unverified.
 |---|---|
 | `ncr96.c`, `ncr96reg.h` | 53C96 host adapter: per-target queues, interrupt-driven state machine with disconnect/reselect, pseudo-DMA and PIO, watchdog |
 | `ncr96pdma.s` | `ncr_blind`: the 256-byte blind chunk, read or write, with a `u_nofault` pad |
-| `scsimac.c` | the `sd.h` layer: `sdopen`/`sdqueue`/`sdhardwarename`, `sdpartition`/`sdvalid`/`sdblkno`/`sddevsize` |
+| `scsimac.c` | the `sd.h` layer: `sdopen`/`sdqueue`/`sdhardwarename`, `sdpartition`/`sdvalid`/`sdblkno`/`sddevsize`; the disk's strategy, read and write entry points (hooks, else `dd`'s) |
+| `sdclust.c` | request shaping in the module: merged block requests, read-ahead, 64 KB raw commands |
 | `apm.c`, `apm.h` | Apple Partition Map → slices; no kernel headers, also built on the host |
 | `macspl.h` | `splscsi`/`splrestore` (see "Compiler trap") |
 | `build.sh` | builds `macscsi.o` (`ld -r` of the above) into an output directory |
 | `trial-link.sh` | applies the SCSI integration to scratch copies and links the kernel |
 | `test/run.py`, `test/apmtest.c` | host test of the partition scan |
-| `test/ncrtest.sh`, `test/ncrsim.c`, `test/ncrhost.h` | host test of `ncr96.c` against a simulated 53C96 and disks |
+| `test/ncrtest.sh`, `test/ncrsim.c`, `test/ncrhost.h`, `test/sdchost.h` | host test of `ncr96.c` and `sdclust.c` against a simulated 53C96 and disks |
 
 ## Layering
 
@@ -44,6 +45,29 @@ are AMIX's.
   flush is needed; the A3091-specific `dma_cache040` hooks do not apply. The chip, DMA port
   and VIA2 (0x50F00000–0x50FFFFFF) are mapped cache-inhibited serialized by `mac_iomap`
   (`PG_IO` 0xC1), so port writes stay ordered against later FIFO-count reads.
+
+## Request shaping
+
+`bdevsw[18]` strategy and `cdevsw[40]` read/write are `sdstrategy`/`sdread`/`sdwrite`
+(`scsimac.c`). Once the module is in they call `sdclust.c` with `dd`'s routine as the
+fallback; open, close, ioctl, print and size stay `dd`'s.
+
+- **Block** (`sd_clust` 1): per-unit queue. A run of queued requests at adjacent blocks, same
+  direction, goes out as one READ/WRITE(10) of up to 64 KB through the unit's cache buffer. A
+  read at the block after the previous read fetches up to `sd_ra` blocks (default 128, never
+  past the slice). Reads inside the cache complete without a command.
+- **Cache coherence:** the cache holds disk contents. Merged writes go through it; other writes
+  (block, raw) drop the cached range they overlap, at issue and at completion; with shaping
+  off, every request bumps a generation that empties it.
+- **Errors:** a merged or read-ahead command that fails is retried one request at a time, so a
+  read-ahead past the end of the disk costs one CHECK CONDITION, not an error.
+- **Raw** (`sd_bigraw` 1, offset and length in whole blocks): `uiophysio` locks the user
+  pages; each 64 KB piece goes straight to them when they are physically contiguous, else
+  through a 64 KB bounce buffer. Other requests take `dd`'s 2 KB path.
+- Buffers (cache, bounce: 64 KB each per unit) are allocated on first use.
+- Counters: `sd_nreq`, `sd_ncmd`, `sd_nmerge`, `sd_nra`, `sd_nhit`, `sd_nsplit`, `sd_nraw`,
+  `sd_ndirect`, `sd_nbounce`.
+- `sdcom.reading` bit 1 marks an address that is a kernel VA: no cache push, no real DMA.
 
 ## Minor numbers and slices
 
@@ -187,6 +211,16 @@ Registers at 0x50F10000 + 16·n; pseudo-DMA port at +0x100, 16-bit. DREQ is bit 
   4. DREQ missing or bus error: if the chip has interrupted, end-of-command handling sorts it
      out. Otherwise the CPU's position is (256 − TC) − FIFO count for reads, 256 − TC for
      writes, and the chunk is finished with the mode-1 loop.
+- **Mode 4, whole phase:** TC = min(bytes left, 0xFE00) & ~1, CMD = 0x90; `ncr_xfer` waits
+  for DREQ once, then moves every word back to back. On a bus error with no chip interrupt the
+  transfer goes on: reads at the faulting address (the faulting read has not stored), writes
+  once the FIFO has drained at requested − TC (the 040 reports a write fault after later
+  stores). A chip interrupt ends the command as usual; no DREQ falls back to the mode-1 loop.
+  Entered at IPL 2, the word loop runs at IPL 1 (`ncr_xipl`), so sound, video and network
+  interrupts are taken during a 64 KB transfer; a SCSI interrupt nested there is refused
+  (`ncr_nnest`) and the loop sees the chip's interrupt itself. `ncr_ipl2max` keeps the
+  longest stretch of the SCSI handler at IPL 2 in µs, timed on VIA1 timer 1's high byte
+  (327 µs resolution).
 - **Remainder** (< 256 bytes, odd address) and **mode 0**: one byte per command. Out: FIFO ←
   byte, CMD = 0x10. In: CMD = 0x10, take the byte at the interrupt.
 - **Mode 1:** TC up to 0x8000 (even), CMD = 0x90. Reads move ⌊FIFO count/2⌋ words at a time,
@@ -288,9 +322,14 @@ gcc:
   disconnect; disconnects after the command, mid-data with and without SAVE DATA POINTER, and
   inside a blind chunk with FIFO residue in both directions; interleaved targets; reselection
   beating our selection; selection timeout; injected bus errors; long target stalls; lost
-  interrupts; automatic-mode transitions; SDTR rejection. Removing any of the pointer restore,
-  SAVE DATA POINTER handling, backoff, ENABLE RESELECTION, write-FIFO residue or read-FIFO
-  drain makes a scenario fail.
+  interrupts; automatic-mode transitions; SDTR rejection; mode-4 data at IPL 1 with a nested
+  interrupt; request shaping (merged writes, read-ahead and cache hits, writes over cached
+  blocks from either path, a failed read-ahead split, 64 KB raw commands). Removing any of the
+  pointer restore, SAVE DATA POINTER handling, backoff, ENABLE RESELECTION, write-FIFO residue,
+  read-FIFO drain, the write overlap drop or the generation check makes a scenario fail.
+- **Quadra:** `scsibench` (as root) times raw and buffered 10 MB reads in mode 2 and mode 4
+  with shaping off, then mode 4 with shaping on, prints commands per MB and the counters, and
+  checks every setting reads the same data.
 
 ## Open hardware questions
 

@@ -59,6 +59,8 @@ f /usr/lib/sndaux 755 0 3 ../../build/mac/sound/sndaux
 f /usr/lib/pingd 755 0 3 ../../build/net/pingd
 # their drivers, registered by sysinit and loaded on first open
 f /sbin/modadmin 555 0 3 ../../build/mac/sound/modadmin
+f /sbin/kvar 555 0 3 ../../build/mac/sound/kvar
+f /usr/bin/scsibench 755 0 3 etc/scsibench
 d /etc/conf 755 0 3
 d /etc/conf/mod.d 755 0 3
 f /etc/conf/mod.d/asc 644 0 3 ../../build/mac/sound/mod.d/asc

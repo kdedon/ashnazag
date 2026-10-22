@@ -27,6 +27,7 @@
 static struct {
 	char *name;
 	int secs;
+	char *arg;
 } tests[] = {
 	{ "t_proc", 150 },
 	{ "t_mem", 180 },
@@ -58,12 +59,14 @@ static struct {
 	{ "t_mac76", 600 },
 	{ "t_coff76", 600 },
 	{ "t_mac81", 600 },
+	{ "t_coff81d", 600 },
 	{ "t_mac6", 330 },
 	/* a second run in the same boot: nothing of the first may linger */
 	{ "t_mac", 330 },
 	{ "t_mac6", 330 },
 	{ "t_mac81", 900 },
 	{ "t_vtop", 60 },
+	{ "t_scsi", 900 },
 	{ "t_display", 360 },
 	{ "t_sound", 300 },
 	{ "t_tos", 700 },
@@ -81,7 +84,8 @@ static struct {
 	{ "t_natenv", 90 },
 	{ "t_v200", 900 },
 	{ "t_next", 1800 },
-	{ "t_lisa", 600 },
+	{ "t_lisa", 760 },
+	{ "t_lisa", 1760, "office" },
 	{ "t_quake", 7200 },
 	{ "t_stable", 14400 },
 	{ 0, 0 }
@@ -267,8 +271,10 @@ char **argv;
 			runone(argv[i], c ? atoi(c) : secs);
 		}
 	} else {
-		for (i = 0; tests[i].name != 0; i++)
+		for (i = 0; tests[i].name != 0; i++) {
+			runarg = tests[i].arg;
 			runone(tests[i].name, tests[i].secs);
+		}
 	}
 
 	sync();

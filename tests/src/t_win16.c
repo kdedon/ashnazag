@@ -522,6 +522,26 @@ groups(p)
 	host("key r");
 	settle(60);
 	t_check("group_sysmenu", kill(p, 0) == 0 && same("groups0", "groups5"), "startwin ended or not restored");
+	/* Main's icon, partly under the next group, stays under it when a window over both closes */
+	host("key ctrl+f4");
+	settle(60);
+	host("key ctrl+f6");
+	settle(60);
+	pshot("icons0");
+	host("key alt+f");
+	nap(500);
+	host("key r");
+	nap(1500);
+	type("notepad");
+	host("key ret");
+	settle(300);
+	host("key alt+f4");
+	settle(60);
+	t_check("group_icon_under", kill(p, 0) == 0 && same("icons0", "icons1"), "startwin ended or the screen differs");
+	host("key alt+w");
+	nap(500);
+	host("key 1");
+	settle(60);
 }
 
 /* a program from File Run, used and quit; Program Manager's screen as before */

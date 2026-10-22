@@ -133,6 +133,8 @@ main()
     unlink(FIXTURE "/.default/lisa");
     rmdir(FIXTURE "/.default");
     check("missing_media", run(0, 0, payload, "/tmp/natlaunch/absent") == 1);
+    check("not_set_up", system("/tests/startnative lisa -e absent -x /tests/natpayload 2>&1 | "
+        "grep -s 'no lisa environment for this user' > /dev/null") == 0);
     memset(header, 0, sizeof header);
     memcpy(header, "\177ELF\001\002\001", 7);
     header[17] = 2;

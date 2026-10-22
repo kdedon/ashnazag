@@ -18,7 +18,7 @@
 #include "ncr96reg.h"
 #undef printf
 
-#define NBLK	32
+#define NBLK	256
 #define BSZ	512
 #define GLUE_US	20		/* stalled port cycle -> bus error */
 #define TICK_US	16667
@@ -28,6 +28,9 @@ extern void	ncr96init(), ncr96queue(), ncr96intr();
 extern int	ncr_intrmode, ncr_pdmamode, ncr_disc, ncr_debug;
 extern long	ncr_nintr, ncr_nlost, ncr_nfault, ncr_nnosel, ncr_ndisc, ncr_nresel, ncr_nerr,
 		ncr_nnodreq, ncr_nchunk;
+extern long	ncr_xcmd, ncr_xbytes, ncr_xphase, ncr_xresume, ncr_xfall;
+extern long	ncr_nnest, ncr_ipl2max;
+extern int	ncr_xipl;
 
 long	lbolt;
 char	*panicstr;
@@ -44,6 +47,8 @@ long us;
 
 void	delayus(us) long us; { advance(us); }
 void	delay(t) long t; { advance(t * TICK_US); }
+int	sim_sr = 0x2200;		/* SCSI interrupt level, as in the handler */
+int	sim_t1hi() { return (13056 - (now * 1000 / 1277) % 13056) >> 8; }
 int	splscsi() { return 0; }
 void	splrestore(s) int s; { }
 
@@ -127,6 +132,8 @@ struct stgt {
 	int	sdtr;			/* send an SDTR before the data */
 	int	extra;			/* data-in bytes beyond the request */
 	int	lag;			/* data out: leave this many bytes in the FIFO */
+	int	oob;			/* past the last block: CHECK CONDITION */
+	int	chk;
 	/* nexus */
 	int	active, connected, discpriv, atn, phase;
 	uchar	*buf, pat[1024];
@@ -226,6 +233,14 @@ uchar *cdb;
 	case 0x2A:
 		lba = (long)cdb[2] << 24 | cdb[3] << 16 | cdb[4] << 8 | cdb[5];
 		n = cdb[7] << 8 | cdb[8];
+		t->chk = 0;
+		if (lba + n > NBLK && t->oob) {
+			t->chk = 1;
+			t->buf = t->pat;
+			t->len = 0;
+			t->in = 1;
+			break;
+		}
 		if (lba + n > NBLK)
 			simfail("LBA out of range");
 		t->buf = t->disk + lba * BSZ;
@@ -265,6 +280,9 @@ static struct {
 	int	race;			/* next selection loses to a reselection */
 	int	early;			/* read TC interrupt before the FIFO drains */
 	int	fault_chunk, fault_word, chunkno;
+	int	nodreq;			/* DREQ never comes */
+	int	nest_word;	/* ncr_xfer: take a nested interrupt at this word */
+	int	xfer_sr;	/* SR seen inside the last ncr_xfer */
 } c;
 
 static void
@@ -510,7 +528,8 @@ int v;
 			simfail("ICCS outside status phase");
 			return;
 		}
-		push(0);
+		push(t->chk ? 2 : 0);
+		t->chk = 0;
 		push(M_CMDCOMPLETE);
 		t->status_done = 1;
 		t->endflag = E_DONE;
@@ -669,6 +688,8 @@ dreq(w)
 int w;
 {
 	run();
+	if (c.nodreq)
+		return 0;
 	if (w)
 		return c.dma && !c.dmain && c.tc >= 2 && c.nf <= 14;
 	return c.port && c.dmain && c.nf >= 2;
@@ -725,6 +746,56 @@ int w;
 	}
 	return 256;
 }
+
+/*
+ * ncr_xfer: whole transfer command.  A write's fault is reported two
+ * words late, as the 040 does after buffered stores.
+ */
+int
+ncr_xfer(pp, n, w)
+uchar **pp;
+uint n;
+int w;
+{
+	uchar *buf = *pp;
+	int i, k;
+
+	c.chunkno++;
+	c.xfer_sr = sim_sr;
+	if (!dreqwait(w))
+		return -1;
+	for (i = 0; i < (int)n / 2; i++) {
+		if (c.nest_word && i == c.nest_word) {
+			c.nest_word = 0;
+			ncr96intr();
+		}
+		if (c.chunkno == c.fault_chunk && i == c.fault_word) {
+			c.fault_chunk = 0;
+			advance(GLUE_US);
+			goto fault;
+		}
+		for (k = 0; !dreq(w); k++) {
+			if (k >= GLUE_US)
+				goto fault;
+			advance(1);
+		}
+		if (w) {
+			push(buf[2 * i]);
+			push(buf[2 * i + 1]);
+			c.tc -= 2;
+		} else {
+			buf[2 * i] = pop();
+			buf[2 * i + 1] = pop();
+		}
+		run();
+	}
+	*pp = buf + n;
+	return 0;
+fault:
+	*pp = buf + 2 * i + (w ? 4 : 0);
+	return -2;
+}
+
 
 /* ---- harness ---- */
 
@@ -1128,6 +1199,434 @@ t_sdtr()
 	check(T[0].rejects == 1, "SDTR rejected");
 }
 
+static void
+xcount(cmds, phases, bytes)
+long cmds, phases, bytes;
+{
+	check(ncr_xcmd == cmds, "transfer commands");
+	check(ncr_xphase == phases, "data phases");
+	check(ncr_xbytes == bytes, "bytes counted");
+	check(ncr_nchunk == 0, "no blind chunks");
+	if (verbose)
+		printf("    x: cmd %ld phase %ld bytes %ld resume %ld fall %ld\n", ncr_xcmd,
+		    ncr_xphase, ncr_xbytes, ncr_xresume, ncr_xfall);
+}
+
+static void
+rd(unit, lba, n)
+int unit, lba, n;
+{
+	struct req *r = mkreq(unit, 0x28, lba, n);
+
+	ncr96queue(&r->sc);
+	check(pump(&r, 1, 50000000), "read finishes");
+	checkread(r, unit, lba);
+}
+
+/* ---- request shaping (sdclust.c) ---- */
+
+#include "sdchost.h"
+
+extern int	sd_clust, sd_ra, sd_bigraw;
+extern long	sd_ncmd, sd_nmerge, sd_nra, sd_nhit, sd_nsplit, sd_nraw, sd_nbounce;
+extern void	sdc_attach();
+int		(*sd_strathook)(), (*sd_rawhook)();
+static long	devsize = NBLK;
+static caddr_t	woke;
+static int	sim_proc, nstock;
+
+static void
+step()
+{
+	if ((c.via_ifr & c.via_ier & V2_SCSIIRQ)) {
+		c.via_ifr &= ~V2_SCSIIRQ;
+		ncr96intr();
+		return;
+	}
+	callouts();
+	advance(20);
+	run();
+}
+
+bool	sdvalid(bp) struct buf *bp; { return 1; }
+uint	sdblkno(bp) struct buf *bp; { return bp->b_blkno; }
+uint	sddevsize(d) dev_t d; { return devsize; }
+void	iodone(bp) struct buf *bp; { bp->b_flags |= B_DONE; }
+void	sdqueue(cp) struct sdcom *cp; { ncr96queue(cp); }
+void	bcopy(a, b, n) char *a, *b; uint n; { memmove(b, a, n); }
+void	dlm_cachepush(a, n) caddr_t a; uint n; { }
+char	*sdhardwarename(c) uint c; { return "sim"; }
+char	*kmem_alloc(n, f) uint n; int f; { return malloc(n); }
+paddr_t	vtop(a, p) caddr_t a; struct proc *p; { return (paddr_t)a; }
+int	wakeup(ch) caddr_t ch; { woke = ch; return 0; }
+
+int
+sleep(ch, pri)
+caddr_t ch;
+int pri;
+{
+	long end = now + 50000000;
+
+	while (woke != ch && now < end)
+		step();
+	if (woke != ch)
+		simfail("sleep never woken");
+	woke = 0;
+	return 0;
+}
+
+static void
+waitbufs(bs, n)
+struct buf **bs;
+int n;
+{
+	long end = now + 50000000;
+	int i;
+
+	for (;;) {
+		for (i = 0; i < n && (bs[i]->b_flags & B_DONE); i++)
+			;
+		if (i == n || now >= end)
+			break;
+		step();
+	}
+	check(i == n, "requests finish");
+}
+
+int
+uiophysio(strat, bp0, dev, rw, uio)
+int (*strat)();
+struct buf *bp0;
+dev_t dev;
+int rw;
+struct uio *uio;
+{
+	struct buf b, *bp = &b;
+
+	memset(&b, 0, sizeof b);
+	b.b_flags = rw;
+	b.b_bcount = uio->uio_resid;
+	b.b_un.b_addr = uio->uio_base;
+	b.b_blkno = uio->uio_offset / BSZ;
+	b.b_proc = (struct proc *)&sim_proc;
+	b.b_edev = dev;
+	(*strat)(bp);
+	waitbufs(&bp, 1);
+	uio->uio_resid = b.b_resid;
+	return (b.b_flags & B_ERROR) ? EIO : 0;
+}
+
+static uchar
+pat(blk, i, seed)
+long blk;
+int i, seed;
+{
+	return blk * 7 + i * 13 + seed;
+}
+
+static struct buf *
+mkbuf(rw, blk, n, seed)
+int rw, n, seed;
+long blk;
+{
+	struct buf *bp = calloc(1, sizeof *bp);
+	int i;
+
+	bp->b_flags = rw;
+	bp->b_bcount = n * BSZ;
+	bp->b_un.b_addr = malloc(n * BSZ);
+	bp->b_blkno = blk;
+	for (i = 0; i < n * BSZ; i++)
+		bp->b_un.b_addr[i] = rw == B_READ ? 0xEE : pat(blk + i / BSZ, i % BSZ, seed);
+	return bp;
+}
+
+/* n blocks of p (or the disk at unit 0) from blk hold the pattern */
+static int
+same(p, blk, n, seed)
+uchar *p;
+long blk;
+int n, seed;
+{
+	int i;
+
+	if (!p)
+		p = T[0].disk + blk * BSZ;
+	for (i = 0; i < n * BSZ; i++)
+		if (p[i] != pat(blk + i / BSZ, i % BSZ, seed))
+			return 0;
+	return 1;
+}
+
+static int
+stock(bp)
+struct buf *bp;
+{
+	int i;
+
+	nstock++;
+	for (i = 0; i < (int)bp->b_bcount; i++)
+		bp->b_un.b_addr[i] = T[0].disk[bp->b_blkno * BSZ + i];
+	iodone(bp);
+	return 0;
+}
+
+/* Queue n requests of k blocks from blk, wait, check reads against seed. */
+static void
+burst(rw, blk, n, k, seed)
+int rw, n, k, seed;
+long blk;
+{
+	struct buf *bs[32];
+	int i;
+
+	for (i = 0; i < n; i++) {
+		bs[i] = mkbuf(rw, blk + i * k, k, seed);
+		(*sd_strathook)(bs[i], stock);
+	}
+	waitbufs(bs, n);
+	for (i = 0; i < n; i++) {
+		check(!(bs[i]->b_flags & B_ERROR), "no error");
+		if (rw == B_READ)
+			check(same(bs[i]->b_un.b_addr, blk + i * k, k, seed), "read data");
+	}
+}
+
+static void
+cwarm()
+{
+	ncr_pdmamode = 4;
+	warmup();
+	sdc_attach();
+}
+
+/* adjacent writes go out as one command; a sequential read fetches ahead */
+static void
+c_merge()
+{
+	long n;
+
+	cwarm();
+	burst(B_WRITE, 10L, 4, 8, 1);
+	check(sd_ncmd == 2 && sd_nmerge == 2, "first alone, then three merged");
+	check(same((uchar *)0, 10L, 32, 1), "disk holds the writes");
+	n = sd_ncmd;
+	burst(B_READ, 10L, 1, 2, 1);
+	burst(B_READ, 12L, 1, 2, 1);
+	check(sd_nra == 1, "second sequential read fetches ahead");
+	burst(B_READ, 14L, 6, 2, 1);
+	check(sd_ncmd - n == 2, "two commands for eight reads");
+	check(sd_nhit == 6, "six reads from the cache");
+	check(nstock == 0, "stock path unused");
+}
+
+static int
+stockraw(dev, uio, cr)
+dev_t dev;
+struct uio *uio;
+struct cred *cr;
+{
+	nstock++;
+	return 0;
+}
+
+/* writes over cached blocks, ours or the stock path's, are seen */
+static void
+c_cohere()
+{
+	struct uio u;
+	long h;
+
+	cwarm();
+	burst(B_WRITE, 0L, 1, 64, 2);
+	burst(B_READ, 0L, 1, 2, 2);
+	check(sd_nra == 1, "cache filled");
+	burst(B_WRITE, 20L, 1, 2, 3);
+	h = sd_nhit;
+	burst(B_READ, 20L, 1, 2, 3);
+	check(sd_nhit == h, "overwritten blocks read from disk");
+	burst(B_READ, 22L, 1, 2, 2);
+	burst(B_READ, 24L, 1, 2, 2);
+	check(sd_nhit == h + 1, "refilled");
+	sd_bigraw = 0;
+	memset(&u, 0, sizeof u);
+	(*sd_rawhook)(0, &u, B_WRITE, stockraw, (struct cred *)0);
+	sd_bigraw = 1;
+	burst(B_READ, 26L, 1, 2, 2);
+	check(sd_nhit == h + 1, "a stock-path write empties the cache");
+	sd_clust = 0;
+	burst(B_READ, 28L, 1, 2, 2);
+	check(nstock == 2, "switched off: stock strategy");
+}
+
+/* a read-ahead past the end fails; each request is retried alone */
+static void
+c_split()
+{
+	cwarm();
+	T[0].oob = 1;
+	devsize = NBLK + 64;
+	burst(B_WRITE, (long)NBLK - 8, 1, 8, 4);
+	burst(B_READ, (long)NBLK - 8, 1, 2, 4);
+	burst(B_READ, (long)NBLK - 6, 1, 2, 4);
+	check(sd_nsplit == 1, "split once");
+	burst(B_READ, (long)NBLK - 4, 1, 4, 4);
+}
+
+/* raw 100 KB in 64 KB commands through the bounce buffer */
+static void
+c_raw()
+{
+	static uchar ub[200 * BSZ];
+	struct uio u;
+	int i;
+
+	cwarm();
+	for (i = 0; i < 200 * BSZ; i++)
+		ub[i] = pat(30L + i / BSZ, i % BSZ, 5);
+	u.uio_offset = 30 * BSZ;
+	u.uio_resid = 200 * BSZ;
+	u.uio_base = (caddr_t)ub;
+	check((*sd_rawhook)(0, &u, B_WRITE, stockraw, (struct cred *)0) == 0 && u.uio_resid == 0,
+	    "raw write");
+	check(same((uchar *)0, 30L, 200, 5), "disk holds the raw write");
+	memset(ub, 0, sizeof ub);
+	u.uio_offset = 30 * BSZ;
+	u.uio_resid = 200 * BSZ;
+	u.uio_base = (caddr_t)ub;
+	check((*sd_rawhook)(0, &u, B_READ, stockraw, (struct cred *)0) == 0, "raw read");
+	check(same(ub, 30L, 200, 5), "raw read data");
+	check(sd_nraw == 4 && sd_nbounce == 4, "two commands each way");
+	check(nstock == 0, "stock path unused");
+}
+
+static void x_rw() { ncr_pdmamode = 4; warmup(); rw(0, 3, 8); xcount(2L, 2L, 8192L); check(ncr_xresume == 0, "no resume"); }
+static void x_polled() { ncr_pdmamode = 4; ncr_intrmode = 0; warmup(); rw(1, 0, 4); xcount(2L, 2L, 4096L); }
+
+static void
+x_big()
+{
+	ncr_pdmamode = 4;
+	warmup();
+	rw(2, 10, 200);			/* 102400 bytes: 0xFE00 + the rest */
+	xcount(4L, 2L, 204800L);
+}
+
+static void
+x_fault()
+{
+	ncr_pdmamode = 4;
+	warmup();
+	c.fault_chunk = 1;
+	c.fault_word = 1001;
+	rw(0, 0, 16);
+	c.fault_chunk = c.chunkno + 1;
+	c.fault_word = 3;
+	rd(0, 0, 16);
+	check(ncr_xresume == 2, "two bus errors resumed");
+	check(ncr_xfall == 0, "no fallback");
+	xcount(3L, 3L, 24576L);
+}
+
+/* data moves at IPL 1; a SCSI interrupt nested there is refused */
+static void
+x_nest()
+{
+	ncr_pdmamode = 4;
+	warmup();
+	c.nest_word = 100;
+	rw(1, 0, 16);
+	check(ncr_nnest == 1, "nested interrupt refused");
+	check(c.xfer_sr == 0x2100, "transfer at IPL 1");
+	check(sim_sr == 0x2200, "IPL 2 restored");
+	check(ncr_ipl2max >= 0 && ncr_ipl2max < 1000, "stretch measured");
+	ncr_xipl = 0;
+	rd(1, 0, 16);
+	check(c.xfer_sr == 0x2200, "transfer at IPL 2 when off");
+	ncr_xipl = 1;
+	xcount(3L, 3L, 24576L);
+}
+
+static void
+x_stall()
+{
+	ncr_pdmamode = 4;
+	warmup();
+	T[2].stall_at = 3000;
+	T[2].stall_us = 500;
+	rw(2, 0, 16);
+	T[2].stall_at = 4097;
+	T[2].stall_until = 0;
+	rd(2, 0, 16);
+	check(ncr_xresume >= 2, "slow target: bus errors resumed");
+	check(ncr_xfall == 0, "no fallback");
+	xcount(3L, 3L, 24576L);
+}
+
+static void
+x_disc()
+{
+	ncr_pdmamode = 4;
+	warmup();
+	T[1].disc_at = 2700;		/* mid-transfer: the port stalls */
+	T[1].lag = 12;			/* the write leaves bytes in the FIFO */
+	rw(1, 0, 16);
+	T[1].disc_at = 7001;		/* odd: a byte stays in the FIFO */
+	rd(1, 0, 16);
+	T[1].disc_at = 512;
+	T[1].nosdp = 1;
+	rd(1, 3, 4);
+	check(ncr_ndisc == 3, "three disconnects");
+	check(ncr_xfall == 0, "no fallback");
+}
+
+static void
+x_interleave()
+{
+	ncr_pdmamode = 4;
+	t_interleave();
+}
+
+static void
+x_odd()
+{
+	struct req *r;
+	int i;
+
+	ncr_pdmamode = 4;
+	warmup();
+	r = mkreq(0, 0x3C, 0, 301);	/* 300 by one command, one byte by PIO */
+	ncr96queue(&r->sc);
+	check(pump(&r, 1, 5000000), "finishes");
+	for (i = 0; i < 301 && r->buf[i] == (uchar)(i * 3 + 1); i++)
+		;
+	check(r->okay && i == 301, "301-byte read");
+	xcount(1L, 1L, 300L);
+}
+
+static void
+x_nodreq()
+{
+	ncr_pdmamode = 4;
+	warmup();
+	c.nodreq = 1;
+	rw(0, 1, 6);
+	check(ncr_xfall == 2, "no DREQ: both finished by FIFO count");
+}
+
+static void
+x_switch()
+{
+	warmup();
+	ncr_pdmamode = 4;
+	rw(0, 0, 4);
+	ncr_pdmamode = 2;
+	rw(0, 4, 4);
+	ncr_pdmamode = 4;
+	rw(0, 8, 4);
+	check(ncr_nchunk == 16 && ncr_xcmd == 4, "modes switch between commands");
+}
+
 static struct { char *name; void (*fn)(); char *what; } tests[] = {
 	{ "intr",	t_intr,		"interrupt mode, blind chunks, write + read" },
 	{ "polled",	t_polled,	"forced polled mode" },
@@ -1149,6 +1648,21 @@ static struct { char *name; void (*fn)(); char *what; } tests[] = {
 	{ "lost",	t_lost,		"lost interrupts, watchdog" },
 	{ "auto",	t_auto,		"cold polled, warm interrupts, panic polled" },
 	{ "sdtr",	t_sdtr,		"target SDTR rejected" },
+	{ "x_rw",	x_rw,		"mode 4: write + read, one command each" },
+	{ "x_polled",	x_polled,	"mode 4: polled" },
+	{ "x_big",	x_big,		"mode 4: 100 KB, two commands per phase" },
+	{ "x_fault",	x_fault,	"mode 4: bus error mid-transfer, read and write" },
+	{ "x_nest",	x_nest,		"mode 4: data at IPL 1, nested interrupt refused" },
+	{ "c_merge",	c_merge,	"shaping: merged writes, read-ahead, cache hits" },
+	{ "c_cohere",	c_cohere,	"shaping: writes over cached blocks" },
+	{ "c_split",	c_split,	"shaping: failed read-ahead retried per request" },
+	{ "c_raw",	c_raw,		"shaping: 64 KB raw commands" },
+	{ "x_stall",	x_stall,	"mode 4: target stall beyond the glue timeout" },
+	{ "x_disc",	x_disc,		"mode 4: disconnect mid-transfer, even and odd" },
+	{ "x_interleave", x_interleave,	"mode 4: three targets interleaved" },
+	{ "x_odd",	x_odd,		"mode 4: odd length, last byte by PIO" },
+	{ "x_nodreq",	x_nodreq,	"mode 4: no DREQ, FIFO-count fallback" },
+	{ "x_switch",	x_switch,	"modes 4 and 2 alternate" },
 };
 
 static int

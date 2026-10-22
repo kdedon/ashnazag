@@ -93,7 +93,8 @@ int	adb_op_sync();		/* (req) -> reply bytes, -1 none, -2 stalled */
  *   key:   (*fn)(unit, KC_CHAR, code, more)   code = raw ADB key code,
  *          bit 7 = up; 0x7F twice (down, up) for the power key.
  *   mouse: (*fn)(unit, MOUSE_CHANGE, r0, changed)  r0 = talk-R0 word
- *          (button|dy << 8 | dx), changed: 1 button, 2 motion.
+ *          (button|dy << 8 | button 2|dx), changed: 1 button, 2 motion,
+ *          4 button 2.
  * Installing a key consumer takes the keyboard away from the console.
  */
 #define KC_CHAR		2
@@ -101,7 +102,7 @@ int	adb_op_sync();		/* (req) -> reply bytes, -1 none, -2 stalled */
 
 void	(*adb_keyhook())();	/* (fn) -> previous; 0 = console */
 void	(*adb_mousehook())();	/* (fn) -> previous */
-extern unsigned char adb_mouse_button;
+extern unsigned char adb_mouse_button, adb_mouse_nbtn;
 extern short adb_mouse_x, adb_mouse_y;
 
 /* console input sink: one byte (ASCII or part of an escape sequence) */

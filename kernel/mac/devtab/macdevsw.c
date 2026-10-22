@@ -31,6 +31,7 @@ extern int gsioctl();
 extern int ctopen(), ctclose(), ctread(), ctwrite();
 extern int ddopen(), ddclose(), ddread(), ddwrite(), ddioctl(),
 	ddstrategy(), ddprint(), ddsize();
+extern int sdstrategy(), sdread(), sdwrite();
 extern int dumopen(), dumclose(), dumstrategy(), dumprint(), dumsize();
 extern int ramopen(), ramclose(), ramstrategy(), ramprint(), ramsize();
 
@@ -56,7 +57,7 @@ struct bdevsw bdevsw[32] = {
 	B_NONE, B_NONE, B_NONE, B_NONE,			/* 12-15 */
 	B_NONE,						/* 16 Amiga floppy */
 	B_NONE,						/* 17 A2090 disk */
-	{ ddopen, ddclose, ddstrategy, ddprint, ddsize, ND, ND, nullflag },	/* 18 */
+	{ ddopen, ddclose, sdstrategy, ddprint, ddsize, ND, ND, nullflag },	/* 18 */
 	{ dumopen, dumclose, dumstrategy, dumprint, dumsize, ND, ND, nullflag },
 	{ ramopen, ramclose, ramstrategy, ramprint, ramsize, ND, ND, nullflag },
 	B_NONE, B_NONE, B_NONE,				/* 21-23 */
@@ -110,7 +111,7 @@ struct cdevsw cdevsw[70] = {
 	C_STR(&icmpinfo, oldflag),			/* 36 icmp */
 	C_STR(&arpinfo, oldflag),			/* 37 arp */
 	C_NONE, C_NONE,					/* 38-39 */
-	{ ddopen, ddclose, ddread, ddwrite, ddioctl,
+	{ ddopen, ddclose, sdread, sdwrite, ddioctl,
 		ND, ND, ND, ND, ND, notty, nostr, nullflag },	/* 40 dd */
 	C_NONE,						/* 41 ben */
 	C_NONE,						/* 42 raw RAM disk */

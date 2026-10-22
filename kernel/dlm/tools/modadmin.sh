@@ -10,3 +10,4 @@ done
 rm -f "$O/libmod.a"
 m68k-elf-ar rcs "$O/libmod.a" "$O"/mod*.o "$O/getksym.o"
 nice -n 19 m68k-cbm-sysv4-gcc -O -I"$DLM/include" -o "$O/modadmin" "$DLM/modadmin.c" "$O/libmod.a"
+nice -n 19 m68k-cbm-sysv4-gcc -O -I"$DLM/include" -o "$O/kvar" "$DLM/kvar.c" "$O/libmod.a"

@@ -276,6 +276,8 @@ mkbrush(style, color, hatch)
 	return h;
 }
 
+static struct bfont *embold();
+
 static u16
 mkfont(lf)
 	struct logfont *lf;
@@ -286,6 +288,8 @@ mkfont(lf)
 	o->u.font.lf = *lf;
 	o->u.font.bf = font_pick(lf);
 	o->u.font.bold = lf->weight >= 600 && o->u.font.bf->f_weight < 600;
+	if (o->u.font.bold)
+		o->u.font.bf = embold(o->u.font.bf);
 	if (w16_debug > 1)
 		w16_log("startwin: font \"%s\" %d,%d weight %d pitch %x: %s %d\n", lf->face, lf->height, lf->width,
 		    lf->weight, lf->pitchfam, o->u.font.bf->f_face, o->u.font.bf->f_height);
@@ -305,6 +309,28 @@ font_face(name)
 		if (w16_stricmp(f->f_face, name) == 0)
 			return f->f_face;
 	return 0;
+}
+
+/* f as GDI makes a bold of it: each character a pixel wider */
+static struct bfont *
+embold(f)
+	struct bfont *f;
+{
+	static struct bfont *made[64];
+	static int nmade;
+	struct bfont *b;
+	int i;
+
+	for (i = 0; i < nmade; i++)
+		if (made[i]->f_w == f->f_w && made[i]->f_tt == f->f_tt && made[i]->f_off == f->f_off)
+			return made[i];
+	if (nmade == 64 || (b = (struct bfont *)malloc(sizeof *b)) == 0)
+		return f;
+	*b = *f;
+	b->f_embold = 1;
+	b->f_avgw++;
+	b->f_maxw++;
+	return made[nmade++] = b;
 }
 
 /*
@@ -2048,15 +2074,13 @@ place(dc, x, y, s, n, dx, sxp, syp, wp)
 	char *s;
 {
 	struct bfont *f = font_of(dc);
-	struct font *fo = fontobj(dc);
 	int w = 0, i;
 
 	if (dx)
 		for (i = 0; i < n; i++)
 			w += dx[i];
 	else
-		w = (justified(dc) ? advances(dc, s, n, (int *)0, 0) : text_width(f, s, n)) +
-		    fo->bold;	/* a fake bold overhangs once */
+		w = justified(dc) ? advances(dc, s, n, (int *)0, 0) : text_width(f, s, n);
 	if (dc->st.align & TA_UPDATECP) {
 		x = dc->st.curx;
 		y = dc->st.cury;
@@ -2211,7 +2235,7 @@ g_GetTextExtent(a)
 
 	f = font_of(dc);
 	/* with the extra and the break extra set, as GDI's */
-	w = s && n > 0 ? advances(dc, s, n, (int *)0, 0) + fontobj(dc)->bold : 0;
+	w = s && n > 0 ? advances(dc, s, n, (int *)0, 0) : 0;
 	h = f->f_height;
 	if (dc->st.mapmode != MM_TEXT) {
 		w = muldiv(w, dc->st.wex, dc->st.vex);
@@ -2256,7 +2280,7 @@ g_GetTextMetrics(a)
 	PW(p + 6, lead);		/* internal leading */
 	PW(p + 8, f->f_extlead);	/* external leading */
 	PW(p + 10, f->f_avgw);
-	PW(p + 12, f->f_maxw + fo->bold);
+	PW(p + 12, f->f_maxw);
 	PW(p + 14, fo->bold || f->f_weight >= 600 ? 700 : 400);
 	PB(p + 16, fo->lf.italic);
 	PB(p + 17, fo->lf.underline);

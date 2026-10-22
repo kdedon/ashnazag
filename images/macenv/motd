@@ -10,7 +10,7 @@
                         A: ~/CPM, H: home, M: temp, O: /, P: DRI's programs
  Win16  startwin        Windows for Workgroups 3.11 (Program Manager)
         Windows 3.11:  startwin -e win311
- Lisa   startlisa       Lisa Office System from ~/Lisa (lisa.rom, profile.dc42)
+ Lisa   startlisa       Lisa Office System from ~/Lisa (lisa.rom, its files)
  V200   startvoyage200  Voyage 200 from ~/Voyage200/media; Cmd-Q quits
  NeXT   startnext       OPENSTEP 4.2 from ~/NeXT/openstep; Cmd-Q quits
  X      startx          twm; or  xsession  for a menu of sessions, or

@@ -74,7 +74,7 @@ if [ "$MACENV" = 1 ]; then cp "$DR/etc/inittab" "$W/src/build/inittab"
 else grep -v '^sa:' "$DR/etc/inittab" > "$W/src/build/inittab"; fi
 # the display test built here; Atari node name; the RTC through /dev/clock
 printf 'TZ=%s\nexport TZ\n' "$ZONE" > "$W/src/build/TIMEZONE"
-{ grep -v -e '^f /usr/bin/dstest' -e '^r /dev/clock$' -e '^f /etc/TIMEZONE' -e '^f /etc/conf/mod.d/' -e '^f /sbin/modadmin' \
+{ grep -v -e '^f /usr/bin/dstest' -e '^r /dev/clock$' -e '^f /etc/TIMEZONE' -e '^f /etc/conf/mod.d/' -e '^f /sbin/modadmin' -e '^f /sbin/kvar' \
 	-e '^c /dev/asc' -e '^f /usr/lib/snd' -e '^f /usr/lib/pingd' -e '^f /etc/inittab' -e '^f /etc/motd' -e '^f /etc/inet/network-config' "$DR/root.manifest"
   echo 'f /etc/motd 644 2 2 build/motd.atari'
   echo 'f /usr/sbin/bootline 744 0 3 atari/bootline'
@@ -86,6 +86,7 @@ printf 'TZ=%s\nexport TZ\n' "$ZONE" > "$W/src/build/TIMEZONE"
   echo 'd /home 755 0 3'
   echo 'c /dev/dpn0 600 0 3 58 0'
   echo 'f /sbin/modadmin 555 0 3 build/mods/modadmin'
+  echo 'f /sbin/kvar 555 0 3 build/mods/src/kvar'
   echo 'd /etc/conf 755 0 3'
   echo 'd /etc/conf/mod.d 755 0 3'
   for m in ataide scsi sd aen dpn dmasnd auxsnd; do echo "f /etc/conf/mod.d/$m 644 0 3 build/mods/mod.d/$m"; done

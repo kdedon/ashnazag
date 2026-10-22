@@ -30,6 +30,7 @@
 /* input events */
 #define	LIN_KEY		0x100		/* | the key byte: code, bit 7 down */
 #define	LIN_MOUSE	0x20000		/* | dx << 8 | dy, signed bytes */
+#define	LIN_POWER	0x40000		/* the soft power switch pressed */
 
 #define	LIRQ_TAKE	0
 #define	LIRQ_ON		1		/* retrace (each host tick) and the 20 ms timer start */

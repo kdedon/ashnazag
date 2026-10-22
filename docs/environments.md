@@ -107,13 +107,17 @@ never written. Cmd-Q quits.
 
 ## Lisa
 
-`startlisa` boots your Lisa ROM and the Office System on your ProFile volume natively; the
-Lisa's chips are not modelled. The environment's folder holds `lisa.rom` (`-r` names
-another), `profile.dc42` (DC42 or raw 532-byte blocks, `-i`) and `parameter-memory` (`-p`); these
-options follow `--`. Environment `office` is `~/Lisa`, others `~/Lisa/NAME`.
-The ProFile is read only: blocks the Lisa writes go to `profile.writes` beside it and are
-read back at the next start. The screen is centred, scaled down on hosts smaller than the
-Lisa's 720x364; without an 8-bit display it stops with a message. Design: `kernel/guest/mod/lisaguest/DESIGN.md`.
+`startlisa` boots your Lisa ROM and the Office System natively from the environment's folder; the
+Lisa's chips are not modelled. Environment `office` is `~/Lisa`, others `~/Lisa/NAME`;
+`tools/makelisa.sh NAME IMAGE` installs the files of your ProFile image (DC42 or raw 532-byte
+blocks) there once, one host file per Lisa file, with a hidden sidecar `.NAME` holding its
+catalog entry and header (the document's title). No disk image is opened at run time.
+The folder also holds `lisa.rom` (`-r` names another) and `parameter-memory` (`-p`); these
+options follow `--`. The screen is centred, scaled down on hosts smaller than the
+Lisa's 720x364; without an 8-bit display it stops with a message. The host's power key is the
+Lisa's power switch: the Office System shuts down, freeing the files it deleted, and the environment
+ends. The Wastebasket holds one document; throwing away another deletes it. Cmd-Q, closing the session or SIGTERM press it too; if the OS has not shut down within
+2 minutes, startlisa stops and says the volume was not closed. Design: `kernel/guest/mod/lisaguest/DESIGN.md`.
 
 Known issues: a "micro diskette" dialog stays over the desktop.
 

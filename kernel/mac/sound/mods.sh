@@ -32,4 +32,4 @@ for m in asc:snd:ascmod auxsnd:auxsnd:sndmod; do
 	DLM_TOOLS=$O/tools sh "$DLM/tools/mkmod" -e "$O/exports" -o "$O" "$d"
 done
 sh "$DLM/tools/modadmin.sh" "$O/src"
-cp "$O/src/modadmin" "$O/modadmin"
+cp "$O/src/modadmin" "$O/src/kvar" "$O/"

@@ -68,7 +68,10 @@ from the volume.
   the environment with its address.
 - Whole host pages: the host maps 4 KB, the Lisa MMU 512-byte pages. The loader's
   allocation rounding, the OS memory manager's segment sizes and the drivers' code space
-  sizes are patched to 4 KB, so every segment starts and ends on a host page; a RAM page that still cannot be mapped
+  sizes are patched to 4 KB, so every segment starts and ends on a host page. The memory
+  manager's region list stays exact: a new segment keeps its has-memory check, a resize
+  whose rounded size is unchanged frees nothing, a moved segment's free region is what is
+  left of the hole. A RAM page that still cannot be mapped
   stops the environment. A write to a read-only segment is a bus error, as on the Lisa.
 - Contexts: context 0 in supervisor mode, SEG1/SEG2's context in user mode. guestcore
   calls the module on every virtual S change; the module remaps only segments whose
@@ -96,11 +99,13 @@ from the volume.
 | serial number | loader's reader | constant |
 | retrace, timer, interrupt status | LLD level 1 handler and its enable; the poll that runs them with interrupts masked | module tick; sources by host call |
 | video latch | LLD setter | display page |
-| keyboard VIA | COPS send; level 2 handler (the one ending in `rte`) and byte decoder | input queue: key bytes, mouse deltas |
+| keyboard VIA | COPS send; level 2 handler (the one ending in `rte`) and byte decoder | input queue: key bytes, mouse deltas, the power switch |
+| power off | LLD power-off, now and at a time | host call that ends the environment |
 | clock | LLD clock read | host local time |
 | contrast, speaker volume | LLD setters | skipped; the volume reads 4 |
 | speaker tone | LLD tone start and stop | silent; beeps keep their length |
 | SCC | OS channel setup | returns at once |
+| ProFile port interrupt enable | `SYSTEM.CD_PROFILE` shutdown, after the OS closed the volume | host call that ends the environment |
 | VIAs and disk controller ID at start | loader and LLD start-up | branched over; the 2/5's defaults kept |
 | drive type | OS probe | host call: a Lisa 2/5 |
 | expansion slots | OS slot probe | no card |
@@ -113,12 +118,37 @@ through supervisor mode in steady state.
 
 ## 5. Storage
 
-The ProFile image is opened read only. Writes go to `profile.writes`, a log of whole
-blocks; each block written again is rewritten in place. At start the log is read back
-over the image's tags, so the Lisa sees its own writes across boots.
+The environment's folder holds the Lisa's files, one host file each (its bytes up to the
+logical end), and per file a hidden sidecar `.NAME`: s-file number, 64-byte catalog
+entry, header page (name, extents, the document's label). `.boot` holds the boot block
+and the loader's blocks; `.volume` the volume's name, size and MDDF.
 
-Later, host folders reach the OS the way the Mac environment's files do: the file
-system's entry points swapped for host calls, one host file per Lisa file.
+The OS's storage layer is patched by code signature to host calls:
+
+| OS routine | answered from |
+|---|---|
+| s-list entry | sidecar's header page (a virtual page number) and extents |
+| bytes of a page (header, data) | sidecar header; host file through the extents |
+| s-file data | host file through the extents |
+| catalog: search, entry pointer, next, path lookup, insert, delete, listing | sidecars' entries in key order |
+| MDDF read/write | `.volume` |
+| free bitmap | the union of all files' extents |
+
+The loader reads the MDDF through the ROM's block read: it gets `.volume`'s copy, the tag's
+checksum byte set to match.
+
+Ended from outside (SIGTERM, SIGINT, SIGHUP; the display's Cmd-Q or a closed session), the
+launcher presses the power switch: the OS frees the files it deleted, writes the MDDF and shuts
+the ProFile driver down, which ends the process. Without that in 120 s it exits and says the volume was not closed.
+
+Catalog callers get entries in the OS's own cache buffers: the entry at the data's start
+and its place in the node's slot table, as the module's code reads a node. A buffer
+given back dirty writes its entry to the sidecar and cuts the host file to the logical
+end. New s-files make host files when their header is written; a renamed header renames
+the host file; a deleted s-list entry removes file and sidecar. The ProFile driver is
+not reached for the boot volume. Only the boot volume (the first one mounted) is the
+folder; there are no directories. Calls for other devices run the OS's own routine: its
+first instructions, copied to launcher data when patched, then a jump back past the patch.
 
 ## 6. Open
 

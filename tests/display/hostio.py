@@ -385,12 +385,15 @@ def serve(q, cmd, a):
             return 'size'
         x0 = y0 = 1 << 30
         x1 = y1 = -1
+        # optional: the first row, then a rectangle to ignore (the pointer)
+        ix0, iy0, ix1, iy1 = map(int, a[3:7]) if len(a) > 6 else (0, 0, -1, -1)
         for y in range(int(a[2]) if len(a) > 2 else 0, h1):
             o = y * w1 * 3
             if p1[o:o + w1 * 3] == p2[o:o + w1 * 3]:
                 continue
             for x in range(w1):
-                if p1[o + 3 * x:o + 3 * x + 3] != p2[o + 3 * x:o + 3 * x + 3]:
+                if p1[o + 3 * x:o + 3 * x + 3] != p2[o + 3 * x:o + 3 * x + 3] and \
+                        not (ix0 <= x <= ix1 and iy0 <= y <= iy1):
                     x0, x1 = min(x0, x), max(x1, x)
                     y0, y1 = min(y0, y), max(y1, y)
         return 'none' if x1 < 0 else '%d %d %d %d' % (x0, y0, x1, y1)

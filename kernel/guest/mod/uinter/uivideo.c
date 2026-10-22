@@ -594,7 +594,9 @@ ui_scrgeom(bp, rbp, wp, hp, dp)
 	caddr_t *bp;
 	int *rbp, *wp, *hp, *dp;
 {
-	if (!uv.v_on || uv.v_proc != u.u_procp)
+	/* joined tasks have the session's map at the same address */
+	if (!uv.v_on || (uv.v_proc != u.u_procp &&
+	    (uv.v_proc != ui.l_proc || !ui_task(GUESTP(u.u_procp)))))
 		return 1;
 	*bp = (caddr_t)uv.v_base;
 	*rbp = uv.v_rowbytes;

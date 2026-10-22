@@ -130,13 +130,30 @@ unsigned char *buf;
 			return 2;
 		}
 		if (d->kind == SIM_MOUSE && hasdata(d)) {
-			buf[0] = (d->mbtn ? 0 : 0x80) | clamp7(d->mdy);
-			buf[1] = 0x80 | clamp7(d->mdx);
-			d->mdx = d->mdy = 0;
 			d->mlast = d->mbtn;
+			if (d->handler == 4) {
+				/* extended: 10-bit motion, high bits in byte 2 */
+				buf[0] = (d->mbtn & 1 ? 0 : 0x80) | (d->mdy & 0x7F);
+				buf[1] = (d->mbtn & 2 ? 0 : 0x80) | (d->mdx & 0x7F);
+				buf[2] = 0x88 | (d->mdy >> 3 & 0x70) | (d->mdx >> 7 & 7);
+				d->mdx = d->mdy = 0;
+				return 3;
+			}
+			buf[0] = (d->mbtn & 1 ? 0 : 0x80) | clamp7(d->mdy);
+			buf[1] = (d->mbtn & 2 ? 0 : 0x80) | clamp7(d->mdx);
+			d->mdx = d->mdy = 0;
 			return 2;
 		}
 		return 0;
+	case 1:
+		if (d->kind != SIM_MOUSE || d->handler != 4)
+			return 0;
+		memcpy(buf, "TEST", 4);
+		buf[4] = 0x01;
+		buf[5] = 0x90;
+		buf[6] = 1;
+		buf[7] = d->nbtn;
+		return 8;
 	}
 	return 0;
 }

@@ -1,6 +1,7 @@
 #!/bin/sh
-# mkvol.sh -- t_lisa's ufs volume (SCSI disk 6): the user's Lisa ProFile
-# image (LISAMEDIA, default media/lisa/imported), which goes on the volume only.
+# mkvol.sh -- t_lisa's ufs volume (SCSI disk 6): /Lisa, the files of the
+# user's Lisa ProFile image (LISAMEDIA, default media/lisa/imported) as
+# makelisa.sh installs them, and their ROM.
 #
 #   sh tests/lisa/mkvol.sh outdir
 #
@@ -18,12 +19,10 @@ if [ ! -f "$LISAMEDIA/profile.dc42" ]; then
 	exit 0
 fi
 mkdir -p "$OUT/src"
-cp "$LISAMEDIA/profile.dc42" "$OUT/src/"
-[ ! -f "$LISAMEDIA/H.rom" ] || cp "$LISAMEDIA/H.rom" "$OUT/src/lisa.rom"
-{
-	echo "f /profile.dc42 444 0 3 profile.dc42"
-	[ ! -f "$OUT/src/lisa.rom" ] || echo "f /lisa.rom 444 0 3 lisa.rom"
-} > "$OUT/manifest"
+OUT=$(cd "$OUT" && pwd)
+HOME=$OUT/src sh "$AUX/tools/makelisa.sh" office "$LISAMEDIA/profile.dc42"
+[ ! -f "$LISAMEDIA/H.rom" ] || cp "$LISAMEDIA/H.rom" "$OUT/src/Lisa/lisa.rom"
+printf 't\t/Lisa\t0\t3\t%s\n' "$OUT/src/Lisa" > "$OUT/manifest"
 python3 "$AUX/kernel/mac/diskroot/mkufs.py" -s 40 -t 723000000 -r "$OUT/src" -m /lisa \
 	"$OUT/manifest" "$OUT/lisa.img"
 rm -rf "$OUT/src"

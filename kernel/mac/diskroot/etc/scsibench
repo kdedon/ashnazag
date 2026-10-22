@@ -1,0 +1,52 @@
+#!/bin/sh
+# scsibench [slice]: time raw and buffered reads of the root disk in SCSI
+# transfer modes 2 and 4, with the driver's request shaping (64 KB raw
+# commands, merging and read-ahead, data moved at IPL 1) off and on, and
+# check every setting reads the same data.  Reads only.
+s=${1:-c0d0s1}
+case "`id`" in
+uid=0\(*) ;;
+*) echo "scsibench: run as root" >&2; exit 1 ;;
+esac
+vars="ncr_pdmamode sd_bigraw sd_clust ncr_xipl"
+old=`kvar $vars | awk '{ printf "%s=%s ", $1, $2 }'`
+trap 'kvar $old >/dev/null; exit 1' 1 2 15
+first=
+bad=0
+skip=0
+for set in "2 0" "4 0" "4 1"
+do
+	set -- $set
+	kvar ncr_pdmamode=$1 sd_bigraw=$2 sd_clust=$2 ncr_xipl=$2 ncr_ipl2max=0 >/dev/null
+	echo "== mode $1, shaping $2"
+	sum=`dd if=/dev/rdsk/$s bs=64k count=160 2>/dev/null | sum`
+	echo "sum $sum"
+	if [ -z "$first" ]
+	then
+		first=$sum
+	elif [ "$sum" != "$first" ]
+	then
+		bad=1
+	fi
+	echo "raw 10 MB:"
+	time dd if=/dev/rdsk/$s of=/dev/null bs=64k count=160 2>/dev/null
+	c=`kvar ncr_ncmd | awk '{ print $2 }'`
+	# a fresh 10 MB each time, so the page cache holds none of it
+	skip=`expr $skip + 1280`
+	echo "buffered 10 MB:"
+	time dd if=/dev/dsk/$s of=/dev/null bs=8k count=1280 skip=$skip 2>/dev/null
+	echo "commands per MB, buffered:" `kvar ncr_ncmd | awk '{ print int(($2 - '$c') / 10) }'`
+	kvar ncr_xcmd ncr_xbytes ncr_xresume ncr_xfall ncr_nerr ncr_ncmd ncr_ipl2max \
+		sd_nraw sd_ndirect sd_nbounce sd_nmerge sd_nra sd_nhit sd_nsplit
+done
+sum=`dd if=/dev/dsk/$s bs=8k count=1280 2>/dev/null | sum`
+echo "buffered sum $sum"
+[ "$sum" = "$first" ] || bad=1
+kvar $old >/dev/null
+if [ $bad = 0 ]
+then
+	echo "data: same in every setting"
+else
+	echo "data: DIFFERENT - leave mode 2 with shaping off (kvar ncr_pdmamode=2 sd_bigraw=0 sd_clust=0) and report this"
+	exit 1
+fi

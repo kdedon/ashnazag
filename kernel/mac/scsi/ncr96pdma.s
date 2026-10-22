@@ -142,3 +142,111 @@ Lbl_fault:
 Lbl_notours:
 	movel	&Lbl_foreign,%sp@-
 	jsr	panic
+
+| int ncr_xfer(char **pp, uint n, int writing)
+|
+| Moves n bytes (even) for a whole-phase transfer command: wait for
+| DREQ, then back-to-back words to the end.  Returns 0 when all moved,
+| -1 when DREQ did not come (chip interrupt or timeout), -2 on a bus
+| error.  *pp is left at the next word: exact on reads, since the
+| faulting read has not stored; on writes the 040 reports the fault
+| after later stores, so the caller takes the position from the chip.
+
+	.globl	ncr_xfer
+ncr_xfer:
+	linkw	%fp,&0
+	movel	u+0x374,%sp@-		| fp-4: outer u_nofault
+	moveml	%d2/%a2,%sp@-		| fp-12: d2 a2
+	moveal	%fp@(8),%a1
+	moveal	%a1@,%a1		| buffer
+	moveal	&0x50f10100,%a0		| DMA port
+	moveal	&0x50f03a00,%a2		| DREQ
+	movel	%sp,ncr_padsp
+	movel	&Lx_fault,u+0x374
+	movel	&DREQWAIT,%d2
+Lx_w:
+	movel	%a2@,%d0
+	btst	&0,%d0
+	bnew	Lx_go
+	btst	&7,0x50f10040		| chip interrupt: phase change
+	bnew	Lx_nodreq
+	subql	&1,%d2
+	bnew	Lx_w
+	braw	Lx_nodreq
+Lx_go:
+	movel	%fp@(12),%d1
+	lsrl	&1,%d1
+	moveq	&15,%d0
+	andl	%d1,%d0			| odd words first
+	lsrl	&4,%d1			| then blocks of 16
+	tstl	%fp@(16)
+	bnew	Lx_out1e
+	braw	Lx_in1e
+Lx_in1:
+	movew	%a0@,%a1@+
+Lx_in1e:
+	dbra	%d0,Lx_in1
+	braw	Lx_in16e
+Lx_in16:
+	movew	%a0@,%a1@+
+	movew	%a0@,%a1@+
+	movew	%a0@,%a1@+
+	movew	%a0@,%a1@+
+	movew	%a0@,%a1@+
+	movew	%a0@,%a1@+
+	movew	%a0@,%a1@+
+	movew	%a0@,%a1@+
+	movew	%a0@,%a1@+
+	movew	%a0@,%a1@+
+	movew	%a0@,%a1@+
+	movew	%a0@,%a1@+
+	movew	%a0@,%a1@+
+	movew	%a0@,%a1@+
+	movew	%a0@,%a1@+
+	movew	%a0@,%a1@+
+Lx_in16e:
+	dbra	%d1,Lx_in16
+	braw	Lx_ok
+Lx_out1:
+	movew	%a1@+,%a0@
+Lx_out1e:
+	dbra	%d0,Lx_out1
+	braw	Lx_out16e
+Lx_out16:
+	movew	%a1@+,%a0@
+	movew	%a1@+,%a0@
+	movew	%a1@+,%a0@
+	movew	%a1@+,%a0@
+	movew	%a1@+,%a0@
+	movew	%a1@+,%a0@
+	movew	%a1@+,%a0@
+	movew	%a1@+,%a0@
+	movew	%a1@+,%a0@
+	movew	%a1@+,%a0@
+	movew	%a1@+,%a0@
+	movew	%a1@+,%a0@
+	movew	%a1@+,%a0@
+	movew	%a1@+,%a0@
+	movew	%a1@+,%a0@
+	movew	%a1@+,%a0@
+Lx_out16e:
+	dbra	%d1,Lx_out16
+Lx_ok:
+	moveq	&0,%d0
+	braw	Lx_ret
+Lx_nodreq:
+	moveq	&-1,%d0
+Lx_ret:
+	moveal	%fp@(8),%a0
+	movel	%a1,%a0@
+	movel	%fp@(-4),u+0x374
+	moveml	%fp@(-12),%d2/%a2
+	unlk	%fp
+	rts
+
+| Bus error: registers and SP as at the faulting instruction.
+Lx_fault:
+	cmpl	ncr_padsp,%sp
+	bnew	Lbl_notours
+	moveq	&-2,%d0
+	braw	Lx_ret

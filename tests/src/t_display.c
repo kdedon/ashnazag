@@ -592,6 +592,14 @@ t_input(int fda, long ida, unsigned char *fba)
 	k = k && nextev(ms, &v, 3000) && v.ie_type == IE_BTN && v.ie_code == 1 && v.ie_value == 0;
 	drain(ms, 300);
 	t_check("mouse_button", k, "type %d code %d value %ld", v.ie_type, v.ie_code, v.ie_value);
+	/* the second button, posted as 3 */
+	host("button 2");
+	k = nextev(ms, &v, 3000) && v.ie_type == IE_BTN && v.ie_code == 3 && v.ie_value == 1;
+	drain(ms, 300);
+	host("button 0");
+	k = k && nextev(ms, &v, 3000) && v.ie_type == IE_BTN && v.ie_code == 3 && v.ie_value == 0;
+	drain(ms, 300);
+	t_check("mouse_button2", k, "type %d code %d value %ld", v.ie_type, v.ie_code, v.ie_value);
 
 	/* a second session in the background gets nothing */
 	fdb = fbopen();

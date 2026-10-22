@@ -180,7 +180,14 @@ suite()
 	sim_dev[1].mbtn = 0;
 	run();
 	check(adb_mouse_button == 0 && mch == 1, "button release");
+	sim_dev[1].mbtn = 2;
+	run();
+	check(adb_mouse_button == 2 && mch == 4 && mr0 == 0x8000, "second button: r0 bit 7, changed 4");
+	sim_dev[1].mbtn = 0;
+	run();
+	check(adb_mouse_button == 0 && mch == 4 && mr0 == 0x8080, "second button release");
 	adb_mousehook(0);
+	check(adb_dev[3].d_handler == 1 && adb_mouse_nbtn == 0, "standard mouse keeps its handler");
 
 	/* idle bus: no SRQ scans, at most 3 interrupts per poll */
 	a = adb_nintr; b = adb_nsrq; p = sim_npoll;
@@ -226,6 +233,27 @@ suite()
 	a = adb_mouse_x;
 	run();
 	check(adb_mouse_x == a + 7, "moved mouse reports through SRQ");
+
+	/* a mouse that takes the extended handler */
+	sim_reset();
+	sim_add(SIM_KBD, 2, 2, 3);
+	i = sim_add(SIM_MOUSE, 3, 1, 4);
+	sim_dev[i].nbtn = 3;
+	adb_init();
+	run();
+	check(sim_dev[i].handler == 4 && adb_dev[3].d_handler == 4 && adb_mouse_nbtn == 3,
+	    "extended mouse: handler 4, 3 buttons from R1");
+	a = adb_mouse_x; b = adb_mouse_y;
+	mcalls = 0;
+	adb_mousehook(mhook);
+	sim_dev[i].mdx = 200; sim_dev[i].mdy = -150; sim_dev[i].mbtn = 2;
+	run();
+	check(adb_mouse_x == a + 200 && adb_mouse_y == b - 150 && adb_mouse_button == 2,
+	    "extended mouse: 10-bit motion, second button");
+	check(mcalls == 4 && mch == 2 && (mr0 & 0x8080) == 0x8000, "extended mouse: long move in 7-bit steps");
+	sim_dev[i].mbtn = 0;
+	run();
+	adb_mousehook(0);
 
 	/* no devices; keyboard plugged later */
 	sim_reset();

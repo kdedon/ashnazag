@@ -10,5 +10,5 @@ shift
 mkdir -p "$W"
 nice -n 19 cc -std=gnu89 -w -g -DNCR_HOST -I"$HERE" -I"$HERE/.." \
 	-I"$AUX/toolchain/amix-root/usr/sys/amiga/alien" \
-	-o "$W/ncrsim" "$HERE/ncrsim.c" "$HERE/../ncr96.c"
+	-o "$W/ncrsim" "$HERE/ncrsim.c" "$HERE/../ncr96.c" "$HERE/../sdclust.c"
 nice -n 19 "$W/ncrsim" "$@"

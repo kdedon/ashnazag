@@ -315,6 +315,24 @@ link_w(w, after)
 	w->next = 0;
 }
 
+void expose();
+
+/* an icon's title just under it, where windows above the icon cover it too */
+static void
+titleunder(w)
+	struct wnd *w;
+{
+	struct wnd *t = w->ititle ? wnd_get(w->ititle) : 0;
+
+	if (!t || t == w || t->owner != w || t->parent != w->parent || w->next == t)
+		return;
+	unlink_w(t);
+	link_w(t, w);
+	vis_epoch++;
+	if (wnd_visible(t))
+		expose(&t->wr);
+}
+
 /* the region of w on the screen nothing covers (client area or whole) */
 void
 wnd_visrgn(w, g, client)
@@ -1242,6 +1260,7 @@ wnd_setpos(w, after, x, y, cx, cy, flags)
 	if (!(flags & SWP_NOZORDER)) {
 		unlink_w(w);
 		link_w(w, after);
+		titleunder(w);
 	}
 	if (flags & SWP_SHOWWINDOW)
 		w->style |= WS_VISIBLE;
@@ -1486,6 +1505,7 @@ wnd_activate(w, how)
 				t->ncpaint = 1;
 				break;
 			}
+		titleunder(w);
 	}
 	wnd_send(w, WM_NCACTIVATE, 1, 0);
 	wnd_send(w, WM_ACTIVATE, how, FP((w->style & WS_MINIMIZE) != 0, old ? old->h : 0));

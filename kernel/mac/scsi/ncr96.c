@@ -14,6 +14,9 @@
  * panic, or when ncr_intrmode is 0.
  *
  * Data phases (ncr_pdmamode):
+ *   4  one transfer command per data phase (up to MAXXFER bytes): wait
+ *      for DREQ once, then back-to-back 16-bit accesses to the end; a
+ *      bus error resumes the transfer where the chip stopped.
  *   2  256-byte chunks, each moved as 128 back-to-back
  *      16-bit accesses of the pseudo-DMA port after DREQ, in both
  *      directions, with a bus-error landing pad (ncr96pdma.s); the
@@ -39,8 +42,10 @@
 #define	TICKS		60		/* clock interrupts per second */
 #define	MAXDMA		0x8000		/* bytes per transfer command */
 #define	BLIND		256		/* mode 2 chunk */
+#define	MAXXFER		0xFE00		/* mode 4: bytes per transfer command */
+#define	XDRAIN		1000000		/* mode 4: polls for a write's FIFO to drain */
 #define	SPIN		4000000		/* FIFO polls before a data stall */
-#define	WAITUS		10		/* poll interval, microseconds */
+#define	WAITUS		1		/* poll interval, microseconds */
 #define	NTGT		8
 
 /* engine states */
@@ -91,7 +96,7 @@ extern long	lbolt;
 extern char	*panicstr;
 extern int	timeout();
 extern void	delay(), delayus();
-extern int	ncr_blind();
+extern int	ncr_blind(), ncr_xfer();
 
 /* tunables */
 int	ncr_intrmode = 2;		/* 0 polled, 1 interrupts, 2 automatic */
@@ -103,12 +108,17 @@ long	ncr_timo = 30 * TICKS;		/* per command, interrupt mode */
 long	ncr_polltimo = 30000000 / WAITUS;	/* per interrupt, polled mode */
 long	ncr_spin = 100;			/* microseconds to wait for the next phase */
 int	ncr_debug = 0;
+int	ncr_xipl = 1;			/* mode 4: move data at IPL 1 */
 struct ncr_dmaops *ncr_dmaops = 0;
 
 /* counters */
 long	ncr_ncmd = 0, ncr_nintr = 0, ncr_nerr = 0;
 long	ncr_nlost = 0, ncr_nfault = 0, ncr_nnosel = 0;
 long	ncr_ndisc = 0, ncr_nresel = 0, ncr_nchunk = 0, ncr_nnodreq = 0;
+/* mode 4: transfer commands, bytes, data phases, bus-error resumes, fallbacks */
+long	ncr_xcmd = 0, ncr_xbytes = 0, ncr_xphase = 0, ncr_xresume = 0, ncr_xfall = 0;
+/* longest interrupt stretch at IPL 2 (us); interrupts deferred while moving data */
+long	ncr_ipl2max = 0, ncr_nnest = 0;
 
 #ifdef BOOTDIAG
 extern unsigned long diag_sdma;
@@ -125,12 +135,17 @@ static uchar	lastmsg;		/* last message in */
 static uchar	msgout;			/* message to send when asked, 0 none */
 static int	msgcnt, msgwant;	/* extended message in progress */
 static uint	xlen;			/* bytes in the running DMA command */
+static bool	xbusy;			/* moving data at IPL 1 */
+static int	t1hi, t1f;		/* stretch timer: segment start */
+static long	t1acc;			/* stretch so far, 256-count units */
 static bool	xin, pdisc;		/* direction; PIO byte discarded */
+static int	xmode;			/* data mode of the running DMA command */
+static bool	xmore;			/* it ended at count zero: same phase may go on */
 
 static void	ncr_start(), ncr_finish(), ncr_abort(), ncr_service();
 static void	ncr_watch(), ncr_setup(), ncr_event(), ncr_phase(), ncr_data();
 static void	ncr_msgin(), ncr_busfree(), ncr_resel(), ncr_resetall();
-static void	ncr_dmaend(), ncr_pioend(), ncr_poll();
+static void	ncr_dmaend(), ncr_pioend(), ncr_poll(), ncr_xdata(), ncr_intr1();
 static int	ncr_wait();
 static uint	ncr_pdma_in(), ncr_pdma_out(), ncr_tc();
 
@@ -298,8 +313,82 @@ ncr_poll()
 /*
  * VIA2 CB2 interrupt, level 2.  The dispatcher has acknowledged the VIA.
  */
+/*
+ * Stretch timer on VIA1 timer 1 (the clock): high byte only, since
+ * reading the low byte clears the clock interrupt.  A wrap shows as the
+ * count going up or as the timer's IFR bit appearing.
+ */
+static void
+ncr_t1mark()
+{
+	t1hi = T1_HI();
+	t1f = T1_IFR();
+}
+
+static void
+ncr_t1add()
+{
+	long d;
+
+	d = t1hi - T1_HI();
+	if (d < 0 || (!t1f && T1_IFR()))
+		d += T1_PERIOD;
+	t1acc += d;
+}
+
+/*
+ * Mode 4 moves data at IPL 1 when entered at IPL 2, so sound, video and
+ * network interrupts are taken during long transfers.  A nested SCSI
+ * interrupt is refused; the transfer loop sees the chip's interrupt.
+ */
+static int
+ncr_lower()
+{
+	int s, n;
+
+	if (!ncr_xipl || polling || panicstr)
+		return -1;
+	SR_GET(s);
+	if ((s & 0x700) != 0x200)
+		return -1;
+	ncr_t1add();
+	xbusy = TRUE;
+	n = (s & ~0x700) | 0x100;
+	SR_SET(n);
+	return s;
+}
+
+static void
+ncr_raise(s)
+int s;
+{
+	if (s < 0)
+		return;
+	SR_SET(s);
+	xbusy = FALSE;
+	ncr_t1mark();
+}
+
 void
 ncr96intr()
+{
+	long us;
+
+	if (xbusy) {
+		ncr_nnest++;
+		return;
+	}
+	ncr_t1mark();
+	t1acc = 0;
+	ncr_intr1();
+	ncr_t1add();
+	us = t1acc * T1_US256;
+	if (us > ncr_ipl2max)
+		ncr_ipl2max = us;
+}
+
+static void
+ncr_intr1()
 {
 	ncr_nintr++;
 #ifdef BOOTDIAG
@@ -722,6 +811,8 @@ struct ev *e;
 		ncr_abort("unknown reselection");
 		return;
 	}
+	if (ph != P_DATAOUT && ph != P_DATAIN)
+		xmore = FALSE;
 	switch (ph) {
 	case P_DATAOUT:
 	case P_DATAIN:
@@ -833,7 +924,7 @@ int ph;
 
 	t = &tg[act];
 	in = ph == P_DATAIN;
-	if (in != (t->cp->reading != 0)) {
+	if (in != (t->cp->reading & 1)) {
 		ncr_abort(in ? "unexpected data in" : "unexpected data out");
 		return;
 	}
@@ -846,8 +937,10 @@ int ph;
 	}
 	n = t->dl > MAXDMA ? MAXDMA : t->dl;
 	mode = ncr_pdmamode;
-	if (mode == 3 && !ncr_dmaops)
+	if (mode == 3 && (!ncr_dmaops || (t->cp->reading & 2)))
 		mode = 2;
+	if (mode == 4)
+		n = t->dl > MAXXFER ? MAXXFER : t->dl;
 	if (mode != 3 && (n < 2 || ((long)t->dp & 1)
 	|| (mode == 2 && n < BLIND) || (mode == 1 && n < FIFO_SIZE)))
 		mode = 0;
@@ -857,10 +950,11 @@ int ph;
 	}
 	if (mode == 2)
 		n = BLIND;
-	else if (mode == 1)
+	else if (mode == 1 || mode == 4)
 		n &= ~1;
 	xlen = n;
 	xin = in;
+	xmode = mode;
 	if (!in)
 		NCR_WR(CMD, C_FLUSH);	/* no stale bytes ahead of the data */
 	if (mode == 3 && (*ncr_dmaops->start)(t->dp, n, in) != 0) {
@@ -873,6 +967,14 @@ int ph;
 	state = N_DATA;
 	if (mode == 3)
 		return;
+	if (mode == 4) {
+		if (!xmore)
+			ncr_xphase++;
+		xmore = FALSE;
+		ncr_xcmd++;
+		ncr_xdata(t->dp, n, in);
+		return;
+	}
 	done = 0;
 	if (mode == 2) {
 		ncr_nchunk++;
@@ -895,6 +997,60 @@ int ph;
 }
 
 /*
+ * Mode 4 transfer of n bytes at dp.  After a bus error the transfer goes
+ * on unless the chip has interrupted (phase change): reads at the
+ * faulting address, writes at what the chip counted once the FIFO has
+ * drained.  If DREQ never comes, the mode 1 loop finishes the command.
+ */
+static void
+ncr_xdata(dp, n, in)
+caddr_t dp;
+uint n;
+int in;
+{
+	caddr_t p, end;
+	uint done;
+	long us;
+	int r, s;
+
+	p = dp;
+	end = dp + n;
+	for (;;) {
+		s = ncr_lower();
+		r = ncr_xfer(&p, (uint)(end - p), !in);
+		ncr_raise(s);
+		if (r == 0 || (NCR_RD(STAT) & S_INT))
+			return;
+		if (r != -2)
+			break;
+		ncr_xresume++;
+		if (!in) {
+			for (us = 0; us < XDRAIN && (NCR_RD(FFLAG) & FF_COUNT)
+			&& !(NCR_RD(STAT) & S_INT); us++)
+				delayus(1);
+			if (NCR_RD(STAT) & S_INT)
+				return;
+			if (NCR_RD(FFLAG) & FF_COUNT)
+				break;
+			p = dp + (xlen - ncr_tc());
+		}
+		if (p < dp || p > end || ((long)(p - dp) & 1)) {
+			ncr_abort("bad transfer position");
+			return;
+		}
+		if (p == end)
+			return;
+	}
+	ncr_xfall++;
+	done = ncr_cpudone();
+	if (done < n)
+		done += in ? ncr_pdma_in(dp + done, n - done)
+			   : ncr_pdma_out(dp + done, n - done);
+	if (done < n && !(NCR_RD(STAT) & S_INT))
+		ncr_abort("data phase stall");
+}
+
+/*
  * The DMA transfer command ended (count reached or phase change).  The
  * position is what the chip counted, less bytes of a write still in the
  * FIFO; bytes of a read still in the FIFO are taken through it.
@@ -910,7 +1066,7 @@ struct ev *e;
 	t = &tg[act];
 	took = xlen - ((e->stat & S_TC) ? 0 : ncr_tc());
 	n = NCR_RD(FFLAG) & FF_COUNT;
-	if (ncr_pdmamode == 3 && ncr_dmaops)
+	if (xmode == 3)
 		took = (*ncr_dmaops->done)(took, xin);
 	else if (xin) {
 		if (n > took)
@@ -924,6 +1080,10 @@ struct ev *e;
 #ifdef BOOTDIAG
 	diag_sdma += took;
 #endif
+	if (xmode == 4) {
+		ncr_xbytes += took;
+		xmore = (e->stat & S_TC) != 0;
+	}
 	t->dp += took;
 	t->dl -= took;
 	state = N_PHASE;

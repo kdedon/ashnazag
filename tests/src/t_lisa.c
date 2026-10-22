@@ -1,11 +1,14 @@
 /*
- * t_lisa: Lisa OS from the user's ProFile image on SCSI disk 6, loaded by
- * startlisa: the volume is read, the screen shows text, nothing faulted, and
- * in steady state the guest takes no faults on hardware pages.
+ * t_lisa: Lisa OS from the files of the user's ProFile image on SCSI disk 6,
+ * loaded by startlisa: the loader reads its files from the folder, the screen
+ * shows text, nothing faulted, and in steady state the guest takes no faults
+ * on hardware pages.  "t_lisa office", run next, boots the folder the first
+ * run left and makes, saves, renames and deletes a LisaWrite document.
  * Skips without the image.
  */
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #include <stdio.h>
 #include <string.h>
 #include <fcntl.h>
@@ -25,7 +28,7 @@ extern int modload();
 #define	DEV	"/dev/dsk/c6d0s0"
 #define	MNT	"/lisa"
 #define	LOG	"/tmp/lisa.log"
-#define	ROOT	"/tmp/lisaenv"		/* the environment's folder */
+#define	ROOT	MNT "/Lisa"		/* the environment's folder; the disk's writes are dropped */
 #define	RUNS	240
 
 static int hfd = -1;
@@ -134,23 +137,26 @@ follow()
 {
 	static long off, last;
 	char buf[4096], *l, *e;
-	int fd, n;
+	int fd, n, prog;
 
 	if ((fd = open(LOG, O_RDONLY)) < 0)
 		return;
-	lseek(fd, off, 0);
-	n = read(fd, buf, sizeof buf - 1);
-	close(fd);
-	buf[n > 0 ? n : 0] = 0;
-	for (l = buf; (e = strchr(l, '\n')) != 0; l = e + 1) {
-		*e = 0;
-		if (strncmp(l, "lisa: pc ", 9) || t_now_ms() - last >= 20000) {
-			if (!strncmp(l, "lisa: pc ", 9))
-				last = t_now_ms();
-			t_info("log", "%s", l);
+	do {
+		lseek(fd, off, 0);
+		n = read(fd, buf, sizeof buf - 1);
+		buf[n > 0 ? n : 0] = 0;
+		for (l = buf; (e = strchr(l, '\n')) != 0; l = e + 1) {
+			*e = 0;
+			prog = !strncmp(l, "lisa: pc ", 9) || !strncmp(l, "lisa: screen ", 13);
+			if (!prog || t_now_ms() - last >= 20000) {
+				if (prog)
+					last = t_now_ms();
+				t_info("log", "%s", l);
+			}
 		}
-	}
-	off += l - buf;
+		off += l - buf;
+	} while (n == sizeof buf - 1 && l > buf);
+	close(fd);
 }
 
 /* waits up to secs for the log to show what; 1 seen */
@@ -230,18 +236,44 @@ step(d)
 	return d > 0 ? (d + 1) / 2 : -((1 - d) / 2);
 }
 
-/* the pointer to host x, y, half the way at a time whatever the scaling */
+/* host pixels per 16 move units on each axis, learned from the moves made */
+static int gx, gy;
+
+/* a move of d pixels at gain g; half of it until g is known */
+static int
+units(d, g)
+	int d, g;
+{
+	int u;
+
+	if (d >= -2 && d <= 2)
+		return 0;
+	if (!g)
+		return step(d);
+	u = d * 16 / g;
+	return u ? u : d > 0 ? 1 : -1;
+}
+
+/* the pointer to host x, y, whatever the scaling */
 static int
 moveto(x, y)
 	int x, y;
 {
 	char req[40];
-	int k, px, py;
+	int k, px, py, mx = 0, my = 0, ox = 0, oy = 0;
 
 	for (k = 0; k < 30 && pointer(&px, &py); k++) {
+		if (k && (mx >= 4 || mx <= -4) && (px - ox) * mx > 0)
+			gx = (px - ox) * 16 / mx >= 4 ? (px - ox) * 16 / mx : gx;
+		if (k && (my >= 4 || my <= -4) && (py - oy) * my > 0)
+			gy = (py - oy) * 16 / my >= 4 ? (py - oy) * 16 / my : gy;
 		if (abs(x - px) <= 2 && abs(y - py) <= 2)
 			return 1;
-		sprintf(req, "move %d %d 40 1", step(x - px), step(y - py));
+		mx = units(x - px, gx);
+		my = units(y - py, gy);
+		ox = px;
+		oy = py;
+		sprintf(req, "move %d %d 40 1", mx, my);
 		host(req);
 		nap(500);
 	}
@@ -268,11 +300,16 @@ changed(a, b)
 #define	LX(x)	((w - sw) / 2 + (x) * sw / 720)	/* a Lisa screen point on the host's */
 #define	LY(y)	(top + (y) * sh / 364)
 
+static int w, h, sw, sh, top;		/* the host screen, the Lisa's on it */
+static void office();
+static int offmode;			/* the office run: files made, renamed, deleted */
+static int offpid, offgone;		/* its startlisa; gone after the power switch */
+
 static void
 input()
 {
 	char *log = readlog(), *s;
-	int x, y, w = 0, h = 0, sw = 0, sh = 0, top;
+	int x, y;
 
 	if ((s = strstr(log, "lisa: display ")) != 0)
 		sscanf(s, "lisa: display %dx%d, the screen at %dx%d", &w, &h, &sw, &sh);
@@ -280,6 +317,10 @@ input()
 	if (w <= 0)
 		return;
 	top = (h - sh) / 2;
+	if (offmode) {
+		office();
+		return;
+	}
 	t_check("mouse", pointer(&x, &y), "the pointer did not move");
 	if (t_check("to_cancel", moveto(LX(596), LY(70)), "pointer not at the dialog's Cancel")) {
 		host("shot li0");
@@ -308,12 +349,263 @@ input()
 	shot("lisa_desk", 1);
 }
 
+/* how often host file name holds s; -1 no such file */
+static int
+holds(name, s)
+	char *name, *s;
+{
+	static char b[65536];
+	char p[300];
+	int fd, k, hit = 0, l = strlen(s), i;
+
+	sprintf(p, "%s/%s", ROOT, name);
+	if ((fd = open(p, O_RDONLY)) < 0)
+		return -1;
+	while ((k = read(fd, b, sizeof b)) > 0)
+		for (i = 0; i + l <= k; i++)
+			if (!memcmp(b + i, s, l))
+				hit++;
+	close(fd);
+	return hit;
+}
+
+#define	NF	400
+static char *fl[NF];			/* the folder's names before the tear-off */
+static int nfl;
+
+/* the folder's names into fl (keep) or, not in fl, into out; how many */
+static int
+names(keep, out, max)
+	int keep, max;
+	char **out;
+{
+	struct dirent *de;
+	DIR *d = opendir(ROOT);
+	int n = 0, i;
+
+	while (d && (de = readdir(d)) != 0 && n < (keep ? NF : max)) {
+		if (keep) {
+			fl[n++] = strdup(de->d_name);
+			continue;
+		}
+		for (i = 0; i < nfl && strcmp(fl[i], de->d_name); i++)
+			;
+		if (i == nfl)
+			out[n++] = strdup(de->d_name);
+	}
+	if (d)
+		closedir(d);
+	if (keep)
+		nfl = n;
+	return n;
+}
+
+/* a typed key per character: lower case and space */
+static void
+type(s)
+	char *s;
+{
+	char req[20];
+
+	for (; *s; s++) {
+		if (*s == ' ')
+			strcpy(req, "key spc");
+		else
+			sprintf(req, "key %c", *s);
+		host(req);
+	}
+}
+
+static void watch();
+
+/* the environment ended as a user ends it: it shuts the OS down and exits within secs; 1 it did */
+static int
+stop(pid, sig, secs, st)
+	int pid, sig, secs, *st;
+{
+	long t0 = t_now_ms();
+
+	if (sig)
+		kill(pid, sig);
+	while (t_now_ms() - t0 < secs * 1000L) {
+		follow();
+		if (waitpid(pid, st, WNOHANG) == pid)
+			return 1;
+		sleep(1);
+	}
+	kill(pid, SIGKILL);
+	waitpid(pid, st, 0);
+	return 0;
+}
+
+/* the File/Print menu's item at Lisa line y, the button held; pressed again while the desktop is busy */
+static void
+menu(y)
+	int y;
+{
+	char req[20];
+	int k, x0, y0, x1, y1;
+
+	for (k = 0; k < 12; k++) {
+		moveto(LX(103), LY(7));
+		host("shot lwp");
+		host("button 1 500");
+		nap(1500);
+		host("shot lwq");
+		if (sscanf(changed("lwp", "lwq"), "%d %d %d %d", &x0, &y0, &x1, &y1) == 4 && y0 <= LY(12) &&
+		    y1 - y0 > LY(60) - LY(7))
+			break;
+		host("button 0");
+		watch(5000);
+	}
+	moveto(LX(103), LY(y));
+	sprintf(req, "shot lwm%d", y);
+	host(req);
+	host("button 0");
+}
+
+/* ms of waiting, the log followed */
+static void
+watch(ms)
+	int ms;
+{
+	for (; ms > 0; ms -= 2000) {
+		nap(ms < 2000 ? ms : 2000);
+		follow();
+	}
+}
+
+/*
+ * Office on the folder: LisaWrite stationery torn off and titled becomes a
+ * host file on its first Open, with the title in its sidecar; text saved
+ * by LisaWrite is in the file; a new title replaces the old one; the
+ * Wastebasket keeps only its last document, deleting the one before, and
+ * the files the OS let go are gone after power off.
+ */
+static void
+office()
+{
+	char *nw[40], doc[40], doc2[40], p[100], p2[100], list[400], *bad;
+	int n, k, j, t, m, figs = 0, scrap = 0, st = -1;
+
+	names(1, (char **)0, 0);
+	moveto(LX(189), LY(144));
+	host("click 1");
+	nap(3000);
+	host("click 1");
+	nap(3000);
+	menu(127);			/* Tear Off Stationery */
+	watch(20000);
+	type("hello");
+	watch(5000);
+	menu(82);			/* Open */
+	watch(90000);
+	host("shot lw0");
+	/* the new document {DnTm}, with its figures and a scrap of its own */
+	doc[0] = list[0] = 0;
+	n = names(0, nw, 40);
+	for (k = 0; k < n; k++) {
+		if (strlen(list) + strlen(nw[k]) < sizeof list - 2)
+			strcat(strcat(list, " "), nw[k]);
+		if (sscanf(nw[k], "{D%dT%d%1s", &j, &t, p) == 3 && !strcmp(p, "}") && !doc[0])
+			strcpy(doc, nw[k]);
+		if (strstr(nw[k], "Scrap") && nw[k][0] != '.')
+			scrap++;
+	}
+	if (doc[0])
+		for (k = 0; k < n; k++)
+			if (!strncmp(nw[k], doc, strlen(doc)) && !strcmp(nw[k] + strlen(doc), ".Figures"))
+				figs++;
+	if (!t_check("tear_off", doc[0] && figs && scrap, "new files:%s", list))
+		return;
+	sprintf(p, ".%s", doc);
+	type("lisa text");
+	nap(3000);
+	host("shot lw1");
+	menu(68);			/* Save & Put Away */
+	watch(30000);
+	host("shot lw2");
+	moveto(LX(157), LY(140));
+	host("button 1 500");
+	moveto(LX(80), LY(310));
+	host("button 0");
+	watch(20000);
+	t_check("saved", holds(doc, "lisa text") > 0, "%s: no text", doc);
+	/* the save's copy took the old file's place, and the old file went */
+	n = names(0, nw, 40);
+	for (bad = 0, k = 0; k < n; k++)
+		if (strstr(nw[k], "%z"))
+			bad = nw[k];
+	t_check("no_strays", !bad, "%s left", bad);
+	/* the desktop writes a document's label when it goes into the Wastebasket */
+	moveto(LX(80), LY(310));
+	host("button 1 500");
+	moveto(LX(418), LY(337));
+	host("button 0");
+	watch(20000);
+	t_check("title", holds(p, "68656c6c6f") > 0, "%s: no title", p);
+	/* a second document, opened and put away, then renamed */
+	moveto(LX(600), LY(220));
+	host("click 1");
+	nap(3000);
+	host("shot lt0");
+	moveto(LX(189), LY(144));
+	host("click 1");
+	nap(3000);
+	menu(127);
+	watch(20000);
+	menu(82);
+	watch(90000);
+	menu(68);
+	watch(30000);
+	/* its icon, wherever it landed: what changed with nothing selected and the pointer parked */
+	moveto(LX(600), LY(220));
+	host("click 1");
+	nap(3000);
+	host("shot lt1");
+	sprintf(p2, "box lt0 lt1 0 %d %d %d %d", LX(600) - 24, LY(220) - 24, LX(600) + 24, LY(220) + 24);
+	if (sscanf(host(p2) ? hrep : "?", "%d %d %d %d", &j, &t, &n, &k) != 4)
+		j = t = n = k = 0;
+	j = (j + n) / 2;
+	t += (k - t) / 3;
+	doc2[0] = 0;
+	n = names(0, nw, 40);
+	for (k = 0; k < n; k++)
+		if ((m = 0, sscanf(nw[k], "{D%*dT%*d}%n", &m), m) && !nw[k][m] && strcmp(nw[k], doc) && !doc2[0])
+			strcpy(doc2, nw[k]);
+	sprintf(p2, ".%s", doc2);
+	moveto(j, t);
+	host("click 1");
+	nap(3000);
+	type("world");
+	watch(3000);
+	host("shot lw3");
+	moveto(j, t);
+	host("button 1 500");
+	moveto(LX(418), LY(337));
+	host("button 0");
+	watch(20000);
+	t_check("rename", doc2[0] && holds(p2, "776f726c64") > 0, "%s: no new title", doc2[0] ? p2 : "no second document");
+	/* the power switch shuts down cleanly */
+	host("key power");
+	k = stop(offpid, 0, 150, &st);
+	host("shot lw4");
+	t_check("power_off", k && st == 0, "%s (status 0x%x)", k ? "exited" : "still running after 150 s", st);
+	sprintf(p2, "%sNEW.Figures", doc);
+	strcat(strcpy(list, doc), ".Figures");
+	offgone = 1;
+	k = holds(doc, "") >= 0 ? 1 : holds(p, "") >= 0 ? 2 : holds(list, "") >= 0 ? 3 : holds(p2, "") >= 0 ? 4 :
+	    !doc2[0] || holds(doc2, "") < 0 ? 5 : 0;
+	t_check("delete", k == 0, k == 5 ? "%s gone from the Wastebasket" : "%s still there",
+	    k == 1 ? doc : k == 2 ? p : k == 3 ? list : k == 4 ? p2 : doc2);
+}
+
 static void
 boot()
 {
 	struct mod_mreg reg;
-	char *log, *s;
-	int pid, st = 0, alive, mj = 68, gone;
+	char *log, *s, *e;
+	int pid, st = 0, alive, mj = 68, gone, osf;
 	long t0, lit = 0, all;
 
 	if (access(MD "/lisaguest", 0) != 0) {
@@ -326,11 +618,11 @@ boot()
 	reg.md_typedata = (caddr_t)&mj;
 	t_check("register_lisaguest", modadm(MOD_TY_CDEV, MOD_C_MREG, &reg) == 0 || errno == EEXIST, "%s", T_ERR);
 	if (access(DEV, 0) != 0 || access("/dev/lisa", 0) != 0 || access("/tests/startlisa", X_OK) != 0 ||
-	    system("/sbin/mount -F ufs -r " DEV " " MNT) != 0) {
+	    system("/sbin/mount -F ufs " DEV " " MNT) != 0) {
 		t_skip("boot", "no Lisa volume or startlisa");
 		return;
 	}
-	if (access(MNT "/lisa.rom", 0) != 0) {
+	if (access(ROOT "/lisa.rom", 0) != 0) {
 		system("/sbin/umount " MNT);
 		t_skip("boot", "no Lisa ROM");
 		return;
@@ -339,10 +631,7 @@ boot()
 		t_info("display", "dsuser: %s", T_ERR);
 	hostopen();
 	unlink(LOG);
-	system("rm -rf " ROOT);
-	mkdir(ROOT, 0755);
-	t_check("folder", symlink(MNT "/profile.dc42", ROOT "/profile.dc42") == 0 &&
-	    symlink(MNT "/lisa.rom", ROOT "/lisa.rom") == 0, "%s", T_ERR);
+	t_check("folder", access(ROOT "/.boot", 0) == 0 && access(ROOT "/system.os", 0) == 0, "%s", T_ERR);
 	if ((pid = fork()) == 0) {
 		int fd = open(LOG, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 
@@ -357,7 +646,21 @@ boot()
 	t0 = t_now_ms();
 	t_check("running", await(pid, "lisa: running", 30), "not running");
 	t_check("volume_read", await(pid, "lisa: first volume read", 30), "no block read");
+	/* the OS's own reads may still reach the ProFile through the loader */
+	log = await(pid, "lisa: loader file system.os from host", 60) ? readlog() : "";
+	e = strstr(log, "lisa: loader file system.os");
+	s = strstr(log, "read from the volume");
+	t_check("loader_files", e && strstr(log, "lisa: loader reads its files by host call") && (!s || s > e),
+	    "the loader read the ProFile");
 	t_check("screen_text", await(pid, "pixels lit", RUNS), "nothing drawn");
+	osf = await(pid, "lisa: OS files from host", 60);
+	/* the loader's code is patched as it is read, not searched for in RAM on every read */
+	if (osf) {
+		all = -1;
+		if ((s = strstr(readlog(), "lisa: OS files from host: s-file ")) != 0)
+			sscanf(s, "%*[^,], %ld", &all);
+		t_check("ram_searches", all == 0, "%ld searches of the Lisa's RAM for code", all);
+	}
 	while (t_now_ms() - t0 < RUNS * 1000L && kill(pid, 0) == 0) {
 		follow();
 		sleep(2);
@@ -375,14 +678,26 @@ boot()
 		lit = atol(e);
 	}
 	shot("lisa_end", 1);
+	/* the office run boots the folder the first run left */
+	if (offmode)
+		t_check("reboot", kill(pid, 0) == 0 && lit > 500 && strstr(log, "lisa: catalog from host") && !strstr(log, "hardware access"),
+		    "%s", strstr(log, "hardware access") ? strstr(log, "hardware access") : "no desktop");
+	offpid = pid;
 	if (hfd >= 0 && kill(pid, 0) == 0)
 		input();
+	if (offmode) {
+		if (!offgone)
+			stop(pid, SIGTERM, 150, &st);
+		follow();
+		system("/sbin/umount " MNT);
+		return;
+	}
 	gone = waitpid(pid, &st, WNOHANG) != 0;
 	alive = !gone;
-	if (alive) {
-		kill(pid, SIGKILL);
-		waitpid(pid, &st, 0);
-	}
+	/* ended from outside, it shuts the OS down through the power switch */
+	if (alive)
+		t_check("power_off", stop(pid, SIGTERM, 150, &st) && st == 0 && strstr(readlog(), "lisa: power off"),
+		    "status 0x%x", st);
 	follow();
 	log = readlog();
 	s = strrchr(log, '\n');
@@ -395,6 +710,21 @@ boot()
 		t_info("writes", "%ld bytes in the overlay", stat(ROOT "/profile.writes", &sb) == 0 ? (long)sb.st_size : -1L);
 	}
 	t_check("text_lit", lit > 500, "%ld pixels lit", lit);
+	t_check("os_files", osf && !strstr(log, "in no extent") && !strstr(log, "no file's"),
+	    "%s", osf ? "a page outside the files" : "the OS's file data came from the ProFile");
+	{
+		struct dirent *de;
+		DIR *d = opendir(ROOT);
+		char *n = 0;
+
+		while (d && (de = readdir(d)) != 0)
+			if (strlen(de->d_name) > 5 && !strcmp(de->d_name + strlen(de->d_name) - 5, ".dc42"))
+				n = "a disk image in the folder";
+		if (d)
+			closedir(d);
+		t_check("no_profile", !n && !strstr(log, "lisa: ProFile block") && strstr(log, "lisa: catalog from host"),
+		    "%s", n ? n : strstr(log, "lisa: ProFile block") ? "a ProFile transfer" : "no catalog call");
+	}
 	lit = steady(log, " a-line ", &all);
 	t_check("aline_user", lit == 0, "%ld A-lines through supervisor mode in 2 s", lit);
 	lit = steady(log, " faults ", &all);
@@ -419,9 +749,12 @@ boot()
 }
 
 int
-main()
+main(argc, argv)
+	int argc;
+	char **argv;
 {
-	t_init("lisa", 540);
+	offmode = argc > 1 && !strcmp(argv[1], "office");
+	t_init(offmode ? "lisaoffice" : "lisa", offmode ? 1700 : 700);
 	boot();
 	return t_done();
 }
