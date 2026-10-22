@@ -547,6 +547,16 @@ vrte(gp, pi)
 extern int fpu_present;
 extern void fsave(), frestore();
 
+int	gc_fast;	/* the gate's 68040 paths: 1 fsave and frestore, 2 cpusha */
+
+static void
+guest_cpuprobe()
+{
+	long *__volatile__ ct = &g_cputype;
+
+	gc_fast = ct && *ct == 40 ? (fpu_present ? 3 : 2) : 0;
+}
+
 /* size of an FPU state frame from its header, 0 if not one */
 static int
 fplen(b, f060)
@@ -864,6 +874,8 @@ guest_priv(gp, r, v)
 
 	if (!(gp->gp_flags & GPF_PRIV))
 		return 1;
+	if (!gc_fast)
+		guest_cpuprobe();
 	pi.r = r;
 	pi.pc = GR_PC(r);
 	pi.len = 0;

@@ -184,7 +184,8 @@ Lftslow:
 | gc_fpriv -- vector 8 of a guest with GPF_PRIV in virtual supervisor
 | mode: rte (format 0), move to and from SR (Dn, (sp)+, -(sp), #imm)
 | and ori/andi/eori #,SR against gp_vsr, as gcpu.c emulates them,
-| move to and from USP against gp_vusp, and movec of SFC, DFC and USP.  An
+| move to and from USP against gp_vusp, movec of SFC, DFC and USP, and on
+| a 68040 cpusha bc and fsave/frestore at (An), d16(An) or abs.l.  An
 | IPL below gp_vpend (an interrupt would be taken), pending signals, a
 | reschedule, other instructions or a fault take the C path.
 
@@ -242,6 +243,149 @@ gc_fpriv:
 	andiw	&0xfffe,%d1
 	cmpiw	&0x4e7a,%d1
 	beqw	Lfpmovec
+	movew	%d0,%d1
+	andiw	&0xff80,%d1
+	cmpiw	&0xf300,%d1
+	beqw	Lfpfpu
+	cmpiw	&0xf4f8,%d0
+	beqw	Lfpcpush
+	bra	Lfpfault
+Lfpcpush:				| cpusha bc
+	btst	&1,gc_fast+3
+	beqw	Lfpfault
+	.short	0xf4f8
+	addql	&2,%a0
+	bra	Lfpdone
+Lfpfpu:					| fsave, frestore at (An), d16(An), abs.l: d2 the address
+	btst	&0,gc_fast+3
+	beqw	Lfpfault
+	moveq	&0,%d4
+	movew	%d0,%d1
+	andiw	&0x0038,%d1
+	cmpiw	&0x0010,%d1
+	beqw	Lfpf2
+	cmpiw	&0x0028,%d1
+	beqw	Lfpf5
+	movew	%d0,%d1
+	andiw	&0x003f,%d1
+	cmpiw	&0x0039,%d1
+	bnew	Lfpfault
+	movesl	%a0@(2),%d2
+	addql	&6,%a0
+	bra	Lfpf9
+Lfpf5:
+	movesw	%a0@(2),%d4
+	extl	%d4
+	addql	&2,%a0
+Lfpf2:
+	addql	&2,%a0
+	movew	%d0,%d1
+	andiw	&7,%d1
+	cmpiw	&3,%d1
+	bcsw	Lfpa1
+	beqw	Lfpa3
+	cmpiw	&5,%d1
+	bcsw	Lfpa4
+	beqw	Lfpa5
+	cmpiw	&7,%d1
+	bcsw	Lfpa6
+	movel	%a2,%d2
+	bra	Lfpa9
+Lfpa1:
+	lslw	&2,%d1
+	movel	%sp@(32,%d1:w),%d2
+	bra	Lfpa9
+Lfpa3:
+	movel	%a3,%d2
+	bra	Lfpa9
+Lfpa4:
+	movel	%a4,%d2
+	bra	Lfpa9
+Lfpa5:
+	movel	%a5,%d2
+	bra	Lfpa9
+Lfpa6:
+	movel	%a6,%d2
+Lfpa9:
+	addl	%d4,%d2
+Lfpf9:
+	movel	%a0,%d5			| the next pc
+	moveal	%d2,%a1
+	moveq	&4,%d3			| d3: the frame's size
+	btst	&6,%d0
+	bnew	Lfrs
+	lea	%sp@(-112),%sp
+	.short	0xf317			| fsave (sp)
+	moveq	&0,%d1
+	moveb	%sp@,%d1
+	beqw	Lfsv1
+	cmpib	&0x41,%d1
+	bnew	Lfsvf
+	moveb	%sp@(1),%d1
+	beqw	Lfsv1
+	cmpib	&0x30,%d1
+	beqw	Lfsv0
+	cmpib	&0x60,%d1
+	bnew	Lfsvf
+Lfsv0:
+	addl	%d1,%d3
+Lfsv1:
+	movel	&Lfsvf,u+0x374
+	moveal	%sp,%a0
+	movel	%d3,%d1
+	lsrl	&2,%d1
+	subql	&1,%d1
+Lfsv2:
+	movel	%a0@+,%d4
+	movesl	%d4,%a1@+
+	dbf	%d1,Lfsv2
+	cmpil	&4,%d3
+	beqw	Lfsv3
+	movel	&0x41000000,%sp@	| idle: a switch still saves fp0-fp7
+	.short	0xf357			| frestore (sp)
+Lfsv3:
+	lea	%sp@(112),%sp
+	moveal	%d5,%a0
+	bra	Lfpdone
+Lfsvf:					| not stored: the state goes back
+	.short	0xf357			| frestore (sp)
+	lea	%sp@(112),%sp
+	bra	Lfpfault
+Lfrs:
+	movesl	%a1@,%d1		| the header
+	movel	%d1,%d4
+	clrw	%d4
+	swap	%d4
+	movew	%d4,%d1
+	andiw	&0xff00,%d1
+	beqw	Lfrs1
+	cmpiw	&0x4100,%d1
+	bnew	Lfpfault
+	andiw	&0x00ff,%d4
+	beqw	Lfrs1
+	cmpiw	&0x0030,%d4
+	beqw	Lfrs0
+	cmpiw	&0x0060,%d4
+	bnew	Lfpfault
+Lfrs0:
+	addl	%d4,%d3
+Lfrs1:
+	lea	%sp@(-112),%sp
+	movel	&Lfrsf,u+0x374
+	moveal	%sp,%a0
+	movel	%d3,%d1
+	lsrl	&2,%d1
+	subql	&1,%d1
+Lfrs2:
+	movesl	%a1@+,%d4
+	movel	%d4,%a0@+
+	dbf	%d1,Lfrs2
+	.short	0xf357			| frestore (sp)
+	lea	%sp@(112),%sp
+	moveal	%d5,%a0
+	bra	Lfpdone
+Lfrsf:
+	lea	%sp@(112),%sp
 	bra	Lfpfault
 Lfpmovec:				| movec of SFC, DFC or USP: d3 the field
 	movesw	%a0@(2),%d2

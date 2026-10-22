@@ -24,7 +24,7 @@
 #include "vm/page.h"
 
 extern int as_map(), as_unmap(), as_fault();
-extern void hat_unload(), seg_free();
+extern void hat_unload(), seg_free(), dlm_cacheflush();
 extern int guest_ram_at();
 extern paddr_t vtop();
 extern unsigned long ds_gen;
@@ -417,11 +417,11 @@ pdrop(m, va)
 		}
 }
 
-/* the space for vSR.S s, its entries in the process root */
+/* the space for vSR.S s, its entries in the process root; defer: an eviction waits for the next fill */
 static void
-setspace(m, s)
+setspace(m, s, defer)
 	struct guest_mmu *m;
-	int s;
+	int s, defer;
 {
 	struct gspace *sp;
 	int i, j;
@@ -439,6 +439,14 @@ setspace(m, s)
 		}
 		if (i > m->nuser) {
 			i = j;
+			if (m->sp[i].inuse && defer) {
+				if (m->space != s)
+					m->nswitch++;
+				m->space = s;
+				if (m->cur >= 0)
+					setroot(m, -1);
+				return;
+			}
 			if (m->sp[i].inuse) {
 				spdrop(m, &m->sp[i]);
 				if (m->cur == i)
@@ -533,7 +541,7 @@ fill(seg, m, va, rw, lock)
 	long pf;
 	int e, wp, mod, tt, moved = 0, wl;
 
-	setspace(m, (int)(m->gp->gp_vsr & SR_S));
+	setspace(m, (int)(m->gp->gp_vsr & SR_S), 0);
 	if ((e = walk(m, va, (int)rw, m->space != 0, 1, &pa, &wp, &mod, &tt)) != 0) {
 		m->nfault++;
 		return e;
@@ -556,12 +564,12 @@ fill(seg, m, va, rw, lock)
 			return FC_NOMAP;
 	}
 	/* hold() may have emptied every space */
-	setspace(m, m->space);
+	setspace(m, m->space, 0);
 	/* the host's caching of the frame: write-through VRAM, copyback RAM */
 	cm = (hd = leaf(as, h)) != 0 && (*hd & 1) ? *hd & 0x60 : *gmu_hat4k & 0x60;
 	if ((d = pte(m, &m->sp[m->cur], va, 1, &dpa)) == 0) {
 		reset(m);
-		setspace(m, m->space);
+		setspace(m, m->space, 0);
 		if ((d = pte(m, &m->sp[m->cur], va, 1, &dpa)) == 0)
 			return FC_NOMAP;
 	}
@@ -835,7 +843,7 @@ guest_mmu_space(gp, s)
 	int s;
 {
 	if (gp->gp_mmu && gp->gp_mmu->seg)
-		setspace(gp->gp_mmu, s & SR_S);
+		setspace(gp->gp_mmu, s & SR_S, 1);
 }
 
 /* movec of an MMU register: 0, or -1 for any other register */
@@ -1023,7 +1031,8 @@ rdrop(m, i, s, e)
 /*
  * The guest's pmap, for a kernel whose own invalidation is replaced: 1 it
  * says what changes from now on, 2 drop [s, e) in the space of root key
- * (0: the supervisor's), 3 the space of key goes.  With pa, the caches
+ * (0: the supervisor's), 3 the space of key goes, 4 as 2 after a push
+ * of the whole caches.  With pa, the caches
  * are pushed over the e - s bytes of guest physical memory there, as the
  * flushes it replaces did for a new mapping's code.
  */
@@ -1042,6 +1051,10 @@ guest_mmu_svc(gp, op, key, s, e, pa)
 	if (op == 1) {
 		m->nuser = NSP - 1;
 		return 0;
+	}
+	if (op == 4) {
+		dlm_cacheflush();
+		op = 2;
 	}
 	if (pa)
 		for (o = 0; o < e - s && o < 0x10000; o += HP)

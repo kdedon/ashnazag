@@ -29,12 +29,12 @@ do
 		bad=1
 	fi
 	echo "raw 10 MB:"
-	time dd if=/dev/rdsk/$s of=/dev/null bs=64k count=160 2>/dev/null
+	time sh -c "dd if=/dev/rdsk/$s of=/dev/null bs=64k count=160 2>/dev/null"
 	c=`kvar ncr_ncmd | awk '{ print $2 }'`
 	# a fresh 10 MB each time, so the page cache holds none of it
 	skip=`expr $skip + 1280`
 	echo "buffered 10 MB:"
-	time dd if=/dev/dsk/$s of=/dev/null bs=8k count=1280 skip=$skip 2>/dev/null
+	time sh -c "dd if=/dev/dsk/$s of=/dev/null bs=8k count=1280 skip=$skip 2>/dev/null"
 	echo "commands per MB, buffered:" `kvar ncr_ncmd | awk '{ print int(($2 - '$c') / 10) }'`
 	kvar ncr_xcmd ncr_xbytes ncr_xresume ncr_xfall ncr_nerr ncr_ncmd ncr_ipl2max \
 		sd_nraw sd_ndirect sd_nbounce sd_nmerge sd_nra sd_nhit sd_nsplit

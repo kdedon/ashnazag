@@ -41,7 +41,9 @@
 #define HC_COPYIN 13	/* (from, to, len) as the kernel's routine; returns to its caller */
 #define HC_COPYOUT 14	/* or, for a page not mapped, goes on in the routine at HF_TRAMP + 16 * (svc - HC_COPYIN) */
 #define HC_COPYSTR 15	/* copyinstr (from, to, max, &copied), the same way */
-#define HC_N 16
+#define HC_COPYOSTR 16	/* copyoutstr, the same way */
+/* for a page not mapped, the routine copies a byte there; then the host call again, from HF_TRAMP + 64 + 16 * (svc - HC_COPYIN) */
+#define HC_N 17
 
 #define HF_IDLE 0
 #define HF_REQUEST 1

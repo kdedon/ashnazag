@@ -41,10 +41,11 @@ struct nx_info {
 	unsigned long ticks, ints, io, faults, nvseq, level, stat, mask, ncensus, lasta, lastpc, monexit;
 	unsigned long high, higha, highpc;	/* guest accesses at or above NX_TOP; the latest address and pc */
 	unsigned long mmu[5];	/* MMU fills, faults, space switches, flushes; privileged instructions */
-	unsigned long hcalls[16];	/* host calls by service; [0] the pmap's */
+	unsigned long hcalls[17];	/* host calls by service; [0] the pmap's */
 	unsigned long privk[13];	/* privileged instructions emulated by kind (SR ops, rte, from SR, to SR, usp, movec, moves, cache, MMU, fsave, frestore, other), then the gates' fast ones */
 	unsigned char nvram[NX_NVRAM];
 	struct nx_census census[NX_NCENSUS];
 	unsigned long privpc[32];	/* the busiest pcs of emulated instructions: pc, count */
+	unsigned long chains;	/* host copies that faulted a page in through the routine */
 };
 #endif

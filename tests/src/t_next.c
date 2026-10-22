@@ -794,9 +794,9 @@ kernel()
 	for (i = 0; i < (int)info.ncensus && i < NX_NCENSUS; i++)
 		t_info("io", "%s %lx x%lu pc %lx last pc %lx", info.census[i].write ? "write" : "read",
 		    info.census[i].addr, info.census[i].count, info.census[i].pc, info.census[i].lastpc);
-	t_info("hcalls", "hfs %lu us %lu delay %lu timer %lu soft %lu time %lu nvram %lu/%lu copyinstr %lu pmap %lu", info.hcalls[1],
-	    info.hcalls[3], info.hcalls[4], info.hcalls[5], info.hcalls[6], info.hcalls[7], info.hcalls[8], info.hcalls[9],
-	    info.hcalls[15], info.hcalls[0]);
+	t_info("hcalls", "hfs %lu us %lu delay %lu timer %lu soft %lu time %lu nvram %lu/%lu copyin %lu copyout %lu copyinstr %lu copyoutstr %lu (faulted in %lu) pmap %lu",
+	    info.hcalls[1], info.hcalls[3], info.hcalls[4], info.hcalls[5], info.hcalls[6], info.hcalls[7], info.hcalls[8],
+	    info.hcalls[9], info.hcalls[13], info.hcalls[14], info.hcalls[15], info.hcalls[16], info.chains, info.hcalls[0]);
 	if (login)
 		t_info("login", "prompt after %ld s", login);
 	t_check("km_on_screen", vramset() > 1000, "the kernel's console drew nothing on the screen");

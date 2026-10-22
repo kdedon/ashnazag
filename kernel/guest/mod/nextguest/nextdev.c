@@ -124,11 +124,11 @@ nvsum(b)
 
 /*
  * The kernel's copyin and copyout: a page at a time through the guest's
- * user map.  A page not mapped for the access, or a kernel address that
- * faults, runs the routine's own code from the start, which faults as it
- * would on the machine.  1: the PC is set.
+ * user map.  A page that faults on either side is faulted in by the
+ * routine's own code; a kernel range outside the guest runs the routine.
+ * 1: the PC is set.
  */
-static int nx_ret0();
+static int nx_ret0(), nx_pagein();
 
 static int
 nx_copy(gp, r, out, a)
@@ -144,17 +144,54 @@ nx_copy(gp, r, out, a)
 	if ((long)len < 0 || !inguest(k, len))
 		goto slow;
 	for (; len; u += n, k += n, len -= n) {
-		n = 4096 - (u & 4095);
+		n = 4096 - ((u & 4095) > (k & 4095) ? u & 4095 : k & 4095);
 		n = n < len ? n : len;
 		if ((h = guest_mmu_user(gp, u, (int)n, out)) == 0 ||
-		    (out ? copyin((caddr_t)k, b, n) || copyout(b, h, n) : copyin(h, b, n) || copyout(b, (caddr_t)k, n)))
-			goto slow;
+		    (out ? copyin((caddr_t)k, b, n) || copyout(b, h, n) : copyin(h, b, n) || copyout(b, (caddr_t)k, n))) {
+			/* a page not mapped: the arguments are the routine's own, they go on from here */
+			a[0] = out ? k : u;
+			a[1] = out ? u : k;
+			a[2] = len;
+			if (copyout((caddr_t)a, (caddr_t)GR_USP(r) + 4, 12) || nx_pagein(r, out, out, a))
+				goto slow;
+			return 1;
+		}
+		if (u == nx.lastu)
+			nx.lastu = ~0UL;
 	}
 	if (nx_ret0(r) == 0)
 		return 1;
 slow:
 	GR_PC(r) = HF_TRAMP + 16 * out;
 	return 1;
+}
+
+/*
+ * A user page not mapped for the access: the routine copies the first
+ * byte a[0] -> a[1], taking the guest's own fault, and the host call i
+ * runs again (HF_TRAMP + 64 + 16 * i).  -1: the same page again.
+ */
+static int
+nx_pagein(r, i, out, a)
+	char *r;
+	int i, out;
+	unsigned long *a;
+{
+	unsigned long f[4], sp = GR_USP(r) - 16;
+
+	if (a[out] == nx.lastu)
+		return -1;
+	f[0] = HF_TRAMP + 64 + 16 * i;
+	f[1] = a[0];
+	f[2] = a[1];
+	f[3] = 1;
+	if (!inguest(sp, 16UL) || copyout((caddr_t)f, (caddr_t)sp, 16))
+		return -1;
+	nx.lastu = a[out];
+	GR_USP(r) = sp;
+	GR_PC(r) = HF_TRAMP + 16 * out;
+	nx.st.chains++;
+	return 0;
 }
 
 /* back to the routine's caller with d0 = 0; -1 when its stack does not read */
@@ -172,44 +209,56 @@ nx_ret0(r)
 	return 0;
 }
 
-/* copyinstr: up to the NUL, which is copied, or max bytes, their count to *a[3] if a[3] */
+/* copyinstr, or copyoutstr if out: up to the NUL, which is copied, or max bytes, their count to *a[3] if a[3] */
 static int
-nx_copystr(gp, r, a)
+nx_copystr(gp, r, a, out)
 	struct guest_proc *gp;
 	char *r;
 	unsigned long *a;
+	int out;
 {
 	static char b[4096];
-	unsigned long u = a[0], k = a[1], max = a[2], done = 0, n, c;
+	unsigned long u = out ? a[1] : a[0], k = out ? a[0] : a[1], lim = a[2], done = 0, n, c, f[2];
 	caddr_t h;
 
-	if (max == 0 || max >= 0x8000 || !inguest(k, max))
+	/* a longer string goes to the routine */
+	lim = lim < 0x8000 ? lim : 0x8000;
+	if (lim == 0 || !inguest(k, lim))
 		goto slow;
-	while (done < max) {
-		n = 4096 - (u & 4095);
-		n = n < max - done ? n : max - done;
-		if ((h = guest_mmu_user(gp, u, (int)n, 0)) == 0 || copyin(h, b, n))
-			goto slow;
+	while (done < lim) {
+		n = 4096 - ((u & 4095) > (k & 4095) ? u & 4095 : k & 4095);
+		n = n < lim - done ? n : lim - done;
+		if ((h = guest_mmu_user(gp, u, (int)n, out)) == 0 || copyin(out ? (caddr_t)k : h, b, n))
+			goto in;
 		for (c = 0; c < n && b[c]; c++)
 			;
 		c = c < n ? c + 1 : n;
-		if (copyout(b, (caddr_t)k, c))
-			goto slow;
+		if (copyout(b, out ? h : (caddr_t)k, c))
+			goto in;
+		if (u == nx.lastu)
+			nx.lastu = ~0UL;
 		done += c;
 		u += c;
 		k += c;
 		if (!b[c - 1])
 			goto nul;
 	}
-	/* no NUL in max bytes: the routine's own error */
+	/* no NUL within the limit: the routine */
 	goto slow;
 nul:
 	if (a[3] && (!inguest(a[3], 4UL) || copyout((caddr_t)&done, (caddr_t)a[3], 4)))
 		goto slow;
 	if (nx_ret0(r) == 0)
 		return 1;
+	goto slow;
+in:
+	/* a page not mapped faults in through copyin or copyout; then from the start */
+	f[0] = out ? k : u;
+	f[1] = out ? u : k;
+	if (nx_pagein(r, 2 + out, out, f) == 0)
+		return 1;
 slow:
-	GR_PC(r) = HF_TRAMP + 32;
+	GR_PC(r) = HF_TRAMP + 32 + 16 * out;
 	return 1;
 }
 
@@ -264,7 +313,8 @@ nx_service(gp, r)
 	case HC_COPYOUT:
 		return nx_copy(gp, r, svc == HC_COPYOUT, a);
 	case HC_COPYSTR:
-		return nx_copystr(gp, r, a);
+	case HC_COPYOSTR:
+		return nx_copystr(gp, r, a, svc == HC_COPYOSTR);
 	case HC_TACK:
 		s = guest_splhi();
 		nx.istat &= ~INT_TIMER;

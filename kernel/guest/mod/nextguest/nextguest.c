@@ -320,6 +320,7 @@ enter(arg)
 	bzero((caddr_t)&nx.st, sizeof nx.st);
 	bcopy((caddr_t)ne.nvram, (caddr_t)nx.st.nvram, NX_NVRAM);
 	bzero((caddr_t)nx.mmu, sizeof nx.mmu);
+	nx.lastu = ~0UL;
 	nx.ramsize = ne.ramsize;
 	nx.flags = ne.flags;
 	nx.sleeping = 0;

@@ -639,7 +639,7 @@ static struct ksym bsyms[] = {
 	{ "_clock_timer_init" }, { "_install_scanned_intr" }, { "_eventc_latch" }, { "_eventc_l" }, { "_timer_csr" },
 	{ "_intrstat" }, { "_scr2" }, { "_rtc_get" }, { "_rtc_set" }, { "_startrtclock" }, { "_nvram_check" },
 	{ "_nvram_set" }, { "_rtc_power_down" }, { "_mon_reset" }, { "_zsintsetup" }, { "_enintsetup" }, { "ipl6" },
-	{ "_copyin" }, { "_copyout" }, { "_copyinstr" },
+	{ "_copyin" }, { "_copyout" }, { "_copyinstr" }, { "_copyoutstr" },
 };
 /* drivers of devices this machine has none of: their probes find nothing */
 static struct ksym absent[] = {
@@ -661,17 +661,21 @@ static struct ksym psyms[] = {
 	{ "_pflush_super" }, { "_pflush_user" }, { "_tlb_update_read" }, { "_tlb_update_write" }, { "_pmove_crp" },
 	{ "_kernel_pmap" }, { "_page_size" }, { "_pmap_pte_valid" }, { "_pmap_enter_mapping" },
 	{ "_pmap_remove_range" }, { "_pmap_protect" }, { "_pmap_destroy" }, { "_pagemove" },
+	{ "_pmap_remove_all" }, { "_pmap_copy_on_write" }, { "_pmap_change_wiring" }, { "_pmap_clear_modify" },
+	{ "_pmap_clear_reference" },
 };
 #define P_CRP 4
 #define P_KPMAP 5
 #define P_PGSIZE 6
-#define P_VALID 7	/* (pmap, va): its page's entry, which the caller changes */
+#define P_VALID 7	/* (pmap, va): its page's entry, which a routine below may change */
 #define P_ENTER 8	/* (pmap, va, ...) */
 #define P_REMOVE 9	/* (pmap, start, end) */
 #define P_PROTECT 10	/* (pmap, start, end, prot) */
 #define P_DESTROY 11	/* (pmap) */
 #define P_MOVE 12	/* (from, to, size), in the kernel's map */
-#define P_N 13
+#define P_RMALL 13	/* on: routines that change the entries they look up with P_VALID */
+#define P_N 18
+#define P_RET P_N	/* a patched routine's return */
 #define B_CLOCKVALUE 0
 #define B_TIMESTAMP 1
 #define B_DELAY 2
@@ -697,6 +701,7 @@ static struct ksym psyms[] = {
 #define B_COPYIN 22
 #define B_COPYOUT 23
 #define B_COPYSTR 24
+#define B_COPYOSTR 25
 
 /* the address of the named symbol in the slice at off, 0 if none */
 static unsigned long
@@ -1351,6 +1356,23 @@ copyentry(a, svc, t)
 	return hcentry(a, svc);
 }
 
+/* after the routine's one-byte copy at t: its error to the caller, or the host call at a again */
+static void
+again(a, t)
+	unsigned long a, t;
+{
+	unsigned short *q = (unsigned short *)t;
+
+	q[0] = 0x4fef;			/* lea 12(sp),sp */
+	q[1] = 12;
+	q[2] = 0x4a80;			/* tst.l d0 */
+	q[3] = 0x6606;			/* bne.s rts */
+	q[4] = 0x4ef9;			/* jmp a */
+	q[5] = a >> 16;
+	q[6] = (unsigned short)a;
+	q[7] = 0x4e75;			/* rts */
+}
+
 /*
  * The event counter read in line: four byte loads through the pointers
  * from the latch's to the 20-bit mask, then d0 and a0 loaded again.  It
@@ -1507,6 +1529,10 @@ services()
 		bad[n++] = "copyout";
 	if (copyentry(bsyms[B_COPYSTR].addr, HC_COPYSTR, HF_TRAMP + 32) < 0)
 		bad[n++] = "copyinstr";
+	if (copyentry(bsyms[B_COPYOSTR].addr, HC_COPYOSTR, HF_TRAMP + 48) < 0)
+		bad[n++] = "copyoutstr";
+	for (i = B_COPYIN; i <= B_COPYOSTR; i++)
+		again(bsyms[i].addr, HF_TRAMP + 64 + 16 * (i - B_COPYIN));
 	/* a driver's probe and slave probe are its first two words, its controller setup the seventh */
 	for (i = 0; i < sizeof absent / sizeof absent[0]; i++)
 		if (inkernel(absent[i].addr) && inkernel(L(absent[i].addr))) {
@@ -1546,11 +1572,12 @@ prologue(p)
 }
 
 static unsigned short ptramp[P_N - P_VALID][10];
+static unsigned short pret[5];
 
 /*
- * The pmap tells the MMU each change through a host call at the entry of
- * the routines that make them, so its whole-ATC flushes (on every change
- * and task switch) and ATC loads go.  All or nothing.
+ * The pmap tells the MMU each change through host calls at the entry and
+ * return of the routines that make them, so its whole-ATC flushes (on
+ * every change and task switch) and ATC loads go.  All or nothing.
  */
 static int
 pmap()
@@ -1571,7 +1598,7 @@ pmap()
 			return -1;
 	for (i = 0; i < P_CRP; i++)
 		*(unsigned short *)psyms[i].addr = 0x4e75;	/* rts */
-	crp[0] = crp[1] = 0x4e71;	/* nop */
+	crp[1] = 0x4e71;		/* nop */
 	for (i = P_VALID; i < P_N; i++) {
 		p = (unsigned short *)psyms[i].addr;
 		t = ptramp[i - P_VALID];
@@ -1590,53 +1617,128 @@ pmap()
 		p[1] = a >> 16;
 		p[2] = (unsigned short)a;
 	}
+	a = HC_STUB(1 + P_RET - P_VALID);
+	pret[0] = 0x598f;		/* subq.l #4,sp: the return address's slot */
+	pret[1] = 0x4eb9;
+	pret[2] = a >> 16;
+	pret[3] = (unsigned short)a;
+	pret[4] = 0x4e75;
 	return 0;
 }
 
-/* a pmap routine's entry: r[18] on are its arguments */
+/*
+ * A patched routine in progress: the drops it needs wait for its return,
+ * when the entries have changed.  Its arguments' address names it.
+ */
+#define PF_N 32
+#define PF_Q 8
+static struct pframe {
+	unsigned long args, ret;	/* args 0: free */
+	int n, ne;	/* queued drops; the first ne the routine's own, sent again at return */
+	struct nx_mmu q[PF_Q];
+} pf[PF_N];
+static int pfull;	/* no frame was free: drops at entry from then on */
+
+static void
+pdrops(f)
+	struct pframe *f;
+{
+	int k;
+
+	for (k = 0; k < f->n; k++)
+		(void)ioctl(bridge, NX_MMU, &f->q[k]);
+	f->n = 0;
+}
+
+/* a pmap routine's entry, or with P_RET its return: r[18] on are its arguments */
 static void
 pmapcall(i, r)
 	int i;
 	unsigned long *r;
 {
-	unsigned long *a = r + 18, ps = L(psyms[P_PGSIZE].addr);
-	struct nx_mmu q;
+	unsigned long *a = r + 18, args = (unsigned long)a, ps = L(psyms[P_PGSIZE].addr);
+	struct pframe *f, *in = 0;
+	struct nx_mmu q[2];
+	int n = 0, k;
 
-	q.op = 2;
-	q.pa = 0;
+	for (f = pf; f < pf + PF_N; f++)
+		if (f->args == args)
+			break;
+	if (i == P_RET) {
+		if (f == pf + PF_N) {
+			fprintf(stderr, "next: pmap return without its entry\n");
+			_exit(1);
+		}
+		pdrops(f);
+		r[17] = f->ret;
+		f->args = 0;
+		return;
+	}
+	q[0].op = q[1].op = 2;
+	q[0].pa = q[1].pa = 0;
 	if (i == P_MOVE) {
-		q.key = 0;
-		q.start = a[0];
-		q.end = a[0] + a[2];
-		(void)ioctl(bridge, NX_MMU, &q);
-		q.start = a[1];
-		q.end = a[1] + a[2];
-		(void)ioctl(bridge, NX_MMU, &q);
-		return;
+		q[0].key = q[1].key = 0;
+		q[0].start = a[0];
+		q[0].end = a[0] + a[2];
+		q[1].start = a[1];
+		q[1].end = a[1] + a[2];
+		n = 2;
+	} else if (i < P_RMALL && a[0]) {
+		q[0].key = a[0] == L(psyms[P_KPMAP].addr) ? 0 : L(a[0] + 4);
+		n = 1;
+		switch (i) {
+		case P_ENTER:
+			/* (pmap, va, pa, ...): the new page's code reaches the instruction cache */
+			q[0].pa = a[2] & ~(ps - 1);
+		case P_VALID:
+			q[0].start = a[1] & ~(ps - 1);
+			q[0].end = q[0].start + ps;
+			break;
+		case P_PROTECT:
+			/* code written before it became executable */
+			if (a[3] & 4)
+				q[0].op = 4;
+		case P_REMOVE:
+			q[0].start = a[1];
+			q[0].end = a[2];
+			break;
+		case P_DESTROY:
+			if (!q[0].key)
+				n = 0;
+			q[0].op = 3;
+			break;
+		}
 	}
-	if (!a[0])
-		return;
-	q.key = a[0] == L(psyms[P_KPMAP].addr) ? 0 : L(a[0] + 4);
-	switch (i) {
-	case P_ENTER:
-		/* (pmap, va, pa, ...): the new page's code reaches the instruction cache */
-		q.pa = a[2] & ~(ps - 1);
-	case P_VALID:
-		q.start = a[1] & ~(ps - 1);
-		q.end = q.start + ps;
-		break;
-	case P_REMOVE:
-	case P_PROTECT:
-		q.start = a[1];
-		q.end = a[2];
-		break;
-	case P_DESTROY:
-		if (!q.key)
+	if (i == P_VALID && !pfull) {
+		/* a lookup, unless a routine that changes entries is in progress below it */
+		for (f = pf; f < pf + PF_N; f++)
+			if (f->args > args && (!in || f->args < in->args))
+				in = f;
+		if (!in || !n)
 			return;
-		q.op = 3;
-		break;
+		if (in->n == PF_Q) {
+			pdrops(in);	/* changed by now */
+			in->n = in->ne;
+		}
+		in->q[in->n++] = q[0];
+		return;
 	}
-	(void)ioctl(bridge, NX_MMU, &q);
+	if (f == pf + PF_N)
+		for (f = pf; f < pf + PF_N && f->args; f++)
+			;
+	if (f == pf + PF_N || pfull) {
+		pfull = 1;
+		for (k = 0; k < n; k++)
+			(void)ioctl(bridge, NX_MMU, &q[k]);
+		return;
+	}
+	pdrops(f);
+	f->args = args;
+	f->ret = r[17];
+	for (k = 0; k < n; k++)
+		f->q[k] = q[k];
+	f->n = f->ne = n;
+	r[17] = (unsigned long)pret;
 }
 
 /*
