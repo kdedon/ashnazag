@@ -109,6 +109,8 @@ Llaslow:
 
 GP_VPEND = 22
 GP_VUSP = 24
+GP_VSFC = 36
+GP_VDFC = 40
 GPF_SPIN_BIT = 2
 GPF_VPEND_BIT = 3
 
@@ -181,8 +183,8 @@ Lftslow:
 
 | gc_fpriv -- vector 8 of a guest with GPF_PRIV in virtual supervisor
 | mode: rte (format 0), move to and from SR (Dn, (sp)+, -(sp), #imm)
-| and ori/andi/eori #,SR against gp_vsr, as gcpu.c emulates them, and
-| move to and from USP against gp_vusp.  An
+| and ori/andi/eori #,SR against gp_vsr, as gcpu.c emulates them,
+| move to and from USP against gp_vusp, and movec of SFC, DFC and USP.  An
 | IPL below gp_vpend (an interrupt would be taken), pending signals, a
 | reschedule, other instructions or a fault take the C path.
 
@@ -236,7 +238,87 @@ gc_fpriv:
 	andiw	&0xfff0,%d1
 	cmpiw	&0x4e60,%d1
 	beqw	Lfpusp
+	movew	%d0,%d1
+	andiw	&0xfffe,%d1
+	cmpiw	&0x4e7a,%d1
+	beqw	Lfpmovec
 	bra	Lfpfault
+Lfpmovec:				| movec of SFC, DFC or USP: d3 the field
+	movesw	%a0@(2),%d2
+	movew	%d2,%d1
+	andiw	&0x0fff,%d1
+	moveq	&GP_VSFC,%d3
+	tstw	%d1
+	beqw	Lfpmc1
+	moveq	&GP_VDFC,%d3
+	cmpiw	&1,%d1
+	beqw	Lfpmc1
+	moveq	&GP_VUSP,%d3
+	cmpiw	&0x800,%d1
+	bnew	Lfpfault
+Lfpmc1:
+	addql	&4,%a0
+	movew	%d2,%d1			| register 0-15 (d0-d7, a0-a7)
+	lsrw	&8,%d1
+	lsrw	&4,%d1
+	btst	&0,%d0
+	bnew	Lfpmcw
+	movel	%a1@(0,%d3:w),%d4	| to the register
+	cmpiw	&11,%d1
+	bcsw	Lfpmr0
+	beqw	Lfpmr3
+	cmpiw	&13,%d1
+	bcsw	Lfpmr4
+	beqw	Lfpmr5
+	cmpiw	&15,%d1
+	bcsw	Lfpmr6
+	moveal	%d4,%a2
+	bra	Lfpdone
+Lfpmr0:
+	lslw	&2,%d1
+	movel	%d4,%sp@(0,%d1:w)
+	bra	Lfpdone
+Lfpmr3:
+	moveal	%d4,%a3
+	bra	Lfpdone
+Lfpmr4:
+	moveal	%d4,%a4
+	bra	Lfpdone
+Lfpmr5:
+	moveal	%d4,%a5
+	bra	Lfpdone
+Lfpmr6:
+	moveal	%d4,%a6
+	bra	Lfpdone
+Lfpmcw:					| from the register
+	cmpiw	&11,%d1
+	bcsw	Lfpmw0
+	beqw	Lfpmw3
+	cmpiw	&13,%d1
+	bcsw	Lfpmw4
+	beqw	Lfpmw5
+	cmpiw	&15,%d1
+	bcsw	Lfpmw6
+	movel	%a2,%d4
+	bra	Lfpmw9
+Lfpmw0:
+	lslw	&2,%d1
+	movel	%sp@(0,%d1:w),%d4
+	bra	Lfpmw9
+Lfpmw3:
+	movel	%a3,%d4
+	bra	Lfpmw9
+Lfpmw4:
+	movel	%a4,%d4
+	bra	Lfpmw9
+Lfpmw5:
+	movel	%a5,%d4
+	bra	Lfpmw9
+Lfpmw6:
+	movel	%a6,%d4
+Lfpmw9:
+	movel	%d4,%a1@(0,%d3:w)
+	bra	Lfpdone
 Lfpusp:					| a1: the guest; register n in d1
 	movew	%d0,%d1
 	andiw	&7,%d1
@@ -360,14 +442,15 @@ Lfpset:					| d0: the new SR
 	bnew	Lfpsi
 	tstl	runrun
 	bnew	Lfpsi
+	moveq	&0,%d4
 	movew	%d0,%d1
 	eorw	%d6,%d1
 	btst	&13,%d1
 	beqw	Lfps0
-	tstl	%a1@(GP_MMU)
-	bnew	Lfpsi			| S changes under a shadow MMU: the C path switches spaces
 	tstl	%a1@(GP_SPACE)
 	bnew	Lfpsi
+	tstl	%a1@(GP_MMU)
+	sne	%d4			| S changes under the MMU: switch spaces once committed
 Lfps0:
 	movew	%d0,%d1
 	andiw	&0x0700,%d1
@@ -396,6 +479,17 @@ Lfps3:
 	andiw	&0x80ff,%d0
 	orw	%d1,%d0
 	movew	%d0,%sp@(44)
+	tstb	%d4
+	beqw	Lfpdone
+	moveml	&0x00a0,%sp@-		| a0, a2
+	moveq	&0,%d1
+	movew	%a1@(GP_VSR),%d1
+	andiw	&0x2000,%d1
+	movel	%d1,%sp@-
+	movel	%a1,%sp@-
+	jsr	guest_mmu_space
+	addql	&8,%sp
+	moveml	%sp@+,&0x0500
 Lfpdone:
 	clrl	u+0x374
 	movel	%a2,%usp

@@ -52,12 +52,18 @@ fsync, inactive, then bmap, strategy and the rest. A vnode has the VM info point
 flag at +4, count at +6, operations at +28, vfs at +36, type at +40, rdev at +44, private
 data at +46. Directories are read as 1024-byte blocks of `ino, reclen, namlen, name`.
 
-The kernel's MMU runs on guestcore's shadow: RAM is one object mapped at its physical address and again
+The kernel's MMU runs on guestcore's 040 MMU: RAM is one object mapped at its physical address and again
 at `NX_PHYS` above (the host filesystem region and the I/O windows follow it in the object), where the host side reads it once the guest's translation takes the low addresses.
+Each guest address space (the kernel's, and up to 32 tasks' keyed by their root) has its own host
+tables; a switch swaps the window's entries of the process root. The pmap's routines that change
+mappings (`pmap_pte_valid`, `pmap_enter_mapping`, `pmap_remove_range`, `pmap_protect`, `pmap_destroy`,
+`pagemove`) tell the MMU through a host call at their entry, so its whole-ATC flushes, the flush in
+`pmove_crp` and the ATC loads in `trap` go. A kernel without these routines keeps its flushes.
 The host filesystem region sits past bank 0, inside the range the kernel maps one to one.
 
 A host call is `jsr HF_HCALL` with the service in d0 (`hfswire.h`): an illegal instruction at a fixed
-address the module recognises. The launcher's signal handlers run on their own stack, since the guest's stack is virtual. `pagein` and `pageout` of the vnode operations
+address the module recognises. The host filesystem's request instead jumps straight to a stub in
+the launcher (`hostcall.h`), which serves it on its own stack with no trap. The launcher's signal handlers run on their own stack, since the guest's stack is virtual. `pagein` and `pageout` of the vnode operations
 are host reads and writes of one page.
 
 ## Sound

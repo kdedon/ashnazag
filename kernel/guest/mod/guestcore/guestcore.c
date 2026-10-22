@@ -106,6 +106,9 @@ gc_exec(p)
 	struct guest_profile *pf = guest_loading == p ? guest_loadprof : 0;
 	struct guest_proc *gp;
 
+	/* the MMU's tables go before the old image's */
+	if (p->p_evpdp)
+		guest_mmu_free(GUESTP(p));
 	if (p->p_evpdp && GUESTP(p)->gp_prof != pf) {
 		GUESTP(p)->gp_flags |= GPF_EXEC;
 		gc_free(p);

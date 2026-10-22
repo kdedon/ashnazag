@@ -26,6 +26,8 @@
 #define NX_RAMNEW 0x4e580003	/* unsigned long: the RAM object (the host filesystem region and the I/O window after it), mmap offsets from 0 */
 #define NXF_CENSUS 1		/* count accesses to addresses nothing backs */
 #define NXF_HOST 2		/* code above the bus is the host's own: its faults stay signals */
+#define NXF_PMAP 4		/* the kernel's pmap tells the MMU what it changes (NX_MMU) */
+#define NX_MMU 0x4e580004	/* struct nx_mmu */
 #define NX_NVRAM 64
 #define NX_NCENSUS 96
 struct nx_enter {
@@ -33,13 +35,16 @@ struct nx_enter {
 	unsigned long width, height;	/* the screen, from the host's */
 	unsigned char nvram[NX_NVRAM];
 };
+struct nx_mmu { unsigned long op, key, start, end, pa; };	/* guest_mmu_svc */
 struct nx_census { unsigned long addr, pc, value; unsigned char size, write, pad[2]; unsigned long count, lastpc; };
 struct nx_info {
 	unsigned long ticks, ints, io, faults, nvseq, level, stat, mask, ncensus, lasta, lastpc, monexit;
 	unsigned long high, higha, highpc;	/* guest accesses at or above NX_TOP; the latest address and pc */
 	unsigned long mmu[5];	/* MMU fills, faults, space switches, flushes; privileged instructions */
-	unsigned long hcalls[16];	/* host calls by service */
+	unsigned long hcalls[16];	/* host calls by service; [0] the pmap's */
+	unsigned long privk[13];	/* privileged instructions emulated by kind (SR ops, rte, from SR, to SR, usp, movec, moves, cache, MMU, fsave, frestore, other), then the gates' fast ones */
 	unsigned char nvram[NX_NVRAM];
 	struct nx_census census[NX_NCENSUS];
+	unsigned long privpc[32];	/* the busiest pcs of emulated instructions: pc, count */
 };
 #endif

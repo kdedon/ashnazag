@@ -7,7 +7,8 @@
  * format-7 faults with the fault address, are fixed there and rerun; a
  * transparent range is identity; a remap after pflush is seen; the user
  * space (URP) is separate and its supervisor-only page faults; 8 KB pages
- * translate; TC off is identity again.
+ * translate; TC off is identity again; the kernel reaches a fresh region
+ * above the window.
  */
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -206,6 +207,24 @@ guest()
 	check("faults", nfault, 3UL);
 }
 
+/*
+ * With the guest's tables in the process root, the kernel's copyout to a
+ * root-level region above the window that nothing used yet: its new
+ * pointer table must be the one the MMU walks.
+ */
+static void
+fresh()
+{
+	char *f = (char *)0xc4000000UL;
+	int z = open("/dev/zero", O_RDWR), q[2];
+
+	if (z < 0 || mmap(f, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, z, 0) == (void *)-1 ||
+	    pipe(q) < 0 || write(q[1], "fresh", 6) != 6 || read(q[0], f, 6) != 6)
+		check("fresh_region", 0UL, 1UL);
+	else
+		check("fresh_region", (unsigned long)strcmp(f, "fresh"), 0UL);
+}
+
 static int
 machine(fd)
 	int fd;
@@ -228,6 +247,7 @@ machine(fd)
 	if (ioctl(dev, NX_ENTER, &ne) < 0)
 		return 6;
 	guest();
+	fresh();
 	write(fd, res, sizeof res);
 	return 0;
 }

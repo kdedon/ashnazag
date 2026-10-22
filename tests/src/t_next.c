@@ -296,31 +296,41 @@ pointer(x, y)
 	return 0;
 }
 
-/* the pointer from the screen's top left to x, y, never moving back: half the way at a time, whatever the scaling */
-/* half of d, at least 1 unless d is within 3 */
+/* d over the scale s, at least 2 (pointer() moves it 1) unless d is within 3 */
 static int
-step(d)
-	int d;
+step(d, s)
+	int d, s;
 {
 	if (d >= -3 && d <= 3)
 		return 0;
-	return d > 0 ? (d + 1) / 2 : -((1 - d) / 2);
+	d = d > 0 ? (d + s - 1) / s : -((s - 1 - d) / s);
+	return d == 1 || d == -1 ? 2 * d : d;
 }
 
+/*
+ * The pointer from the screen's top left to x, y.  The event driver speeds
+ * up moves by how many land between its reads, so a move that overshoots
+ * doubles that axis's scale.
+ */
 static int
 moveto(x, y)
 	int x, y;
 {
 	char req[40];
-	int k, px, py;
+	int k, px, py, dx = 0, dy = 0, sx = 2, sy = 2;
 
 	host("move -2000 -2000 20");
 	nap(1000);
 	for (k = 0; k < 40 && pointer(&px, &py); k++) {
 		if (abs(x - px) <= 3 && abs(y - py) <= 3)
 			return 1;
-		/* half the way, a pixel an event: the event driver speeds up larger moves */
-		sprintf(req, "move %d %d 40 1", step(x - px), step(y - py));
+		if (dx && (x - px) * dx < 0 && sx < 64)
+			sx *= 2;
+		if (dy && (y - py) * dy < 0 && sy < 64)
+			sy *= 2;
+		dx = step(x - px, sx);
+		dy = step(y - py, sy);
+		sprintf(req, "move %d %d 40 1", dx, dy);
 		host(req);
 		nap(500);
 	}
@@ -574,7 +584,7 @@ kernel()
 {
 	static struct nx_info info, now;
 	struct stat st;
-	unsigned long io0 = 0, priv0 = 0;
+	unsigned long io0 = 0, priv0 = 0, fill0 = 0, hcall0 = 0;
 	pid_t pid;
 	int i, hw, hh, gone = 0, status, banner, typed = 0, after = 0, nopanel = 0, panelkeys = 0, held = 0, again = 0;
 	char *q;
@@ -635,10 +645,9 @@ kernel()
 		/*
 		 * loginwindow skips the automatic login while the button is down.  The window server
 		 * restarts after a logout or the console's exit and learns the button from events: hold it
-		 * and drag a pixel each second until the panel shows.
+		 * and drag a pixel at every poll until the panel shows, before a fast restart logs in.
 		 */
-		if ((typed == 4 || typed == 11) && held >= 0 &&
-		    i % 10 == 0) {
+		if ((typed == 4 || typed == 11) && held >= 0) {
 			/* the old Workspace's own lookups are not a new login */
 			if (held == 0)
 				errmark = stat(ERRLOG, &st) == 0 ? st.st_size : 0;
@@ -739,6 +748,8 @@ kernel()
 		if (after == 1) {
 			io0 = iofaults(&info);
 			priv0 = info.mmu[4];
+			fill0 = info.mmu[0];
+			hcall0 = info.hcalls[0];
 		}
 		if (after == 899)
 			shot("next_workspace");
@@ -765,12 +776,27 @@ kernel()
 	    info.ints, info.io, info.lasta, info.lastpc, info.level, info.stat, info.mask);
 	t_info("mmu", "fills %lu faults %lu space switches %lu flushes %lu, privileged %lu, ticks %lu",
 	    info.mmu[0], info.mmu[1], info.mmu[2], info.mmu[3], info.mmu[4], info.ticks);
+	t_info("privkinds", "SR ops %lu rte %lu from SR %lu to SR %lu usp %lu movec %lu moves %lu cache %lu MMU %lu fsave %lu frestore %lu other %lu; fast %lu",
+	    info.privk[0], info.privk[1], info.privk[2], info.privk[3], info.privk[4], info.privk[5], info.privk[6],
+	    info.privk[7], info.privk[8], info.privk[9], info.privk[10], info.privk[11], info.privk[12]);
+	for (i = 0; i < 8; i++) {
+		int k, b = -1;
+
+		for (k = 0; k < 16; k++)
+			if (info.privpc[2 * k + 1] && (b < 0 || info.privpc[2 * k + 1] > info.privpc[2 * b + 1]))
+				b = k;
+		if (b < 0)
+			break;
+		t_info("privpc", "%lx %lu", info.privpc[2 * b], info.privpc[2 * b + 1]);
+		info.privpc[2 * b + 1] = 0;
+	}
 	t_info("space", "above the guest's space %lu, last %lx pc %lx", info.high, info.higha, info.highpc);
 	for (i = 0; i < (int)info.ncensus && i < NX_NCENSUS; i++)
 		t_info("io", "%s %lx x%lu pc %lx last pc %lx", info.census[i].write ? "write" : "read",
 		    info.census[i].addr, info.census[i].count, info.census[i].pc, info.census[i].lastpc);
-	t_info("hcalls", "hfs %lu us %lu delay %lu timer %lu soft %lu time %lu nvram %lu/%lu", info.hcalls[1],
-	    info.hcalls[3], info.hcalls[4], info.hcalls[5], info.hcalls[6], info.hcalls[7], info.hcalls[8], info.hcalls[9]);
+	t_info("hcalls", "hfs %lu us %lu delay %lu timer %lu soft %lu time %lu nvram %lu/%lu copyinstr %lu pmap %lu", info.hcalls[1],
+	    info.hcalls[3], info.hcalls[4], info.hcalls[5], info.hcalls[6], info.hcalls[7], info.hcalls[8], info.hcalls[9],
+	    info.hcalls[15], info.hcalls[0]);
 	if (login)
 		t_info("login", "prompt after %ld s", login);
 	t_check("km_on_screen", vramset() > 1000, "the kernel's console drew nothing on the screen");
@@ -826,8 +852,9 @@ kernel()
 		t_check("io_steady", iofaults(&info) == io0, "%lu hardware-page faults in the %d s after %s",
 		    iofaults(&info) - io0, (after - 1) / 10, full ? "the login" : "the command");
 		/* Mach's MMU and cache instructions are still emulated: reported, not checked */
-		t_info("emulated_steady", "%lu privileged instructions emulated in the %d s after %s",
-		    info.mmu[4] - priv0, (after - 1) / 10, full ? "the login" : "the command");
+		t_info("emulated_steady", "%lu privileged instructions emulated, %lu MMU fills, %lu pmap calls in the %d s after %s",
+		    info.mmu[4] - priv0, info.mmu[0] - fill0, info.hcalls[0] - hcall0, (after - 1) / 10,
+		    full ? "the login" : "the command");
 	}
 	if (full) {
 		/* rc.boot's text with today's date, then init starts /etc/rc */

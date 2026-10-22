@@ -34,6 +34,7 @@
 #include "profile.h"
 #include "hfswire.h"
 #include "sndout.h"
+#include "hostcall.h"
 
 extern unsigned char hfs_blob[];
 extern unsigned long hfs_blob_len, hfs_entry, fb_entry[];
@@ -638,7 +639,7 @@ static struct ksym bsyms[] = {
 	{ "_clock_timer_init" }, { "_install_scanned_intr" }, { "_eventc_latch" }, { "_eventc_l" }, { "_timer_csr" },
 	{ "_intrstat" }, { "_scr2" }, { "_rtc_get" }, { "_rtc_set" }, { "_startrtclock" }, { "_nvram_check" },
 	{ "_nvram_set" }, { "_rtc_power_down" }, { "_mon_reset" }, { "_zsintsetup" }, { "_enintsetup" }, { "ipl6" },
-	{ "_copyin" }, { "_copyout" },
+	{ "_copyin" }, { "_copyout" }, { "_copyinstr" },
 };
 /* drivers of devices this machine has none of: their probes find nothing */
 static struct ksym absent[] = {
@@ -655,6 +656,22 @@ static struct ksym nodsp[] = {
 	{ "_dsp_dev_init" }, { "_dsp_dev_reset_hard" }, { "_dma_init" }, { "_dma_close" }, { "_dma_start" },
 	{ "_dma_cleanup" }, { "_dma_abort" },
 };
+/* the pmap's flushes and the routines that change its tables, found by name */
+static struct ksym psyms[] = {
+	{ "_pflush_super" }, { "_pflush_user" }, { "_tlb_update_read" }, { "_tlb_update_write" }, { "_pmove_crp" },
+	{ "_kernel_pmap" }, { "_page_size" }, { "_pmap_pte_valid" }, { "_pmap_enter_mapping" },
+	{ "_pmap_remove_range" }, { "_pmap_protect" }, { "_pmap_destroy" }, { "_pagemove" },
+};
+#define P_CRP 4
+#define P_KPMAP 5
+#define P_PGSIZE 6
+#define P_VALID 7	/* (pmap, va): its page's entry, which the caller changes */
+#define P_ENTER 8	/* (pmap, va, ...) */
+#define P_REMOVE 9	/* (pmap, start, end) */
+#define P_PROTECT 10	/* (pmap, start, end, prot) */
+#define P_DESTROY 11	/* (pmap) */
+#define P_MOVE 12	/* (from, to, size), in the kernel's map */
+#define P_N 13
 #define B_CLOCKVALUE 0
 #define B_TIMESTAMP 1
 #define B_DELAY 2
@@ -679,6 +696,7 @@ static struct ksym nodsp[] = {
 #define B_IPL6 21
 #define B_COPYIN 22
 #define B_COPYOUT 23
+#define B_COPYSTR 24
 
 /* the address of the named symbol in the slice at off, 0 if none */
 static unsigned long
@@ -775,6 +793,9 @@ loadkernel(path)
 			for (n = 0; n < sizeof absent / sizeof absent[0]; n++)
 				absent[n].addr = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16),
 				    BE(cmd + 20), absent[n].name);
+			for (n = 0; n < P_N; n++)
+				psyms[n].addr = symbol(fd, off, BE(cmd + 8), BE(cmd + 12), BE(cmd + 16),
+				    BE(cmd + 20), psyms[n].name);
 		} else if (BE(cmd) == 5)
 			entry = BE(cmd + 12 + 4 * BE(cmd + 12));	/* the last word of the state: pc */
 		if (BE(cmd + 4) < 8)
@@ -962,6 +983,9 @@ trap(sig, si, uc)
  * a filesystem-switch entry the root setup is pointed at, with no device
  * probe and no network code.  The kernel file is not touched.
  */
+/* a request takes more than the stub's own stack: a read or write buffers 8 KB */
+static unsigned long hfstack[8192];
+
 struct hctx {
 	long (*kalloc)(), (*vm_info_init)(), (*uiomove)(), (*vfs_add)(), (*vfs_unlock)(), (*bcopy)(), (*specvp)();
 	unsigned long *active_u;
@@ -997,7 +1021,8 @@ hostfs(folder)
 	c->bcopy = (long (*)())ksyms[K_BCOPY].addr;
 	c->specvp = (long (*)())ksyms[K_SPECVP].addr;
 	c->active_u = (unsigned long *)ksyms[K_ACTIVEU].addr;
-	c->hcall = (long (*)())HF_HCALL;
+	c->hcall = (long (*)())HC_STUB(0);
+	hc_sp = hfstack + sizeof hfstack / sizeof hfstack[0];
 	if (kminput && timeout && hz) {
 		k = (struct hf_keys *)HF_KEYS;
 		k->input = (long (*)())kminput;
@@ -1427,7 +1452,7 @@ static int
 services()
 {
 	unsigned short *c = (unsigned short *)HF_HCALL;
-	char *bad[18 + sizeof absent / sizeof absent[0] + sizeof nodsp / sizeof nodsp[0]];
+	char *bad[19 + sizeof absent / sizeof absent[0] + sizeof nodsp / sizeof nodsp[0]];
 	int i, n = 0;
 
 	c[0] = 0x202f;				/* move.l 4(sp),d0 */
@@ -1480,6 +1505,8 @@ services()
 		bad[n++] = "copyin";
 	if (copyentry(bsyms[B_COPYOUT].addr, HC_COPYOUT, HF_TRAMP + 16) < 0)
 		bad[n++] = "copyout";
+	if (copyentry(bsyms[B_COPYSTR].addr, HC_COPYSTR, HF_TRAMP + 32) < 0)
+		bad[n++] = "copyinstr";
 	/* a driver's probe and slave probe are its first two words, its controller setup the seventh */
 	for (i = 0; i < sizeof absent / sizeof absent[0]; i++)
 		if (inkernel(absent[i].addr) && inkernel(L(absent[i].addr))) {
@@ -1499,6 +1526,117 @@ services()
 	if (!n)
 		fprintf(stderr, "next: the board's routines are host calls\n");
 	return n ? -1 : 0;
+}
+
+/* words of p's prologue that cover 6 bytes: link, pea (a6), movea sp,a6, movem.l and move.l to -(sp); 0 for any other */
+static int
+prologue(p)
+	unsigned short *p;
+{
+	int n = 0;
+
+	while (n < 3)
+		if (p[n] == 0x4e56 || p[n] == 0x48e7)
+			n += 2;
+		else if (p[n] == 0x4856 || p[n] == 0x2c4f || (p[n] & 0xfff0) == 0x2f00)
+			n++;
+		else
+			return 0;
+	return n;
+}
+
+static unsigned short ptramp[P_N - P_VALID][10];
+
+/*
+ * The pmap tells the MMU each change through a host call at the entry of
+ * the routines that make them, so its whole-ATC flushes (on every change
+ * and task switch) and ATC loads go.  All or nothing.
+ */
+static int
+pmap()
+{
+	unsigned short *p, *t, *crp, w[2];
+	unsigned long a;
+	int i, k, n[P_N - P_VALID];
+
+	for (i = 0; i < P_N; i++)
+		if (!inkernel(psyms[i].addr) || (i < P_CRP && !framed(psyms[i].addr)))
+			return -1;
+	w[0] = 0xf4f8;			/* cpusha bc */
+	w[1] = 0xf510;			/* pflushan */
+	if (!(crp = find((unsigned short *)psyms[P_CRP].addr, 12, w, 2)) || crp[4] != 0x4e7b || crp[5] != 0x0806)
+		return -1;
+	for (i = P_VALID; i < P_N; i++)
+		if (!framed(psyms[i].addr) || !(n[i - P_VALID] = prologue((unsigned short *)psyms[i].addr)))
+			return -1;
+	for (i = 0; i < P_CRP; i++)
+		*(unsigned short *)psyms[i].addr = 0x4e75;	/* rts */
+	crp[0] = crp[1] = 0x4e71;	/* nop */
+	for (i = P_VALID; i < P_N; i++) {
+		p = (unsigned short *)psyms[i].addr;
+		t = ptramp[i - P_VALID];
+		a = HC_STUB(1 + i - P_VALID);
+		t[0] = 0x4eb9;
+		t[1] = a >> 16;
+		t[2] = (unsigned short)a;
+		for (k = 0; k < n[i - P_VALID]; k++)
+			t[3 + k] = p[k];
+		a = (unsigned long)(p + k);
+		t[3 + k] = 0x4ef9;
+		t[4 + k] = a >> 16;
+		t[5 + k] = (unsigned short)a;
+		a = (unsigned long)t;
+		p[0] = 0x4ef9;
+		p[1] = a >> 16;
+		p[2] = (unsigned short)a;
+	}
+	return 0;
+}
+
+/* a pmap routine's entry: r[18] on are its arguments */
+static void
+pmapcall(i, r)
+	int i;
+	unsigned long *r;
+{
+	unsigned long *a = r + 18, ps = L(psyms[P_PGSIZE].addr);
+	struct nx_mmu q;
+
+	q.op = 2;
+	q.pa = 0;
+	if (i == P_MOVE) {
+		q.key = 0;
+		q.start = a[0];
+		q.end = a[0] + a[2];
+		(void)ioctl(bridge, NX_MMU, &q);
+		q.start = a[1];
+		q.end = a[1] + a[2];
+		(void)ioctl(bridge, NX_MMU, &q);
+		return;
+	}
+	if (!a[0])
+		return;
+	q.key = a[0] == L(psyms[P_KPMAP].addr) ? 0 : L(a[0] + 4);
+	switch (i) {
+	case P_ENTER:
+		/* (pmap, va, pa, ...): the new page's code reaches the instruction cache */
+		q.pa = a[2] & ~(ps - 1);
+	case P_VALID:
+		q.start = a[1] & ~(ps - 1);
+		q.end = q.start + ps;
+		break;
+	case P_REMOVE:
+	case P_PROTECT:
+		q.start = a[1];
+		q.end = a[2];
+		break;
+	case P_DESTROY:
+		if (!q.key)
+			return;
+		q.op = 3;
+		break;
+	}
+	(void)ioctl(bridge, NX_MMU, &q);
 }
 
 /*
@@ -1533,9 +1671,9 @@ audio()
 
 static int hfslog;	/* each request on stderr */
 
-/* a host call from the guest: the request in the mailbox */
+/* the guest's request in the mailbox */
 static void
-hostcall(sig)
+hfcall(sig)
 	int sig;
 {
 	struct hf_box *b = (struct hf_box *)(NX_PHYS + HF_BASE);
@@ -1554,6 +1692,21 @@ hostcall(sig)
 		    b->name : "");
 		write(2, line, strlen(line));
 	}
+}
+
+HC_ENTRY
+
+/* the kernel's host filesystem and pmap call this directly: no trap or signal */
+void
+hostcall(r)
+	unsigned long *r;
+{
+	int n = HC_CALL(r);
+
+	if (n)
+		pmapcall(P_VALID + n - 1, r);
+	else
+		hfcall(0);
 }
 
 /* the ROM's stack and entry: the first two longs */
@@ -1692,11 +1845,15 @@ main(argc, argv)
 				cursorrow();
 			if (audio() < 0)
 				fprintf(stderr, "next: no sound out\n");
-			sa.sa_handler = hostcall;
+			sa.sa_handler = hfcall;
 			sa.sa_flags = SA_ONSTACK;
 			sigaction(SIGPWR, &sa, (struct sigaction *)0);
 		}
 		services();
+		if (pmap() == 0)
+			ne.flags |= NXF_PMAP;
+		else
+			fprintf(stderr, "next: the pmap keeps its own flushes\n");
 	}
 	/* the child shares the host filesystem's region for the keys */
 	machine = getpid();

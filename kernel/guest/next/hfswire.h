@@ -40,7 +40,8 @@
 #define HC_TACK 12	/* the timer's interrupt acknowledged; d1 as HC_US */
 #define HC_COPYIN 13	/* (from, to, len) as the kernel's routine; returns to its caller */
 #define HC_COPYOUT 14	/* or, for a page not mapped, goes on in the routine at HF_TRAMP + 16 * (svc - HC_COPYIN) */
-#define HC_N 15
+#define HC_COPYSTR 15	/* copyinstr (from, to, max, &copied), the same way */
+#define HC_N 16
 
 #define HF_IDLE 0
 #define HF_REQUEST 1

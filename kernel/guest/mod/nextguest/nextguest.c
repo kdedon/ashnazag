@@ -20,9 +20,18 @@ extern int nodev(), ttimeout(), untimeout(), fpu_present;
 extern void dlm_cacheflush();
 extern int __amix_sendsig(), __amix_fsig();
 extern struct modwrapper nextguest_wrapper;
+extern void guest_priv_stats(), guest_priv_pcs();
 
 static struct guest_profile profile;
 static int device_flag;
+
+/* the launcher's own code, such as a host call's stub, finishes first */
+static int
+hostpc(p)
+	struct proc *p;
+{
+	return (nx.flags & NXF_HOST) && p == u.u_procp && u.u_ar0 && (unsigned long)GR_PC(u.u_ar0) >= NX_TOP;
+}
 
 /* a request above the guest's IPL wakes a halted guest or sends the carrier; under spl */
 void
@@ -85,7 +94,7 @@ nx_fsig(p, gp)
 
 	h = p->p_hold;
 	sigdelset(&p->p_hold, NX_SIG);
-	if (nx.gp != gp || nx_level() <= GUEST_VIPL(gp) || guest_onstack(p))
+	if (nx.gp != gp || nx_level() <= GUEST_VIPL(gp) || guest_onstack(p) || hostpc(p))
 		sigaddset(&p->p_hold, NX_SIG);
 	n = __amix_fsig(p);
 	p->p_hold = h;
@@ -319,6 +328,8 @@ enter(arg)
 	nx_board(ne.width, ne.height);
 	if (nx.ram && guest_mmu_init(gp, NX_PHYS, NX_LIMIT, 0UL, NX_TOP))
 		printf("NOTICE: next: no MMU shadow on this host\n");
+	else if (ne.flags & NXF_PMAP)
+		(void)guest_mmu_svc(gp, 1, 0UL, 0UL, 0UL, 0UL);
 	nx.proc = curproc;
 	nx.gp = gp;
 	dlm_cacheflush();
@@ -385,9 +396,16 @@ ioctl_device(dev, command, argument, mode, credentials, result)
 	int *result;
 {
 	unsigned long size;
+	struct nx_mmu q;
 	int s;
 
 	switch (command) {
+	case NX_MMU:
+		if (nx.state != 1 || curproc != nx.proc)
+			return ENXIO;
+		nx.st.hcalls[0]++;
+		return copyin(argument, (caddr_t)&q, sizeof q) ? EFAULT :
+		    guest_mmu_svc(nx.gp, (int)q.op, q.key, q.start, q.end, q.pa);
 	case NX_ENTER:
 		return GUESTP(curproc) ? EBUSY : enter(argument);
 	case NX_RAMNEW:
@@ -403,6 +421,8 @@ ioctl_device(dev, command, argument, mode, credentials, result)
 		if (nx.state != 1)
 			return ENXIO;
 		guest_mmu_stats(nx.gp, nx.st.mmu);
+		guest_priv_stats(nx.st.privk);
+		guest_priv_pcs(nx.st.privpc);
 		s = guest_splhi();
 		nx.st.level = nx_level();
 		nx.st.stat = nx.stat;

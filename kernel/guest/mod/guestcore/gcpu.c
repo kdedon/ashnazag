@@ -39,6 +39,7 @@ extern long g_cputype __asm__("cputype");	/* 30, 40, 60; absent: 68030 */
 int	guest_npriv;			/* emulated instructions */
 int	guest_nprivbad;			/* refused ones */
 long	guest_npk[12];			/* emulated, by privkind() */
+unsigned long guest_ppc[16][2];		/* the busiest pcs of emulated ones: pc, count */
 long	guest_privop;			/* the last refused opcode */
 long	guest_nfault7, guest_f7pc, guest_f7ea;	/* faults sent to vector 2 */
 long	guest_nunote;			/* their notices left out */
@@ -630,6 +631,46 @@ fpstate(gp, pi, op)
 	return 0;
 }
 
+/* a count by pc that keeps the busiest: a new pc takes the smallest entry's place and count */
+static void
+ppc(pc)
+	unsigned long pc;
+{
+	int i, j = 0;
+
+	for (i = 0; i < 16; i++) {
+		if (guest_ppc[i][0] == pc) {
+			guest_ppc[i][1]++;
+			return;
+		}
+		if (guest_ppc[i][1] < guest_ppc[j][1])
+			j = i;
+	}
+	guest_ppc[j][0] = pc;
+	guest_ppc[j][1]++;
+}
+
+/* the counts by kind, then the gates' fast ones */
+void
+guest_priv_stats(v)
+	unsigned long *v;
+{
+	extern long guest_nfpriv;
+	int i;
+
+	for (i = 0; i < 12; i++)
+		v[i] = guest_npk[i];
+	v[12] = guest_nfpriv;
+}
+
+/* the busiest pcs: 16 of pc, count */
+void
+guest_priv_pcs(v)
+	unsigned long *v;
+{
+	bcopy((caddr_t)guest_ppc, (caddr_t)v, sizeof guest_ppc);
+}
+
 /* counter index: SR ops, rte, SR moves, usp, movec, moves, cache, MMU, fsave, frestore, other */
 static int
 privkind(op)
@@ -720,6 +761,7 @@ priv1(gp, pi)
 	if (iword(pi, &op))
 		return -2;
 	guest_npk[privkind((int)op)]++;
+	ppc((unsigned long)pi->pc);
 	mode = (op >> 3) & 7;
 	reg = op & 7;
 	switch (op) {

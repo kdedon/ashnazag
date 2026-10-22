@@ -128,6 +128,8 @@ nvsum(b)
  * faults, runs the routine's own code from the start, which faults as it
  * would on the machine.  1: the PC is set.
  */
+static int nx_ret0();
+
 static int
 nx_copy(gp, r, out, a)
 	struct guest_proc *gp;
@@ -136,7 +138,7 @@ nx_copy(gp, r, out, a)
 	unsigned long *a;
 {
 	static char b[4096];	/* one machine at a time */
-	unsigned long u = out ? a[1] : a[0], k = out ? a[0] : a[1], len = a[2], n, ret;
+	unsigned long u = out ? a[1] : a[0], k = out ? a[0] : a[1], len = a[2], n;
 	caddr_t h;
 
 	if ((long)len < 0 || !inguest(k, len))
@@ -148,14 +150,66 @@ nx_copy(gp, r, out, a)
 		    (out ? copyin((caddr_t)k, b, n) || copyout(b, h, n) : copyin(h, b, n) || copyout(b, (caddr_t)k, n)))
 			goto slow;
 	}
+	if (nx_ret0(r) == 0)
+		return 1;
+slow:
+	GR_PC(r) = HF_TRAMP + 16 * out;
+	return 1;
+}
+
+/* back to the routine's caller with d0 = 0; -1 when its stack does not read */
+static int
+nx_ret0(r)
+	char *r;
+{
+	unsigned long ret;
+
 	if (!inguest((unsigned long)GR_USP(r), 4UL) || copyin((caddr_t)GR_USP(r), (caddr_t)&ret, 4))
-		goto slow;
+		return -1;
 	GR_USP(r) += 4;
 	GR_PC(r) = ret;
 	GR_D(r, 0) = 0;
-	return 1;
+	return 0;
+}
+
+/* copyinstr: up to the NUL, which is copied, or max bytes, their count to *a[3] if a[3] */
+static int
+nx_copystr(gp, r, a)
+	struct guest_proc *gp;
+	char *r;
+	unsigned long *a;
+{
+	static char b[4096];
+	unsigned long u = a[0], k = a[1], max = a[2], done = 0, n, c;
+	caddr_t h;
+
+	if (max == 0 || max >= 0x8000 || !inguest(k, max))
+		goto slow;
+	while (done < max) {
+		n = 4096 - (u & 4095);
+		n = n < max - done ? n : max - done;
+		if ((h = guest_mmu_user(gp, u, (int)n, 0)) == 0 || copyin(h, b, n))
+			goto slow;
+		for (c = 0; c < n && b[c]; c++)
+			;
+		c = c < n ? c + 1 : n;
+		if (copyout(b, (caddr_t)k, c))
+			goto slow;
+		done += c;
+		u += c;
+		k += c;
+		if (!b[c - 1])
+			goto nul;
+	}
+	/* no NUL in max bytes: the routine's own error */
+	goto slow;
+nul:
+	if (a[3] && (!inguest(a[3], 4UL) || copyout((caddr_t)&done, (caddr_t)a[3], 4)))
+		goto slow;
+	if (nx_ret0(r) == 0)
+		return 1;
 slow:
-	GR_PC(r) = HF_TRAMP + 16 * out;
+	GR_PC(r) = HF_TRAMP + 32;
 	return 1;
 }
 
@@ -165,7 +219,7 @@ nx_service(gp, r)
 	struct guest_proc *gp;
 	char *r;
 {
-	unsigned long a[3], us;
+	unsigned long a[4], us;
 	unsigned char b[32];
 	int svc = GR_D(r, 0), s;
 
@@ -209,6 +263,8 @@ nx_service(gp, r)
 	case HC_COPYIN:
 	case HC_COPYOUT:
 		return nx_copy(gp, r, svc == HC_COPYOUT, a);
+	case HC_COPYSTR:
+		return nx_copystr(gp, r, a);
 	case HC_TACK:
 		s = guest_splhi();
 		nx.istat &= ~INT_TIMER;
