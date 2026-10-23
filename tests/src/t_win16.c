@@ -30,6 +30,8 @@
 #define	DEV	"/dev/dsk/c3d0s0"
 #define	W	"/win"
 #define	LOG	W "/t/startwin.log"
+#define	MINEX	98		/* Minesweeper's top left square */
+#define	MINEY	142
 
 static int hfd = -1, hseq;
 static char hrep[128];
@@ -478,6 +480,55 @@ same(name, now)
 	return host(req) != 0 && strcmp(hrep, "same") == 0;
 }
 
+/* the same colour at (x, y) in shots a and b */
+static int
+pixsame(a, b, x, y)
+	char *a, *b;
+	int x, y;
+{
+	char req[64], c[16];
+
+	sprintf(req, "pix win16_%s %d %d", a, x, y);
+	if (host(req) == 0)
+		return 0;
+	strcpy(c, hrep);
+	sprintf(req, "pix win16_%s %d %d", b, x, y);
+	return host(req) != 0 && strcmp(hrep, c) == 0;
+}
+
+/*
+ * Minesweeper flags a square on a right click: the mine count and the
+ * square change (the clock, right of the face, is left out).  A left
+ * button taken for still down makes it a two-button click instead.
+ */
+static void
+rbutton(p)
+	pid_t p;
+{
+	char req[64];
+	int k, x0, y0, x1, y1;
+
+	host("key alt+f");
+	nap(500);
+	host("key r");
+	nap(1500);
+	type("winmine");
+	host("key ret");
+	settle(300);
+	pshot("mine0");
+	pointer(MINEX, MINEY);
+	host("button 2");
+	host("button 0");
+	settle(60);
+	pshot("mine1");
+	sprintf(req, "box win16_mine0 win16_mine1 0 %d 0 639 %d", MINEX + 40, MINEY - 8);
+	k = host(req) != 0 && sscanf(hrep, "%d %d %d %d", &x0, &y0, &x1, &y1) == 4;
+	t_check("right_button", kill(p, 0) == 0 && k && y0 < MINEY - 20 && y1 >= MINEY - 8 && x0 <= MINEX,
+	    "startwin ended or no flag: %s", hrep);
+	host("key alt+f4");
+	settle(60);
+}
+
 /*
  * Program Manager's groups at 640x480 (small fonts): the active group is
  * Main at its first start, its system box at (31, 70); a minimised
@@ -487,6 +538,8 @@ static void
 groups(p)
 	pid_t p;
 {
+	int x, y, n;
+
 	pointer(100, 100);
 	shot("pointer100");
 	pshot("groups0");
@@ -538,6 +591,18 @@ groups(p)
 	host("key alt+f4");
 	settle(60);
 	t_check("group_icon_under", kill(p, 0) == 0 && same("icons0", "icons1"), "startwin ended or the screen differs");
+	/* Main restored on top, then minimised again: its icon goes back under that group */
+	host("key alt+w");
+	nap(500);
+	host("key 1");
+	settle(60);
+	host("key ctrl+f4");
+	settle(60);
+	pshot("icons2");
+	for (n = 0, y = 309; y < 343; y += 6)
+		for (x = 41; x < 75; x += 6)
+			n += !pixsame("icons0", "icons2", x, y);
+	t_check("group_icon_below", kill(p, 0) == 0 && n == 0, "%d points of the icon differ", n);
 	host("key alt+w");
 	nap(500);
 	host("key 1");
@@ -647,6 +712,7 @@ progman()
 	shot("progman_end");
 	if (host("shot win16_size") != 0 && strcmp(hrep, "640 480") == 0) {
 		groups(p);
+		rbutton(p);
 		use(p, "notepad", "hello", 1);
 		use(p, "write", "hello", 1);
 		use(p, "pbrush", (char *)0, 0);

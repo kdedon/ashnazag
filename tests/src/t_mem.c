@@ -101,6 +101,65 @@ test_sbrk()
 	t_check("brk_restore", sbrk(0) == base, "break %lx, want %lx", (long)sbrk(0), (long)base);
 }
 
+/*
+ * A store into the page just above the break (sh's arena sentinel) must
+ * survive the next sbrk that still ends below that page, show up when the
+ * break reaches it, and be gone after a shrink below it.  Exit code bits:
+ * 1 lost on the small grow, 2 lost when covered, 4 stale after shrink/regrow,
+ * 8 the page faulted after the store; 100 the store itself faulted.
+ */
+static volatile int brkpast_stored;
+
+static void
+brkpast_segv(sig)
+int sig;
+{
+	_exit(brkpast_stored ? 8 : 100);
+}
+
+static void
+test_brkpast()
+{
+	char *b, *pg;
+	long *w;
+	int pid, st, r = 0;
+
+	if ((pid = fork()) == 0) {
+		b = sbrk(0);
+		if (((long)b & 0xfff) == 0)
+			b = (char *)sbrk(16) + 16;
+		pg = (char *)(((long)b + 0xfff) & ~0xfffL);
+		w = (long *)(pg + 0x50);
+		signal(SIGSEGV, brkpast_segv);
+		*w = 0x5a5a1234;
+		brkpast_stored = 1;
+		sbrk((int)((pg - b) / 2) & ~3);
+		if (*w != 0x5a5a1234)
+			r |= 1;
+		sbrk((int)(pg + 0x100 - (char *)sbrk(0)));
+		if (*w != 0x5a5a1234)
+			r |= 2;
+		sbrk((int)(b - (char *)sbrk(0)));
+		sbrk((int)(pg + 0x100 - (char *)sbrk(0)));
+		if (*w != 0)
+			r |= 4;
+		_exit(r);
+	}
+	if (pid == -1 || t_waitchild(pid, &st, 20) != pid) {
+		t_fail("brk_past", "child: %s", pid == -1 ? T_ERR : "hung");
+		return;
+	}
+	r = WIFEXITED(st) ? WEXITSTATUS(st) : 16;
+	if (r == 100) {
+		t_skip("brk_past", "no write past the break on this CPU");
+		return;
+	}
+	t_check("brk_past_mapped", !(r & 24), "exit status 0x%x", st);
+	t_check("brk_past_kept", !(r & 1), "store above the break lost by a smaller grow");
+	t_check("brk_past_covered", !(r & 2), "store lost when the break reached it");
+	t_check("brk_past_shrink", !(r & 4), "stale data after shrink and regrow");
+}
+
 static void
 test_malloc()
 {
@@ -526,6 +585,7 @@ main()
 	pid = fork();
 	if (pid == 0) {
 		test_sbrk();
+		test_brkpast();
 		test_malloc();
 		_exit(t_nfail != 0);
 	}

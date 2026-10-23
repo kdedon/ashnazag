@@ -357,11 +357,46 @@ char *a1, *a2;
 	return WEXITSTATUS(s);
 }
 
+/* kvar's output for a command line, "" on error */
+static char *
+kvar(args)
+char *args;
+{
+	static char out[256];
+	char cmd[128];
+	FILE *f;
+	int n;
+
+	out[0] = 0;
+	sprintf(cmd, "/tests/kvar %s 2>&1", args);
+	if ((f = popen(cmd, "r")) == 0)
+		return out;
+	n = fread(out, 1, sizeof out - 1, f);
+	out[n < 0 ? 0 : n] = 0;
+	pclose(f);
+	return out;
+}
+
+/* several names per call, both reading and setting */
+static void
+test_kvar()
+{
+	char *o;
+
+	o = kvar("dlmta_value=7 dlmta_loads=5");
+	t_check("kvar_set", strcmp(o, "dlmta_value 7\ndlmta_loads 5\n") == 0 &&
+	    kval("dlmta_value") == 7 && kval("dlmta_loads") == 5, "%s", o);
+	kvar("dlmta_loads=1 dlmta_value=1000");
+	o = kvar("dlmta_value dlmta_loads");
+	t_check("kvar_read", strcmp(o, "dlmta_value 1000\ndlmta_loads 1\n") == 0, "%s", o);
+}
+
 static void
 test_modadmin()
 {
 	t_check("modadmin_load", admin("-l", MD "dlmta") == 0 && nloaded() == 1, "");
 	t_check("modadmin_list", admin("-s", (char *)0) == 0, "");
+	test_kvar();
 	t_check("modadmin_bad", admin("-l", MD "nosuch") == 1, "");
 	t_check("modadmin_unload", admin("-U", "dlmta") == 0 && nloaded() == 0, "");
 }

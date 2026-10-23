@@ -392,6 +392,64 @@ test_root()
 	unlink("/tmp/scsi_b0");
 }
 
+/* scsibench on the disk at ID 0: it must restore the settings and find the data the same */
+static void
+test_bench()
+{
+	static char *node[] = { "/dev/rdsk/c0d0s0", "/dev/rdsk/c0d0s1", "/dev/dsk/c0d0s0", "/dev/dsk/c0d0s1" };
+	static int mn[] = { 0, 16, 0, 16 };
+	char line[200], *v[4];
+	long before[4];
+	FILE *f;
+	int i, st, same = 0, set = 1, mode, wide = 0, made[4];
+
+	if (access("/tests/scsibench", 0) != 0 || access("/usr/bin/sum", 0) != 0) {
+		t_skip("bench", "no scsibench in this root");
+		return;
+	}
+	for (i = 0; i < 4; i++)
+		if (!(made[i] = mknod(node[i], (i < 2 ? S_IFCHR : S_IFBLK) | 0600,
+		    makedev(i < 2 ? 40 : 18, mn[i])) == 0) && errno != EEXIST) {
+			t_fail("bench_nodes", "%s: %s", node[i], T_ERR);
+			return;
+		}
+	/* odd settings, to see them restored */
+	v[0] = "ncr_pdmamode"; v[1] = "sd_bigraw"; v[2] = "sd_clust"; v[3] = "ncr_xipl";
+	kset("ncr_pdmamode", 4L);
+	kset("sd_bigraw", 1L);
+	kset("sd_clust", 0L);
+	kset("ncr_xipl", 1L);
+	for (i = 0; i < 4; i++)
+		before[i] = kget(v[i]);
+	mode = 0;
+	if ((f = popen("PATH=/tests:/usr/bin:/sbin sh /tests/scsibench -v c0d0s1 2>&1", "r")) == 0) {
+		t_fail("bench", "popen: %s", T_ERR);
+		return;
+	}
+	while (fgets(line, sizeof line, f)) {
+		line[strcspn(line, "\n")] = 0;
+		t_info("bench", "%s", line);
+		if (strlen(line) > 80)
+			wide++;
+		if (strcmp(line, "data: same in every setting") == 0)
+			same = 1;
+		if (strncmp(line, "mode 4, shaping on ", 19) == 0)
+			mode = 1;
+	}
+	st = pclose(f);
+	for (i = 0; i < 4; i++)
+		if (kget(v[i]) != before[i])
+			set = 0;
+	t_check("bench_runs", st == 0 && mode, "status 0x%x", st);
+	t_check("bench_data", same, "no 'data: same' line");
+	t_check("bench_restores", set, "settings changed");
+	t_check("bench_width", wide == 0, "%d lines over 80 columns", wide);
+	/* other tests use the nodes that were already there */
+	for (i = 0; i < 4; i++)
+		if (made[i])
+			unlink(node[i]);
+}
+
 main()
 {
 	long mode;
@@ -419,6 +477,7 @@ main()
 		test_shaping();
 	}
 	test_root();
+	test_bench();
 	test_ipl();
 	shaping(1);
 	kset("ncr_pdmamode", mode);

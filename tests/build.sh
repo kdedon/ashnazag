@@ -148,6 +148,9 @@ link "$BIN/macscrn" "$O/macscrn.o"
 if [ -n "$MODO" ]; then
 	cc "$KDIR/dlm/modadmin.c" "$O/modadmin.o" $XA -w -I"$KDIR/dlm/include"
 	link "$BIN/modadmin" "$O/modadmin.o" $MODO
+	cc "$KDIR/dlm/kvar.c" "$O/kvar.o" $XA -w -I"$KDIR/dlm/include"
+	link "$BIN/kvar" "$O/kvar.o" $MODO
+	cp "$KDIR/mac/diskroot/etc/scsibench" "$BIN/scsibench"
 	echo "[ok] modadmin"
 fi
 

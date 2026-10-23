@@ -328,8 +328,13 @@ gcc:
   pointer restore, SAVE DATA POINTER handling, backoff, ENABLE RESELECTION, write-FIFO residue,
   read-FIFO drain, the write overlap drop or the generation check makes a scenario fail.
 - **Quadra:** `scsibench` (as root) times raw and buffered 10 MB reads in mode 2 and mode 4
-  with shaping off, then mode 4 with shaping on, prints commands per MB and the counters, and
-  checks every setting reads the same data.
+  with shaping off, then mode 4 with shaping on, and prints one line per setting (seconds, MB/s
+  and commands per MB for each). `scsibench -v` adds each run's counter changes and per-KB
+  costs: commands, chip events, 1-µs waits for an interrupt (`ncr_nwait`), DREQ polls
+  (`ncr_ndreq`), PIO and FIFO-sized bytes (`ncr_npio`, `ncr_n1bytes`), and µs in the interrupt
+  handler and moving data (`ncr_tintr`, `ncr_tdata`, VIA1 timer, 327 µs steps, kept while
+  `ncr_timing` is 1). It checks that the whole disk's first 4 MB, read twice to show it is stable,
+  reads the same in every setting.
 
 ## Open hardware questions
 

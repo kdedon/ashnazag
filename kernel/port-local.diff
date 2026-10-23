@@ -760,3 +760,192 @@ index 8b9f5f0..e29aec6 100644
  
  	if [ "${AMIX_ALLOW_UNKNOWN_STOCK:-0}" = "1" ]; then
  		echo "[!] ==================================================================="
+diff --git a/src/hgfault040.s b/src/hgfault040.s
+index c25d9e2..f8efd77 100644
+--- a/src/hgfault040.s
++++ b/src/hgfault040.s
+@@ -81,9 +81,8 @@
+ |     this fix chooses; it is counted (hg_grow_n) and it is one page wide, not a region.
+ |  4. **A WRITE only** (040 SSW bit 8, RW: 1 = read).  A read past the break still takes
+ |     its SIGSEGV; only a write can be silently discarded, so only a write is completed.
+-|  5. **Exactly one page** -- `round4k(p_brkbase + p_brksize)`, and nothing else.  sh's own
+-|     grow increment caps below 2 KiB, so one page always suffices; a wild write further up
+-|     still takes a prompt SIGSEGV and is counted separately (hg_far_n).
++|  5. **One page per fault** -- the first unmapped page above the break, and nothing else;
++|     a wild write further up still takes a prompt SIGSEGV and is counted (hg_far_n).
+ |  6. **Only a fault the stock body already refused.**  The stock resolver runs FIRST and
+ |     its return is checked; a resolved fault (the overwhelming majority) costs one call
+ |     and one `tstl`.  Nothing is grown speculatively.
+@@ -136,6 +135,11 @@
+ |     +64 SR (word)   +66 PC   +70 format/vector (high nibble = frame format)
+ |     +76 SSW (word, 040 format 7: bit 8 = RW, 1 = read)   +84 fault address
+ | proc offsets: p_brkbase @52, p_brksize @56, p_as @124; curproc = u.u_procp = u+0x730.
++|
++| The grown pages stay ABOVE the break: p_brksize is not changed.  libc's sbrk keeps its
++| own copy of the break, so a later brk(old break + n) would otherwise look like a shrink
++| and unmap the page holding the store (sh's arena sentinel, lost, then "no space").
++| brk_hgfwd below lets brk take these pages over on a grow and drops them on a shrink.
+ 
+ 	.text
+ 	.globl	usrxmemflt_orig
+@@ -185,12 +189,16 @@ Lhg_enter:
+ 	beqw	Lhg_ret
+ 	movel	%a3@(52),%d4		| d4 = p_brkbase
+ 	beqw	Lhg_ret			| no data segment at all: not a heap fault
+-| --- the window: EXACTLY the page above the break, and nothing else ---
++| --- the window: the first unmapped page above the break, and nothing else ---
+ 	movel	%a3@(56),%d0		| p_brksize (brk keeps it UNROUNDED)
+ 	addl	%d4,%d0			| brkend = p_brkbase + p_brksize
+ 	addil	&0xfff,%d0
+ 	andil	&0xfffff000,%d0
+-	movel	%d0,%d5			| d5 = base = round4k(brkend) = first page past it
++	movel	%d0,%sp@-
++	movel	%d3,%sp@-
++	bsrw	hg_top
++	addqw	&8,%sp
++	movel	%d0,%d5			| d5 = base = first unmapped page above the break
+ 	movel	%d2,%d1
+ 	andil	&0xfffff000,%d1		| d1 = the faulting page
+ 	cmpl	%d5,%d1
+@@ -257,8 +265,6 @@ Lhg_noclr:
+ 	movel	%d1,hg_last_err
+ 	braw	Lhg_ret
+ Lhg_mapped:
+-	movel	%d6,%a3@(56)		| p_brksize -- brk's own write at 0x581f8, so a later
+-					| brk computes its old end from the grown extent
+ | --- hand the SAME fault back to the stock resolver.  It now finds a covering segment,
+ |     takes the F_INVAL demand path, faults the zero-fill page in through segvn, and
+ |     rewrites the siginfo itself.  This is the eager fault-in: the PTE is resident before
+@@ -284,6 +290,97 @@ Lhg_ret:
+ 	unlk	%fp
+ 	rts
+ 
++
++| hg_top(as, page): the first page at or above `page` that no segment covers (at most
++| 16 segments are skipped).
++hg_top:
++	movel	%d2,%sp@-
++	movel	%sp@(12),%d0
++	moveq	&15,%d2
++Lht_next:
++	movel	%d0,%sp@-
++	movel	%sp@(12),%sp@-
++	jsr	as_segat
++	addqw	&4,%sp
++	movel	%sp@+,%d0
++	movel	%a0,%d1
++	beqs	Lht_done
++	movel	%a0@(4),%d0
++	addl	%a0@(8),%d0		| s_base + s_size
++	dbra	%d2,Lht_next
++Lht_done:
++	movel	%sp@+,%d2
++	rts
++
++| brk_hgfwd(uap): brk_orig, plus the pages hgfault mapped above the break.  A grow first
++| moves the break over the mapped pages it reaches, so brk maps only beyond them; a shrink
++| unmaps them all.
++	.globl	brk_hgfwd
++brk_hgfwd:
++	tstl	hg_on
++	beqw	Lbh_pass
++	cmpil	&40,cputype
++	bnew	Lbh_pass
++	linkw	%fp,&0
++	moveml	%d2-%d6/%a3,%sp@-
++	moveal	u+0x730,%a3		| curproc
++	movel	%a3@(52),%d4		| p_brkbase
++	beqw	Lbh_call
++	movel	%a3@(56),%d6		| p_brksize, restored if brk fails
++	movel	%d4,%d3
++	addl	%d6,%d3			| d3 = break
++	movel	%d3,%d5
++	addil	&0xfff,%d5
++	andil	&0xfffff000,%d5		| d5 = first page above it
++	movel	%d5,%sp@-
++	movel	%a3@(124),%sp@-
++	bsrw	hg_top
++	addqw	&8,%sp
++	cmpl	%d5,%d0
++	beqw	Lbh_call		| nothing mapped above the break
++	moveal	%fp@(8),%a0
++	movel	%a0@,%d2		| d2 = requested break
++	cmpl	%d3,%d2
++	bcss	Lbh_shrink
++	movel	%d2,%d1
++	addil	&0xfff,%d1
++	andil	&0xfffff000,%d1
++	cmpl	%d0,%d1
++	blss	Lbh_take
++	movel	%d0,%d1
++Lbh_take:
++	subl	%d4,%d1
++	movel	%d1,%a3@(56)		| break = min(round4k(request), top of mapped pages)
++	addql	&1,hg_take_n
++	movel	%fp@(8),%sp@-
++	jsr	brk_orig
++	addqw	&4,%sp
++	tstl	%d0
++	beqs	Lbh_ret
++	movel	%d6,%a3@(56)
++	bras	Lbh_ret
++Lbh_shrink:
++	tstw	%a3@(224)		| locked: brk refuses the shrink
++	bnes	Lbh_call
++	subl	%d5,%d0
++	movel	%d0,%sp@-
++	movel	%d5,%sp@-
++	movel	%a3@(124),%sp@-
++	jsr	as_unmap
++	lea	%sp@(12),%sp
++	addql	&1,hg_drop_n
++Lbh_call:
++	movel	%fp@(8),%sp@-
++	jsr	brk_orig
++	addqw	&4,%sp
++Lbh_ret:
++	moveal	%d0,%a0
++	moveml	%fp@(-24),%d2-%d6/%a3
++	unlk	%fp
++	rts
++Lbh_pass:
++	jmp	brk_orig
++
+ 	.balign 4			| pad section to a 4-byte multiple (bss placement)
+ 
+ 	.data
+@@ -339,6 +436,12 @@ hg_mapfail_n:
+ hg_unres_n:
+ 	.long	0			| grown, mapped, and the resolver STILL refused --
+ 					| the invariant-breaking case.  Must stay 0.
++	.globl	hg_take_n
++hg_take_n:
++	.long	0			| brk grows that took over pages mapped above the break
++	.globl	hg_drop_n
++hg_drop_n:
++	.long	0			| brk shrinks that unmapped them
+ 	.globl	hg_far_n
+ hg_far_n:
+ 	.long	0			| a refused user write ABOVE the one-page window: a
+diff --git a/src/i10rev040.s b/src/i10rev040.s
+index 5caa1de..3d133ac 100644
+--- a/src/i10rev040.s
++++ b/src/i10rev040.s
+@@ -4121,7 +4121,7 @@ brk:
+ 	tstl	i10b_on
+ 	bnew	Lbrk_active
+ Lbrk_fwd:
+-	jmp	brk_orig		| both dormant: forward unchanged
++	jmp	brk_hgfwd		| both dormant: forward unchanged
+ Lbrk_active:
+ 	linkw	%fp,&0
+ 	moveml	%d2-%d7/%a2-%a6,%sp@-
+@@ -4134,7 +4134,7 @@ Lbrk_active:
+ 	movel	hat_sdtfail_n,%d4	| d4 = hat_sdtfail_n BEFORE (i10b)
+ | --- call the real brk, capture its verdict ---
+ 	movel	%fp@(8),%sp@-
+-	jsr	brk_orig
++	jsr	brk_hgfwd
+ 	addqw	&4,%sp
+ 	movel	%d0,%d5			| d5 = brk's return (0 = ok; grow-fail = as_map errno)
+ 	movel	%a2@(56),%d6		| d6 = p_brksize AFTER

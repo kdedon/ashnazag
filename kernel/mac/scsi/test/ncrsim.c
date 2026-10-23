@@ -30,7 +30,8 @@ extern long	ncr_nintr, ncr_nlost, ncr_nfault, ncr_nnosel, ncr_ndisc, ncr_nresel,
 		ncr_nnodreq, ncr_nchunk;
 extern long	ncr_xcmd, ncr_xbytes, ncr_xphase, ncr_xresume, ncr_xfall;
 extern long	ncr_nnest, ncr_ipl2max;
-extern int	ncr_xipl;
+extern long	ncr_nevent, ncr_npio, ncr_n1bytes, ncr_nwait, ncr_ndreq, ncr_tintr, ncr_tdata;
+extern int	ncr_xipl, ncr_timing;
 
 long	lbolt;
 char	*panicstr;
@@ -704,6 +705,7 @@ int w;
 	for (n = 0; n < 1000; n++) {
 		if (dreq(w))
 			return 1;
+		ncr_ndreq++;
 		if (c.sint)
 			return 0;
 		advance(1);
@@ -951,10 +953,35 @@ int unit, lba, n;
 	checkread(r, unit, lba);
 }
 
-static void t_intr() { warmup(); rw(0, 3, 8); check(ncr_nchunk == 32, "32 blind chunks"); }
+static void
+t_intr()
+{
+	ncr_timing = 1;
+	warmup();
+	rw(0, 3, 8);
+	check(ncr_nchunk == 32, "32 blind chunks");
+	check(ncr_npio == 0 && ncr_n1bytes == 0, "no PIO or FIFO-sized bytes");
+	check(ncr_nevent > 0 && ncr_tintr > 0 && ncr_tdata >= 0, "interrupt time counted");
+}
 static void t_polled() { ncr_intrmode = 0; warmup(); rw(1, 0, 4); }
-static void t_mode1() { ncr_pdmamode = 1; warmup(); rw(0, 1, 5); check(ncr_nchunk == 0, "no blind chunks"); }
-static void t_mode0() { ncr_pdmamode = 0; warmup(); rw(2, 7, 1); }
+static void
+t_mode1()
+{
+	ncr_pdmamode = 1;
+	warmup();
+	rw(0, 1, 5);
+	check(ncr_nchunk == 0, "no blind chunks");
+	check(ncr_n1bytes == 2 * 5 * BSZ && ncr_npio == 0, "FIFO-sized bytes counted");
+}
+
+static void
+t_mode0()
+{
+	ncr_pdmamode = 0;
+	warmup();
+	rw(2, 7, 1);
+	check(ncr_npio == 2 * BSZ, "PIO bytes counted");
+}
 static void t_nodisc() { ncr_disc = 0; T[0].disc_before = 1; warmup(); rw(0, 2, 2); check(ncr_ndisc == 0, "no disconnect without privilege"); }
 static void t_early() { c.early = 1; warmup(); rw(0, 0, 3); }
 
@@ -1396,6 +1423,7 @@ static void
 cwarm()
 {
 	ncr_pdmamode = 4;
+	sd_clust = sd_bigraw = 1;
 	warmup();
 	sdc_attach();
 }

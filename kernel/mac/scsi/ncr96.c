@@ -109,6 +109,7 @@ long	ncr_polltimo = 30000000 / WAITUS;	/* per interrupt, polled mode */
 long	ncr_spin = 100;			/* microseconds to wait for the next phase */
 int	ncr_debug = 0;
 int	ncr_xipl = 1;			/* mode 4: move data at IPL 1 */
+int	ncr_timing = 0;			/* keep ncr_tintr and ncr_tdata (a few VIA reads per event) */
 struct ncr_dmaops *ncr_dmaops = 0;
 
 /* counters */
@@ -119,6 +120,14 @@ long	ncr_ndisc = 0, ncr_nresel = 0, ncr_nchunk = 0, ncr_nnodreq = 0;
 long	ncr_xcmd = 0, ncr_xbytes = 0, ncr_xphase = 0, ncr_xresume = 0, ncr_xfall = 0;
 /* longest interrupt stretch at IPL 2 (us); interrupts deferred while moving data */
 long	ncr_ipl2max = 0, ncr_nnest = 0;
+/*
+ * Where the time goes: chip events, bytes by PIO and by the FIFO-sized
+ * loop, 1-us polls waiting for a chip interrupt, DREQ polls before a
+ * pseudo-DMA burst, polls of an empty or full FIFO in the FIFO-sized
+ * loop, and microseconds in the interrupt handler and moving data.
+ */
+long	ncr_nevent = 0, ncr_npio = 0, ncr_n1bytes = 0, ncr_nwait = 0;
+long	ncr_ndreq = 0, ncr_n1spin = 0, ncr_tintr = 0, ncr_tdata = 0;
 
 #ifdef BOOTDIAG
 extern unsigned long diag_sdma;
@@ -137,6 +146,8 @@ static int	msgcnt, msgwant;	/* extended message in progress */
 static uint	xlen;			/* bytes in the running DMA command */
 static bool	xbusy;			/* moving data at IPL 1 */
 static int	t1hi, t1f;		/* stretch timer: segment start */
+static int	tihi, tif, tdhi, tdf;	/* ncr_tintr and ncr_tdata timers */
+static bool	tion;			/* ncr_tintr running */
 static long	t1acc;			/* stretch so far, 256-count units */
 static bool	xin, pdisc;		/* direction; PIO byte discarded */
 static int	xmode;			/* data mode of the running DMA command */
@@ -146,6 +157,7 @@ static void	ncr_start(), ncr_finish(), ncr_abort(), ncr_service();
 static void	ncr_watch(), ncr_setup(), ncr_event(), ncr_phase(), ncr_data();
 static void	ncr_msgin(), ncr_busfree(), ncr_resel(), ncr_resetall();
 static void	ncr_dmaend(), ncr_pioend(), ncr_poll(), ncr_xdata(), ncr_intr1();
+static void	ncr_tiadd();
 static int	ncr_wait();
 static uint	ncr_pdma_in(), ncr_pdma_out(), ncr_tc();
 
@@ -336,6 +348,21 @@ ncr_t1add()
 	t1acc += d;
 }
 
+/* VIA1 timer 1 time since hi/f were taken, in microseconds (under one clock tick) */
+static long
+ncr_t1us(hi, f)
+int hi, f;
+{
+	long d;
+
+	if (!ncr_timing)
+		return 0;
+	d = hi - T1_HI();
+	if (d < 0 || (!f && T1_IFR()))
+		d += T1_PERIOD;
+	return d * T1_US256;
+}
+
 /*
  * Mode 4 moves data at IPL 1 when entered at IPL 2, so sound, video and
  * network interrupts are taken during long transfers.  A nested SCSI
@@ -378,6 +405,11 @@ ncr96intr()
 		ncr_nnest++;
 		return;
 	}
+	tion = ncr_timing;
+	if (tion) {
+		tihi = T1_HI();
+		tif = T1_IFR();
+	}
 	ncr_t1mark();
 	t1acc = 0;
 	ncr_intr1();
@@ -385,6 +417,18 @@ ncr96intr()
 	us = t1acc * T1_US256;
 	if (us > ncr_ipl2max)
 		ncr_ipl2max = us;
+	if (tion)
+		ncr_tiadd();
+	tion = FALSE;
+}
+
+/* ncr_tintr so far, in steps short enough for the timer to wrap at most once */
+static void
+ncr_tiadd()
+{
+	ncr_tintr += ncr_t1us(tihi, tif);
+	tihi = T1_HI();
+	tif = T1_IFR();
 }
 
 static void
@@ -420,10 +464,13 @@ ncr_service()
 		&& (act < 0 || state == N_SEL || !ncr_wait(ncr_spin)))
 			break;
 		ncr_regs(&e);
+		ncr_nevent++;
 		if (ncr_debug)
 			printf("ncr96: st %d tgt %d stat %x step %d intr %x\n",
 			    state, act, e.stat, e.step, e.intr);
 		ncr_event(&e);
+		if (tion)
+			ncr_tiadd();
 	}
 }
 
@@ -850,6 +897,7 @@ int in, discard;
 {
 	xin = in;
 	pdisc = discard;
+	ncr_npio++;
 	if (!in)
 		NCR_WR(FIFO, *tg[act].dp);
 	NCR_WR(CMD, C_TRANS);
@@ -967,31 +1015,41 @@ int ph;
 	state = N_DATA;
 	if (mode == 3)
 		return;
+	if (ncr_timing) {
+		tdhi = T1_HI();
+		tdf = T1_IFR();
+	}
 	if (mode == 4) {
 		if (!xmore)
 			ncr_xphase++;
 		xmore = FALSE;
 		ncr_xcmd++;
 		ncr_xdata(t->dp, n, in);
+		ncr_tdata += ncr_t1us(tdhi, tdf);
 		return;
 	}
 	done = 0;
 	if (mode == 2) {
 		ncr_nchunk++;
 		r = ncr_blind(t->dp, !in);
-		if (r == BLIND)
+		if (r == BLIND) {
+			ncr_tdata += ncr_t1us(tdhi, tdf);
 			return;
+		}
 		if (r == -2)
 			ncr_nfault++;
 		else
 			ncr_nnodreq++;
-		if (NCR_RD(STAT) & S_INT)
+		if (NCR_RD(STAT) & S_INT) {
+			ncr_tdata += ncr_t1us(tdhi, tdf);
 			return;
+		}
 		done = ncr_cpudone();		/* still running: finish by FIFO count */
 	}
 	if (done < n)
 		done += in ? ncr_pdma_in(t->dp + done, n - done)
 			   : ncr_pdma_out(t->dp + done, n - done);
+	ncr_tdata += ncr_t1us(tdhi, tdf);
 	if (done < n && !(NCR_RD(STAT) & S_INT))
 		ncr_abort("data phase stall");
 }
@@ -1121,7 +1179,10 @@ uint n;
 				break;
 		} else if (++spin > SPIN)
 			break;
+		else
+			ncr_n1spin++;
 	}
+	ncr_n1bytes += n - left;
 	return n - left;
 }
 
@@ -1151,7 +1212,10 @@ uint n;
 			break;
 		else if (++spin > SPIN)
 			break;
+		else
+			ncr_n1spin++;
 	}
+	ncr_n1bytes += n - left;
 	return n - left;
 }
 
@@ -1165,6 +1229,7 @@ long us;
 	for (n = 0; n < us; n += WAITUS) {
 		if (NCR_RD(STAT) & S_INT)
 			return 1;
+		ncr_nwait++;
 		delayus(WAITUS);
 #ifdef BOOTDIAG
 		diag_poke();

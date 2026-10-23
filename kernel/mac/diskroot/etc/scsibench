@@ -1,52 +1,98 @@
 #!/bin/sh
-# scsibench [slice]: time raw and buffered reads of the root disk in SCSI
-# transfer modes 2 and 4, with the driver's request shaping (64 KB raw
-# commands, merging and read-ahead, data moved at IPL 1) off and on, and
-# check every setting reads the same data.  Reads only.
+# scsibench [-v] [slice]: time raw and buffered 10 MB reads of the slice
+# (default c0d0s1) in SCSI transfer modes 2 and 4, with the driver's
+# request shaping (64 KB raw commands, merging and read-ahead, data moved
+# at IPL 1) off and on.  -v also prints what the driver counted per run.
+# Data check: the first 4 MB of the whole disk (partition map, driver,
+# boot partition; CHECK=cNd0sM to pick another slice) is read twice
+# first to show it does not change, then must read the same in every
+# setting.  Reads only.
+v=0
+[ "$1" = -v ] && { v=1; shift; }
 s=${1:-c0d0s1}
+chk=$CHECK
+[ -n "$chk" ] || chk=`echo $s | sed 's/s[0-9]*$/s0/'`
 case "`id`" in
 uid=0\(*) ;;
 *) echo "scsibench: run as root" >&2; exit 1 ;;
 esac
-vars="ncr_pdmamode sd_bigraw sd_clust ncr_xipl"
-old=`kvar $vars | awk '{ printf "%s=%s ", $1, $2 }'`
+cnt="ncr_ncmd ncr_nintr ncr_nevent ncr_nwait ncr_ndisc ncr_nlost ncr_nerr
+ncr_nchunk ncr_nnodreq ncr_nfault ncr_ndreq ncr_xcmd ncr_xbytes ncr_xresume
+ncr_xfall ncr_npio ncr_n1bytes ncr_n1spin ncr_tintr ncr_tdata
+sd_nraw sd_ndirect sd_nbounce sd_nmerge sd_nra sd_nhit sd_nsplit"
+old=`kvar ncr_pdmamode sd_bigraw sd_clust ncr_xipl ncr_timing | awk '{ printf "%s=%s ", $1, $2 }'`
+case "$old" in
+"ncr_pdmamode="*" sd_bigraw="*" sd_clust="*" ncr_xipl="*" ncr_timing="*" ") ;;
+*) echo "scsibench: kvar read only '$old'" >&2; exit 1 ;;
+esac
 trap 'kvar $old >/dev/null; exit 1' 1 2 15
-first=
+kvar ncr_pdmamode=2 sd_bigraw=0 sd_clust=0 ncr_xipl=0 >/dev/null
+a=`dd if=/dev/rdsk/$chk bs=64k count=64 2>/dev/null | sum`
+b=`dd if=/dev/rdsk/$chk bs=64k count=64 2>/dev/null | sum`
+stable=1
+[ "$a" = "$b" ] || stable=0
+echo "scsibench $s: 10 MB reads, seconds, MB/s and SCSI commands per MB"
+echo "setting raw MB/s cmd/MB buffered MB/s cmd/MB" |
+	awk '{ printf "%-19s %8s %5s %6s %9s %5s %6s\n", $1, $2, $3, $4, $5, $6, $7 }'
 bad=0
 skip=0
 for set in "2 0" "4 0" "4 1"
 do
 	set -- $set
-	kvar ncr_pdmamode=$1 sd_bigraw=$2 sd_clust=$2 ncr_xipl=$2 ncr_ipl2max=0 >/dev/null
-	echo "== mode $1, shaping $2"
-	sum=`dd if=/dev/rdsk/$s bs=64k count=160 2>/dev/null | sum`
-	echo "sum $sum"
-	if [ -z "$first" ]
+	want="ncr_pdmamode=$1 sd_bigraw=$2 sd_clust=$2 ncr_xipl=$2 ncr_timing=1 "
+	kvar $want ncr_ipl2max=0 >/dev/null
+	got=`kvar ncr_pdmamode sd_bigraw sd_clust ncr_xipl ncr_timing | awk '{ printf "%s=%s ", $1, $2 }'`
+	if [ "$got" != "$want" ]
 	then
-		first=$sum
-	elif [ "$sum" != "$first" ]
-	then
-		bad=1
+		echo "scsibench: set '$want', read back '$got'" >&2
+		kvar $old >/dev/null
+		exit 1
 	fi
-	echo "raw 10 MB:"
-	time sh -c "dd if=/dev/rdsk/$s of=/dev/null bs=64k count=160 2>/dev/null"
-	c=`kvar ncr_ncmd | awk '{ print $2 }'`
-	# a fresh 10 MB each time, so the page cache holds none of it
+	sum=`dd if=/dev/rdsk/$chk bs=64k count=64 2>/dev/null | sum`
+	[ $stable = 0 ] || [ "$sum" = "$a" ] || bad=1
+	# a fresh 10 MB for each buffered run, so the page cache holds none of it
 	skip=`expr $skip + 1280`
-	echo "buffered 10 MB:"
-	time sh -c "dd if=/dev/dsk/$s of=/dev/null bs=8k count=1280 skip=$skip 2>/dev/null"
-	echo "commands per MB, buffered:" `kvar ncr_ncmd | awk '{ print int(($2 - '$c') / 10) }'`
-	kvar ncr_xcmd ncr_xbytes ncr_xresume ncr_xfall ncr_nerr ncr_ncmd ncr_ipl2max \
-		sd_nraw sd_ndirect sd_nbounce sd_nmerge sd_nra sd_nhit sd_nsplit
+	shaping=off
+	[ $2 = 0 ] || shaping=on
+	row="$1 $shaping"
+	for run in raw buffered
+	do
+		if [ $run = raw ]
+		then
+			dd="dd if=/dev/rdsk/$s of=/dev/null bs=64k count=160"
+		else
+			dd="dd if=/dev/dsk/$s of=/dev/null bs=8k count=1280 skip=$skip"
+		fi
+		c0=`kvar $cnt`
+		t=`time sh -c "$dd 2>/dev/null" 2>&1 >/dev/null | awk '$1 == "real" { print $2 }'`
+		d=`{ echo "$c0"; kvar $cnt; } | awk '!($1 in a) { a[$1] = $2; next } { print $1, $2 - a[$1] }'`
+		row="$row ${t:-0} `echo "$d" | awk '$1 == "ncr_ncmd" { print $2 / 10 }'`"
+		[ $v = 0 ] || echo "mode $1, shaping $shaping, $run:
+$d" | awk 'NR == 1 { print; next } { d[$1] = $2; printf "%s %d%s", $1, $2, ++n % 4 ? "  " : "\n" }
+		END {
+			if (n % 4) printf "\n"
+			k = 10240
+			printf "per KB: commands %.2f  events %.1f  waits %.1f  dreq polls %.1f\n",
+			    d["ncr_ncmd"] / k, d["ncr_nevent"] / k, d["ncr_nwait"] / k, d["ncr_ndreq"] / k
+			printf "per KB: interrupt us %.0f  data us %.0f\n", d["ncr_tintr"] / k, d["ncr_tdata"] / k
+		}'
+	done
+	[ $v = 0 ] || kvar ncr_ipl2max
+	echo "$row" | awk '{
+		printf "mode %d, shaping %-3s %8.1f %5.2f %6d %9.1f %5.2f %6d\n", $1, $2,
+		    $3, ($3 > 0 ? 10 / $3 : 0), $4, $5, ($5 > 0 ? 10 / $5 : 0), $6 }'
 done
-sum=`dd if=/dev/dsk/$s bs=8k count=1280 2>/dev/null | sum`
-echo "buffered sum $sum"
-[ "$sum" = "$first" ] || bad=1
+sum=`dd if=/dev/dsk/$chk bs=64k count=64 2>/dev/null | sum`
+[ $stable = 0 ] || [ "$sum" = "$a" ] || bad=1
 kvar $old >/dev/null
-if [ $bad = 0 ]
+if [ $stable = 0 ]
+then
+	echo "data: not checked, /dev/rdsk/$chk changes between reads"
+elif [ $bad = 0 ]
 then
 	echo "data: same in every setting"
 else
-	echo "data: DIFFERENT - leave mode 2 with shaping off (kvar ncr_pdmamode=2 sd_bigraw=0 sd_clust=0) and report this"
+	echo "until fixed: kvar ncr_pdmamode=2 sd_bigraw=0 sd_clust=0"
+	echo "data: DIFFERENT in some setting; please report this"
 	exit 1
 fi

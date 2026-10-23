@@ -50,6 +50,9 @@ Lbl_w0:
 	bnew	Lbl_w0
 	braw	Lbl_nodreq
 Lbl_g0:
+	movel	&DREQWAIT,%d0		| DREQ polls, for ncr_ndreq
+	subl	%d2,%d0
+	addl	%d0,ncr_ndreq
 	tstl	%fp@(12)
 	bnew	Lbl_out
 | read: one word, DREQ, 127 words
@@ -65,6 +68,9 @@ Lbl_w1:
 	bnew	Lbl_w1
 	braw	Lbl_nodreq
 Lbl_g1:
+	movel	&DREQWAIT,%d0
+	subl	%d2,%d0
+	addl	%d0,ncr_ndreq
 	movew	%a0@,%a1@+
 	movew	%a0@,%a1@+
 	movew	%a0@,%a1@+
@@ -98,6 +104,9 @@ Lbl_w2:
 	bnew	Lbl_w2
 	braw	Lbl_nodreq
 Lbl_g2:
+	movel	&DREQWAIT,%d0
+	subl	%d2,%d0
+	addl	%d0,ncr_ndreq
 	movew	%a1@+,%a0@
 	movew	%a1@+,%a0@
 	movew	%a1@+,%a0@
@@ -120,6 +129,9 @@ Lbl_ok:
 	movel	&256,%d0
 	braw	Lbl_ret
 Lbl_nodreq:
+	movel	&DREQWAIT,%d0
+	subl	%d2,%d0
+	addl	%d0,ncr_ndreq
 	moveq	&-1,%d0
 Lbl_ret:
 	movel	%fp@(-4),u+0x374
@@ -174,6 +186,9 @@ Lx_w:
 	bnew	Lx_w
 	braw	Lx_nodreq
 Lx_go:
+	movel	&DREQWAIT,%d0
+	subl	%d2,%d0
+	addl	%d0,ncr_ndreq
 	movel	%fp@(12),%d1
 	lsrl	&1,%d1
 	moveq	&15,%d0
@@ -235,6 +250,9 @@ Lx_ok:
 	moveq	&0,%d0
 	braw	Lx_ret
 Lx_nodreq:
+	movel	&DREQWAIT,%d0
+	subl	%d2,%d0
+	addl	%d0,ncr_ndreq
 	moveq	&-1,%d0
 Lx_ret:
 	moveal	%fp@(8),%a0

@@ -152,6 +152,10 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 	echo "f /tests/ksyms 444 0 3 $B/ksyms"
 	# t_arith's FP through awk
 	grep -q '^f /usr/bin/awk ' "$M" || echo "f /usr/bin/awk 755 0 3 $RD/build/core/usr/bin/nawk"
+	# t_scsi runs scsibench
+	for f in dd sum time id expr; do
+		grep -q "^f /usr/bin/$f[[:space:]]" "$M" || echo "f /usr/bin/$f 755 0 3 $RD/build/core/usr/bin/$f"
+	done
 	[ -z "$ONLY" ] || { : > "$B/.group"; echo "f /tests/.group 444 0 3 $B/.group"; }
 	# STABLE: t_stable's environments and idle=SECONDS
 	[ -z "$STABLE" ] || { echo "$STABLE" > "$B/stable.envs"; echo "f /tests/stable.envs 444 0 3 $B/stable.envs"; }

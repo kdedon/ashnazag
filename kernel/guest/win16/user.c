@@ -333,6 +333,21 @@ titleunder(w)
 		expose(&t->wr);
 }
 
+/* child icons stay under their other siblings: top and bottom are within each layer */
+static struct wnd *
+iconlayer(w, after)
+	struct wnd *w, *after;
+{
+	struct wnd *s, *p = 0;
+
+	if (!(w->style & WS_CHILD) || (after ? after != (struct wnd *)1 || (w->style & WS_MINIMIZE) :
+	    !(w->style & WS_MINIMIZE)))
+		return after;
+	for (s = w->parent->child; s && !(s->style & WS_MINIMIZE); s = s->next)
+		p = s;
+	return s ? p : (struct wnd *)1;
+}
+
 /* the region of w on the screen nothing covers (client area or whole) */
 void
 wnd_visrgn(w, g, client)
@@ -1259,7 +1274,7 @@ wnd_setpos(w, after, x, y, cx, cy, flags)
 		nccalc(w);
 	if (!(flags & SWP_NOZORDER)) {
 		unlink_w(w);
-		link_w(w, after);
+		link_w(w, iconlayer(w, after));
 		titleunder(w);
 	}
 	if (flags & SWP_SHOWWINDOW)
@@ -1837,6 +1852,14 @@ user_poll(e, timeout)
 	if (r == 1 && e->type == EV_KEY && !e->down) {
 		asyncstate[e->vk & 0xff] &= ~0x80;
 		keystate[e->vk & 0xff] &= ~0x80;
+	}
+	/* so is a button: a click after a menu is not taken for two buttons */
+	if (r == 1 && e->type == EV_BTN && !e->down && e->btn <= 2) {
+		static u8 vkb[] = { VK_LBUTTON, VK_RBUTTON, VK_MBUTTON };
+
+		btnstate &= ~(1 << e->btn);
+		asyncstate[vkb[e->btn]] &= ~0x80;
+		keystate[vkb[e->btn]] &= ~0x80;
 	}
 	return r;
 }

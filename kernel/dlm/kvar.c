@@ -29,6 +29,7 @@ char **argv;
 	for (i = 1; i < argc; i++) {
 		if ((eq = strchr(argv[i], '=')) != 0)
 			*eq++ = 0;
+		a = 0;			/* nonzero asks for the name at that address */
 		if (getksym(argv[i], &a, &info) < 0) {
 			fprintf(stderr, "kvar: %s: no such symbol\n", argv[i]);
 			rc = 1;

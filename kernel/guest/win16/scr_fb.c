@@ -474,7 +474,8 @@ readinput(fd)
 				moved = 0;
 			}
 			{
-				int b = ev[i].ie_code == 1 ? 0 : ev[i].ie_code == 2 ? 1 : 2;
+				/* 1 left, 2 middle, 3 right */
+				int b = ev[i].ie_code == 1 ? 0 : ev[i].ie_code == 3 ? 1 : 2;
 
 				if (ev[i].ie_value)
 					btns |= 1 << b;
