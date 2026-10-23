@@ -87,11 +87,11 @@ case " $ONLY " in
 	[ $r1 -ge $r2 ] && exit $r1
 	exit $r2 ;;
 esac
-# GROUP=lisa: a second boot on a 640x480 screen, narrower than the Lisa's
+# GROUP=lisa: a second boot on a 640x480 screen, narrower than the Lisa's, at a Quadra 800's speed
 if [ "${GROUP:-}" = lisa ] && [ -z "$GEOM" ]; then
 	rmdir "$OUT"
 	GROUP= sh "$0" $ARGS; r1=$?
-	GROUP= ONLY="$T/src/runall.c $T/src/t_lisa.c" GEOM=640x480x8 sh "$0" $ARGS; r2=$?
+	GROUP= ONLY="$T/src/runall.c $T/src/t_lisa.c" GEOM=640x480x8 QEMUX="$QEMUX -icount shift=6" sh "$0" $ARGS; r2=$?
 	[ $r1 -ge $r2 ] && exit $r1
 	exit $r2
 fi

@@ -55,6 +55,7 @@ vsr_get(gp, r)
 
 /* the address space follows vSR.S: the 68040 shadow's, or the profile's */
 #define	SPACED(gp)	((gp)->gp_mmu || (gp)->gp_space)
+#define	MMU040(gp)	((gp)->gp_mmu && !((gp)->gp_flags & GPF_FRAME68K))	/* sees 68040 access faults */
 typedef char gp_spaceat[(int)&((struct guest_proc *)0)->gp_space == 72 ? 1 : -1];	/* the gates read it */
 
 static void
@@ -64,7 +65,7 @@ space(gp, s)
 {
 	if (gp->gp_mmu)
 		guest_mmu_space(gp, s);
-	else
+	if (gp->gp_space)
 		(*gp->gp_space)(gp, s);
 }
 
@@ -901,7 +902,7 @@ guest_priv(gp, r, v)
 		else
 			printf("NOTICE: further unemulated instructions not reported\n");
 	}
-	if (e == -2 && gp->gp_mmu && pi.fssw) {
+	if (e == -2 && MMU040(gp) && pi.fssw) {
 		/* a fault of the guest's own access: its handler maps the page and the instruction reruns */
 		char f[60];
 		int fl = guest_bframe(f, GR_SR(r) | gp->gp_vsr, pi.pc, pi.fa, pi.fssw, 0);
@@ -1051,7 +1052,7 @@ guest_fault(p, gp, n)
 		bcopy(r + 64 + 14, f + 14, 6);
 		bcopy(r + 64 + 24, f + 24, 36);
 	}
-	if (gp->gp_mmu) {
+	if (MMU040(gp)) {
 		/* a translation fault (ATC) in the guest's own mode, entered as an exception */
 		P16(f + 12, G16(f + 12) | 0x400 | (gp->gp_vsr & SR_S ? 4 : 0));
 		if (guest_reflect(gp, r, GR_PC(r), (int)G16(f + 6), f + 8, fl - 6, -1))
@@ -1084,7 +1085,7 @@ guest_fault(p, gp, n)
 	GR_USP(r) = usp;
 	GR_PC(r) = h;
 	GR_SR(r) &= 0x00ff;
-	if (!gp->gp_mmu)
+	if (!MMU040(gp))
 		gp->gp_vsr &= SR_S | SR_IPL;
 	u.u_sigflag |= USTKCLEAR;
 	return 0;

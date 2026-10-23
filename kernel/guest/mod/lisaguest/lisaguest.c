@@ -6,6 +6,8 @@
  * mapped from the segment registers: RAM in whole 4 KB pages is mapped,
  * so the guest runs at full speed there; I/O space stays unmapped, and
  * the launcher patches every routine that touches it into a host call.
+ * Each context has its own host tables, filled at fault, so a context
+ * switch costs no remapping.
  *
  *   segment:     SLR type 4-7  RAM at SOR * 512 (5 and 4 read-only)
  *                context 0 in supervisor mode, else SEG1/SEG2's
@@ -27,6 +29,8 @@ extern int nodev(), ttimeout(), untimeout();
 extern timestruc_t hrestime;
 extern int as_unmap();
 extern struct seg *as_segat();
+extern int guest_mmu_init(), guest_mmu_plat(), guest_mmu_svc();
+extern void guest_mmu_ukey(), guest_mmu_stats();
 extern void dlm_cacheflush();
 __asm__(".weak cputype");
 extern long lisa_cputype __asm__("cputype");
@@ -43,7 +47,7 @@ static int lisadevflag[1] = { 0 };
 static int ntrace;
 static long lasttrace;
 
-#define	M_RAM	0x01000000UL	/* l_map: RAM page | index */
+#define	M_RAM	0x01000000UL	/* want: RAM page | index */
 #define	M_ROM	0x02000000UL
 #define	M_RO	0x04000000UL
 
@@ -54,6 +58,9 @@ static long lasttrace;
 #define	C_BAD	5		/* invalid segment: bus error */
 
 #define	LISA_SIG	17	/* carries virtual interrupts */
+#define	WINDOW	0x2000000UL	/* 0-16 MB and its copy at top byte 1 */
+#define	HIGH	0xfe000000UL	/* copies at top bytes $FE and $FF, but for the last page */
+#define	CTX(t)	((t)->l_gp->gp_vsr & 0x2000 ? 0 : (t)->l_seg)
 
 static void
 trace(what, a, pc)
@@ -69,8 +76,9 @@ trace(what, a, pc)
 
 /* the class of logical address a, and its offset in RAM, ROM, I/O or the MMU */
 static int
-lclass(t, a, op)
+lclass(t, x, a, op)
 	struct lisactr *t;
+	int x;
 	unsigned long a, *op;
 {
 	unsigned long s, slr, sor, p;
@@ -78,8 +86,8 @@ lclass(t, a, op)
 
 	a &= 0xffffff;
 	s = a >> 17;
-	slr = t->l_slr[t->l_ctx][s];
-	sor = t->l_sor[t->l_ctx][s];
+	slr = t->l_slr[x][s];
+	sor = t->l_sor[x][s];
 	p = ((sor & 0xfff) << 9) + (a & 0x1ffff);
 	switch (slr >> 8 & 0xf) {
 	case 4: case 5: case 6: case 7:
@@ -104,29 +112,32 @@ lclass(t, a, op)
  * It, and a page whose RAM origin is not 4 KB aligned, cannot be mapped.
  */
 static int
-cutoff(t, va)
+cutoff(t, x, va)
 	struct lisactr *t;
+	int x;
 	unsigned long va;
 {
 	unsigned long o;
 
-	return lclass(t, va + 0xe00, &o) != C_RAM;
+	return lclass(t, x, va + 0xe00, &o) != C_RAM;
 }
 
-/* what page va should map: 0 nothing */
+/* what page va should map in context x: 0 nothing */
 static unsigned long
-want(t, va)
+want(t, x, va)
 	struct lisactr *t;
+	int x;
 	unsigned long va;
 {
 	unsigned long o, slr;
-	int c = lclass(t, va, &o);
+	int c;
 
-	if (c == C_ROM)
+	va &= 0xfff000;
+	if ((c = lclass(t, x, va, &o)) == C_ROM)
 		return M_ROM | M_RO | o >> 12;
-	if (c != C_RAM || o + 0x1000 > t->l_ramsize || (o & 0xfff) || cutoff(t, va))
+	if (c != C_RAM || o + 0x1000 > t->l_ramsize || (o & 0xfff) || cutoff(t, x, va))
 		return 0;
-	slr = t->l_slr[t->l_ctx][va >> 17] >> 8 & 0xf;
+	slr = t->l_slr[x][va >> 17] >> 8 & 0xf;
 	return M_RAM | (slr < 6 ? M_RO : 0) | o >> 12;
 }
 
@@ -162,72 +173,38 @@ unalias(t, i)
 	t->l_alias[i] = t->l_alias[--t->l_nalias];
 }
 
-/* bring the mappings of host pages p..end-1 in line with the MMU; windows too unless kept */
-static void
-remaprange(t, p, end, keep)
-	struct lisactr *t;
-	unsigned long p, end;
-	int keep;
-{
-	struct as *as = curproc->p_as;
-	unsigned long n, i, w, w2;
-	addr_t a;
-	int e;
-
-	for (i = 0; !keep && i < t->l_nalias; )
-		if ((t->l_alias[i].b >> 12 & 0xfff) + 32 > p && (t->l_alias[i].b >> 12 & 0xfff) < end)
-			unalias(t, (int)i);
-		else
-			i++;
-	for (; p < end; p += n) {
-		n = 1;
-		w = want(t, p << 12);
-		if (w == t->l_map[p])
-			continue;
-		for (; p + n < end; n++) {
-			w2 = want(t, (p + n) << 12);
-			if (w2 == t->l_map[p + n] || (w ? w2 != w + n : w2 != 0))
-				break;
-		}
-		a = (addr_t)(p << 12);
-		e = w ? mapat(t, a, w, n) : as_unmap(as, a, n << 12);
-		if (e) {
-			trace("map failed", (long)(p << 12), (long)e);
-			w = 0;
-			(void)as_unmap(as, a, n << 12);
-		}
-		for (i = 0; i < n; i++)
-			t->l_map[p + i] = w ? w + i : 0;
-	}
-}
+static void lisa_space();
 
 /*
- * The 68000 ignores address bits 24-31; the OS keeps flags there.  An
- * access above 16 MB maps the segment's pages at that 128 KB window too,
- * where the process has nothing else.  0 done.
+ * The 68000 ignores address bits 24-31; the OS keeps flags there.  Top
+ * bytes 1, $FE and $FF are in windows.  An access elsewhere maps the segment's pages
+ * at that 128 KB window too, where the process has nothing else.  0 done.
  */
 static int
 alias(t, fa)
 	struct lisactr *t;
 	unsigned long fa;
 {
-	unsigned long b = fa & ~0x1ffffUL, p = fa >> 12 & 0xfe0, m = 0, i, k;
+	unsigned long b = fa & ~0x1ffffUL, w[32], m = 0, i, k;
+	int x = CTX(t);
 
-	if (fa < 0x1000000 || !t->l_map[fa >> 12 & 0xfff])
+	for (i = 0; i < 32; i++)
+		w[i] = want(t, x, b + (i << 12));
+	if (!w[fa >> 12 & 31])
 		return -1;
 	if (t->l_nalias == sizeof t->l_alias / sizeof t->l_alias[0])
 		unalias(t, 0);
 	/* runs of pages consecutive in RAM, one mapping each */
 	for (i = 0; i < 32; i = k) {
-		for (k = i + 1; k < 32 && t->l_map[p + i] && t->l_map[p + k] == t->l_map[p + i] + (k - i) &&
+		for (k = i + 1; k < 32 && w[i] && w[k] == w[i] + (k - i) &&
 		    !as_segat(curproc->p_as, (caddr_t)(b | k << 12)); k++)
 			;
-		if (t->l_map[p + i] && !as_segat(curproc->p_as, (caddr_t)(b | i << 12)) &&
-		    !mapat(t, (addr_t)(b | i << 12), t->l_map[p + i], k - i))
+		if (w[i] && !as_segat(curproc->p_as, (caddr_t)(b | i << 12)) &&
+		    !mapat(t, (addr_t)(b | i << 12), w[i], k - i))
 			m |= (k < 32 ? (1UL << k) - 1 : ~0UL) & ~((1UL << i) - 1);
 	}
 	for (i = k = 0; i < 32; i++)
-		if (t->l_map[p + i] && !(m & 1UL << i) && as_segat(curproc->p_as, (caddr_t)(b | i << 12)))
+		if (w[i] && !(m & 1UL << i) && as_segat(curproc->p_as, (caddr_t)(b | i << 12)))
 			k++;
 	if (k && !(t->l_st.ls_flags & LSF_SHARED)) {
 		t->l_st.ls_flags |= LSF_SHARED;
@@ -237,41 +214,30 @@ alias(t, fa)
 	if (!(m & 1UL << (fa >> 12 & 31)))
 		return -1;
 	t->l_alias[t->l_nalias].b = b;
-	t->l_alias[t->l_nalias].c = t->l_ctx;
+	t->l_alias[t->l_nalias].c = x;
 	t->l_alias[t->l_nalias++].m = m;
 	t->l_st.ls_alias++;
+	/* windows follow context switches */
+	t->l_gp->gp_space = lisa_space;
 	return 0;
 }
 
-/* context 0 in supervisor mode, else SEG1/SEG2's */
+/*
+ * Context c is entering.  A window shows its own context's segment.  It
+ * stays while that segment is the same in c, and on the way into context
+ * 0 where context 0 has no RAM there, so it is still there when its
+ * context comes back.
+ */
 static void
-remap(t)
-	struct lisactr *t;
+lisa_space(gp, sr)
+	struct guest_proc *gp;
+	int sr;
 {
-	t->l_st.ls_remap++;
-	t->l_ctx = t->l_gp && !(t->l_gp->gp_vsr & 0x2000) ? t->l_seg : 0;
-	remaprange(t, 0UL, 4096UL, 0);
-	dlm_cacheflush();
-}
+	struct lisactr *t = &lisac;
+	int c = sr & 0x2000 ? 0 : t->l_seg, i, s, w;
 
-/* map context c: only the segments it differs in from the one mapped */
-static void
-setctx(t, c)
-	struct lisactr *t;
-	int c;
-{
-	int s, i, w, o = t->l_ctx;
-
-	if (c == o)
+	if (t->l_gp != gp)
 		return;
-	t->l_ctx = c;
-	t->l_st.ls_ctxsw++;
-	/*
-	 * A window shows its own context's segment.  It stays while that
-	 * segment is the same in c, and on the way into context 0 where
-	 * context 0 has no RAM there, so it is still there when its context
-	 * comes back.
-	 */
 	for (i = 0; i < t->l_nalias; ) {
 		w = t->l_alias[i].c;
 		s = t->l_alias[i].b >> 17 & 0x7f;
@@ -281,19 +247,46 @@ setctx(t, c)
 		else
 			unalias(t, i);
 	}
-	for (s = 0; s < 128; s++)
-		if (t->l_slr[c][s] != t->l_slr[o][s] || t->l_sor[c][s] != t->l_sor[o][s])
-			remaprange(t, (unsigned long)s << 5, (unsigned long)(s + 1) << 5, 1);
+	if (!t->l_nalias)
+		gp->gp_space = 0;
 }
 
-/* vSR.S changed: context 0 in supervisor mode, else SEG1/SEG2's */
-static void
-lisa_space(gp, sr)
+/* the window's translation in the space of key: context key - 1 */
+static int
+lisa_walk(gp, va, rw, key, pap, wpp, mp)
 	struct guest_proc *gp;
-	int sr;
+	unsigned long va, key, *pap;
+	int rw, *wpp, *mp;
 {
-	if (lisac.l_gp == gp)
-		setctx(&lisac, sr & 0x2000 ? 0 : lisac.l_seg);
+	struct lisactr *t = &lisac;
+	unsigned long w = want(t, (int)key - 1, va);
+
+	if (!w)
+		return FC_NOMAP;
+	if ((w & M_RO) && rw == S_WRITE)
+		return FC_PROT;
+	*pap = (w & M_ROM ? t->l_rom - t->l_phys : 0) + ((w & 0xfffff) << 12) + (va & 0xfff);
+	*wpp = (w & M_RO) != 0;
+	*mp = !*wpp;
+	return 0;
+}
+
+/* segment s of context c changed: its pages go from the spaces that see it */
+static void
+segdrop(t, c, s)
+	struct lisactr *t;
+	int c, s;
+{
+	static unsigned long top[4] = { 0, 0x1000000UL, HIGH, HIGH + 0x1000000UL };
+	unsigned long a;
+	int i;
+
+	for (i = 0; i < 4; i++) {
+		a = top[i] + ((unsigned long)s << 17);
+		if (c == 0)
+			(void)guest_mmu_svc(t->l_gp, 2, 0UL, a, a + 0x20000, 0UL);
+		(void)guest_mmu_svc(t->l_gp, 2, c + 1UL, a, a + 0x20000, 0UL);
+	}
 }
 
 static int guest_splhi();
@@ -352,12 +345,12 @@ lisa_fault(gp, r, v)
 	int v;
 {
 	struct lisactr *t = &lisac;
-	unsigned long fa, d;
-	int ssw, e, k;
+	unsigned long fa, d, w;
+	int ssw, e, k, x;
 
 	if (t->l_gp != gp || (e = guest_bfault(r, &fa, &ssw)) < 0)
 		return 1;
-	if (fa >= 0x1000000) {
+	if (fa >= WINDOW && fa < HIGH) {
 		for (k = 0; k < t->l_nalias && (fa & ~0x1ffffUL) != t->l_alias[k].b; k++)
 			;
 		if (GR_USP(r) >= 0x1000000)
@@ -381,27 +374,29 @@ lisa_fault(gp, r, v)
 			guest_trapret();
 			return 0;
 		}
-		fa &= 0xffffff;
 	}
-	/* a mapped page not yet loaded: the stock handler */
-	if (fa < 0x1000000 && t->l_map[fa >> 12] && ((ssw & 0x100) || !(t->l_map[fa >> 12] & M_RO)))
+	fa &= 0xffffff;
+	/* a page the window maps, not yet loaded: the stock handler */
+	x = CTX(t);
+	w = want(t, x, fa);
+	if (w && ((ssw & 0x100) || !(w & M_RO)))
 		return 1;
 	if (!(t->l_st.ls_flags & LSF_BOOT) && (GR_PC(r) & 0xffffff) < 0xfe0000) {
 		t->l_st.ls_flags |= LSF_BOOT;
 		t->l_st.ls_bootpc = GR_PC(r);
 	}
-	if (!e && lclass(t, fa, &d) == C_RAM) {
-		if (t->l_map[fa >> 12])		/* a write to a read-only segment */
+	if (!e && lclass(t, x, fa, &d) == C_RAM) {
+		if (w)		/* a write to a read-only segment */
 			return lisa_berr(gp, r, (long)fa, ssw);
 		t->l_st.ls_hwfault++;
-		e = t->l_ctx;
+		e = x;
 		printf("lisa: RAM at %x (offset %x) is not in whole 4 KB pages, pc %x, context %d SLR %x SOR %x\n",
 		    (int)fa, (int)d, (int)GR_PC(r), e, t->l_slr[e][fa >> 17 & 0x7f], t->l_sor[e][fa >> 17 & 0x7f]);
 		psignal(curproc, SIGSEGV);
 		guest_trapret();
 		return 0;
 	}
-	if (e || lclass(t, fa, &d) == C_BAD)
+	if (e || lclass(t, x, fa, &d) == C_BAD)
 		return lisa_berr(gp, r, (long)fa, ssw);
 	/* I/O, ROM writes, no RAM: a hardware access no patch covers */
 	t->l_st.ls_hwfault++;
@@ -661,10 +656,11 @@ enter(dev, arg)
 		return EFAULT;
 	if (!lisa_ram || curproc != lisa_rproc || t->l_state)
 		return EBUSY;
+	if (le.le_rom < le.le_phys || ((le.le_rom | le.le_phys) & 0xfff))
+		return EINVAL;
 	if ((e = guest_lone_enter(&lisa_profile)) != 0)
 		return e;
 	GUESTP(curproc)->gp_flags = (GUESTP(curproc)->gp_flags & ~GPF_FTRAP) | GPF_FRAME68K;
-	GUESTP(curproc)->gp_space = lisa_space;
 	GUESTP(curproc)->gp_hostlo = le.le_hostlo;
 	GUESTP(curproc)->gp_hosthi = le.le_hosthi;
 	bzero((caddr_t)t, sizeof *t);
@@ -686,8 +682,11 @@ enter(dev, arg)
 	}
 	t->l_st.ls_pid = curproc->p_pid;
 	ntrace = 0;
-	(void)as_unmap(curproc->p_as, (addr_t)0, 0x1000000);
-	remap(t);
+	if ((e = guest_mmu_init(t->l_gp, t->l_phys, t->l_rom - t->l_phys + LISA_ROMSZ, 0UL, WINDOW)) != 0 ||
+	    (e = guest_mmu_plat(t->l_gp, lisa_walk, 1UL, 4, HIGH, 0x2000000UL - 0x1000)) != 0)
+		return e;
+	t->l_gp->gp_flags |= GPF_FTRAP;
+	guest_mmu_ukey(t->l_gp, 1UL);
 	t->l_state = 1;
 	t->l_timer = ttimeout(lisa_tick, (caddr_t)0, 1L);
 	return 0;
@@ -762,7 +761,7 @@ mem(arg)
 		n = 0x200 - (a & 0x1ff);
 		if (n > m.lm_len - i)
 			n = m.lm_len - i;
-		if (lclass(t, a, &o) != C_RAM || o + n > t->l_ramsize)
+		if (lclass(t, CTX(t), a, &o) != C_RAM || o + n > t->l_ramsize)
 			return EFAULT;
 		if (m.lm_flags & LM_WRITE ? copyout((caddr_t)m.lm_data + i, (caddr_t)(t->l_phys + o), n) :
 		    copyin((caddr_t)(t->l_phys + o), (caddr_t)m.lm_data + i, n))
@@ -789,7 +788,7 @@ seg(arg)
 {
 	struct lisactr *t = &lisac;
 	struct lisaseg g;
-	int i, s;
+	int i, s, c;
 
 	if (!t->l_state || curproc != t->l_proc)
 		return ENXIO;
@@ -797,13 +796,22 @@ seg(arg)
 		return EFAULT;
 	if (g.lg_n < 0 || g.lg_n > 128)
 		return EINVAL;
+	t->l_st.ls_remap++;
+	c = g.lg_ctx & 3;
 	for (i = 0; i < g.lg_n; i++) {
 		s = (g.lg_first + i) & 0x7f;
-		t->l_slr[g.lg_ctx & 3][s] = g.lg_slr[i] & 0xfff;
-		t->l_sor[g.lg_ctx & 3][s] = g.lg_sor[i] & 0xfff;
+		if (t->l_slr[c][s] == (g.lg_slr[i] & 0xfff) && t->l_sor[c][s] == (g.lg_sor[i] & 0xfff))
+			continue;
+		t->l_slr[c][s] = g.lg_slr[i] & 0xfff;
+		t->l_sor[c][s] = g.lg_sor[i] & 0xfff;
+		segdrop(t, c, s);
 	}
+	while (t->l_nalias)
+		unalias(t, 0);
+	t->l_gp->gp_space = 0;
 	t->l_seg = g.lg_final & 3;
-	remap(t);
+	guest_mmu_ukey(t->l_gp, t->l_seg + 1UL);
+	dlm_cacheflush();
 	return 0;
 }
 
@@ -832,8 +840,9 @@ lisaioctl(dev, cmd, arg, mode, cr, rvp)
 		if (!lisac.l_state || curproc != lisac.l_proc)
 			return ENXIO;
 		lisac.l_seg = (int)arg & 3;
-		if (!(lisac.l_gp->gp_vsr & 0x2000))
-			setctx(&lisac, lisac.l_seg);
+		guest_mmu_ukey(lisac.l_gp, lisac.l_seg + 1UL);
+		if (lisac.l_gp->gp_space)
+			lisa_space(lisac.l_gp, (int)lisac.l_gp->gp_vsr);
 		return 0;
 	case LISAIOC_ALINE:
 		if (!lisac.l_state || curproc != lisac.l_proc)
@@ -863,10 +872,15 @@ lisaioctl(dev, cmd, arg, mode, cr, rvp)
 		dlm_cacheflush();
 		return 0;
 	}
-	case LISAIOC_STAT:
-		if (!lisac.l_state)
+	case LISAIOC_STAT: {
+		unsigned long v[5];
+
+		if (!lisac.l_state || !lisac.l_gp)
 			return ENXIO;
+		guest_mmu_stats(lisac.l_gp, v);
+		lisac.l_st.ls_ctxsw = v[2];
 		return copyout((caddr_t)&lisac.l_st, arg, sizeof lisac.l_st) ? EFAULT : 0;
+	}
 	}
 	return EINVAL;
 }

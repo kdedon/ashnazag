@@ -48,6 +48,7 @@ extern void _start();
 
 static char *disk;			/* the ProFile image, never written */
 static char *pmfile;			/* parameter memory, 64 bytes */
+static int curctx = -1;			/* the module's user context */
 static unsigned char pm[64];
 static int verbose;
 static unsigned long serial = 5L << 16 | 60100;	/* the machine's serial number, 005-60100 */
@@ -2989,6 +2990,7 @@ hcmmu(r)
 			segnote(g.lg_first + i, org, type, e[3]);
 	}
 	ioctl(lfd, LISAIOC_SEG, &g);
+	curctx = g.lg_final & 3;
 }
 
 /* one segment's registers set inline: the jsr is followed by the SLR, its address, the context and the SOR's register */
@@ -3009,6 +3011,7 @@ hcseg1(r)
 		    g.lg_sor[0], g.lg_ctx);
 	r[16] += 8;
 	ioctl(lfd, LISAIOC_SEG, &g);
+	curctx = g.lg_final & 3;
 }
 
 /* d0: year since 1980 (a nibble) and the day of the year's first two BCD digits; d1: the rest, hours to tenths */
@@ -3127,7 +3130,8 @@ hostcall(r)
 		hctake(r);
 		break;
 	case 15:
-		ioctl(lfd, LISAIOC_CTX, (int)(r[1] & 3));
+		if ((int)(r[1] & 3) != curctx)
+			ioctl(lfd, LISAIOC_CTX, curctx = (int)(r[1] & 3));
 		alinereg();
 		break;
 	case 16:
@@ -3752,7 +3756,7 @@ show(fd)
 			continue;
 		scr = (unsigned char *)PHYS + st.ls_vid * 0x8000UL;
 		lit = 0;
-		for (i = 0; i < SCRB; i++)
+		for (i = 0; verbose && n % 10 == 0 && i < SCRB; i++)
 			lit += bits[scr[i]];
 		/* rows y..e-1 land on host row oy; only changed ones are drawn */
 		for (y = 0; y < SCRH; y = e) {

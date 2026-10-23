@@ -4,13 +4,14 @@
  * The platform names where guest physical memory lies in the process
  * (guest physical p at host pbase + p, for p below plimit) and the
  * window of guest virtual addresses the process can give the guest.
- * When the guest first sets TC.E, one segment replaces the window; its
+ * When the guest first sets TC.E, a segment replaces the window; its
  * pages fill at fault from the guest's own tables or transparent
  * ranges, in the space (SRP or URP) its virtual S bit selects.  A page
  * maps read-only until a write sets M in the guest's descriptor; any
  * access sets U.  Each space keeps its own host tables, so a switch only
  * swaps the window's root entries.  With TC.E clear the window maps
- * identity.
+ * identity.  A platform whose MMU is not a 68040's translates for it
+ * instead, each space named by a key it chooses.
  *
  * K&R C.
  */
@@ -65,15 +66,17 @@ struct gspace {
 
 struct guest_mmu {
 	struct guest_proc *gp;
-	struct seg	*seg;		/* the window, once TC.E was set */
-	unsigned long	pbase, plimit, lo, hi;
+	struct seg	*seg, *seg2;	/* the windows, once TC.E was set */
+	unsigned long	pbase, plimit, lo, hi, lo2, len2;
 	unsigned long	tc, srp, urp, tt[4], mmusr;	/* tt: ITT0, ITT1, DTT0, DTT1 */
 	int		space;		/* SR_S of the space in use */
 	int		cur;		/* space the process root holds; -1: the host's own entries */
 	int		nuser;		/* user spaces kept */
-	int		first, nslot;	/* the window's root entries */
+	int		nsl;
+	unsigned char	sl[128];	/* the windows' root entries */
 	int		moved;		/* holds frames of a display session, which may move */
 	int		glob;		/* the last walk's page was global */
+	int		(*pwalk)();	/* the platform's translation, 0: the 040 tables */
 	struct guest_mmu *next;		/* of those */
 	unsigned long	*root, rootpa;
 	unsigned long	hsave[128];	/* the host's window entries */
@@ -122,6 +125,10 @@ walk(m, va, rw, s, upd, pap, wpp, mp, ttp)
 
 	*ttp = 0;
 	m->glob = 0;
+	if (m->pwalk) {
+		m->glob = 1;
+		return (*m->pwalk)(m->gp, va, rw, s ? m->srp : m->urp, pap, wpp, mp);
+	}
 	if (!(m->tc & TC_E)) {
 		*pap = va;
 		*wpp = 0;
@@ -290,11 +297,11 @@ setroot(m, i)
 	struct guest_mmu *m;
 	int i;
 {
-	unsigned long *s = i < 0 ? m->hsave : m->sp[i].slot, *r = m->root + m->first;
-	int k;
+	unsigned long *s = i < 0 ? m->hsave : m->sp[i].slot, *r = m->root;
+	int j, k;
 
-	for (k = 0; k < m->nslot; k++)
-		if (r[k] != s[k])
+	for (j = 0; j < m->nsl; j++)
+		if (r[k = m->sl[j]] != s[k])
 			r[k] = s[k];
 	hcpush(m->rootpa, 1, 1);
 	__asm__ __volatile__(".short 0xf510" : : : "memory");	/* pflushan */
@@ -307,10 +314,10 @@ spdrop(m, sp)
 	struct gspace *sp;
 {
 	unsigned long *p;
-	int a, b;
+	int a, b, j;
 
-	for (a = 0; a < m->nslot; a++) {
-		if ((p = sp->ptr[a]) == 0)
+	for (j = 0; j < m->nsl; j++) {
+		if ((p = sp->ptr[a = m->sl[j]]) == 0)
 			continue;
 		for (b = 0; b < 128; b++)
 			if (p[b])
@@ -345,7 +352,7 @@ pte(m, sp, va, mk, pap)
 	unsigned long va, *pap;
 	int mk;
 {
-	int a = (int)(va >> 25) - m->first, b = va >> 18 & 0x7f, c = va >> 12 & 0x3f;
+	int a = (int)(va >> 25), b = va >> 18 & 0x7f, c = va >> 12 & 0x3f;
 	unsigned long *p, *l, pa;
 
 	if ((p = sp->ptr[a]) == 0) {
@@ -354,8 +361,8 @@ pte(m, sp, va, mk, pap)
 		sp->ptr[a] = p;
 		sp->slot[a] = pa | TDESC;
 		if (m->cur == sp - m->sp) {
-			m->root[m->first + a] = sp->slot[a];
-			hcpush(m->rootpa + (m->first + a) * 4, 1, 0);
+			m->root[a] = sp->slot[a];
+			hcpush(m->rootpa + a * 4, 1, 0);
 		}
 	}
 	if (!p[b]) {
@@ -376,14 +383,14 @@ dropnl(m)
 {
 	struct gspace *sp;
 	unsigned long *p, *l, pa;
-	int i, a, b, c, n;
+	int i, a, b, c, n, j;
 
 	for (i = 0; i < NSP; i++) {
 		sp = &m->sp[i];
 		if (!sp->inuse || !sp->local)
 			continue;
-		for (a = 0, n = 0; a < m->nslot; a++)
-			if ((p = sp->ptr[a]) != 0)
+		for (j = 0, n = 0; j < m->nsl; j++)
+			if ((p = sp->ptr[a = m->sl[j]]) != 0)
 				for (b = 0; b < 128; b++)
 					if (p[b])
 						for (l = (unsigned long *)p[128 + b], pa = p[b] & ~0xffUL, c = 0; c < 64; c++)
@@ -562,7 +569,9 @@ fill(seg, m, va, rw, lock)
 		}
 		if ((pf = hostpfn(as, h)) < 0)
 			return FC_NOMAP;
-	}
+	} else if (!(hd = leaf(as, h)) || !(*hd & 1))
+		/* the host's mapping says how the frame is cached */
+		(void)as_fault(as, (addr_t)h, (u_int)HP, F_INVAL, S_READ);
 	/* hold() may have emptied every space */
 	setspace(m, m->space, 0);
 	/* the host's caching of the frame: write-through VRAM, copyback RAM */
@@ -633,16 +642,27 @@ gmu_dup(seg, nseg)
 	return 0;
 }
 
+/* every window loses its tables and m */
+static void
+detach(m)
+	struct guest_mmu *m;
+{
+	release(m);
+	if (m->seg)
+		m->seg->s_data = 0;
+	if (m->seg2)
+		m->seg2->s_data = 0;
+	m->seg = m->seg2 = 0;
+}
+
 static void
 gmu_free(seg)
 	struct seg *seg;
 {
 	struct guest_mmu *m = (struct guest_mmu *)seg->s_data;
 
-	if (m) {
-		release(m);
-		m->seg = 0;
-	}
+	if (m)
+		detach(m);
 }
 
 static int
@@ -656,7 +676,7 @@ gmu_unmap(seg, addr, len)
 	/* the caller takes len off the size, which never counted it */
 	seg->s_as->a_size += len;
 	if (seg->s_data)
-		release((struct guest_mmu *)seg->s_data);
+		detach((struct guest_mmu *)seg->s_data);
 	hat_unload(seg, addr, len, HAT_NOFLAGS);
 	seg_free(seg);
 	return 0;
@@ -710,9 +730,14 @@ gmu_create(seg, arg)
 	struct seg *seg;
 	caddr_t arg;
 {
+	struct guest_mmu *m = (struct guest_mmu *)arg;
+
 	seg->s_ops = &gmu_ops;
 	seg->s_data = (_VOID *)arg;
-	((struct guest_mmu *)arg)->seg = seg;
+	if (m->seg)
+		m->seg2 = seg;
+	else
+		m->seg = seg;
 	return 0;
 }
 
@@ -743,32 +768,49 @@ gmu_opsinit()
  * paths enter the guest's handlers without a space switch: turned off.
  */
 static int
-window(m)
+winmap(m, as, lo, len)
 	struct guest_mmu *m;
+	struct as *as;
+	unsigned long lo, len;
 {
-	struct as *as = m->gp->gp_proc->p_as;
 	rlim_t lim;
 	int e;
 
-	if (!gmu_ops.fault)
-		gmu_opsinit();
-	if ((e = as_unmap(as, (addr_t)m->lo, (u_int)(m->hi - m->lo))) != 0)
+	if ((e = as_unmap(as, (addr_t)lo, (u_int)len)) != 0)
 		return e;
 	/* the window is address space, not memory: outside the process's limit and size */
 	lim = u.u_rlimit[RLIMIT_VMEM].rlim_cur;
 	u.u_rlimit[RLIMIT_VMEM].rlim_cur = ~(rlim_t)0;
-	e = as_map(as, (addr_t)m->lo, (u_int)(m->hi - m->lo), gmu_create, (caddr_t)m);
+	e = as_map(as, (addr_t)lo, (u_int)len, gmu_create, (caddr_t)m);
 	u.u_rlimit[RLIMIT_VMEM].rlim_cur = lim;
-	if (e)
+	if (!e)
+		as->a_size -= len;
+	return e;
+}
+
+static int
+window(m)
+	struct guest_mmu *m;
+{
+	struct as *as = m->gp->gp_proc->p_as;
+	int e, j;
+
+	if (!gmu_ops.fault)
+		gmu_opsinit();
+	if ((e = winmap(m, as, m->lo, m->hi - m->lo)) != 0)
 		return e;
-	as->a_size -= m->hi - m->lo;
+	if (m->len2 && (e = winmap(m, as, m->lo2, m->len2)) != 0) {
+		(void)as_unmap(as, (addr_t)m->lo, (u_int)(m->hi - m->lo));
+		return e;
+	}
 	m->gp->gp_flags &= ~(GPF_FTRAP | GPF_FTRAP13);
 	/* a core file of the window would read the whole guest space */
 	u.u_rlimit[RLIMIT_CORE].rlim_cur = 0;
 	m->space = m->gp->gp_vsr & SR_S;
 	m->root = *(unsigned long **)((char *)as + 20);
 	m->rootpa = (unsigned long)vtop((caddr_t)m->root, (struct proc *)0);
-	bcopy((caddr_t)(m->root + m->first), (caddr_t)m->hsave, m->nslot * 4);
+	for (j = 0; j < m->nsl; j++)
+		m->hsave[m->sl[j]] = m->root[m->sl[j]];
 	m->cur = -1;
 	return 0;
 }
@@ -795,8 +837,8 @@ guest_mmu_init(gp, pbase, plimit, lo, hi)
 	m->plimit = plimit;
 	m->lo = lo;
 	m->hi = hi;
-	m->first = (int)(lo >> 25);
-	m->nslot = (int)((hi - lo) >> 25);
+	for (; lo < hi; lo += 0x2000000)
+		m->sl[m->nsl++] = lo >> 25;
 	m->cur = -1;
 	m->nuser = 1;
 	gp->gp_mmu = m;
@@ -811,10 +853,8 @@ guest_mmu_free(gp)
 
 	if (!m)
 		return;
-	if (m->seg) {
-		release(m);
-		m->seg->s_data = 0;
-	}
+	if (m->seg)
+		detach(m);
 	for (mp = &gmu_moved; *mp; mp = &(*mp)->next)
 		if (*mp == m) {
 			*mp = m->next;
@@ -834,6 +874,59 @@ guest_mmu_dsmoved()
 		if (m->seg)
 			reset(m);
 	return 0;
+}
+
+/*
+ * A platform MMU from now on: fn(gp, va, rw, key, &pa, &wp, &mod)
+ * translates va in the space of key as walk does; skey is the
+ * supervisor's, nuser the user spaces kept.  len2 bytes from lo2 are
+ * a second window, in root entries of their own; 0 none.
+ */
+int
+guest_mmu_plat(gp, fn, skey, nuser, lo2, len2)
+	struct guest_proc *gp;
+	int (*fn)();
+	unsigned long skey, lo2, len2;
+	int nuser;
+{
+	struct guest_mmu *m = gp->gp_mmu;
+	unsigned long a;
+	int n, e;
+
+	if (!m || m->seg || nuser < 1 || nuser > NSP - 1 || (lo2 & 0x1ffffff) || (len2 & (HP - 1)) ||
+	    lo2 + len2 < lo2 || (len2 && lo2 < m->hi && lo2 + len2 > m->lo) ||
+	    (len2 && m->pbase < lo2 + len2 && m->pbase + m->plimit > lo2))
+		return EINVAL;
+	for (n = m->nsl, a = lo2; a - lo2 < len2; a += 0x2000000)
+		m->sl[m->nsl++] = a >> 25;
+	m->lo2 = lo2;
+	m->len2 = len2;
+	m->pwalk = fn;
+	m->srp = skey;
+	m->nuser = nuser;
+	m->tc = TC_E;
+	if ((e = window(m)) != 0) {
+		m->nsl = n;
+		m->len2 = 0;
+		m->pwalk = 0;
+		m->tc = 0;
+	}
+	return e;
+}
+
+/* a platform MMU's user space is now key's */
+void
+guest_mmu_ukey(gp, key)
+	struct guest_proc *gp;
+	unsigned long key;
+{
+	struct guest_mmu *m = gp->gp_mmu;
+
+	if (!m || m->urp == key)
+		return;
+	m->urp = key;
+	if (m->seg && !m->space)
+		setspace(m, 0, 1);
 }
 
 /* a change of the virtual S bit */
@@ -857,6 +950,8 @@ guest_mmu_creg(gp, c, vp, wr)
 	unsigned long *cp, old;
 	int e;
 
+	if (m->pwalk)
+		return -1;
 	switch (c) {
 	case 0x003: cp = &m->tc; break;
 	case 0x004: case 0x005: case 0x006: case 0x007: cp = &m->tt[c - 4]; break;
@@ -882,6 +977,19 @@ guest_mmu_creg(gp, c, vp, wr)
 	return 0;
 }
 
+static int
+inwin(m, a)
+	struct guest_mmu *m;
+	unsigned long a;
+{
+	int j;
+
+	for (j = 0; j < m->nsl; j++)
+		if (m->sl[j] == a >> 25)
+			return 1;
+	return 0;
+}
+
 /* pflush (An) / pflushn (An) / pflusha / pflushan, ptestr / ptestw (An) */
 int
 guest_mmu_insn(gp, op, a)
@@ -900,7 +1008,7 @@ guest_mmu_insn(gp, op, a)
 			reset(m);
 		else if (op & 0x10)
 			dropnl(m);
-		else if (a >= m->lo && a < m->hi) {
+		else if (inwin(m, a)) {
 			pdrop(m, a);
 			if (m->tc & TC_P)
 				pdrop(m, a ^ HP);
@@ -996,33 +1104,29 @@ rdrop(m, i, s, e)
 	unsigned long s, e;
 {
 	struct gspace *sp = &m->sp[i];
-	unsigned long *p, *l, pa, va;
+	unsigned long *p, *l, pa, va, nx;
 	int n = 0;
 
-	if (s < m->lo)
-		s = m->lo;
-	if (e > m->hi || e < s)
-		e = m->hi;
-	for (va = s & ~(HP - 1); va < e; ) {
-		if ((p = sp->ptr[(va >> 25) - m->first]) == 0) {
-			va = (va | 0x1ffffffUL) + 1;
-			continue;
+	if (e < s)
+		e = ~0UL;
+	for (va = s & ~(HP - 1); va < e; va = nx) {
+		if ((p = sp->ptr[va >> 25]) == 0)
+			nx = (va | 0x1ffffffUL) + 1;
+		else if (!p[va >> 18 & 0x7f])
+			nx = (va | 0x3ffffUL) + 1;
+		else {
+			l = (unsigned long *)p[128 + (va >> 18 & 0x7f)] + (va >> 12 & 0x3f);
+			pa = (p[va >> 18 & 0x7f] & ~0xffUL) + (va >> 12 & 0x3f) * 4;
+			if (*l) {
+				*l = 0;
+				hcpush(pa, 1, 0);
+				if (m->cur == i && ++n <= 16)
+					atcflush(va);
+			}
+			nx = va + HP;
 		}
-		if (!p[va >> 18 & 0x7f]) {
-			va = (va | 0x3ffffUL) + 1;
-			continue;
-		}
-		l = (unsigned long *)p[128 + (va >> 18 & 0x7f)] + (va >> 12 & 0x3f);
-		pa = (p[va >> 18 & 0x7f] & ~0xffUL) + (va >> 12 & 0x3f) * 4;
-		if (*l) {
-			*l = 0;
-			hcpush(pa, 1, 0);
-			if (m->cur == i && ++n <= 16)
-				atcflush(va);
-		}
-		if (va + HP < va)
+		if (nx < va)
 			break;
-		va += HP;
 	}
 	if (n > 16)
 		__asm__ __volatile__(".short 0xf510" : : : "memory");	/* pflushan */

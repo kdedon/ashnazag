@@ -17,9 +17,7 @@ struct lisactr {
 	unsigned long	l_ramsize;
 	unsigned short	l_slr[4][128], l_sor[4][128];	/* per context */
 	int		l_seg;
-	int		l_ctx;		/* the context mapped */
-	unsigned long	l_map[4096];	/* what each 4 KB page of 0-16 MB maps */
-	struct { unsigned long b, m; int c; } l_alias[64];	/* 128 KB windows above 16 MB: pages mapped, context */
+	struct { unsigned long b, m; int c; } l_alias[64];	/* 128 KB windows above 32 MB: pages mapped, context */
 	int		l_nalias;
 	int		l_irqon;	/* level 1 sources running */
 	int		l_vpend, l_tpend;	/* retrace, timer periods pending */

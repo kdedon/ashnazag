@@ -100,9 +100,10 @@ Llaslow:
 	jmp	gc_gate_c
 
 | gc_ftrap -- trap #n of a guest with GPF_FTRAP: the CPU's format-0
-| frame goes on the guest's supervisor stack, as guest_reflect builds it.
+| frame goes on the guest's supervisor stack, as guest_reflect builds it;
+| under a shadow MMU, in the supervisor's space.
 |
-|   guest frame:  SR | vSR   PC   format/vector
+|   guest frame:  SR | vSR   PC   format/vector (none for a 68000)
 |   then:         real SR = CCR, vSR = S, M and IPL kept
 |
 | Pending signals, a reschedule, another format or a fault take the C path.
@@ -116,7 +117,7 @@ GPF_VPEND_BIT = 3
 
 	.globl	gc_ftrap
 gc_ftrap:
-	moveml	&0xe0e0,%sp@-		| d0-d2/a0-a2; frame at 24(sp)
+	moveml	&0xe0f0,%sp@-		| d0-d2/a0-a3; frame at 28(sp)
 	moveal	curproc,%a1
 	movel	%a1@(P_HOLD),%d0
 	notl	%d0
@@ -124,16 +125,13 @@ gc_ftrap:
 	bnew	Lftslow
 	tstl	runrun
 	bnew	Lftslow
-	movew	%sp@(30),%d0
+	movew	%sp@(34),%d0
 	cmpiw	&0x0fff,%d0		| format 0
 	bhiw	Lftslow
 	moveal	%a1@(P_EVPDP),%a1
 	moveq	&1,%d1
 	movec	%d1,%sfc
 	movec	%d1,%dfc
-	movel	&Lftfault,u+0x374
-	moveal	%a1@(GP_VVBR),%a0
-	movesl	%a0@(0,%d0:w),%d1	| the guest's handler
 	movew	%a1@(GP_VSR),%d2
 	movel	%usp,%a2
 	moveal	%a2,%a0
@@ -142,19 +140,36 @@ gc_ftrap:
 	btst	&GPF_SPIN_BIT,%a1@(GP_FLAGS+3)
 	bnew	Lft1
 	tstl	%a1@(GP_SPACE)
-	bnew	Lftfault		| S changes: the C path switches spaces
+	bnew	Lftslow			| S changes: the C path switches spaces
 	moveal	%a1@(GP_VUSP),%a0
+	tstl	%a1@(GP_MMU)
+	beqw	Lft1
+	bset	&5,%a1@(GP_VSR)		| vS early: a fill below picks the supervisor's space too
+	moveml	&0xc0c0,%sp@-		| the supervisor's space holds the table and the stack
+	movel	&0x2000,%sp@-
+	movel	%a1,%sp@-
+	jsr	guest_mmu_space
+	addql	&8,%sp
+	moveml	%sp@+,&0x0303
 Lft1:
+	movel	&Lftfault,u+0x374
+	moveal	%a1@(GP_VVBR),%a3
+	movesl	%a3@(0,%d0:w),%d1	| the guest's handler
+	btst	&0,%a1@(GP_FLAGS+1)	| GPF_FRAME68K: SR and PC only
+	beqw	Lft2
+	subql	&6,%a0
+	bra	Lft5
+Lft2:
 	subql	&8,%a0
-	movew	%sp@(24),%d0
+	movesw	%d0,%a0@(6)
+Lft5:
+	movew	%sp@(28),%d0
 	andiw	&0x80ff,%d0
 	andiw	&0x3700,%d2
 	orw	%d2,%d0
 	movesw	%d0,%a0@
-	movel	%sp@(26),%d0
+	movel	%sp@(30),%d0
 	movesl	%d0,%a0@(2)
-	movew	%sp@(30),%d0
-	movesw	%d0,%a0@(6)
 	clrl	u+0x374
 	btst	&13,%d2			| from vUSP: it gets the user sp
 	bnew	Lft3
@@ -170,22 +185,34 @@ Lft3:
 	bnew	Lft4
 	bclr	&GPF_VPEND_BIT,%a1@(GP_FLAGS+3)
 Lft4:
-	andiw	&0x7fff,%sp@(24)	| T1 off
-	movel	%d1,%sp@(26)
+	andiw	&0x7fff,%sp@(28)	| T1 off
+	movel	%d1,%sp@(30)
 	addql	&1,guest_nftrap
-	moveml	%sp@+,&0x0707
+	moveml	%sp@+,&0x0f07
 	rte
 Lftfault:
 	clrl	u+0x374
+	btst	&13,%d2			| the user's space back if it changed
+	bnew	Lftslow
+	btst	&GPF_SPIN_BIT,%a1@(GP_FLAGS+3)
+	bnew	Lftslow
+	tstl	%a1@(GP_MMU)
+	beqw	Lftslow
+	bclr	&5,%a1@(GP_VSR)
+	clrl	%sp@-
+	movel	%a1,%sp@-
+	jsr	guest_mmu_space
+	addql	&8,%sp
 Lftslow:
-	moveml	%sp@+,&0x0707
+	moveml	%sp@+,&0x0f07
 	jmp	gc_gate_c
 
 | gc_fpriv -- vector 8 of a guest with GPF_PRIV in virtual supervisor
-| mode: rte (format 0), move to and from SR (Dn, (sp)+, -(sp), #imm)
+| mode: rte (format 0, or a 68000's SR and PC), move to and from SR (Dn, (sp)+, -(sp), #imm)
 | and ori/andi/eori #,SR against gp_vsr, as gcpu.c emulates them,
 | move to and from USP against gp_vusp, movec of SFC, DFC and USP, and on
-| a 68040 cpusha bc and fsave/frestore at (An), d16(An) or abs.l.  An
+| a 68040 cpusha bc and fsave/frestore at (An), d16(An) or abs.l; a
+| 68000's move from SR to Dn or -(sp) in user mode too.  An
 | IPL below gp_vpend (an interrupt would be taken), pending signals, a
 | reschedule, other instructions or a fault take the C path.
 
@@ -202,7 +229,10 @@ gc_fpriv:
 	moveal	%a1@(P_EVPDP),%a1
 	movew	%a1@(GP_VSR),%d6
 	btst	&13,%d6
+	bnew	Lfpsv
+	btst	&0,%a1@(GP_FLAGS+1)	| GPF_FRAME68K: a 68000 reads SR in user mode too
 	beqw	Lfpslow
+Lfpsv:
 	moveq	&1,%d1
 	movec	%d1,%sfc
 	movec	%d1,%dfc
@@ -215,6 +245,16 @@ gc_fpriv:
 	movew	%d6,%d1
 	andiw	&0x3700,%d1
 	orw	%d1,%d7
+	btst	&13,%d6
+	bnew	Lfpsv1
+	cmpiw	&0x40e7,%d0
+	beqw	Lfppush
+	movew	%d0,%d1
+	andiw	&0xfff8,%d1
+	cmpiw	&0x40c0,%d1
+	beqw	Lfptod
+	bra	Lfpfault
+Lfpsv1:
 	cmpiw	&0x4e73,%d0
 	beqw	Lfprte
 	cmpiw	&0x46fc,%d0
@@ -526,8 +566,13 @@ Lfpur6:
 	moveal	%d2,%a6
 	bra	Lfpdone
 Lfprte:
-	btst	&0,%a1@(GP_FLAGS+1)	| bit 16, GPF_FRAME68K: the C path pops 6 bytes
-	bnew	Lfpfault
+	btst	&0,%a1@(GP_FLAGS+1)	| bit 16, GPF_FRAME68K: SR and PC only
+	beqw	Lfprte4
+	movesw	%a2@,%d0
+	movesl	%a2@(2),%a0
+	addql	&6,%a2
+	bra	Lfpset
+Lfprte4:
 	movesw	%a2@(6),%d1
 	cmpiw	&0x0fff,%d1
 	bhiw	Lfpfault		| format 0 only

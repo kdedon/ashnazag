@@ -225,6 +225,8 @@ extern caddr_t guest_mmu_user();	/* (gp, va, sz, wr): the guest frame of a user-
 extern void guest_mmu_stats();		/* (gp, v[5]): fills, faults, space switches, flushes, privileged */
 extern void guest_mmu_free(), guest_mmu_space();
 extern int guest_mmu_creg(), guest_mmu_insn();
+extern int guest_mmu_plat();		/* (gp, fn, skey, nuser, lo2, len2): a platform MMU translates */
+extern void guest_mmu_ukey();		/* (gp, key): its user space */
 extern int guest_mmu_svc();		/* (gp, op, key, s, e, pa): the guest's pmap changes */
 extern int guest_cache_insn();		/* (gp, op, a): cinv/cpush of a line or page, -1 the whole caches */
 extern unsigned long guest_cflush_all, guest_cflush_scoped;

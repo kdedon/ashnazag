@@ -61,8 +61,9 @@ from the volume.
   data fault the instruction's own with pc + 2. This is how code segments load on demand.
 - 24-bit addresses: the OS keeps flags in pointers' top byte. A fetch above 16 MB
   continues at the 24-bit pc, so a jump into a segment not yet loaded gives the OS its
-  own fault. A data access above 16 MB maps that segment's pages at its 128 KB window
-  there too, until the segment changes; a user context's window stays across a switch
+  own fault. Top bytes 0, 1, $FE and $FF map alike (but for the last 4 KB). A data
+  access at another top byte maps that segment's pages at its 128 KB window there too,
+  until the segment changes; a user context's window stays across a switch
   into context 0 where context 0 has no RAM. A window page the launcher already holds
   is left to the launcher and reported once; a guest access to a launcher page stops
   the environment with its address.
@@ -73,9 +74,10 @@ from the volume.
   whose rounded size is unchanged frees nothing, a moved segment's free region is what is
   left of the hole. A RAM page that still cannot be mapped
   stops the environment. A write to a read-only segment is a bus error, as on the Lisa.
-- Contexts: context 0 in supervisor mode, SEG1/SEG2's context in user mode. guestcore
-  calls the module on every virtual S change; the module remaps only segments whose
-  SLR/SOR differ.
+- Contexts: context 0 in supervisor mode, SEG1/SEG2's context in user mode. Each
+  context is a guestcore MMU space whose pages fill at fault from its SLR/SOR; a virtual
+  S change or context switch swaps root entries, and a segment register change drops
+  that segment's pages.
 - User-mode A-lines (Lisa Pascal inter-segment calls) enter the dispatcher's user-mode
   tail through `gp_ualine` without a supervisor switch; the launcher registers the
   entry once vector 10 has the dispatcher's shape.

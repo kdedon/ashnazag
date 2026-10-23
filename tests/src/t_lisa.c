@@ -498,6 +498,10 @@ office()
 	watch(20000);
 	type("hello");
 	watch(5000);
+	/* a title typed early ends the selection: select the document again */
+	moveto(LX(157), LY(140));
+	host("click 1");
+	nap(3000);
 	menu(82);			/* Open */
 	watch(90000);
 	host("shot lw0");
