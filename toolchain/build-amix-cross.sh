@@ -1,6 +1,7 @@
 #!/bin/sh
 # build-amix-cross.sh -- gcc 2.7.2.3 and binutils 2.8.1 for m68k-cbm-sysv4
-# into toolchain/amix, from the pinned gcc-cross-amix sources.
+# into toolchain/amix, from the pinned gcc-cross-amix sources, the 68060
+# multiply rewrite and scanner picked from a fork, and gcc-cross-amix-patches/.
 #
 #   sh toolchain/build-amix-cross.sh [AMIX_ROOT]
 #   sh toolchain/build-amix-cross.sh -s	(sources only)
@@ -12,15 +13,22 @@
 set -e
 TC=$(cd "$(dirname "$0")" && pwd)
 GCA_URL=https://github.com/isoriano1968/gcc-cross-amix
-GCA_PIN=206bc9589dc8b0bae1cb2deb1c5bc7e5d3d8e190
+GCA_PIN=63d18ad981a71d14be200798b3ff6752686eb3ec
+PICK_URL=https://github.com/jusii/gcc-cross-amix
+PICKS="2ab2b2235f0e2d7320ba06fca0572039d3160982 80b6d678f9c408fb3e3e37b819514079c5b95ec7"
 GCC_V=2.7.2.3
 G=$TC/src/gcc-cross-amix
 R=$1
 
 [ -d "$G/.git" ] || git clone -q $GCA_URL "$G"
 git -C "$G" cat-file -e "$GCA_PIN^{commit}" 2>/dev/null || git -C "$G" fetch -q origin
-[ "$(git -C "$G" rev-parse HEAD)" = "$(git -C "$G" rev-parse "$GCA_PIN^{commit}")" ] ||
-	git -C "$G" checkout -q --detach $GCA_PIN
+for c in $PICKS; do
+	git -C "$G" cat-file -e "$c^{commit}" 2>/dev/null || git -C "$G" fetch -q $PICK_URL main
+done
+# the build trees are ignored files, which reset keeps
+git -C "$G" reset -q --hard $GCA_PIN
+git -C "$G" -c user.name=build -c user.email=build@localhost cherry-pick -n $PICKS > /dev/null
+for p in "$TC"/gcc-cross-amix-patches/*.patch; do git -C "$G" apply "$p"; done
 [ "$R" != -s ] || exit 0
 if [ -n "$R" ]; then
 	T=all

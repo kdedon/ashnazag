@@ -1,0 +1,8 @@
+PKG=vim
+NAME=Vim 9.2 - Vi IMproved, with vimdiff and xxd
+ARCH=m68k
+VERSION=9.2.1189
+CATEGORY=editor
+CLASSES=none
+VENDOR=Ash Nazag
+DESC=Vim with the normal feature set and syntax highlighting for common file types; no GUI. Help is in vimdoc. /usr/bin/vi stays the system's. In /opt/amix/bin.

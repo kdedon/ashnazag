@@ -301,7 +301,7 @@ changed(a, b)
 #define	LY(y)	(top + (y) * sh / 364)
 
 static int w, h, sw, sh, top;		/* the host screen, the Lisa's on it */
-static void office();
+static void office(), mandel(), watch(), menu();
 static int offmode;			/* the office run: files made, renamed, deleted */
 static int offpid, offgone;		/* its startlisa; gone after the power switch */
 
@@ -347,6 +347,74 @@ input()
 	host("key meta_l+o");
 	nap(5000);
 	shot("lisa_desk", 1);
+}
+
+/* black at Lisa point x, y of shot name */
+static int
+dark(name, x, y)
+	char *name;
+	int x, y;
+{
+	char req[64];
+
+	sprintf(req, "pix %s %d %d", name, LX(x), LY(y));
+	return host(req) && !strcmp(hrep, "000000");
+}
+
+/* the system error alert's Stop sign: a black octagon, its corners and sides white */
+static int
+stopsign(name)
+	char *name;
+{
+	static int in[][2] = { { 75, 93 }, { 156, 93 }, { 116, 68 }, { 116, 120 }, { 90, 104 }, { 142, 82 } };
+	static int out[][2] = { { 66, 62 }, { 166, 62 }, { 66, 126 }, { 166, 126 }, { 60, 93 }, { 172, 93 } };
+	int i;
+
+	for (i = 0; i < 6; i++)
+		if (!dark(name, in[i][0], in[i][1]) || dark(name, out[i][0], out[i][1]))
+			return 0;
+	return 1;
+}
+
+/*
+ * LisaMandelbrotPort, a QuickPort program in floating point, draws its
+ * set to the end: the screen stops changing, no system error alert shows
+ * and the environment runs on.
+ */
+static void
+mandel(pid)
+	int pid;
+{
+	char req[40];
+	int k, same = 0, stop = 0;
+
+	moveto(LX(300), LY(200));
+	host("click 1");
+	nap(3000);
+	moveto(LX(549), LY(140));
+	host("click 2");
+	for (k = 0; k < 60 && kill(pid, 0) == 0 && same < 3 && !stop; k++) {
+		watch(10000);
+		sprintf(req, "shot lm%d", k);
+		host(req);
+		stop = stopsign(req + 5);
+		if (k > 0) {
+			sprintf(req, "lm%d", k - 1);
+			sprintf(req + 20, "lm%d", k);
+			same = strcmp(changed(req, req + 20), "none") == 0 ? same + 1 : 0;
+		}
+	}
+	if (!stop)
+		watch(30000);
+	shot("lisa_mandel", 1);
+	stop |= stopsign("lisa_mandel");
+	if (!t_check("mandel", kill(pid, 0) == 0 && same >= 3 && !stop, "%s after %d s",
+	    stop ? "system error alert" : kill(pid, 0) ? "exited" : "still drawing", k * 10))
+		return;
+	/* Save & Put Away: the office run boots this desktop */
+	menu(68);
+	watch(30000);
+	host("shot lm_away");
 }
 
 /* how often host file name holds s; -1 no such file */
@@ -498,8 +566,10 @@ office()
 	watch(20000);
 	type("hello");
 	watch(5000);
-	/* a title typed early ends the selection: select the document again */
+	/* a title typed early ends the selection, one still open ends at the first click: select the document again */
 	moveto(LX(157), LY(140));
+	host("click 1");
+	nap(3000);
 	host("click 1");
 	nap(3000);
 	menu(82);			/* Open */
@@ -682,6 +752,12 @@ boot()
 		lit = atol(e);
 	}
 	shot("lisa_end", 1);
+	if (!offmode && kill(pid, 0) == 0) {
+		long b = t_busy(30000L);
+
+		/* an application waiting for input yields to nobody on every pass */
+		t_check("idle_busy", b >= 0 && b < 100, "%ld.%ld%% busy at the desktop", b / 10, b % 10);
+	}
 	/* the office run boots the folder the first run left */
 	if (offmode)
 		t_check("reboot", kill(pid, 0) == 0 && lit > 500 && strstr(log, "lisa: catalog from host") && !strstr(log, "hardware access"),
@@ -689,6 +765,8 @@ boot()
 	offpid = pid;
 	if (hfd >= 0 && kill(pid, 0) == 0)
 		input();
+	if (!offmode && hfd >= 0 && kill(pid, 0) == 0)
+		mandel(pid);
 	if (offmode) {
 		if (!offgone)
 			stop(pid, SIGTERM, 150, &st);
@@ -758,7 +836,7 @@ main(argc, argv)
 	char **argv;
 {
 	offmode = argc > 1 && !strcmp(argv[1], "office");
-	t_init(offmode ? "lisaoffice" : "lisa", offmode ? 1700 : 700);
+	t_init(offmode ? "lisaoffice" : "lisa", offmode ? 1700 : 1300);
 	boot();
 	return t_done();
 }

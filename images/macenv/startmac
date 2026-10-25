@@ -5,13 +5,13 @@
 #	startmac -d env | -l
 #
 # Environments: 7.6.1, from /mac/lib/System Folder; one for each
-# /mac/lib/env/env/System Folder (8.1: Mac OS 8.1); 6, System 6.0.7 with
-# MultiFinder, A/UX 2.0.1's Mac environment in its own root, /a201.
+# /mac/lib/env/env/System Folder (8.1: Mac OS 8.1; 6: System 6.0.7 with
+# MultiFinder, run by A/UX 2.0.1's startmac in /usr/aux/aux2).
 # Without -e it is the default: -d sets the user's, /etc/default/mac
 # (DEFAULT_ENVIRONMENT) the system's; -l lists them.  A new name is the
 # user's own copy of base, by default the default.  Root's 7.6.1 System
 # Folder is /mac/sys/System Folder, another user's ~/System Folder; the
-# others' are in ~/Mac/env, System 6's in /a201/home/<login>.  A user's
+# others' are in ~/Mac/env.  A user's
 # System Folder is copied from the template at first start and again
 # when it changes or with -R, keeping Preferences, the desktop database,
 # MacTCP settings and other files.  One session per System Folder: a second is
@@ -19,7 +19,8 @@
 #
 # /etc/aux/macenv.conf (shell syntax) or the environment may set
 #   TBMEMORY  Mac memory, e.g. 32M; default a quarter of physical
-#             memory, 8 to 32 MB, as free swap allows
+#             memory, 8 to 32 MB, as free swap allows; System 6 takes
+#             only the environment's, default 4M
 #   MACMODEL  Gestalt machine ID the Mac reports, e.g. 35 Quadra 800
 #             (root only); unset picks one from the host and the ROM
 # The environment wins.
@@ -28,7 +29,6 @@ umask 022
 m=$MACMODEL t=$TBMEMORY
 [ -r /etc/aux/macenv.conf ] && . /etc/aux/macenv.conf
 MACMODEL=${m:-$MACMODEL} TBMEMORY=${t:-$TBMEMORY}
-A6=/a201
 usage() {
 	echo "usage: startmac [-e env [-b base]] [-d env] [-R] [arg ...] | startmac -d env | -l" >&2
 	exit 2
@@ -82,7 +82,6 @@ while [ $# -gt 0 ]; do
 			for i in /mac/lib/env/*/System\ Folder; do
 				[ -d "$i" ] && expr "x$i" : 'x/mac/lib/env/\(.*\)/System Folder$'
 			done
-			[ ! -d "$A6/mac/sys/System Folder" ] || echo 6
 			for i in "$R"/*/"$MN"; do
 				[ -f "$i" ] && expr "x$i" : ".*/\([^/]*\)/$MN\$"
 			done
@@ -122,22 +121,6 @@ run() {
 	stty $t
 	exit $r
 }
-if [ "$e" = 6 ]; then
-	case $login in
-	root)	S="$A6/mac/sys/System Folder" ;;
-	*)	S="$A6/home/$login/System Folder" ;;
-	esac
-	{ [ -z "$refresh" ] && [ -f "$S/System" ]; } || [ $login = root ] || [ ! -d "$A6/mac/sys/System Folder" ] || {
-		{ [ -d "$S" ] || mkdir -p "$S"; } && (cd "$A6/mac/sys/System Folder" && find . -print | cpio -pdmu "$S" 2> /dev/null)
-	}
-	[ -f "$S/System" ] || { echo "startmac: no $S" >&2; exit 1; }
-	macscrn "$S/System" 2> /dev/null
-	F="$S/.stamp"
-	[ -f "$F" ] || : >> "$F"
-	envlock -t "$F" || exit 1
-	run /usr/aux/lib/mac6 "$@"
-fi
-ps -e | grep -s ' fidd$' > /dev/null || /etc/aux/fidd < /dev/null
 case $login in
 root)
 	H=/mac/sys
@@ -201,10 +184,19 @@ envlock -t "$F" || exit 1
 	done | cpio -pdmu "$S" 2> /dev/null) && {
 		[ $login != root ] || [ ! -f "$P/../RootFinder" -o ! -f "$P/../%RootFinder" ] ||
 			{ cp "$P/../RootFinder" "$S/Finder" && cp "$P/../%RootFinder" "$S/%Finder"; }
-	} && cp "$P/%.stamp" "$P/.stamp" "$S/" && [ -f "$S/System" ] ||
+	} && cp "$P/.stamp" "$S/" && { [ ! -f "$P/%.stamp" ] || cp "$P/%.stamp" "$S/"; } && [ -f "$S/System" ] ||
 		{ echo "startmac: cannot make $S" >&2; exit 1; }
 }
-macscrn "$S/%System" 2> /dev/null
+# System 6 and copies of it: A/UX 2's startmac, AppleSingle files, no fidd
+if [ "$P" = "/mac/lib/env/6/System Folder" ]; then
+	X=/usr/aux/aux2/mac/bin/startmac
+	macscrn "$S/System" 2> /dev/null
+	TBMEMORY=${t:-4M}
+else
+	X=/mac/bin/startmac
+	ps -e | grep -s ' fidd$' > /dev/null || /etc/aux/fidd < /dev/null
+	macscrn "$S/%System" 2> /dev/null
+fi
 if [ -z "$TBMEMORY" ]; then
 	# swap backs Mac memory; startmac takes less when it runs short
 	p=`cat /etc/aux/memsize 2> /dev/null`
@@ -231,4 +223,4 @@ v=`ulimit -v`
 [ "$v" = unlimited ] || [ "$v" -ge "$k" ] || ulimit -v $k
 TBSYSTEM=${TBSYSTEM:-$S}
 export TBSYSTEM TBMEMORY
-run /mac/bin/startmac "$@"
+run $X "$@"

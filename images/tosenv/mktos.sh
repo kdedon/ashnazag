@@ -11,8 +11,8 @@
 # (kernel/guest/tos/fvdi/build.sh).  TOSAPPS names the
 # unpacked apps of APPS.md (default ref/tosapps); without them the
 # image has none.
-# XaAES and its MiNT layer go to /tos/xaaes (starttos -e xaaes adds them to a
-# C: folder) and make guest's environment xaaes.
+# XaAES and its MiNT layer go to /tos/xaaes (starttos adds them to C:; the
+# environment's desktop setting runs them).
 # NOTERADESK=1 leaves TeraDesk out, NOFVDI=1 fVDI, NOXAAES=1 XaAES.
 set -e
 D=$(cd "$(dirname "$0")" && pwd)
@@ -116,7 +116,7 @@ else
 	echo "[FAIL] TeraDesk: $(tail -1 "$O/teradesk.log"); NOTERADESK=1 builds without it"
 	exit 1
 fi
-# XaAES over its MiNT layer: C: files of environment xaaes; its source beside it (GPL)
+# XaAES over its MiNT layer: C: files for the xaaes desktop; its source beside it (GPL)
 if [ -n "$NOXAAES" ]; then
 	echo "[warn] XaAES left out"
 elif AUX=$AUX MINT=$O/mint sh "$G/tos/xaaes/build.sh" "$O/xaaes" > "$O/xaaes.log" 2>&1; then
@@ -127,21 +127,19 @@ else
 	echo "[FAIL] XaAES: $(tail -1 "$O/xaaes.log"); NOXAAES=1 builds without it"
 	exit 1
 fi
-# guest's TOS folders, as starttos makes them: environments emutos and xaaes
+# guest's TOS folder, as starttos makes it
 H=$OUT/guest/home/guest
 mkdir -p "$H"
 (cd "$T/tos/sys" && find . | grep -v -x ./drives | cpio -pdm --quiet "$H/TOS")
-printf 'id=emutos\nname=emutos\nbase=emutos\ntemplate=/tos/sys\ncreated=%s\n' \
-	"$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$H/TOS/.env"
 if [ -d "$T/tos/xaaes" ]; then
-	X=$H/TOS/xaaes
-	mkdir -p "$X"
-	printf 'id=xaaes\nname=xaaes\nbase=xaaes\ntemplate=/tos/sys\ncreated=%s\n' \
-		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$X/.env"
-	(cd "$T/tos/sys" && find . | grep -v -x ./drives | cpio -pdm --quiet "$X")
-	(cd "$T/tos/xaaes" && find . | cpio -pdmu --quiet "$X")
-	mkdir -p "$X/CLIPBRD"
+	(cd "$T/tos/xaaes" && find . | cpio -pdmu --quiet "$H/TOS")
+	mkdir -p "$H/TOS/CLIPBRD"
+	TPL=/tos/xaaes
+else
+	TPL=/tos/sys
 fi
+printf 'id=emutos\nname=emutos\nbase=emutos\ntemplate=%s\ncreated=%s\n' \
+	"$TPL" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$H/TOS/.env"
 find "$T" "$OUT/guest" -type d -exec chmod 755 {} +
 find "$T" "$OUT/guest" -type f -exec chmod 644 {} +
 chmod 755 "$T"/usr/bin/*

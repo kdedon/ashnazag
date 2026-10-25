@@ -102,7 +102,7 @@ echo "[OK] 20 emulator objects and glue"
 echo "[*] RAM disk"
 sh "$K/mac/ramdisk/build.sh" > "$W/ramdisk.log"
 RDB="$K/mac/ramdisk/build"
-RDDEF="-Dmac_rd_config=ata_rd_config -Dmac_bi=ata_bi -Dmac_bilen=ata_bilen
+RDDEF="-DRD_PGSHIFT=11 -Dmac_rd_config=ata_rd_config -Dmac_bi=ata_bi -Dmac_bilen=ata_bilen
 -Dmac_puts=ata_puts -Dmac_puthex=ata_puthex"
 $CC $AMIX_KERNEL_CFLAGS $RDDEF -c "$K/mac/ramdisk/rd.c" -o "$W/rd.o"
 if m68k-linux-gnu-nm "$W/rd.o" | grep -q ' [bBC] '; then
@@ -177,11 +177,13 @@ for s in freemem_wait free_pages pagecnt page_cachelist page_cachelist_size page
 # anonymous memory reserved against RAM plus swap
 WEAK="$WEAK $(sh "$K/vm/build.sh" "$BASE" "$W")"
 OBJS="$OBJS $W/vm.o"
+# its splhi sites are raised with the base's
+SPL_SITES=$((SPL_SITES + $(python3 "$A/patch_spl.py" -c "$W/vm.o" | cut -d" " -f2)))
 m68k-linux-gnu-objcopy $WEAK "$BASE" "$W/base.weak"
-python3 "$A/patch_spl.py" -p "$W/base.weak" $SPL_SITES
 
 echo "[*] linking the Atari overrides over the base"
 m68k-cbm-sysv4-ld -r -o "$OUT" "$W/base.weak" $OBJS
+python3 "$A/patch_spl.py" -p "$OUT" $SPL_SITES
 python3 "$K/guest/patch_vec.py" "$OUT" "$W/guest/gates.lst"
 # the fatal user-fault notice through the guest filter: a fault the guest's
 # own vector takes is no notice

@@ -1,8 +1,5 @@
 # asmfix.pl -- fixups to gcc's assembly for GL and Quake code (perl -0777 -pi).
 #
-# -fPIC names constant labels LC%N, which GNU as reads as an operator, and
-# its PLT calls need 32-bit displacements in objects over 32 KB.
-#
 # FScc, which the 68060 traps, becomes a branch around sf:
 #
 #	fslt %d0	->	st %d0; fblt .LFSn; sf %d0; .LFSn:
@@ -13,8 +10,6 @@
 # without one this exits 3, for a build with one.
 BEGIN { %cc = map { $_ => 1 } qw(f t eq ne neq gt ngt ge nge lt nlt le nle gl ngl
     gle ngle ogt oge olt ole ogl or un ueq ugt uge ult ule sf st seq sne sneq) }
-s/\bLC%(\d+)/.LCP$1/g;
-s/^(\s*b(?:sr|ra))(\s+\S+\@PLTPC)/$1.l$2/mg;
 $n = 0;
 s{^(\s*)fs([a-z]+)(\s+)(%d[0-7])[ \t]*$}{
 	$cc{$2} ? ($n++, "$1st$3$4\n$1fb$2$3.LFS$n\n$1sf$3$4\n.LFS$n:")[1] : $&

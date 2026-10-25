@@ -28,7 +28,7 @@ them); a new mode reverts after 15 s unless Return is pressed. Design: `docs/dis
 | `startmac -e 6` | 6.0.7 with MultiFinder | Special > Logout |
 
 A/UX 3.1's Mac environment (A/UX 2.0.1's for System 6). Root's System Folder is
-`/mac/sys/System Folder`, other users' `~/System Folder` (8.1: `~/Mac/8.1`); a new
+`/mac/sys/System Folder`, other users' `~/System Folder` (8.1: `~/Mac/8.1`, 6: `~/Mac/6`); a new
 template is copied over it at the next start, keeping your files. Root's Shut Down halts Unix.
 `/etc/aux/macenv.conf` sets `TBMEMORY` (default a quarter of RAM, 8-32 MB) and, for root,
 `MACMODEL`. 7.6.1 also runs on an Amiga host.
@@ -40,11 +40,12 @@ Known issues: System 6 is slow.
 `starttos` boots EmuTOS with the TeraDesk desktop and fVDI at the screen's size. EmuTOS's
 BIOS and XBIOS routines are patched to call host services; no Atari chip is modelled.
 
-- Environments: `emutos` (default), `xaaes` (XaAES multitasking AES).
-- C: `~/TOS` (`xaaes`: `~/TOS/xaaes`), G: games, U: `/`; more in `~/TOS/drives` or `-D L=dir`;
+- Environment `emutos`. Desktop: `desktop=emudesk` (default) or `desktop=xaaes` (XaAES,
+  multitasking) in `~/TOS/.env`, or `-X` for one session; both use the same C:.
+- C: `~/TOS`, G: games, U: `/`; more in `~/TOS/drives` or `-D L=dir`;
   `-i FILE` a FAT disk image instead.
-- `-M` ST high monochrome, `-S` the ST screen, `-m MB` ST-RAM.
-- `-C DIR` boots a program folder: `starttos -C ~/TOS/PROGRAM`.
+- `-M` (implied on 1-bit screens) ST high monochrome, TT high on screens of 1280x960 or more; `-S` the ST screen, `-m MB` ST-RAM.
+- `-C DIR` boots a program folder as single TOS: `starttos -C ~/TOS/PROGRAM`.
 - `-rom FILE`: your own TOS ROM.
 - Sound: DMA sound and the YM2149 (bell, key click, XBIOS music) on host sound. NVRAM settings
   are kept in `.nvram` in C:. Programs that write the video, palette or sound chips directly

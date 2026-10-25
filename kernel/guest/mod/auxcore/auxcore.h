@@ -71,6 +71,7 @@ extern struct auxent auxcalls[];
 extern struct guest_profile aux_profile;
 extern struct modwrapper auxcore_wrapper;
 extern int aux_trace;
+extern char aux_root2[];
 extern int (*aux_alwatch)();	/* (gp, regs): an A-line under GPF_AWATCH, 1 if it took it */
 extern void (*aux_macgfd)();
 extern void (*aux_macdetach)();	/* (gp): the layer's, while loaded */

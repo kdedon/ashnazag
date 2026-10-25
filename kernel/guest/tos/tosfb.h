@@ -5,7 +5,8 @@
  * in the cartridge.  The fVDI driver draws there and publishes its
  * palette in ST-RAM under the cookie TFB_COOKIE; the display process
  * loads that palette into the session's CLUT and stops converting the
- * ST screen while fs_on is set.
+ * ST screen while fs_on is set, unless the ST screen changes while
+ * fs_draw stands still.
  */
 #ifndef _TOSFB_H
 #define _TOSFB_H
@@ -26,6 +27,7 @@ struct tfbshare {
 	unsigned long	fs_magic;
 	unsigned long	fs_on;		/* the driver owns the screen */
 	unsigned long	fs_seq;		/* bumped after each palette change */
+	unsigned long	fs_draw;	/* bumped by each drawing call */
 	unsigned short	fs_pal[256][3];	/* 16-bit components by pixel value */
 };
 

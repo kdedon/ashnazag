@@ -11,7 +11,7 @@
 #include "ds.h"
 
 extern int ata_spltty(), ata_tt, ata_ttmono;
-extern void ata_splx(), ikbd_dsmode(), ikbd_cons(), ds_relmouse();
+extern void ata_splx(), ikbd_dsmode(), ikbd_cons(), ikbd_intr(), ds_relmouse();
 
 struct adbdev adb_dev[16] = { { ADB_ADDR_KBD, 2 }, { ADB_ADDR_MOUSE, 1 } };
 struct fbpmode fbp_mode[FBP_NMODE];
@@ -115,6 +115,8 @@ ata_dspoll()
 
 	for (;;) {
 		s = ata_spltty();
+		/* the tick runs with the ACIA masked, and it holds one byte */
+		ikbd_intr();
 		if (ad_get == ad_put) {
 			ata_splx(s);
 			return;

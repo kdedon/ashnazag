@@ -1,12 +1,14 @@
 name: AMIX cross toolchain
 on:
   pull_request:
-    paths: ['toolchain/build-amix-cross.sh', 'toolchain/fix-ashrdi16.sh', '.github/workflows/toolchain.yml',
+    paths: ['toolchain/build-amix-cross.sh', 'toolchain/fix-ashrdi16.sh', 'toolchain/gcc-cross-amix-patches/**',
+            '.github/workflows/toolchain.yml',
             'kernel/mods.sh', 'kernel/include/**', 'kernel/dlm/**', 'kernel/guest/**', 'kernel/mac/**',
             'kernel/atari/**', 'kernel/amiga/**', 'kernel/drm/**']
   push:
     branches-ignore: [main]  # main: unstable.yml
-    paths: ['toolchain/build-amix-cross.sh', 'toolchain/fix-ashrdi16.sh', '.github/workflows/toolchain.yml',
+    paths: ['toolchain/build-amix-cross.sh', 'toolchain/fix-ashrdi16.sh', 'toolchain/gcc-cross-amix-patches/**',
+            '.github/workflows/toolchain.yml',
             'kernel/mods.sh', 'kernel/include/**', 'kernel/dlm/**', 'kernel/guest/**', 'kernel/mac/**',
             'kernel/atari/**', 'kernel/amiga/**', 'kernel/drm/**']
   workflow_dispatch:
@@ -28,7 +30,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - id: key
-        run: echo "rev=$(git log -1 --format=%H -- toolchain/build-amix-cross.sh toolchain/fix-ashrdi16.sh)" >> "$GITHUB_OUTPUT"
+        run: echo "rev=$(git log -1 --format=%H -- toolchain/build-amix-cross.sh toolchain/fix-ashrdi16.sh toolchain/gcc-cross-amix-patches)" >> "$GITHUB_OUTPUT"
       # compile-only: no AMIX headers or libraries
       - uses: actions/cache@v4
         id: cache

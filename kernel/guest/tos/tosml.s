@@ -41,6 +41,7 @@ p_tfd:	.long	-1			| /dev/tos, for socket calls
 p_dtab:	.space	0x1000			| host drives: letter, flags, path; ... 0
 	.globl	p_spawn
 p_spawn: .long	-1			| the spawner's pipe, for Unix programs
+	.long	0			| 1: XaAES is the desktop
 
 init:
 	jsr	vminit
@@ -75,8 +76,28 @@ init:
 	bcc.s	1f
 	move.l	d0,a0
 	move.b	#2,0x37(a0)		| p_defdrv: AUTO from C:
-1:	bra	fixrez
+1:	bsr	shmode
+	bra	fixrez
 run:	rts
+
+| The shifter register reads the launcher's mode; TOS booted the
+| monitor's.  Setting the launcher's here also keeps it: EmuTOS allows
+| no resolution change when Line A's geometry differs after this init.
+shmode:	moveq	#7,d0
+	and.b	0xffff8262,d0
+	moveq	#7,d1
+	and.b	0x44c,d1		| sshiftmod
+	cmp.b	d0,d1
+	beq.s	1f
+	clr.w	-(sp)
+	move.w	d0,-(sp)
+	moveq	#-1,d1
+	move.l	d1,-(sp)
+	move.l	d1,-(sp)
+	move.w	#5,-(sp)		| Setscreen(-1, -1, rez, 0)
+	trap	#14
+	lea	14(sp),sp
+1:	rts
 
 | GEM through fVDI on the frame buffer: EmuTOS keeps the screen mode
 | (no resolution change, saved one ignored) when Line A's geometry

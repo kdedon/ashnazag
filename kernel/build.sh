@@ -24,6 +24,8 @@ BASE_SHA=b37cb0edfdb0b078e70d28466c9749a87db7170a4028b9b85a38c219527f1af0
 PATH="$AUX/toolchain/linux/bin:$AUX/toolchain/bin:$PATH"
 : "${AMIX_TAPE:=$AUX/media/amix-tape}"
 export PATH AMIX_TAPE
+# no 68060 runs these: keep the 64-bit multiply the compiler would expand
+case ${PLATFORM:-mac} in mac|atari) AMIX_MUL64=keep; export AMIX_MUL64 ;; esac
 mkdir -p "$LOG"
 
 . "$K/port-tree.sh"

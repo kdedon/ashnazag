@@ -28,6 +28,7 @@ int t_fill(int fd, int n, int seed);	/* write pattern, returns bytes */
 int t_pattern(long off, int seed);	/* pattern byte at offset */
 long t_kmem(char *sym);			/* kernel long at "sym" or "sym+off", -1 if unknown */
 long t_now_ms(void);			/* gettimeofday in milliseconds */
+long t_busy(long ms);			/* the machine's busy share over ms, per mille */
 
 #define T_ERR	strerror(errno)
 

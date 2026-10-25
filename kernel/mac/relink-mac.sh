@@ -92,7 +92,7 @@ if [ $MODE = port ]; then
 	echo "[*] vtop: user addresses through the process's page tables"
 	m68k-cbm-sysv4-gcc -m68040 -c "$MAC/vtop/vtop.s" -o "$W/vtop.o"
 	OBJS="$OBJS $W/vtop.o"
-	VTOP=vtop
+	VTOP="vtop prmapin dbg_uiomove_publish"
 	echo "[*] hat_ptalloc: waiting table requests wait for free memory"
 	m68k-cbm-sysv4-gcc -m68040 -c "$MAC/ptalloc/ptalloc.s" -o "$W/ptalloc.o"
 	OBJS="$OBJS $W/ptalloc.o"
@@ -124,6 +124,7 @@ OVRD="coinfo cdevsw bdevsw io_start execsw fmodsw vfssw architecture"
 ALIAS="sendsig:T valid_usr_range:T fsig:T execsw:D stime:T fmodsw:D memialloc:T vfssw:D vfs_getvfssw:T vfs_mountroot:T"
 [ $MODE = port ] && OVR="$OVR sysseginit" ALIAS="$ALIAS sysseginit:T"
 [ -n "$PTALLOC" ] && ALIAS="$ALIAS hat_ptalloc:T" GLOB=freemem_wait
+[ -n "$VTOP" ] && ALIAS="$ALIAS dbg_uiomove_publish:T"
 
 echo "[*] FPU probe: null or idle frame, boot option nofpu"
 m68k-cbm-sysv4-gcc -m68040 -c "$MAC/fpu/chkfpu.s" -o "$W/chkfpu.o"
@@ -139,6 +140,14 @@ fi
 # uiomove: the wrapper marks the segkmap pages it writes modified.
 OVR="$OVR uiomove"
 ALIAS="$ALIAS uiomove:T"
+
+# s5 superblock writes keep the newest inode blocks sharing their page.
+if [ $MODE = port ]; then
+	m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68040 -c "$MAC/s5dir/sbwrite.c" -o "$W/sbwrite.o"
+	OBJS="$OBJS $W/sbwrite.o"
+	OVR="$OVR fbwritei"
+	ALIAS="$ALIAS fbwritei:T"
+fi
 if [ -n "$AMIX_DIAG_CFLAGS" ]; then
 	m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS $AMIX_DIAG_CFLAGS -m68040 -c "$MAC/bootdiag/diag.c" \
 		-o "$W/diag.o"

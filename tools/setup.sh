@@ -259,10 +259,12 @@ fi
 G=$TC/src/gcc-cross-amix
 sh "$TC/build-amix-cross.sh" -s
 GCA="PREFIX=$TC/amix AMIX_ROOT=$R"
-# a toolchain from before the 64-bit shift fix is rebuilt
+# a toolchain from before the 64-bit shift fix or the 68060 multiply
+# rewrite (which brought the scanner) is rebuilt
 OLDGCC=
 [ ! -x "$TC/amix/bin/m68k-cbm-sysv4-gcc" ] ||
-	python3 "$AUX/kernel/tools/chkasr16.py" -c "$TC/amix/bin/m68k-cbm-sysv4-gcc" >/dev/null 2>&1 ||
+	{ python3 "$AUX/kernel/tools/chkasr16.py" -c "$TC/amix/bin/m68k-cbm-sysv4-gcc" >/dev/null 2>&1 &&
+	  [ -x "$TC/amix/bin/m68k-cbm-sysv4-scan060" ]; } ||
 	OLDGCC=1
 if [ ! -x "$TC/amix/bin/m68k-cbm-sysv4-gcc" ] || [ -n "$OLDGCC" ]; then
 	if [ -n "$CROSS" ] && [ -z "$OLDGCC" ]; then

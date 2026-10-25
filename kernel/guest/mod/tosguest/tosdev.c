@@ -126,17 +126,21 @@ owe(ch, n)
 		return;
 	n += tosc.t_ipend[ch];
 	tosc.t_ipend[ch] = n > 8 ? 8 : n;
+	if (n)
+		tosc.t_ipmask |= 1 << ch;
 }
 
 int
 mfp_level()
 {
-	int ch;
+	return tosc.t_ipmask ? 6 : 0;
+}
 
-	for (ch = 0; ch < 16; ch++)
-		if (tosc.t_ipend[ch])
-			return 6;
-	return 0;
+/* level 6 when a channel can be taken: Timer C waits while in service */
+int
+mfp_ready()
+{
+	return tosc.t_ipmask & ~(tosc.t_tcsvc << CH_TIMERC) ? 6 : 0;
 }
 
 /* interrupt acknowledge: the vector, highest channel first */
@@ -146,8 +150,9 @@ mfp_ack()
 	int ch;
 
 	for (ch = 15; ch >= 0; ch--) {
-		if (tosc.t_ipend[ch]) {
-			tosc.t_ipend[ch]--;
+		if (tosc.t_ipend[ch] && !(ch == CH_TIMERC && tosc.t_tcsvc)) {
+			if (--tosc.t_ipend[ch] == 0)
+				tosc.t_ipmask &= ~(1 << ch);
 			break;
 		}
 	}
@@ -188,6 +193,7 @@ tos_xbtimer(v)
 		tm->tm_acc = 0;
 		tm->tm_ev = tm->tm_left = c == 8 ? d : 0;
 		tosc.t_ipend[i ? CH_TIMERB : CH_TIMERA] = 0;
+		tosc.t_ipmask &= ~(1 << (i ? CH_TIMERB : CH_TIMERA));
 	}
 	guest_splx(s);
 }
@@ -204,6 +210,7 @@ tos_inten(v)
 	else {
 		tosc.t_ien &= ~(1 << ch);
 		tosc.t_ipend[ch] = 0;
+		tosc.t_ipmask &= ~(1 << ch);
 	}
 	guest_splx(s);
 }

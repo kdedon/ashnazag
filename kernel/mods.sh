@@ -60,6 +60,8 @@ atari060)	GF="-DDS_ATARI -DATA060" DCPU=-m68000 DF="-DDS_ATARI -DATA060"
 	VCC="-m68040 -DATA060" CHK64=1 ;;
 *)	usage ;;
 esac
+# no 68060 runs these: keep the 64-bit multiply the compiler would expand
+case $TARGET in mac|atari030) AMIX_MUL64=keep; export AMIX_MUL64 ;; esac
 KABI=$K/include/kabi.$TARGET
 
 # include/ only, never the toolchain's system headers

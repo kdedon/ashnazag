@@ -46,7 +46,7 @@ fi
 [ -f "$RD/build/core/sbin/init" ] || { echo "[FAIL] no $RD/build/core (run mkroot.sh)"; exit 1; }
 [ -x "$B/bin/runall" ] || { echo "[FAIL] no tests/build/bin (run build.sh)"; exit 1; }
 
-nm "$KERNEL" | awk '$3 ~ /^(freemem|availrmem|availsmem|lbolt|fpu_present|anoninfo|ticks_til_clock|mac_ticks|dlm_inited|sn_nintr|sn_nslot|guest_loading|M68Kvec|guest_chain|guest_nftrap|guest_nfpriv|idle|rd_unit|adb_nintr|adb_nsrq|segmapcnt|waitloc|kmeminfo|pageio_out|cputype|end)$/ && ($3 != "idle" || $2 == "T") { print $3, $1 }' \
+nm "$KERNEL" | awk '$3 ~ /^(freemem|availrmem|availsmem|lbolt|fpu_present|anoninfo|ticks_til_clock|mac_ticks|dlm_inited|sn_nintr|sn_nslot|guest_loading|M68Kvec|guest_chain|guest_nftrap|guest_nfpriv|idle|rd_unit|adb_nintr|adb_nsrq|segmapcnt|waitloc|kmeminfo|pageio_out|cputype|sysinfo|end)$/ && ($3 != "idle" || $2 == "T") { print $3, $1 }' \
 	> "$B/ksyms"
 # t_dlm's modules, built against this kernel (none without module support)
 KDIR=$KDIR sh "$T/dlm/build.sh" "$KERNEL" "$B/dlm"
@@ -115,6 +115,8 @@ if [ -z "$TESTKB" ]; then
 	TESTKB=$((BASEKB + 128))
 	[ -d "$AUXB/root" ] && TESTKB=$((TESTKB + 256 + $(du -sk "$AUXB/root" | cut -f1)))
 	[ -d "$TOSB/root" ] && TESTKB=$((TESTKB + 1152 + $(du -sk "$TOSB/root" | cut -f1)))
+	# t_env: XaAES in its two environments' copies, in /tmp
+	[ -d "$TOSB/root/tos/xaaes" ] && TESTKB=$((TESTKB + 2 * $(du -sk "$TOSB/root/tos/xaaes" | cut -f1)))
 	[ -d "$AMIB/root" ] && TESTKB=$((TESTKB + 64 + $(du -sk "$AMIB/root" | cut -f1)))
 	[ -d "$SMQB/root" ] && TESTKB=$((TESTKB + 64 + 2 * $(du -sk "$SMQB/root" | cut -f1)))
 	# t_cpm: S: and its scratch drives
@@ -221,15 +223,6 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 		if [ -f "$AUXB/macsys.img" ]; then
 			echo "b /dev/dsk/c1d0s0 600 0 3 18 1"
 			echo "d /macsys 755 0 3"
-		fi
-		# A/UX 2.0.1's environment: its devices
-		if [ -d "$AUXB/root/a201" ]; then
-			echo "c /a201/dev/uinter0 666 0 3 54 0"
-			echo "c /a201/dev/console 620 0 7 0 0"
-			echo "d /a201/dev/snd 755 0 3"
-			for m in note:0 wave1:1 wave2:2 wave3:3 wave4:4 samp:5 raw:6; do
-				echo "c /a201/dev/snd/${m%:*} 666 0 3 47 ${m#*:}"
-			done
 		fi
 	fi
 	if [ -d "$MINTB/root" ] && [ -f "$AUXB/mod.d/tosguest" ]; then

@@ -84,7 +84,7 @@ static struct {
 	{ "t_natenv", 90 },
 	{ "t_v200", 900 },
 	{ "t_next", 1800 },
-	{ "t_lisa", 760 },
+	{ "t_lisa", 1400 },
 	{ "t_lisa", 1760, "office" },
 	{ "t_quake", 7200 },
 	{ "t_stable", 14400 },

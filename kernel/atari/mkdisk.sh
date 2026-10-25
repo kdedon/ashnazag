@@ -31,11 +31,17 @@
 # (images/work/x11-atari), built or refreshed here; X goes on the root with the AMIX
 # clients (tape segments 13, 14) and the server options in etc/xoptions.
 # BOOTX=1 boots to xdm.  XPKGS="xview": packages built next to X11 (x11/NAME/build.sh).
-# TOSENV=1: the TOS, Win16 and, with DRI's release (CPMZIP), CP/M-68K
-# environments; CUBASE (mkcubase.sh's) adds Cubase to guest's ~/TOS.
+# TOSENV=1: the TOS, Win16 (Windows from the user's disks, as on the Mac
+# image) and, with DRI's release (CPMZIP), CP/M-68K environments; CUBASE
+# (mkcubase.sh's) adds Cubase to guest's ~/TOS.
 # MACENV=1: System 6 (A/UX 2.0.1's startmac, System 6.0.7, from CD201,
-# default media/AUX_2.0.1_CD_Image.iso) in its own root /a201 on the ROM
-# file ROM6 (default the IIci's), with startmac -e 6.
+# default media/AUX_2.0.1_CD_Image.iso) on the ROM file ROM6 (default
+# the IIci's), with startmac -e 6.
+# ALLENV=1: TOSENV and MACENV, plus every environment the Mac image
+# carries, set up from the user's media as there (images/envpkg/envmedia.sh):
+# Mac 7.6.1 and 8.1 (AUXROOT, CD761, CD81, ROM file AUXROM, default the
+# Quadra 800's), Amiga (AMIGASTAGE), Lisa, NeXT, Voyage 200; DISKMB
+# defaults to 2048, ROOTMB to 1024.
 # With X11, TOSENV or MACENV, guest is in group display.
 # /etc/motd lists what the image holds and how to start it.
 # The tape segments come from the Mac build or $AMIX_TAPE.
@@ -47,6 +53,10 @@ DR=$K/mac/diskroot
 KERNEL=${1:-$K/build/unix-atari030.elf}
 W=$K/build/atari/disk
 OUT=${2:-$W/falcon-disk.img}
+if [ "$ALLENV" = 1 ]; then
+	TOSENV=1 MACENV=1
+	DISKMB=${DISKMB:-2048} ROOTMB=${ROOTMB:-1024}
+fi
 DISKMB=${DISKMB:-512}
 ROOTMB=${ROOTMB:-128}
 SWAPMB=${SWAPMB:-64}
@@ -162,25 +172,35 @@ if [ -n "$TOSENV$MACENV" ]; then
 		for p in tosenv cpmenv win16env; do ef=`echo "$EP/$p"-*.pkg`; [ ! -f "$ef" ] || pk="$pk $ef"; done
 		[ ! -d "$E/envpkg/dri/cpm" ] || printf 't\t/cpm\t0\t3\t%s\n' "$E/envpkg/dri/cpm" >> "$W/root.manifest"
 	fi
+	[ "$ALLENV" != 1 ] ||
+		for p in amigaenv lisaenv v200env nextenv; do ef=`echo "$EP/$p"-*.pkg`; [ ! -f "$ef" ] || pk="$pk $ef"; done
+	. "$K/../images/envpkg/envmedia.sh"
+	AUX=$(cd "$K/.." && pwd) P=$E G=$E/envpkg/guest/home/guest GH=/guest I=$W/root.manifest IH=$E/home.lines
+	: > "$IH"
+	[ "$TOSENV" != 1 ] || envwin16
+	if [ "$ALLENV" = 1 ]; then
+		[ -n "$AUXROOT" ] || AUXROOT=$(cat "$AUX/tests/aux/auxroot")
+		CD761=${CD761:-$AUX/media/Mac OS 7.6.1.iso}
+		CD81=${CD81:-$AUX/media/MacOS8_1.iso}
+		AUXROM=${AUXROM:-$AUX/Quadra 800.ROM}
+		envmac
+		envamiga
+		envlisa
+		envnext
+		envv200
+	fi
 fi
 # one package database for X's and the environments' packages
 [ -z "$pk" ] || $PY "$DR/pkg/pkginst.py" "$W/xpkgs" $pk >> "$W/root.manifest"
 if [ "$MACENV" = 1 ]; then
-	R6=$E/mac6/a201
+	R6=$E/sys6
 	sh "$K/../images/macenv/mksys6.sh" "${CD201:-$K/../media/AUX_2.0.1_CD_Image.iso}" "$R6" \
-		> "$E/mac6.log" 2>&1 || { tail "$E/mac6.log"; exit 1; }
-	mkdir -p "$R6/dev" "$R6/etc/aux" "$R6/home/guest"
-	cp "${ROM6:-$K/../368CADFE - Mac IIci.ROM}" "$R6/etc/aux/rom"
-	echo "guest::100:1:guest:/home/guest:/bin/sh" >> "$R6/etc/passwd"
-	: > "$R6/mac/sys/System Folder/.stamp"
-	# root runs the Mac: nothing in its root writable by others
+		> "$E/sys6.log" 2>&1 || { tail "$E/sys6.log"; exit 1; }
+	mkdir -p "$R6/usr/aux/aux2/etc/aux"
+	cp "${ROM6:-$K/../368CADFE - Mac IIci.ROM}" "$R6/usr/aux/aux2/etc/aux/rom"
 	chmod -R go-w "$R6"
-	chmod 1777 "$R6/tmp"
-	# guest's System Folder, owned by guest, as on the Mac image
-	{ printf 't\t/a201\t0\t3\t%s\n' "$R6"
-	  printf 't\t%s\t100\t1\t%s\n' "/a201/home/guest/System Folder" "$R6/mac/sys/System Folder"
-	  echo 'c /a201/dev/uinter0 660 0 25 54 0'
-	  echo 'c /a201/dev/console 620 0 7 0 0'; } >> "$W/root.manifest"
+	{ printf 't\t/usr/aux/aux2\t0\t3\t%s\n' "$R6/usr/aux/aux2"
+	  printf 't\t/mac/lib/env/6\t0\t3\t%s\n' "$R6/mac/lib/env/6"; } >> "$W/root.manifest"
 fi
 if [ -n "$X11$TOSENV$MACENV" ]; then
 	T2=${AMIX_TAPE:-$W/src/build/tape}
@@ -226,14 +246,29 @@ if [ -n "$TESTS" ]; then
 	  fi; } >> "$W/root.manifest"
 fi
 { printf '\tSystem V Release 4.0\t\tAsh Nazag\n\n'
-  [ "$MACENV" != 1 ] || echo ' Mac    startmac -e 6   System 6.0.7 (root); leave with Special > Logout'
-  [ "$TOSENV" != 1 ] || { echo ' TOS    starttos        EmuTOS and TeraDesk; -e xaaes XaAES, -M mono'
+  if [ "$ALLENV" = 1 ]; then
+	echo ' Mac    startmac        System 7.6.1; leave with Special > Log Out'
+	echo '        startmac -e 8.1  Mac OS 8.1;  startmac -e 6  System 6.0.7'
+  elif [ "$MACENV" = 1 ]; then
+	echo ' Mac    startmac -e 6   System 6.0.7; leave with Special > Logout'
+  fi
+  [ "$TOSENV" != 1 ] || { echo ' TOS    starttos        EmuTOS and TeraDesk; -X xaaes XaAES, -M mono'
 	[ -f "$EP/cpmenv-1.0.pkg" ] &&
 		printf '%s\n' ' CP/M   startcpm        Concurrent CP/M-68K; EXIT ends it, -c N joins' \
 		"                        A: ~/CPM, H: home, M: temp, O: /, P: DRI's programs"
-	[ -f "$EP/win16env-1.0.pkg" ] &&
-		printf '%s\n' ' Win16  startwin        Windows 3.x programs; startwin -install your disks first'
+	case $WINS in
+	*wfw*) echo ' Win16  startwin        Windows for Workgroups 3.11 (Program Manager)'
+		case $WINS in *win311*) echo '        Windows 3.11:  startwin -e win311' ;; esac ;;
+	*win311*) echo ' Win16  startwin -e win311  Windows 3.11 (Program Manager)' ;;
+	*) [ ! -f "$EP/win16env-1.0.pkg" ] ||
+		printf '%s\n' ' Win16  startwin        Windows 3.x programs; startwin -install your disks first' ;;
+	esac
 	:; }
+  [ "$ALLENV" != 1 ] || {
+	[ ! -d "$E/amigasys" ] || echo ' Amiga  startamiga      Workbench; -m MB fast RAM (or fastmb=MB in .env)'
+	[ ! -d "$E/lisa" ] || echo ' Lisa   startlisa       Lisa Office System from ~/Lisa (lisa.rom, its files)'
+	[ ! -d "$E/v200" ] || echo ' V200   startvoyage200  Voyage 200 from ~/Voyage200/media; Cmd-Q quits'
+	[ ! -d "$E/next" ] || echo ' NeXT   startnext       OPENSTEP 4.2 from ~/NeXT/openstep; Cmd-Q quits'; }
   [ -z "$X11" ] || echo ' X      startx          twm; or  xsession  for a menu of sessions'
   echo ' Sound  sndtest         a tone through the DMA sound'
   echo
@@ -278,6 +313,7 @@ else
 			[ ! -d "$E/envpkg/guest/home/guest/$d" ] ||
 				printf 't\t/guest/%s\t100\t1\t%s\n' $d "$E/envpkg/guest/home/guest/$d"
 		done >> "$W/home.manifest"
+		cat "$E/home.lines" >> "$W/home.manifest"
 		CUBASE=${CUBASE:-$K/../images/work/cubase/cubase.cpio}
 		if [ -f "$CUBASE" ]; then
 			mkdir -p "$E/cubase"

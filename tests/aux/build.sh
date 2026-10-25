@@ -10,7 +10,8 @@
 # Mac environment: startmac, libmac1_s, Patch.067C, the System file in
 # /mac/sys/Sys7 with the Finder, the ROM image at /etc/aux/rom, fidd at
 # /etc/aux/fidd; with the A/UX 2.0.1 CD image, CD201, its System 6
-# environment in /a201).  With the Mac OS 7.6.1 CD image, CD761, or the
+# environment: A/UX 2's files in /usr/aux/aux2, the System Folder in
+# /mac/lib/env/6/Sys6).  With the Mac OS 7.6.1 CD image, CD761, or the
 # Mac OS 8.1 one, CD81, outdir/macsys.img: a ufs volume holding their
 # System Folders with SimpleText (S761, S761u with a user's Finder, S81;
 # with FULL81=1, 8.1's whole System Folder).
@@ -122,24 +123,25 @@ if [ -f "$OUT/mod.d/uinter" ] && [ -f "$AUXROOT/mac/bin/startmac" ] && [ -f "$SY
 		python3 "$T/net/mtcp/mkapp.py" "$OUT/obj/mtcp.bin" "$OUT/root/mac/sys/MTcp/mtcp"
 		cp "$AUXROOT/mac/sys/System Folder/MacTCP DNR" "$OUT/root/mac/sys/MTcp/MacTCPDNR"
 	fi
-	# A/UX 2.0.1's System 6 environment, a root of its own (chroot), from
-	# its CD, when present; the test root's names have no spaces, t_mac6
-	# links the System Folder's under their own
+	# A/UX 2.0.1's System 6 environment from its CD, when present; the
+	# test root's names have no spaces, t_mac6 links the System Folder's
+	# under their own
 	CD201=${CD201:-$AUX/media/AUX_2.0.1_CD_Image.iso}
 	if [ -f "$CD201" ]; then
-		R6=$OUT/root/a201
+		R6=$OUT/sys6
 		sh "$AUX/images/macenv/mksys6.sh" "$CD201" "$R6"
-		mv "$R6/mac/sys/System Folder" "$R6/mac/sys/Sys6"
+		S6=$R6/mac/lib/env/6/Sys6
+		mv "$R6/mac/lib/env/6/System Folder" "$S6"
 		for n in "%AUX Resources" "DA Handler" "Key Layout" "Scrapbook File"; do
-			mv "$R6/mac/sys/Sys6/$n" "$R6/mac/sys/Sys6/$(echo "$n" | tr -d ' ')"
+			mv "$S6/$n" "$S6/$(echo "$n" | tr -d ' ')"
 		done
-		mkdir -p "$R6/dev" "$R6/etc/aux"
+		mkdir -p "$R6/usr/aux/aux2/etc/aux"
 		# the IIci's ROM, the one System 6.0.7 knows, else the other
 		AUXROM6=${AUXROM6:-$AUX/368CADFE - Mac IIci.ROM}
 		[ -f "$AUXROM6" ] || AUXROM6=$AUXROM
-		cp "$AUXROM6" "$R6/etc/aux/rom"
-		mkdir -p "$R6/mac/lib/Resources"
-		cp "$AUXROOT/mac/lib/Resources/sampledBeep" "$R6/mac/lib/Resources/"
+		cp "$AUXROM6" "$R6/usr/aux/aux2/etc/aux/rom"
+		cp -rp "$R6/." "$OUT/root/"
+		rm -rf "$R6"
 	fi
 	CD81=${CD81:-$AUX/media/MacOS8_1.iso}
 	if [ -f "$CD81" ]; then

@@ -321,6 +321,7 @@ static int stscreen;			/* fVDI kept off the frame buffer */
 static int stik;			/* C:\AUTO starts it */
 #define	ACCPRG	"/tos/acc/SESSION.ACC"
 #define	LAPRG	"/tos/linea/LATEST.PRG"	/* the Line-A calls under fVDI */
+#define	STPRG	"/tos/linea/STSHOW.TOS"	/* a text screen, then its own */
 static int acc;				/* C: holds the session accessory */
 #define	EXITPRG	"/tos/exit/EXITTEST.PRG"
 #define	XDIR	"/tmp/tosx"		/* C: for EXITTEST.PRG, any user's */
@@ -590,7 +591,7 @@ ucheck()
 		"cwd", "attrib", "dfree", "pexec", "links_inside", "escape_dotdot",
 		"escape_link", "escape_uplink", "escape_cwd", "long_path", "c_auto", "drive_g",
 		"drive_cwd", "c_rw", "drive_d", "drive_h", "irq_rte", "irq_movesr", "irq_mask",
-		"irq_nest", "trap9", "trap10", "trap0", "env_hidden", "snd_lock", "snd_cookie",
+		"irq_nest", "irq_tcbusy", "trap9", "trap10", "trap0", "env_hidden", "snd_lock", "snd_cookie",
 		"snd_play", "snd_end", "snd_stopped", "snd_unlock", 0
 	};
 	char b[2048], n[40], why[40], *l, *nm;
@@ -2001,6 +2002,104 @@ fallrun(mono)
 		nap(200);
 }
 
+/* until C:'s file f exists, 60 s at most */
+static int
+marked(f)
+	char *f;
+{
+	char p[64];
+	long t0 = t_now_ms();
+
+	sprintf(p, "%s/%s", FDIR, f);
+	while (access(p, 0) < 0 && t_now_ms() - t0 < 60000)
+		nap(500);
+	nap(1500);
+	return access(p, 0) == 0;
+}
+
+/* a dump of the guest screen: white per mille in 100x100 at its middle */
+static int
+middle(name, x, y, w)
+	char *name;
+	int *x, *y, *w;
+{
+	char req[48], *r;
+	int h = 0;
+
+	*x = *y = *w = 0;
+	shot(S(name));
+	sprintf(req, "tos %s", S(name));
+	if ((r = host(req)) != 0)
+		sscanf(r, "box %d %d %d %d", x, y, w, &h);
+	*x += *w / 2;
+	*y += h / 2;
+	return white(S(name), *x - 50, *y - 50, *x + 50, *y + 50);
+}
+
+/*
+ * Under fVDI the desktop starts STSHOW.TOS: its console text on the ST
+ * screen shows, then the screen it sets with Setscreen, then the
+ * desktop again.  White per mille in the middle: 0 for the reversed
+ * text, half for its striped screen.
+ */
+static void
+strun()
+{
+	char req[48], px[16], *r;
+	int st, fd, x, y, w, n;
+	pid_t p;
+	long t0;
+
+	pf = "stshow";
+	unlink(FDIR "/EMUDESK.INF");
+	unlink(FDIR "/STSHOW.TOS");
+	unlink(FDIR "/stshow.1");
+	unlink(FDIR "/stshow.2");
+	unlink(FDIR "/stshow.3");
+	unlink(FDIR "/LATEST.PRG");
+	rmdir(FDIR);
+	mkdir(FDIR, 0755);
+	fcopy(STPRG, FDIR "/STSHOW.TOS");
+	wfile(FDIR "/EMUDESK.INF", "#Z 00 C:\\STSHOW.TOS@\r\n");
+	if ((p = fork()) == 0) {
+		setpgrp();
+		if ((fd = open("/dev/null", O_RDWR)) >= 0) {
+			dup2(fd, 1);
+			dup2(fd, 2);
+		}
+		execl("/tos/bin/starttos", "starttos", "-C", FDIR, (char *)0);
+		_exit(127);
+	}
+	t0 = t_now_ms();
+	while (access(FDIR "/stshow.1", 0) < 0 && t_now_ms() - t0 < 150000)
+		nap(1000);
+	nap(1500);
+	n = middle("text", &x, &y, &w);
+	t_check(N("text"), access(FDIR "/stshow.1", 0) == 0 && w >= 320 && n == 0,
+	    "width %d, white %d of 1000", w, n);
+	host("key ret");
+	st = marked("stshow.2");
+	n = middle("own", &x, &y, &w);
+	t_check(N("own_screen"), st && w >= 320 && n >= 400 && n <= 600,
+	    "width %d, white %d of 1000", w, n);
+	host("key ret");
+	st = marked("stshow.3");
+	nap(3000);
+	shot(S("desk"));
+	n = diff(S("own"), S("desk"));
+	/* neither black nor white: not the text screen or the stripes */
+	sprintf(req, "pix %s %d %d", S("desk"), x + 20, y + 20);
+	strcpy(px, (r = host(req)) != 0 ? r : "none");
+	t_check(N("desk_back"), st && n > 2000 && strcmp(px, "000000") != 0 &&
+	    strcmp(px, "ffffff") != 0 && strcmp(px, "none") != 0,
+	    "diff %d from its screen, pixel %s", n, px);
+	kill(p, SIGTERM);
+	t_waitchild(p, &st, 10);
+	t0 = t_now_ms();
+	while (front() != 0 && t_now_ms() - t0 < 10000)
+		nap(200);
+}
+
 /*
  * The session's host calls, as the accessory makes them: a halt asked
  * for by a user is refused and the exit ends the session; root's halt
@@ -2298,6 +2397,11 @@ main()
 		fallrun(0);
 		fallrun(1);
 	}
+	if (stat(STPRG, &sb) < 0 || stat(FVDIDIR "/FVDI.SYS", &sb) < 0 || stat(EMUTOS, &sb) < 0 ||
+	    hfd < 0)
+		t_skip("stshow", "no STSHOW.TOS, fVDI, EmuTOS or host line");
+	else
+		strun();
 	/* a halt that slips through is recorded, never run */
 	if (stat(EXITPRG, &sb) < 0 || stat(EMUTOS, &sb) < 0)
 		t_skip("exit", "no EXITTEST.PRG or EmuTOS");

@@ -339,6 +339,11 @@ calculator()
 		t_check("home_screen", home == known[k].home, "LCD crc %08lx", home);
 	else if (home)
 		t_info("home_crc", "%08lx", home);
+	if (home) {
+		long b = t_busy(30000L);
+
+		t_info("idle_busy", "%ld.%ld%%", b / 10, b % 10);
+	}
 	if (!home || hfd < 0) {
 		logtail();
 		t_skip("sum", "no Home screen or no host keyboard");

@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <poll.h>
 #include "t.h"
 
 char *t_area = "?";
@@ -261,4 +262,26 @@ t_now_ms(void)
 
 	gettimeofday(&tv, (void *)0);
 	return tv.tv_sec * 1000L + tv.tv_usec / 1000;
+}
+
+/* the machine's busy share over ms, per mille, from the clock's tick counts (I/O wait is idle); -1 without them */
+long
+t_busy(long ms)
+{
+	long a[5], b[5], all = 0, rest;
+	char sym[16];
+	int i;
+
+	for (i = 0; i < 5; i++) {
+		sprintf(sym, "sysinfo+%d", i * 4);
+		a[i] = t_kmem(sym);
+	}
+	poll((struct pollfd *)0, 0, (int)ms);
+	for (i = 0; i < 5; i++) {
+		sprintf(sym, "sysinfo+%d", i * 4);
+		b[i] = t_kmem(sym);
+		all += b[i] - a[i];
+	}
+	rest = b[0] - a[0] + b[3] - a[3];
+	return a[0] < 0 || b[0] < 0 || all <= 0 ? -1 : (all - rest) * 1000 / all;
 }

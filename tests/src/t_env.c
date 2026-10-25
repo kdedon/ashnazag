@@ -195,6 +195,8 @@ tos()
 	static char *bv[] = { STARTTOS, "-e", "new", "-b", "emutos", "-rom", "/tmp/rom.new", 0 };
 	static char *ls[] = { STARTTOS, "-l", 0 };
 	static char *dv[] = { STARTTOS, "-d", "two", 0 };
+	static char *xv[] = { STARTTOS, "-C", "/tmp", "-X", "xaaes", 0 };
+	static char *kv[] = { STARTTOS, "-e", "one", "-X", "foo", 0 };
 	struct stat sb;
 	pid_t p, q, r;
 	int st;
@@ -264,6 +266,12 @@ tos()
 	dv[2] = "../x";
 	t_check("tos_bad_default", status(H, "/tmp/env1.log", dv) == 1 &&
 	    stat(H "/.default/tos", &sb) < 0, "starttos -d ../x");
+	/* one C: holds both desktops; -C is single TOS */
+	t_check("tos_xaaes_files", stat("/tos/xaaes", &sb) < 0 ||
+	    stat(H "/TOS/AUTO/XAMINT.PRG", &sb) == 0, "no ~/TOS/AUTO/XAMINT.PRG");
+	t_check("tos_desktop_single", status(H, "/tmp/env1.log", xv) == 2, "starttos -C dir -X xaaes");
+	t_check("tos_desktop_bad", status(H, "/tmp/env1.log", kv) == 1 &&
+	    logged("/tmp/env1.log", "emudesk or xaaes"), "starttos -X foo");
 }
 
 static void

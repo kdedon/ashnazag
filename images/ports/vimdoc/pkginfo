@@ -1,0 +1,7 @@
+PKG=vimdoc
+NAME=Vim 9.2 help files (:help)
+ARCH=m68k
+VERSION=9.2.1189
+CATEGORY=editor
+CLASSES=none
+VENDOR=Ash Nazag

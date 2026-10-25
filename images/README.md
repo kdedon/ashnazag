@@ -194,7 +194,7 @@ sh images/ports/check/check.sh IMAGE OUT                   # install OUT's packa
 
 ### Our packages
 
-`images/ports` builds bash, bzip2, dropbear, infozip (zip, unzip), joe, lynx, prngd, screen and wget from source into `/opt/amix`, one binary set for every host: no instruction the 68060 lacks, FPU instructions only in float formatting. The image builders pre-install them and the environment packages. A release carries every package as assets of its GitHub release:
+`images/ports` builds bash, bzip2, dropbear, infozip (zip, unzip), joe, lynx, prngd, screen, vim (help in vimdoc) and wget from source into `/opt/amix`, one binary set for every host: no instruction the 68060 lacks, FPU instructions only in float formatting. The image builders pre-install them and the environment packages. A release carries every package as assets of its GitHub release:
 
 ```sh
 sh images/mkrelease.sh REL
@@ -257,7 +257,7 @@ The A/UX modules are registered at run level 2 (`/etc/rc2.d/S05aux`), which also
 
 Mac OS 8.1 is a separate environment with its own template, `/mac/lib/env/8.1/System Folder`, from the 8.1 CD (`CD81`): `startmac -e 8.1`. A new name makes another copy, e.g. `startmac -e work -b 8.1`; `startmac -R` copies the template over yours again.
 
-`startmac -e 6` runs System 6.0.7 with MultiFinder instead: A/UX 2.0.1's Mac environment in its own root, `/a201`, on the IIci's ROM in 4 MB (`TBMEMORY`), from the A/UX 2.0.1 CD (`media/AUX_2.0.1_CD_Image.iso`, `CD201`) and the IIci ROM beside the repository (`AUXROM6`); without them the image has no System 6.  root's System Folder is `/a201/mac/sys/System Folder`, guest's `/a201/home/guest/System Folder`; other users need a copy there.  Special > Logout leaves it.
+`startmac -e 6` runs System 6.0.7 with MultiFinder instead: A/UX 2.0.1's Mac environment on the IIci's ROM in 4 MB (`TBMEMORY`), from the A/UX 2.0.1 CD (`media/AUX_2.0.1_CD_Image.iso`, `CD201`) and the IIci ROM beside the repository (`AUXROM6`); without them the image has no System 6.  A/UX 2's startmac, libraries and ROM are in `/usr/aux/aux2`, where the kernel finds an A/UX 2 program's libraries; the template is `/mac/lib/env/6/System Folder`, each user's copy `~/Mac/6/System Folder`.  Special > Logout leaves it.
 
 The Mac reports the model that fits the host and the ROM (a Quadra 800 on a Quadra 800) and gets a quarter of physical memory, 8 to 32 MB, as free swap allows.  `/etc/aux/macenv.conf` or the environment of `startmac` may set `TBMEMORY` (e.g. `16M`) and, for root, `MACMODEL` (a Gestalt machine ID, e.g. `22` for a Quadra 700).
 

@@ -8,6 +8,8 @@
 |   3  IPL 5: timer C only, through SR moves that keep 5 or 4; then
 |      IPL 3 lets the VBL in
 |   4  IPL 3, timer C's handler drops to 3: the VBL nests inside it
+|   5  timer C's handler drops to 3 for longer than a tick, three
+|      times: timer C stays in service, its handler is not entered again
 | Each entry is logged: level, the frame's SR and PC, the SR inside.
 
 NLOG = 64
@@ -38,7 +40,9 @@ irqtest:
 	beq	k2
 	cmp.l	#3,d7
 	beq	k3
-	bra	k4
+	cmp.l	#4,d7
+	beq	k4
+	bra	k5
 
 k1:	move.w	#0,-(sp)		| format 0
 	pea	k1lab(pc)
@@ -91,6 +95,24 @@ k4lab:	clr.w	nest
 	tst.l	d0
 	bne	out
 	bsr	sane
+	bra	out
+
+k5:	clr.w	depth
+	clr.w	nested
+	move.w	#3,slow
+	move.l	0x466,d3		| 100 VBLs for the three
+	add.l	#100,d3
+	move.w	#0x2300,sr
+1:	tst.w	slow
+	beq	2f
+	cmp.l	0x466,d3
+	bhi	1b
+	moveq	#9,d0			| the handler never ran three times
+	bra	out
+2:	moveq	#10,d0
+	tst.w	nested
+	bne	out
+	moveq	#0,d0
 	bra	out
 
 | d2: the PC timer C came back to, first; a VBL after it
@@ -239,7 +261,22 @@ mytc:	move.w	sr,-(sp)
 	movem.l	d0-d1/a0,-(sp)
 	moveq	#6,d0
 	bsr	logit
-	tst.w	nest
+	tst.w	slow
+	beq	3f
+	addq.w	#1,depth
+	cmp.w	#1,depth
+	beq	4f
+	move.w	#1,nested		| entered again while in service
+	bra	5f
+4:	move.w	#0x2300,sr		| two VBLs, some timer C periods
+	move.l	0x466,d0
+	addq.l	#2,d0
+6:	cmp.l	0x466,d0
+	bhi	6b
+	move.w	#0x2600,sr
+	subq.w	#1,slow
+5:	subq.w	#1,depth
+3:	tst.w	nest
 	beq	1f
 	clr.w	nest
 	move.w	#0x2300,sr
@@ -255,6 +292,9 @@ nestpc:	nop
 	.lcomm	oldtc, 4
 	.lcomm	nlog, 4
 	.lcomm	nest, 2
+	.lcomm	slow, 2
+	.lcomm	depth, 2
+	.lcomm	nested, 2
 	.lcomm	log, NLOG * 12
 
 | long traptest9(), traptest10(), traptest0(): 0 when a handler at the vector

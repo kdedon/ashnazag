@@ -3,7 +3,7 @@
  Mac    startmac        System 7.6.1; leave with Special > Log Out
         startmac -e 8.1  Mac OS 8.1;  startmac -e 6  System 6.0.7
  TOS    starttos        EmuTOS and TeraDesk; -M TT mono, -m MB ST-RAM
-        XaAES:   starttos -e xaaes  (multitasking)
+        XaAES:   starttos -X xaaes  (multitasking; desktop=xaaes in ~/TOS/.env)
         Cubase:  starttos -C $HOME/TOS/CUBASE/CUBASE31  (or SCORE, CAF)
  Amiga  startamiga      Workbench; -m MB fast RAM (or fastmb=MB in .env)
  CP/M   startcpm        Concurrent CP/M-68K; EXIT ends it, -c N joins

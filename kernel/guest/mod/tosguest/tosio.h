@@ -38,6 +38,7 @@ struct tosenter {
 
 #define	TEF_MONO	0x01		/* monochrome monitor */
 #define	TEF_NOMACH	0x02		/* a lone program: no machine, ST-RAM is the caller's */
+#define	TEF_TCEOI	0x04		/* Timer C's handler clears pv_tcsvc at its end */
 
 struct tosowner {
 	long		to_pid;		/* 0: free */
@@ -100,6 +101,7 @@ struct tosstat {
 	unsigned long	ts_iow;		/* writes that faulted on the I/O pages */
 	unsigned long	ts_iowpc;	/* the last one's pc */
 	unsigned long	ts_isp;		/* movep emulated (68060) */
+	unsigned long	ts_tcheld;	/* Timer C held: its handler still ran */
 };
 
 /*
@@ -126,6 +128,7 @@ struct tospv {
 	}		pv_ev[PV_NEV];
 	unsigned long	pv_vbl;		/* guest: VBLs run */
 	unsigned long	pv_la;		/* guest: its Line A base */
+	unsigned long	pv_tcsvc;	/* nonzero while Timer C's handler runs */
 };
 
 /*

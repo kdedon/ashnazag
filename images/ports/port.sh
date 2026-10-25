@@ -4,7 +4,7 @@
 #
 # Sets CC (cc.sh), PCFLAGS (the SVR4 declarations; libport's in every
 # file), HOST (configure options), LIBPORT (libacompat, the passwd
-# parsers, 32-bit mul/div), W (work dir), ROOT (the installed tree) and
+# parsers), W (work dir), ROOT (the installed tree) and
 # PATH (the cross tools).  Helpers:
 #
 #   src NAME          unpack images/vendor.manifest's NAME into W, print

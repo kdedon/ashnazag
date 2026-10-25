@@ -4,7 +4,7 @@
 #
 #   sh images/ports/mkports.sh outdir [port...]
 #
-#   bash      GNU bash 3.2.57
+#   bash      GNU bash 5.2.37
 #   bzip2     bzip2 1.0.8
 #   dropbear  SSH server and client (needs prngd)
 #   infozip   zip 3.0, unzip 6.0
@@ -12,6 +12,8 @@
 #   lynx      text web browser, no TLS
 #   prngd     entropy daemon on TCP localhost:708
 #   screen    GNU screen 4.0.3
+#   vim       Vim 9.2 (vimdiff, rvim, rview, xxd)
+#   vimdoc    its help files
 #   wget      HTTP and FTP downloader, no TLS
 #
 # Writes outdir/pkgs/*.pkg, outdir/catalog (apkg's format, paths

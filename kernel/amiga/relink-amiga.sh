@@ -23,9 +23,9 @@ nice -n19 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68000 -c "$K/mac/video/fbfont
 WEAK="--weaken-symbol dmainit --weaken-symbol execsw --weaken-symbol fmodsw --weaken-symbol vfssw --weaken-symbol architecture"
 for s in sdopen sdqueue sdhardwarename; do WEAK="$WEAK --weaken-symbol $s"; done
 MARK="sysseginit mfree sptalloc hat_init page_init memialloc kmem_init seg_alloc segmap_create segu_create dispinit hrtinit itinit pid_init svirtophys vstart mlsetup figuredisplaytype btrace_mark bzero"
-OVR="ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig kbintr unt_latch vtop hat_ptalloc uiomove aciabintr pstart screeninit config_cachefix vfs_getvfssw vfs_mountroot"
+OVR="ev_config ev_fork ev_exec ev_exit sendsig valid_usr_range fsig kbintr unt_latch vtop prmapin dbg_uiomove_publish hat_ptalloc uiomove aciabintr pstart screeninit config_cachefix vfs_getvfssw vfs_mountroot"
 for s in $OVR $MARK; do WEAK="$WEAK --weaken-symbol $s"; done
-for s in $(echo $MARK | sed "s/ sptalloc / /") sendsig valid_usr_range fsig kbintr unt_latch hat_ptalloc uiomove aciabintr pstart screeninit config_cachefix vfs_getvfssw vfs_mountroot; do
+for s in $(echo $MARK | sed "s/ sptalloc / /") sendsig valid_usr_range fsig kbintr unt_latch dbg_uiomove_publish hat_ptalloc uiomove aciabintr pstart screeninit config_cachefix vfs_getvfssw vfs_mountroot; do
  v=$(m68k-linux-gnu-nm "$BASE" | awk -v s="$s" '$3==s && $2=="T"{print $1}')
  [ -n "$v" ] || { echo "[FAIL] no $s"; exit 1; }
  WEAK="$WEAK --add-symbol __amix_$s=.text:0x$v,function,global"
@@ -36,6 +36,10 @@ for pair in execsw:data fmodsw:data vfssw:data; do
  [ -n "$v" ] || { echo "[FAIL] no $s"; exit 1; }
  WEAK="$WEAK --add-symbol __amix_$s=.$sec:0x$v,object,global"
 done
+# s5 superblock writes keep the newest inode blocks sharing their page
+v=$(m68k-linux-gnu-nm "$BASE" | awk '$3=="fbwritei" && $2=="T"{print $1}')
+[ -n "$v" ] || { echo "[FAIL] no fbwritei"; exit 1; }
+WEAK="$WEAK --weaken-symbol fbwritei --add-symbol __amix_fbwritei=.text:0x$v,function,global"
 WEAK="$WEAK $(VM_CHAIN=sptalloc sh "$K/vm/build.sh" "$BASE" "$W")"
 m68k-linux-gnu-objcopy $WEAK --globalize-symbol freemem_wait "$BASE" "$W/base.weak"
 python3 "$K/mac/patch_s5pages.py" "$W/base.weak"
@@ -47,6 +51,7 @@ for f in vtop/vtop ptalloc/ptalloc; do
  nice -n19 m68k-cbm-sysv4-gcc -m68040 -c "$K/mac/$f.s" -o "$W/$(basename "$f").o"
 done
 nice -n19 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68040 -c "$K/mac/s5dir/uiomod.c" -o "$W/uiomod.o"
+nice -n19 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68040 -c "$K/mac/s5dir/sbwrite.c" -o "$W/sbwrite.o"
 nice -n19 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68040 -I"$K/dlm/include" -c "$A/amigadlm.c" -o "$W/amigadlm.o"
 nice -n19 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68040 -c "$A/amigarom.c" -o "$W/amigarom.o"
 nice -n19 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68040 -I"$A/amilib" -c "$A/amigazorro.c" -o "$W/amigazorro.o"
@@ -56,7 +61,7 @@ nice -n19 m68k-cbm-sysv4-gcc -m68040 -c "$A/bootmark.s" -o "$W/bootmark.o"
 ALIEN=$AMIX_SYSROOT/usr/sys/amiga/alien
 nice -n19 m68k-cbm-sysv4-gcc $AMIX_KERNEL_CFLAGS -m68040 -I"$ALIEN" -I"$K/dlm/include" -c "$A/amigasd.c" -o "$W/amigasd.o"
 nice -n19 m68k-cbm-sysv4-gcc -m68040 -c "$A/ide/ide040.s" -o "$W/ide040.o"
-OBJS="$W/vm.o $W/vtop.o $W/ptalloc.o $W/uiomod.o $W/amigadlm.o $W/amigarom.o $W/amigazorro.o $W/devkvmap.o $W/cpu060.o $W/bootmark.o $W/amigasd.o $W/ide040.o $W/ds.o $W/amigads.o $W/fbfont.o $W/guest/guest.o"
+OBJS="$W/vm.o $W/vtop.o $W/ptalloc.o $W/uiomod.o $W/sbwrite.o $W/amigadlm.o $W/amigarom.o $W/amigazorro.o $W/devkvmap.o $W/cpu060.o $W/bootmark.o $W/amigasd.o $W/ide040.o $W/ds.o $W/amigads.o $W/fbfont.o $W/guest/guest.o"
 for f in dlm_core dlm_ld dlm_sym dlm_slot dlm_str dlm_fs dlm_boot dlm_root dlm_sd dlmconf dlm_cache dlm_hooksw; do
  OBJS="$OBJS $W/dlm/$f.o"
 done

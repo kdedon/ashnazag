@@ -36,6 +36,7 @@ struct tosctr {
 	unsigned long	t_flags;	/* TEF_* */
 
 	unsigned char	t_ipend[16];	/* MFP channels' interrupts owed */
+	unsigned short	t_ipmask;	/* channels owing any */
 	unsigned short	t_ien;		/* MFP channels enabled */
 	struct tostimer	t_tm[2];	/* Timer A, B */
 	unsigned long	t_tcacc;
@@ -49,6 +50,8 @@ struct tosctr {
 	struct proc	*t_pproc;
 	unsigned long	t_sinkva;	/* the writable I/O page, saved in the sink; 0 none */
 	unsigned long	t_sinkoff;	/* that I/O page's offset in the RAM object */
+	int		t_tcsvc;	/* Timer C in service */
+	long		t_tcsince;	/* lbolt at its delivery */
 
 	/* 68030 MMU registers, recorded only */
 
@@ -72,6 +75,7 @@ extern int tos_access();
 extern void tos_devinit();
 extern void tos_timers();
 extern int mfp_level();
+extern int mfp_ready();
 extern int mfp_ack();
 extern void mfp_unack();
 extern void tos_xbtimer();

@@ -32,7 +32,7 @@
 #include "vm/seg.h"
 #include "vm/as.h"
 
-extern int execmap(), as_map(), as_unmap(), segvn_create();
+extern int execmap(), as_map(), as_unmap(), segvn_create(), strlen();
 extern struct vnode *makespecvp();
 extern caddr_t zfod_argsp;
 extern int fpu_present;
@@ -268,12 +268,17 @@ romload1(aux2)
 	int aux2;
 {
 	unsigned char *b = 0;
-	char *name = "ROMBase";
+	char *name = "ROMBase", f2[80];
 	long head = 0x10000;	/* ProductInfo lives in the first 64 KB */
 	int e = 0, i;
 
 	if (uinter_rom[0] || aux2 || (ui_hwrom = hwrom()) == 0) {
 		name = uinter_rom[0] ? uinter_rom : ROMFILE;
+		if (aux2 && !uinter_rom[0] && (i = strlen(aux_root2)) < 64) {
+			bcopy(aux_root2, f2, i);
+			bcopy(ROMFILE, f2 + i, sizeof ROMFILE);
+			name = f2;
+		}
 		b = (unsigned char *)kmem_alloc(head, KM_SLEEP);
 		if ((e = romfile(name, b, head)) != 0) {
 			kmem_free((_VOID *)b, head);
@@ -327,7 +332,8 @@ ui_romload(aux2)
 
 	while (busy)
 		sleep((caddr_t)&busy, PZERO);
-	box = uinter_boxflag >= 0 ? uinter_boxflag : modelfile();
+	/* the model file names an A/UX 3 Mac */
+	box = uinter_boxflag >= 0 ? uinter_boxflag : aux2 ? -1 : modelfile();
 	if ((ui_rom.r_vp || ui_hwrom) && ui_rom.r_box == box && ui_rom.r_aux2 == aux2) {
 		inuse++;
 		return 0;

@@ -39,7 +39,7 @@ struct auxlib {
 	u_long		al_daddr, al_dsize, al_doff, al_bsize;
 };
 
-extern int coffexec(), execmap(), valid_usr_range();
+extern int coffexec(), execmap(), valid_usr_range(), strlen();
 extern void dlm_cacheflush();
 extern struct guest_profile aux_profile;
 extern int aux_execaux2;
@@ -119,10 +119,19 @@ libopen(path, al)
 {
 	struct vnode *vp;
 	struct vattr va;
-	int e = ELIBACC;
+	char p[64 + LIBREC];
+	int e = ELIBACC, n = strlen(aux_root2);
 
-	if (path[0] != '/' ||
-	    lookupname(path, UIO_SYSSPACE, FOLLOW, NULLVPP, &al->al_vp))
+	if (path[0] != '/')
+		return ELIBACC;
+	/* an A/UX 2 program's libraries are A/UX 2's, when installed */
+	if (aux_execaux2 && n < 64) {
+		bcopy(aux_root2, p, n);
+		bcopy(path, p + n, LIBREC);
+		if (lookupname(p, UIO_SYSSPACE, FOLLOW, NULLVPP, &al->al_vp))
+			al->al_vp = 0;
+	}
+	if (!al->al_vp && lookupname(path, UIO_SYSSPACE, FOLLOW, NULLVPP, &al->al_vp))
 		return ELIBACC;
 	vp = al->al_vp;
 	va.va_mask = AT_MODE;

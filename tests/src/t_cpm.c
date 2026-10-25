@@ -1071,6 +1071,22 @@ main()
 			closeout();
 		} else t_fail("eof_boot", "pipe or fork: %s", T_ERR);
 	}
+	/* input at end of file from the start, on a device that can't be polled */
+	if ((fd = open("/dev/null", O_RDWR)) >= 0 && (pid = start(fd, fd)) > 0) {
+		close(fd);
+		st = -1;
+		for (n = 0; n < 60 && waitpid(pid, &st, WNOHANG) == 0; n++)
+			sleep(1);
+		if (n == 60) {
+			t_info("null_busy", "%ld per mille", t_busy(5000L));
+			kill(-pid, SIGKILL);
+			t_waitchild(pid, &st, 30);
+			st = -1;
+		}
+		t_check("null_input_ends", WIFEXITED(st) && WEXITSTATUS(st) == 0, "status %#x", st);
+		released("null_unload");
+	} else
+		t_fail("null_input_ends", "%s", T_ERR);
 	if ((ofd = boot()) >= 0 && t_check("kill_boot", waitfor(ofd, "A>", 60000),
 	    "output \"%.300s\"", out)) {
 		running("kill_active_busy");

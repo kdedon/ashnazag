@@ -1,5 +1,5 @@
 #!/bin/sh
-# build.sh -- cross-build bash 3.2.57 for /opt/amix: job control, the
+# build.sh -- cross-build bash 5.2.37 for /opt/amix: job control, the
 # system's malloc, the bundled readline, the compat library and passwd
 # parsers linked in.
 #
@@ -9,7 +9,7 @@ D=$(cd "$(dirname "$0")" && pwd)
 AUX=$(cd "$D/../../.." && pwd)
 PORT=bash OUT=$1
 . "$AUX/images/ports/port.sh"
-CFLAGS="-O -Wall"
+CFLAGS="-O -Wall -D__amix"
 
 # the headers with their full SVR4 namespace (sigaction, sigsetjmp, fileno,
 # timeval) at __STDC__ = 1, as the native cc -Xa sees them
@@ -22,8 +22,7 @@ export SYSINC
 
 mv "$W/$(src bash)" "$W/src"
 cd "$W/src"
-# the build-host tools (mksyntax ...) include config.h too
-sed -i 's/^#undef \(ssize_t\|socklen_t\)$/#ifndef CROSS_COMPILING\n&\n#endif/' config.h.in
+patch -p1 -s < "$D/bash.diff"
 # the bundled termcap reads the package's file; sys/file.h wants sys/types.h
 sed -i -e 's,"/etc/termcap","/opt/amix/etc/termcap",' \
 	-e 's,^#  include <sys/file.h>,#  include <sys/types.h>\n&,' lib/termcap/termcap.c
@@ -44,8 +43,9 @@ sed -i 's/defined (GETCWD_BROKEN) && !defined (SOLARIS)/defined (GETCWD_BROKEN) 
 sed -i -e 's|^TERMCAP_LIB = .*|TERMCAP_LIB = -ltermcap|' \
 	-e 's|^\t$(CC) $(CCFLAGS) -c $(SUPPORT_SRC)signames.c$|& -o $@|' Makefile
 # its host tools link without the target's network libraries
-sed -i 's/^LIBS = .*/LIBS =/' builtins/Makefile
-nice -n 19 make -j1 > "$W/make.log" 2>&1 || { tail -30 "$W/make.log"; exit 1; }
+sed -i 's/^LIBS = .*/LIBS =/' builtins/Makefile support/Makefile
+# the build-host tools (mksyntax ...) include config.h too
+nice -n 19 make -j1 CC_FOR_BUILD="gcc -std=gnu89 -include $D/hostfix.h" > "$W/make.log" 2>&1 || { tail -30 "$W/make.log"; exit 1; }
 
 P=$ROOT/opt/amix
 mkdir -p "$P/bin" "$P/etc" "$P/man/man1" "$P/doc/bash"

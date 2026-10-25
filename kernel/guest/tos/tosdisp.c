@@ -22,6 +22,7 @@
 #include <stropts.h>
 
 #define	REFRESH	40		/* ms between screen updates */
+#define	CALM	8		/* unchanged updates before each doubling, up to 8 * REFRESH */
 
 /* ADB key code -> IKBD scan code (US layout), 0 none */
 static unsigned char adb2ikbd[128] = {
@@ -312,8 +313,8 @@ halve(d, a, b, n)
 	}
 }
 
-/* redraw the rows that changed (all when full) */
-static void
+/* redraw the rows that changed (all when full); 1 if any did */
+static int
 refresh(tv, g, full)
 	struct shifter *tv;
 	struct geom *g;
@@ -322,7 +323,9 @@ refresh(tv, g, full)
 	int ow = g->w * g->sx / g->step, oh = g->h * g->sy / g->step;
 	int ox = ((int)fi.fi_width - ow) / 2, oy = ((int)fi.fi_height - oh) / 2;
 	unsigned char *src = (unsigned char *)tv->tv_base, *sh = shadow, *d;
-	int y, x, k, v, bits;
+	int y, x, k, v, bits, drawn = 0;
+	/* a 1-bit ST high row is copied as it is */
+	int direct = fi.fi_depth == 1 && g->planes == 1 && g->sx == 1 && g->step == 1 && dark[1] != dark[0];
 
 	if (ox < 0)
 		ox = 0;
@@ -331,11 +334,12 @@ refresh(tv, g, full)
 	if (oy < 0)
 		oy = 0;
 	if (tv->tv_base >= ramsize || g->rowb * g->h > ramsize - tv->tv_base)
-		return;				/* screen outside ST-RAM */
+		return 0;			/* screen outside ST-RAM */
 	for (y = 0; y < g->h; y += g->step, src += g->rowb * g->step, sh += g->rowb * g->step) {
 		if (!full && same((unsigned long *)src, (unsigned long *)sh, g->rowb * g->step))
 			continue;
 		memcpy(sh, src, g->rowb * g->step);
+		drawn = 1;
 		if (g->step == 2 && fi.fi_depth == 1) {
 			k = oy + y / 2;
 			if (k < (int)fi.fi_height)
@@ -347,7 +351,8 @@ refresh(tv, g, full)
 			chunky(src + g->rowb, g);
 			memcpy(line2, line, g->w);
 		}
-		chunky(src, g);
+		if (!direct)
+			chunky(src, g);
 		for (k = 0; k < g->sy; k++) {
 			int row = oy + y / g->step * g->sy + k;
 
@@ -356,7 +361,7 @@ refresh(tv, g, full)
 			d = fb + fi.fi_offset + row * fi.fi_rowbytes + ox;
 			if (fi.fi_depth == 1) {
 				d = fb + fi.fi_offset + row * fi.fi_rowbytes + ox / 8;
-				if (g->planes == 1 && g->sx == 1 && g->step == 1 && dark[1] != dark[0]) {
+				if (direct) {
 					for (x = 0; x < ow / 8 && ox + 8 * x < (int)fi.fi_width; x++)
 						d[x] = dark[1] ? src[x] : ~src[x];
 					continue;
@@ -384,20 +389,41 @@ refresh(tv, g, full)
 					d[x] = line[x * g->step / g->sx];
 		}
 	}
+	return drawn;
+}
+
+/* 1 if the ST screen changed since the shadow copy, which takes it */
+static int
+stchanged(tv)
+	struct shifter *tv;
+{
+	struct geom g;
+	long n;
+
+	if (!shadow || !geom(tv, &g))
+		return 0;
+	n = (long)g.rowb * g.h;
+	if (tv->tv_base >= ramsize || n > ramsize - tv->tv_base ||
+	    same((unsigned long *)tv->tv_base, (unsigned long *)shadow, n))
+		return 0;
+	memcpy(shadow, (char *)tv->tv_base, n);
+	return 1;
 }
 
 /*
- * Does the fVDI driver own the screen: its cookie is set and the ST
- * screen is still the one it took over.  Its palette goes to the CLUT.
+ * Does the fVDI driver own the screen: its cookie is set, the ST
+ * screen is still the one it took over, and the ST screen has not
+ * changed since the driver last drew (console text, a program's own
+ * pixels).  Its palette goes to the CLUT.
  */
 static int
 fvdi(tv)
 	struct shifter *tv;
 {
-	static unsigned long seq, base;
+	static unsigned long seq, base, draws;
 	static unsigned short stm, ttm;
 	static struct tfbshare *last;
-	static int stale;
+	static int stale, st, own;
 	static unsigned short r[256], gr[256], b[256];
 	struct fbcmap cm;
 	struct tfbshare *fs = 0;
@@ -424,12 +450,25 @@ fvdi(tv)
 		stm = tv->tv_stmode;
 		ttm = tv->tv_ttmode;
 		stale = 1;
+		draws = fs->fs_draw;
+		st = 0;
+		stchanged(tv);
 	}
 	/* a program set its own screen: show that */
 	if (tv->tv_base != base || tv->tv_stmode != stm || tv->tv_ttmode != ttm) {
-		stale = 1;
+		stale = own = 1;
 		return 0;
 	}
+	if (own || fs->fs_draw != draws) {
+		own = 0;
+		draws = fs->fs_draw;
+		stale |= st;
+		st = 0;
+		stchanged(tv);
+	} else if (!st && stchanged(tv))
+		st = 1;
+	if (st)
+		return 0;
 	if (stale || fs->fs_seq != seq) {
 		stale = 0;
 		seq = fs->fs_seq;
@@ -522,8 +561,8 @@ disp(fd, verbose, ram)
 	struct pollfd p[3];
 	struct fbnote fn;
 	struct evinfo ei;
-	int i, k, kfd, mfd, have = 0;
-	long t = -REFRESH;
+	int i, k, kfd, mfd, have = 0, calm = 0;
+	long t = -REFRESH, per = REFRESH;
 
 	tfd = fd;
 	ramsize = ram;
@@ -586,11 +625,13 @@ input:
 	p[2].fd = fbfd;
 	p[0].events = p[1].events = p[2].events = POLLIN;
 	for (;;) {
-		i = t + REFRESH - now();
+		i = t + per - now();
 		if (poll(p, 3L, hidden ? 1000 : i > 0 ? i : 0) > 0) {
 			for (i = 0; i < 2; i++)
-				if (p[i].revents & POLLIN)
+				if (p[i].revents & POLLIN) {
 					events(p[i].fd);
+					calm = 0;
+				}
 			if ((p[2].revents & POLLIN) && read(fbfd, (char *)&fn, sizeof fn) == sizeof fn) {
 				if (fn.fn_type == FBN_HIDDEN && !hidden)
 					hide();
@@ -604,10 +645,12 @@ input:
 		if (getppid() == 1)
 			return;
 		drain();
-		if (hidden || now() - t < REFRESH)
+		/* a screen that stays the same is compared less often, input or a change resets it */
+		per = REFRESH << (calm < 3 * CALM ? calm / CALM : 3);
+		if (hidden || now() - t < per)
 			continue;
 		/* a fixed cadence: the clock moves in ticks, not ms */
-		t = now() - t < 2 * REFRESH ? t + REFRESH : now();
+		t = now() - t < 2 * per ? t + per : now();
 		if (ioctl(tfd, TOSIOC_VIDEO, &kv) < 0) {
 			if (errno == ENXIO)	/* the guest has not started yet */
 				continue;
@@ -623,9 +666,14 @@ input:
 		if (k)
 			memset(fb + fi.fi_offset, 0, fi.fi_rowbytes * fi.fi_height);
 		if (k || memcmp((char *)tv.tv_stpal, (char *)last.tv_stpal, sizeof tv.tv_stpal) ||
-		    memcmp((char *)tv.tv_ttpal, (char *)last.tv_ttpal, sizeof tv.tv_ttpal))
+		    memcmp((char *)tv.tv_ttpal, (char *)last.tv_ttpal, sizeof tv.tv_ttpal)) {
 			palette(&tv, &g);
-		refresh(&tv, &g, k);
+			calm = 0;
+		}
+		if (refresh(&tv, &g, k))
+			calm = 0;
+		else if (calm < 3 * CALM)
+			calm++;
 		last = tv;
 		have = 1;
 	}

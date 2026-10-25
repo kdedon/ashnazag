@@ -1,18 +1,19 @@
 /*
  * starttos -- run Atari TOS as this process: EmuTOS, or the user's ROM image.
  *
- *	starttos [-rom file] [-c cartridge] [-e env [-b base] [-R] | -C dir | -i disk] [-d env]
- *		[-D L=dir] [-u dir | -U] [-m megabytes] [-M] [-S] [-v]
+ *	starttos [-rom file] [-c cartridge] [-e env [-b base] [-R] [-X desktop] | -C dir | -i disk]
+ *		[-d env] [-D L=dir] [-u dir | -U] [-m megabytes] [-M] [-S] [-v]
  *	starttos -d env | -l
  *
  * ST-RAM is a shared mapping at 0, the ROM file mapped read-only at its own
  * base, the machine-layer cartridge at $FA0000.  Drives are host
  * directories used with the caller's permissions: C:, the boot drive,
  * the environment's folder: ~/TOS for emutos, ~/TOS/env for the others,
- * copied from /tos/sys (and /tos/xaaes for xaaes) at first use and with
- * -R, keeping the user's other files.  A new name is a copy of base, by
- * default the default.  Without -e it is the default, which -d sets; -l
- * lists them.  U: is "/";
+ * copied from /tos/sys and /tos/xaaes at first use and with -R, keeping
+ * the user's other files.  A new name is a copy of base, by default the
+ * default.  Without -e it is the default, which -d sets; -l lists them.
+ * Its desktop, desktop= in its metadata or -X, is emudesk (single TOS)
+ * or xaaes (multitasking); -C and -i are single TOS.  U: is "/";
  * others come from /tos/sys/drives, ~/TOS/drives and -D.  -i makes C: a FAT image
  * (512-byte sectors) instead.  One writable session per environment:
  * a second is refused.  A child process owns the display session:
@@ -65,8 +66,8 @@ static char *rom = "/etc/tos/emutos.img";	/* the free TOS; -rom for the user's *
 static char *cart = "/etc/tos/tosml.img";
 static char *disk;
 static char *cdir;
-static char *env, *ebase;
-static int refresh;
+static char *env, *ebase, *desk;
+static int refresh, xaaes;
 static char *udir = "/";
 static char *xdrv[26];			/* -D */
 static char *tab[26];			/* drive -> host directory */
@@ -74,7 +75,7 @@ static char tro[26];			/* read-only */
 static long ramsize = 4L << 20;
 static int mono, stscreen, verbose, cfold;
 static int tfd;
-static struct fbinfo hfi;		/* the host screen, for 1-bit hosts */
+static struct fbinfo hfi;		/* the host screen */
 extern int fbpipe;
 extern char *tos_nvram;
 extern unsigned long hc_stack[];
@@ -83,6 +84,7 @@ unsigned long tos_romlo, tos_romsz;	/* the ROM, for the sound pump */
 
 extern void disp(), tossnd();
 extern int tos_patch();
+extern int tos_tceoi;
 extern char etext;
 extern void _start();
 
@@ -342,10 +344,10 @@ fbmap(fd)
 		return;
 	}
 	close(fd);
-	/* a 1-bit screen: TOS on a monochrome monitor */
-	if (ioctl(rf.fd, FBIOGINFO, &fi) == 0 && fi.fi_depth == 1) {
-		mono = 1;
+	if (ioctl(rf.fd, FBIOGINFO, &fi) == 0) {
 		hfi = fi;
+		if (fi.fi_depth == 1)
+			mono = 1;	/* TOS on a monochrome monitor */
 	}
 	if (!stscreen && ioctl(rf.fd, FBIOGINFO, &fi) == 0 &&
 	    (fi.fi_layout == FBL_PLANES ? fi.fi_depth <= 8 && fi.fi_planebytes % 8 == 0 &&
@@ -543,16 +545,7 @@ spawnstart()
 
 #define	XADIR	"/tos/xaaes"
 
-static char **
-tosenvs()
-{
-	static char *e[] = { "emutos", "xaaes", 0 };
-	struct stat sb;
-
-	if (stat(XADIR, &sb) < 0)
-		e[1] = 0;
-	return e;
-}
+static char *tosenvs[] = { "emutos", 0 };
 
 static char *
 homedir()
@@ -571,7 +564,8 @@ tosmake(id, base, path)
 	char *id, *base, *path;
 {
 	char x[1100];
-	int xa = strcmp(base, "xaaes") == 0;
+	struct stat sb;
+	int xa = stat(XADIR, &sb) == 0;
 
 	/* the system's drive table stays the system's: ~/TOS/drives adds to it */
 	if (envcopy("starttos", "tos", xa ? (char *)0 : id, base, SYSDIR, path,
@@ -585,6 +579,23 @@ tosmake(id, base, path)
 	}
 	fprintf(stderr, "starttos: %s is drive C: of %s\n", path, id);
 	return 0;
+}
+
+/* the session's desktop: 1 for XaAES */
+static int
+desktop(meta)
+	char *meta;
+{
+	char d[16], *v = desk;
+
+	if (v == 0 && envkey(meta, "desktop", d, sizeof d) == 0)
+		v = d;
+	if (v == 0 || strcmp(v, "emudesk") == 0)
+		return 0;
+	if (strcmp(v, "xaaes") == 0)
+		return 1;
+	fprintf(stderr, "starttos: desktop %s: emudesk or xaaes\n", v);
+	return -1;
 }
 
 static int
@@ -602,9 +613,9 @@ envsetup()
 		return 0;
 	h = homedir();
 	id = envchoose("tos", env, h, "emutos");
-	if ((b = envbase("starttos", "tos", id, ebase, h, "emutos", tosenvs())) == 0 ||
+	if ((b = envbase("starttos", "tos", id, ebase, h, "emutos", tosenvs)) == 0 ||
 	    envhome("tos", id, "emutos", h, path, sizeof path) < 0 ||
-	    envmeta("tos", path, meta, sizeof meta) < 0)
+	    envmeta("tos", path, meta, sizeof meta) < 0 || (xaaes = desktop(meta)) < 0)
 		return -1;
 	/* an interrupted copy has no metadata yet and is redone */
 	if (!(made = stat(meta, &sb) == 0) && tosmake(id, b, path) < 0) {
@@ -629,8 +640,10 @@ static void
 iopage()
 {
 	unsigned char *io = (unsigned char *)0xff0000L;
+	/* a TT's monochrome monitor is TT high; ST high is on a colour one */
+	int hi = mono && hfi.fi_width >= 1280 && hfi.fi_height >= 960;
 
-	io[0xfa01] = mono ? 0x7f : 0xff;	/* MFP GPIP: bit 7 the monitor */
+	io[0xfa01] = hi ? 0x7f : 0xff;		/* MFP GPIP: bit 7 the monitor */
 	io[0xfa2d] = 0x80;			/* USART transmitter empty */
 	io[0xfc00] = io[0xfc04] = 2;		/* ACIAs: transmitter empty */
 	io[0x8e09] = 1;				/* memory configured: warm boot */
@@ -638,7 +651,7 @@ iopage()
 	io[0x9201] = 0xff;
 	io[0x8607] = 1;				/* DMA: no error */
 	io[0x8260] = mono ? 2 : 0;
-	io[0x8262] = !mono ? 4 : hfi.fi_width >= 1280 && hfi.fi_height >= 960 ? 6 : 2;
+	io[0x8262] = hi ? 6 : mono ? 2 : 4;	/* the cartridge sets this mode at boot */
 }
 
 int
@@ -657,9 +670,9 @@ main(argc, argv)
 	for (c = 1; c < argc; c++)
 		if (strcmp(argv[c], "-rom") == 0)
 			argv[c] = "-r";
-		else if (argv[c][0] == '-' && strchr("rcCdiDebmu", argv[c][1]) && argv[c][2] == 0)
+		else if (argv[c][0] == '-' && strchr("rcCdiDebmuX", argv[c][1]) && argv[c][2] == 0)
 			c++;		/* skip the option's argument */
-	while ((c = getopt(argc, argv, "r:c:C:d:i:D:e:b:Rlu:Um:MSv")) != -1)
+	while ((c = getopt(argc, argv, "r:c:C:d:i:D:e:b:RX:lu:Um:MSv")) != -1)
 		switch (c) {
 		case 'r': rom = optarg; break;
 		case 'c': cart = optarg; break;
@@ -669,8 +682,9 @@ main(argc, argv)
 		case 'e': env = optarg; break;
 		case 'b': ebase = optarg; break;
 		case 'R': refresh = 1; break;
+		case 'X': desk = optarg; break;
 		case 'l':
-			envlist("tos", homedir(), "emutos", tosenvs());
+			envlist("tos", homedir(), "emutos", tosenvs);
 			return 0;
 		case 'D':
 			c = optarg[0] & ~040;
@@ -687,12 +701,12 @@ main(argc, argv)
 		case 'S': stscreen = 1; break;
 		case 'v': verbose = 1; break;
 		default:
-			fprintf(stderr, "usage: starttos [-rom file] [-c cartridge] [-e env [-b base] [-R] | -C dir | -i disk] [-d env] [-D L=dir] [-u dir | -U] [-m MB] [-M] [-S] [-v]\n"
+			fprintf(stderr, "usage: starttos [-rom file] [-c cartridge] [-e env [-b base] [-R] [-X desktop] | -C dir | -i disk] [-d env] [-D L=dir] [-u dir | -U] [-m MB] [-M] [-S] [-v]\n"
 			    "       starttos -d env | -l\n");
 			return 2;
 		}
-	if ((env || ebase || refresh) && (cdir || disk)) {
-		fprintf(stderr, "starttos: -e, -C and -i exclude each other\n");
+	if ((env || ebase || refresh || desk) && (cdir || disk)) {
+		fprintf(stderr, "starttos: -e, -X, -C and -i exclude each other\n");
 		return 2;
 	}
 	if (def) {
@@ -759,6 +773,7 @@ main(argc, argv)
 	region((unsigned long)CART, (unsigned long)CARTSZ, 1);
 	(void)readall(cart, (char *)CART, TOSPV - CART);
 	put32((unsigned long)CART + 0x78, (unsigned long)tfd);	/* sockets */
+	put32((unsigned long)CART + 0x1084, (unsigned long)xaaes);
 	if (disk)
 		drivec();
 	drives();
@@ -805,7 +820,7 @@ main(argc, argv)
 	te.te_w = hfi.fi_width;
 	te.te_h = hfi.fi_height;
 	te.te_depth = hfi.fi_depth;
-	te.te_flags = mono ? TEF_MONO : 0;
+	te.te_flags = (mono ? TEF_MONO : 0) | (tos_tceoi ? TEF_TCEOI : 0);
 	te.te_hostlo = (unsigned long)_start;
 	te.te_hosthi = (unsigned long)&etext;
 	te.te_stklo = (unsigned long)hc_stack;

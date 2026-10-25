@@ -46,10 +46,10 @@ main(argc, argv)
 	    b.ts_absent - a.ts_absent, b.ts_top - a.ts_top, b.ts_berr - a.ts_berr,
 	    b.ts_refl[2] - a.ts_refl[2], b.ts_iow - a.ts_iow, b.ts_mmu - a.ts_mmu,
 	    b.ts_refl[4] - a.ts_refl[4]);
-	printf("tosstat: priv %lu fpriv %lu ftrap %lu sys %lu stop %lu vbl %lu isp %lu refl",
+	printf("tosstat: priv %lu fpriv %lu ftrap %lu sys %lu stop %lu vbl %lu isp %lu tcheld %lu refl",
 	    b.ts_priv - a.ts_priv, b.ts_fpriv - a.ts_fpriv, b.ts_ftrap - a.ts_ftrap,
 	    b.ts_sys - a.ts_sys, b.ts_stop - a.ts_stop, b.ts_vbl - a.ts_vbl,
-	    b.ts_isp - a.ts_isp);
+	    b.ts_isp - a.ts_isp, b.ts_tcheld - a.ts_tcheld);
 	for (i = 0; i < 64; i++)
 		if (b.ts_refl[i] != a.ts_refl[i])
 			printf(" %d:%lu", i, b.ts_refl[i] - a.ts_refl[i]);

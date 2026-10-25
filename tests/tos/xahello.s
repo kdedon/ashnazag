@@ -1,8 +1,12 @@
 | xahello.s -- XAHELLO.TOS: a plain TOS program for the console window.
-| Asks for a line (Cconrs), writes it to C:\XAHELLO.TXT, ends with 5.
+| Asks for a line (Cconrs), writes it to C:\XAHELLO.TXT, ends with 5,
+| or 6 when its TPA is 256 KB or less (a MiNT-aware program's).
 	.text
 	.globl	_start
-_start:	pea	hello
+_start:	move.l	4(sp),a0
+	move.l	4(a0),d4		| p_hitpa - p_lowtpa
+	sub.l	(a0),d4
+	pea	hello
 	move.w	#9,-(sp)		| Cconws
 	trap	#1
 	addq.l	#6,sp
@@ -33,7 +37,11 @@ _start:	pea	hello
 	move.w	#9,-(sp)
 	trap	#1
 	addq.l	#6,sp
-	move.w	#5,-(sp)
+	moveq	#5,d0
+	cmp.l	#0x40000,d4
+	bhi.s	2f
+	moveq	#6,d0
+2:	move.w	d0,-(sp)
 	move.w	#0x4c,-(sp)		| Pterm
 	trap	#1
 	.data

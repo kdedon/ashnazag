@@ -310,6 +310,47 @@ test_dd()
 	close(fd);
 }
 
+/*
+ * A /dev/mem mapping of a frame outside RAM: raw disk and /proc transfers
+ * must fail, not use the frame's physical address as a kernel address.
+ * 0x40000000 is where the kernel keeps the u-area.
+ */
+#define DEVPA	0x40000000L
+
+static void
+test_devmem()
+{
+	char path[32], pbuf[256], *m;
+	long off = bn0 * 1024, i;
+	int fd, n;
+
+	fd = open("/dev/mem", O_RDONLY);
+	m = fd < 0 ? (char *)-1 : mmap((char *)0, (size_t)PG, PROT_READ, MAP_SHARED, fd, (off_t)DEVPA);
+	if (fd >= 0)
+		close(fd);
+	if (m == (char *)-1) {
+		t_skip("devmem", "no /dev/mem mapping at 0x%lx: %s", DEVPA, T_ERR);
+		return;
+	}
+	n = rawio(rawfd, 1, off, m, 1024L);
+	t_check("raw_write_devmem", !n && errno == EFAULT, "%s", n ? "write succeeded" : T_ERR);
+	for (i = 0; i < 1024; i++)
+		hbuf[i] = t_pattern(i, S_DECOY);
+	rawio(rawfd, 1, off, hbuf, 1024L);
+	sprintf(path, "/proc/%05ld", (long)getpid());
+	fd = open(path, O_RDONLY);
+	n = fd < 0 || lseek(fd, (off_t)(long)m, 0) == -1 ? -2 : read(fd, pbuf, sizeof pbuf);
+	if (n == -2)
+		t_fail("proc_read_devmem", "open %s: %s", path, T_ERR);
+	else if (n == -1)
+		t_check("proc_read_devmem", errno == EFAULT, "%s", T_ERR);
+	else
+		t_fail("proc_read_devmem", "read %d bytes of kernel memory", n);
+	if (fd >= 0)
+		close(fd);
+	munmap(m, (size_t)PG);
+}
+
 int
 main()
 {
@@ -320,6 +361,7 @@ main()
 		test_proc("proc_read_lowva", 0, 0);
 		test_proc("proc_read_lowva_resident", 0, 1);
 		test_proc("proc_write_lowva", 1, 0);
+		test_devmem();
 	}
 	test_dd();
 	if (rawfd >= 0)

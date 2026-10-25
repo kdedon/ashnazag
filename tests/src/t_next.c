@@ -751,8 +751,15 @@ kernel()
 			fill0 = info.mmu[0];
 			hcall0 = info.hcalls[0];
 		}
-		if (after == 899)
+		if (after == 899) {
 			shot("next_workspace");
+			if (full) {
+				long b = t_busy(30000L);
+
+				/* a spinning idle thread keeps it near 100% */
+				t_check("idle_busy", b >= 0 && b < 500, "%ld per mille busy at the Workspace", b);
+			}
+		}
 		if (full ? i % 1200 == 1199 : i == 60 || i == 190) {
 			char name[20];
 

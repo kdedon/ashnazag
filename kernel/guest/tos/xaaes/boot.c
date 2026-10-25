@@ -38,12 +38,22 @@ take_exec_os(void)
 	return 0;
 }
 
-/* AUTO: resident when XaAES is installed, else gone */
+/* the cartridge's desktop word */
+static long
+desk_xaaes(void)
+{
+	return *(long *)0xfa1084;
+}
+
+/* AUTO: resident when the session's desktop is XaAES and it is installed */
 long
 xa_auto(BASEPAGE *bp)
 {
-	long fd = gemdos(0x3d, (long)KM, 0L);
+	long fd;
 
+	if (!supexec(desk_xaaes))
+		return 0;
+	fd = gemdos(0x3d, (long)KM, 0L);
 	if (fd < 0) {
 		gemdos(9, (long)"XaMiNT: no " KM ", not installed\r\n", 0);
 		return 0;

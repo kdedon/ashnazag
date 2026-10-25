@@ -17,7 +17,8 @@ Script lines:
                   screenshot FILE every few seconds until the screen is ready, then
                   go on (after the wait limit too, so the check reports it):
                   xterm = focused shell prompt in the default terminal;
-                  desktop = a GEM desktop; same = like REF; greeter = not like
+                  desktop = a GEM desktop; arrange = Cubase's Arrange window;
+                  same = like REF; greeter = not like
                   REF, not blank, and unchanged for 3 shots
 Fails (exit 1) when a wait takes longer than WAIT seconds (default 120).
 """
@@ -65,6 +66,8 @@ def ready(path, mode, ref, last):
             return terminal_prompt(tosshot.load(path)[2]) and last is not None and terminal_prompt(tosshot.load(last)[2])
         if mode == 'desktop':
             return tosshot.desktop(path) is None
+        if mode == 'arrange':
+            return tosshot.arrange(path) is None
         if mode == 'same':
             return tosshot.diff(path, ref) < 0.01
         w, h, rows = tosshot.load(path)

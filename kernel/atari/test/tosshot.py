@@ -2,6 +2,7 @@
 """tosshot.py -- check the TOS environment's screen dumps.
 
     tosshot.py desktop DESKTOP.png      the GEM desktop is drawn and clean
+    tosshot.py arrange SHOT.png         Cubase's Arrange window in ST high
     tosshot.py same A.png B.png         B shows what A shows
     tosshot.py differ A.png B.png       B shows something else
 
@@ -96,6 +97,23 @@ def desktop(path):
     return None
 
 
+def arrange(path):
+    """Menu titles, a window of text on white and the transport bar below it."""
+    w, h, rows = load(path)
+    if w < 640 or h < 400:
+        return 'screen %dx%d' % (w, h)
+    top, black = (h - 400) // 2, (0, 0, 0)
+
+    def dark(y0, y1):
+        return sum(rows[y].count(black) for y in range(top + y0, top + y1)) / float((y1 - y0) * w)
+    for name, y0, y1, lo, hi in (('menu bar', 2, 16, 0.08, 0.25), ('window', 60, 300, 0.05, 0.25),
+                                 ('transport bar', 340, 396, 0.3, 0.6)):
+        d = dark(y0, y1)
+        if not lo <= d <= hi:
+            return '%s %d%% dark' % (name, 100 * d)
+    return None
+
+
 def diff(a, b):
     """The fraction of pixels that differ."""
     wa, ha, ra = load(a)
@@ -110,6 +128,9 @@ def main():
     if len(sys.argv) == 3 and sys.argv[1] == 'desktop':
         why = desktop(sys.argv[2])
         ok, msg = why is None, 'desktop drawn' + (': ' + why if why else '')
+    elif len(sys.argv) == 3 and sys.argv[1] == 'arrange':
+        why = arrange(sys.argv[2])
+        ok, msg = why is None, 'Arrange window' + (': ' + why if why else '')
     elif len(sys.argv) == 4 and sys.argv[1] in ('same', 'differ'):
         d = diff(sys.argv[2], sys.argv[3])
         ok = d < 0.01 if sys.argv[1] == 'same' else d > 0.05

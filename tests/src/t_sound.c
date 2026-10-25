@@ -41,9 +41,9 @@ static pid_t sndd = -1, sndaux = -1;
 #define STARTMAC "/mac/bin/startmac"
 #define MACSYS	"/macsys/S761"
 #define MACSYS81 "/macsys/S81"
-#define ROOT6	"/a201"
-#define SYS6	ROOT6 "/mac/sys/Sys6"
-#define SYS6DIR	ROOT6 "/mac/sys/System Folder"
+#define ROOT6	"/usr/aux/aux2"
+#define SYS6	"/mac/lib/env/6/Sys6"
+#define SYS6DIR	"/mac/lib/env/6/System Folder"
 #define SNDTEST	"/mac/lib/SndTest"
 #define SNDAUX	"/usr/lib/sndaux"
 #define MACDEV	"/dev/dsk/c1d0s0"
@@ -425,7 +425,7 @@ sys6links(int on)
 /*
  * startmac with SndTest in the System Folder: SysBeep and a synchronous
  * SndPlay reach the chip, an asynchronous one returns at once and its
- * callBackCmd runs after it.  sys6: A/UX 2.0.1's System 6 in /a201.
+ * callBackCmd runs after it.  sys6: A/UX 2.0.1's System 6.
  */
 static void
 macsnd(int a, int version)
@@ -438,7 +438,7 @@ macsnd(int a, int version)
 	static char *env81[] = { "PATH=/aux/bin:/usr/bin:/sbin", "HOME=/tmp",
 		"TBSYSTEM=" MACSYS81, "TBMEMORY=16M", "TBVERBOSE=1", "TBWARN=1", 0 };
 	static char *env6[] = { "PATH=/aux/bin:/usr/bin:/sbin", "HOME=/tmp",
-		"TBSYSTEM=/mac/sys/System Folder", "TBMEMORY=4M", "TBVERBOSE=1", "TBWARN=1", 0 };
+		"TBSYSTEM=" SYS6DIR, "TBMEMORY=4M", "TBVERBOSE=1", "TBWARN=1", 0 };
 	struct sndstat s;
 	char line[256], tn[16], init[96], inith[96], *root = sys6 ? ROOT6 : "";
 	char tf[64], tout[64], ttrace[64];
@@ -485,7 +485,7 @@ macsnd(int a, int version)
 	}
 	cp(SNDTEST "/SndTest", init);
 	cp(SNDTEST "/%SndTest", inith);
-	sprintf(tf, "%s%s", root, TESTF);
+	strcpy(tf, TESTF);
 	sprintf(tout, "%s.out", tf);
 	sprintf(ttrace, "%s.trace", tf);
 	fidd();
@@ -508,8 +508,7 @@ macsnd(int a, int version)
 		dup2(p[1], 2);
 		for (fd = 3; fd < 20; fd++)
 			close(fd);
-		if (sys6 && (chroot(ROOT6) < 0 || chdir("/") < 0))
-			_exit(126);
+		av[0] = sys6 ? ROOT6 STARTMAC : STARTMAC;
 		execve(av[0], av, sys6 ? env6 : sys81 ? env81 : env7);
 		_exit(127);
 	}

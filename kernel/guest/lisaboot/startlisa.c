@@ -353,7 +353,7 @@ gput(a, v, n)
 HC_ENTRY
 enum { HC_READ, HC_PFID, HC_XFER, HC_MMU, HC_SEG1, HC_SERIAL, HC_IRQON, HC_IRQ1, HC_CLOCK, HC_VIDEO, HC_PMRD, HC_PMWR, HC_INPUT, HC_UNPACK, HC_TAKE, HC_CTX, HC_FDTYPE, HC_FDIN1, HC_RESET, HC_STOP, HC_VID0, HC_ROUND, HC_FDCMD, HC_LMEDIA,
     HC_LOPEN, HC_LFILL, HC_LMOVE, HC_FSLIST, HC_FSPAGE, HC_FSDATA,
-    HC_CREL, HC_CGET, HC_CSRCH, HC_CPTR, HC_CNEXT, HC_CLOOK, HC_CINS, HC_CDEL, HC_COPEN, HC_CENUM, HC_MDDF, HC_BMAP, HC_POLL, HC_POWER, HC_MOVE, HC_SEGSZ, HC_SHRINK };
+    HC_CREL, HC_CGET, HC_CSRCH, HC_CPTR, HC_CNEXT, HC_CLOOK, HC_CINS, HC_CDEL, HC_COPEN, HC_CENUM, HC_MDDF, HC_BMAP, HC_POLL, HC_POWER, HC_MOVE, HC_SEGSZ, HC_SHRINK, HC_IDLE };
 #define	hc_read	HC_STUB(HC_READ)
 #define	hc_pfid	HC_STUB(HC_PFID)
 #define	hc_xfer	HC_STUB(HC_XFER)
@@ -872,7 +872,9 @@ sonydrv(fid, page0, f, n)
  *    keeps the page it would give back;
  *  - the drivers' code space grows its segment by each driver's size and
  *    fails unless the segment has exactly that size, so the size rounds up
- *    to 4 KB (by host call) in place of 512 bytes.
+ *    to 4 KB (by host call) in place of 512 bytes;
+ *  - Yield_CPU with no other process ready waits in the host for an
+ *    interrupt: an idle application's event loop yields on every pass.
  */
 static unsigned char unpsig[] = { 0x4c, 0xdf, 0x1c, 0xf8, 0x4e, 0x5e, 0x20, 0x5f, 0xde, 0xfc, 0x00, 0x14, 0x4e, 0xd0,
     'U', 'N', 'P', 'A', 'C', 'K' };
@@ -981,6 +983,13 @@ codepatch(c, n)
 	    0x206e, -1, 0x0810, 0x0006, 0x56c0 };
 	static int vbm[] = { 0x4e56, -1, 0x2f0c, 0x302e, 0x000e, 0x41ed, -1, 0xe540, 0x2070, 0x0000, 0x2868, 0x0036,
 	    0x2f2e, 0x0010, 0x3f2e, 0x000e, 0x3f3c, 0x0002, 0x2f2c, 0x0088 };
+	/*
+	 * Yield_CPU after its queue work: whether to reschedule, to the next
+	 * process in the ready queue if it may run
+	 */
+	static int yld[] = { 0x102b, -1, 0x6704, 0x422b, -1, 0x3f3c, 0x0700, 0x486e, -1, 0x4ead, -1, 0x2f0c, 0x4267,
+	    0x4ead, -1, 0x3f2e, -1, 0x4ead, -1, 0x102d, -1, 0x0a00, 0x0001, 0xc02e, 0x0008, 0x6712, 0x2854, 0x4a6c,
+	    0x000c, 0x6f0a, 0x2b4c, -1, 0x1b7c, 0x0001, -1, 0x102d, -1, 0x670e, 0x202d, -1, 0xb0ad, -1, 0x6604, 0x42ad, -1 };
 	/* a segment moved into free memory: its size and old place */
 	static int mvs[] = { 0x2f2c, 0xfff2, 0x1f3c, 0x0001, 0x4eba, -1, 0x206c, 0xfffa, 0x3e28, 0x000a, 0x206c, 0xfffa,
 	    0x3828, 0x0008, 0x206c, 0xfff2, 0x3a28, 0x000a };
@@ -1053,6 +1062,34 @@ codepatch(c, n)
 			/* jsr hc_move; bra.w to the copy */
 			memcpy(p + 16, "\x4e\xb9....\x60\x00\x00\x2a", 10);
 			put32(p + 18, HC_STUB(HC_MOVE));
+			k++;
+		} else if (a + 2 * 45 <= n && wmatch(p, yld, 45) && word(p + 8, G16P(p + 2)) && word(p + 32, G16P(p + 16)) &&
+		    word(p + 68, G16P(p + 40)) && word(p + 72, G16P(p + 40))) {
+			/*
+			 * clr.b x(a3) in place of its test makes room at the end:
+			 * tst.b flag(a5); bne.s A; tst.b to_any(a6); beq.s ret
+			 * movea.l (a4),a4; tst.w $c(a4); bgt.s set; jsr hc_idle; bra.s A
+			 * set: move.l a4,next(a5); move.b #1,flag(a5)
+			 * A: tst.b flag(a5); beq.s ret
+			 * move.l x(a5),d0; cmp.l y(a5),d0; bne.s ret; clr.l z(a5)
+			 */
+			static int w[] = { 0x4a2d, -20, 0x6620, 0x4a2e, 0x0008, 0x672e, 0x2854, 0x4a6c, 0x000c, 0x6e08,
+			    0x4eb9, 0, 0, 0x600a, 0x2b4c, -31, 0x1b7c, 0x0001, -20, 0x4a2d, -20, 0x670e,
+			    0x202d, -39, 0xb0ad, -41, 0x6604, 0x42ad, -44 };	/* -n: word n of the original */
+			unsigned short o[45];
+			int v;
+
+			for (j = 0; j < 45; j++)
+				o[j] = G16P(p + 2 * j);
+			p[0] = 0x42;
+			p[1] = 0x2b;
+			memmove(p + 4, p + 10, 28);
+			for (j = 0; j < 29; j++) {
+				v = w[j] < 0 ? o[-w[j]] : w[j];
+				p[32 + 2 * j] = v >> 8;
+				p[33 + 2 * j] = v;
+			}
+			put32(p + 54, HC_STUB(HC_IDLE));
 			k++;
 		} else if (a + 2 * 18 < n && wmatch(p, csp, 18)) {
 			/* move.l size(a6),-(sp); jsr hc_round */
@@ -3191,6 +3228,10 @@ hostcall(r)
 	case HC_BMAP: hcbmap(r); break;
 	case HC_POLL: r[0] &= ~0xffUL; break;	/* the bit clear */
 	case HC_MOVE: hcmove(r); break;
+	case HC_IDLE:
+		/* until an interrupt, which ends the wait by its signal, or 50 ms */
+		poll((struct pollfd *)0, 0L, 50);
+		break;
 	case HC_SHRINK:
 		/*
 		 * D7 the pages a resize gains, D5 true for a stack: move.w 8(a4),d4;

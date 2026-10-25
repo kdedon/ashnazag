@@ -160,6 +160,7 @@ long aux_nsys, aux_lastsys;	/* Mac task's calls; the last: number << 16 | errno 
 int aux_trace = 0;	/* 1: every call, 2: results, 4: open paths, 8: failures, name changes,
 			   16: keep the first AUX_TBUF bytes */
 int aux_execaux2 = 0;	/* the image being exec'd is an A/UX 2 one */
+char aux_root2[64] = "/usr/aux/aux2";	/* A/UX 2's libraries and ROM, at their A/UX paths */
 void (*aux_macdetach)() = 0;
 void (*aux_macgfd)() = 0;
 int (*aux_slotmgr)() = 0;

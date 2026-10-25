@@ -23,6 +23,7 @@ The repository is MIT (`LICENSE`). Components below keep their own licences and 
 | sdhcp | `images/envpkg/sdhcp` (from github.com/michaelforney/sdhcp at 5f9956c) | MIT, Copyright 2012 David Galos, 2014-2015 Hiltjo Posthuma, 2015 Michael Forney (`LICENSE`, installed with the package) |
 | top 3.5.1 | `images/envpkg/top` (from unixtop 3.5.1) | Freely redistributable with its notice intact, Copyright 1984-2004 William LeFebvre (`LICENSE`, installed with the package). Machine module and changes: MIT |
 | Dropbear, prngd, libamixcompat | `images/pkgs/dropbear`, `prngd` patches; `images/pkgs/port` builds jusii/amix-packages libamixcompat and passwd parsers | Fetched at build. Dropbear MIT (Matt Johnston and others); prngd free licence, Lutz Jaenicke; libamixcompat BSD-2 and amix-pwgr.c MIT, Jussi Alanärä |
+| Vim 9.2 | `images/ports/vim`, `vimdoc`, fetched at build; configure answers, vimrc settings and the `%ll` formatting after slaapliedje/atari-sysv-sp1 `amix/vim` | Vim licence (charityware, GPL-compatible), Bram Moolenaar and others (`LICENSE`, installed with the package) |
 | go-lha | `webapp/internal/lhadecode` | MIT, Copyright (c) 2018 MURAOKA Taro (`LICENSE`, `NOTICE`) |
 | SMSQ/E | fetched | BSD 2-clause |
 | Digital Research CP/M-68K 1.3 CCP | `kernel/guest/cpm/ccp/ccp.c`, `ccpdef.h` | Copyright (c) 1982 Digital Research. Distributed under the Caldera 2001 licence and DR DOS, Inc.'s 2022 statement permitting use and redistribution with the notice kept. The file headers say "Portions Copyright (c) 2026 kdedon": only the additions are ours (MIT). `ccpext.c`, `ccpgo.c`, `ccpsv.h` and `cmd/*` are ours (MIT) |
@@ -92,6 +93,7 @@ These are separate programs, patches or separately loaded modules and keep their
 | fVDI (`kernel/guest/tos/fvdi`, `ashfb.c` built with it) | TOS-side program, separate image | GPL |
 | XaAES, TeraDesk, FreeMiNT | fetched at build, source shipped with the binaries | GPL |
 | EmuTOS | fetched, separate image, patched in memory only | GPL-2.0-or-later |
+| GNU bash 5.2.37 (`images/ports/bash`; `bash.diff` and `hostfix.h` from slaapliedje/atari-sysv-sp1 `amix/bash`) | patch; separate program in its package | GPL-3.0-or-later |
 | manx, atari-sysv-sp1 (slaapliedje) | fetched at build | GPL-2.0 |
 
 Files that are ours inside these projects' patches follow the patched project's licence.

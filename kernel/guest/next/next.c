@@ -639,7 +639,7 @@ static struct ksym bsyms[] = {
 	{ "_clock_timer_init" }, { "_install_scanned_intr" }, { "_eventc_latch" }, { "_eventc_l" }, { "_timer_csr" },
 	{ "_intrstat" }, { "_scr2" }, { "_rtc_get" }, { "_rtc_set" }, { "_startrtclock" }, { "_nvram_check" },
 	{ "_nvram_set" }, { "_rtc_power_down" }, { "_mon_reset" }, { "_zsintsetup" }, { "_enintsetup" }, { "ipl6" },
-	{ "_copyin" }, { "_copyout" }, { "_copyinstr" }, { "_copyoutstr" },
+	{ "_copyin" }, { "_copyout" }, { "_copyinstr" }, { "_copyoutstr" }, { "_idle_thread_continue" },
 };
 /* drivers of devices this machine has none of: their probes find nothing */
 static struct ksym absent[] = {
@@ -702,6 +702,7 @@ static struct ksym psyms[] = {
 #define B_COPYOUT 23
 #define B_COPYSTR 24
 #define B_COPYOSTR 25
+#define B_IDLE 26
 
 /* the address of the named symbol in the slice at off, 0 if none */
 static unsigned long
@@ -1470,11 +1471,53 @@ softint()
 	return 0;
 }
 
+/*
+ * The idle thread spins on the run queues.  Its loop head, which clears the
+ * AST bits at spl7, gets a stop #$2000 in front, paid for by the loop's two
+ * dead saves of sr:
+ *
+ *	L: movea dN,a2; move.l (a2,d2*4),d0; moveq #-8,d1; and.l d1,d0; beq.s X
+ *	   move sr,d0; move #$2300,sr; move.l ..,d0; and.l; move.l d0,..
+ *	   move sr,d0; move #$2000,sr
+ *	X: move.l (a5),d0 ...			(the queues; empty: bra L)
+ * becomes
+ *	L: stop #$2000; movea ...; beq.s X; move #$2300,sr; ...; move #$2000,sr
+ * An interrupt between the queue tests and the stop waits for the next tick.
+ */
+static int
+idleloop()
+{
+	unsigned short at[3], *s, *l, w[17];
+	unsigned long a = bsyms[B_IDLE].addr;
+
+	at[0] = 0x40c0;
+	at[1] = 0x46fc;
+	at[2] = 0x2300;
+	if (!inkernel(a) || !(s = find((unsigned short *)a, 64, at, 3)))
+		return -1;
+	l = s - 6;
+	if ((l[0] & 0xfff8) != 0x2440 || l[3] != 0x72f8 || l[4] != 0xc081 || l[5] != 0x6716 ||
+	    (l[1] & 0xffc0) != 0x2000 || (s[3] & 0xffc0) != 0x2000 || s[5] != 0xc081 ||
+	    s[8] != 0x40c0 || s[9] != 0x46fc || s[10] != 0x2000 || (s[11] & 0xffc0) != 0x2000)
+		return -1;
+	w[0] = 0x4e72;				/* stop #$2000 */
+	w[1] = 0x2000;
+	memcpy(w + 2, l, 12);
+	w[7] = 0x6712;				/* beq.s X, 4 bytes nearer */
+	w[8] = 0x46fc;
+	w[9] = 0x2300;
+	memcpy(w + 10, s + 3, 10);
+	w[15] = 0x46fc;
+	w[16] = 0x2000;
+	memcpy(l, w, sizeof w);
+	return 0;
+}
+
 static int
 services()
 {
 	unsigned short *c = (unsigned short *)HF_HCALL;
-	char *bad[19 + sizeof absent / sizeof absent[0] + sizeof nodsp / sizeof nodsp[0]];
+	char *bad[20 + sizeof absent / sizeof absent[0] + sizeof nodsp / sizeof nodsp[0]];
 	int i, n = 0;
 
 	c[0] = 0x202f;				/* move.l 4(sp),d0 */
@@ -1501,6 +1544,8 @@ services()
 		bad[n++] = "ipl6";
 	if (softint() < 0)
 		bad[n++] = "callout_dispatch";
+	if (idleloop() < 0)
+		bad[n++] = "idle_thread_continue";
 	if (hcentry(bsyms[B_DELAY].addr, HC_DELAY) < 0)
 		bad[n++] = "delay";
 	if (hcentry(bsyms[B_SETTIMER].addr, HC_TIMER) < 0)

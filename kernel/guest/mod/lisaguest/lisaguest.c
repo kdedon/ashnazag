@@ -174,6 +174,20 @@ unalias(t, i)
 
 static void lisa_space();
 
+/* windows at top bytes $40-$7F: the stock rule refuses that quadrant */
+static int
+lisa_vur(gp, a, len)
+	struct guest_proc *gp;
+	caddr_t a;
+	u_int len;
+{
+	u_long s = (u_long)a, e = s + len - 1;
+
+	if (s >> 30 != 1)
+		return __amix_valid_usr_range(a, len);
+	return len != 0 && e >= s && e >> 30 == 1;
+}
+
 /*
  * The 68000 ignores address bits 24-31; the OS keeps flags there.  Top
  * bytes 1, $FE and $FF are in windows.  An access elsewhere maps the segment's pages
@@ -891,6 +905,7 @@ lisaguest_load()
 	lisa_profile.gpf_stop = lisa_stop;
 	lisa_profile.gpf_fsig = lisa_fsig;
 	lisa_profile.gpf_sendsig = lisa_sendsig;
+	lisa_profile.gpf_vur = lisa_vur;
 	return 0;
 }
 

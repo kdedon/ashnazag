@@ -34,7 +34,7 @@ images. The last four packages are only for building QEMU.
 
 | Where | What | Source |
 |---|---|---|
-| `toolchain/amix` | AMIX cross compiler `m68k-cbm-sysv4`: gcc 2.7.2.3, binutils 2.8.1 | [gcc-cross-amix](https://github.com/isoriano1968/gcc-cross-amix) at `206bc95`, `make all PREFIX=toolchain/amix AMIX_ROOT=toolchain/amix-root` |
+| `toolchain/amix` | AMIX cross compiler `m68k-cbm-sysv4`: gcc 2.7.2.3, binutils 2.8.1 | [gcc-cross-amix](https://github.com/isoriano1968/gcc-cross-amix) at `63d18ad`, plus [jusii's](https://github.com/jusii/gcc-cross-amix) `2ab2b22` and `80b6d67` (68060 multiply rewrite, `m68k-cbm-sysv4-scan060`) and `toolchain/gcc-cross-amix-patches`; `toolchain/build-amix-cross.sh toolchain/amix-root` |
 | `toolchain/src/gcc-cross-amix/build/env.sh` | its environment, sourced by the kernel scripts | written by `make env`; setup rewrites it on every run |
 | `toolchain/amix-root` | AMIX headers, libraries and link kit | your tape, segments 02 (core), 04 (Cdev), 19 (conf) |
 | `toolchain/bin` | `m68k-elf` binutils 2.43.1 | GNU, `--target=m68k-elf --disable-nls --disable-werror` |

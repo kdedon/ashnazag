@@ -38,6 +38,12 @@ long fb_pen(long c)
 	return pen(c);
 }
 
+void fb_drawn(void)
+{
+	if (share)
+		share->fs_draw++;
+}
+
 long CDECL c_get_colour(Virtual *vwk, long colour)
 {
 	(void)vwk;
@@ -109,6 +115,7 @@ long CDECL c_write_pixel(Virtual *vwk, MFDB *dst, long x, long y, long colour)
 		return 0;
 	if (!(a = where(vwk->real_address, dst, &wrap)))
 		return 0;
+	fb_drawn();
 	a[y * wrap + x] = colour;
 	return 1;
 }
@@ -165,6 +172,7 @@ long CDECL c_fill_area(Virtual *vwk, long x, long y, long w, long h,
 		return -1;
 	if (w > 0 && h > 0) {
 		c_get_colours(vwk, colour, &fg, &bg);
+		fb_drawn();
 		fb->fill(vwk->real_address, x, y, w, h, (unsigned short *)pattern, fg, bg, mode);
 	}
 	return 1;
@@ -197,6 +205,7 @@ long CDECL c_expand_area(Virtual *vwk, MFDB *src, long src_x, long src_y,
 	if (!(d = where(vwk->real_address, dst, &dwrap)))
 		return 0;
 	c_get_colours(vwk, colour, &fg, &bg);
+	fb_drawn();
 	swrap = (long)src->wdwidth * 2;
 	fb->expand((unsigned short *)((char *)src->address + src_y * swrap), swrap, src_x,
 	    d + dst_y * dwrap + dst_x, dwrap, w, h, fg, bg, operation);
@@ -248,6 +257,7 @@ long CDECL c_blit_area(Virtual *vwk, MFDB *src, long src_x, long src_y,
 		return 1;
 	if (!(s = where(wk, src, &swrap)) || !(d = where(wk, dst, &dwrap)))
 		return 0;
+	fb_drawn();
 	fb->blit(s + src_y * swrap + src_x, swrap, d + dst_y * dwrap + dst_x, dwrap, w, h, operation);
 	return 1;
 }
@@ -274,6 +284,7 @@ long CDECL c_line_draw(Virtual *vwk, long x1, long y1, long x2, long y2,
 		return -1;
 	if (clip_line(vwk, &x1, &y1, &x2, &y2)) {
 		c_get_colours(vwk, colour, &fg, &bg);
+		fb_drawn();
 		fb->line(vwk->real_address, x1, y1, x2, y2, pattern, fg, bg, mode);
 	}
 	return 1;
@@ -455,6 +466,7 @@ long CDECL initialize(Virtual *vwk)
 	}
 	share->fs_magic = TFB_MAGIC;
 	share->fs_seq = 0;
+	share->fs_draw = 0;
 	if (loaded_palette)
 		access->funcs.copymem(loaded_palette, default_vdi_colors, 256 * 3 * sizeof(short));
 	c_set_colours(vwk, 0, ncol, (unsigned short *)default_vdi_colors, wk->screen.palette.colours);

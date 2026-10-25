@@ -10,7 +10,7 @@ mint-gcc|tar|https://ppa.launchpadcontent.net/vriviere/ppa/ubuntu/pool/main/g/gc
 mint-mintlib|tar|https://ppa.launchpadcontent.net/vriviere/ppa/ubuntu/pool/main/m/mintlib-m68k-atari-mint/mintlib-m68k-atari-mint_0.60.1.Git-20220821-1ppa20240524094504~noble_all.deb|4365d740c7ad0277b50bf223970816ce9ea5c5d6b3883673117fe801a69dce6c|LGPL-2.1 and others
 mint-gemlib|tar|https://ppa.launchpadcontent.net/vriviere/ppa/ubuntu/pool/main/g/gemlib-m68k-atari-mint/gemlib-m68k-atari-mint_0.44.0-Git-20230112-1ppa20240524094547~noble_all.deb|a95595f95bfad30ca91424a129bf5903fa0804bad08e3076c907d85078712bcc|LGPL-2.1
 freemint|git|https://github.com/freemint/freemint|cd0b07fd0f3654d79bcaad38b8d995f0d2e08179|GPL-2.0
-bash|tar|http://ftp.gnu.org/gnu/bash/bash-3.2.57.tar.gz|3fa9daf85ebf35068f090ce51283ddeeb3c75eb5bc70b1a4a7cb05868bfe06a4|GPL-2.0-or-later
+bash|tar|https://ftp.gnu.org/gnu/bash/bash-5.2.37.tar.gz|9599b22ecd1d5787ad7d3b7bf0c59f312b3396d1e281175dd1f8a4014da621ff|GPL-3.0-or-later
 amix-packages|git|https://github.com/jusii/amix-packages|909e29d4b06880e6a43477c2af93a7b7eb7bfc13|MIT (libamixcompat BSD-2)
 wget|tar|https://ftp.gnu.org/gnu/wget/wget-1.11.4.tar.gz|7315963b6eefb7530b4a4f63a5d5ccdab30078784cf41ccb5297873f9adea2f3|GPL-3.0
 lynx|tar|https://invisible-mirror.net/archives/lynx/tarballs/lynx2.8.5rel.1.tar.gz|6e7f9dd2abb59d1b7420f3532edd25841e83e11e4c755bc6c08b359eeec9eac9|GPL-2.0
@@ -18,6 +18,7 @@ dropbear|tar|https://matt.ucc.asn.au/dropbear/releases/dropbear-2025.88.tar.bz2|
 prngd|tar|https://downloads.sourceforge.net/project/prngd/prngd/0.9.29/prngd-0.9.29.tar.gz|e48669c3b78f82a3e2fee3e2ca3e749bba1679d691be587bf70d9a1225842e7c|BSD-4-Clause
 bzip2|tar|https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz|ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269|bzip2-1.0.6
 joe|tar|https://downloads.sourceforge.net/joe-editor/joe-3.7.tar.gz|cae456e1ad5a8c1d3c94920a3416c2347277739b260e3494d3bc0f2b9b73106f|GPL-1.0-or-later
+vim|tar|https://github.com/vim/vim/archive/refs/tags/v9.2.1189.tar.gz|f83bfbb04a0f960fc7fcb4b5c886073e696e5035517f0a7a4cfc4499e25897c6|Vim (GPL-compatible charityware)
 screen|tar|https://ftp.gnu.org/gnu/screen/screen-4.0.3.tar.gz|78f0d5b1496084a5902586304d4a73954b2bfe33ea13edceecf21615c39e6c77|GPL-2.0-or-later
 zip|tar|https://downloads.sourceforge.net/infozip/zip30.tar.gz|f0e8bb1f9b7eb0b01285495a2699df3a4b766784c1765a8f1aeedf63c0806369|Info-ZIP
 unzip|tar|https://downloads.sourceforge.net/infozip/unzip60.tar.gz|036d96991646d0449ed0aa952e4fbe21b476ce994abc276e49d30e686708bd37|Info-ZIP

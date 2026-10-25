@@ -1,0 +1,6 @@
+" System vimrc.
+" The backtracking regexp engine: filetype.vim's patterns compiled for the
+" NFA one take some 18 MB, more than a process gets here.
+set regexpengine=1
+" A 68030 needs longer than 2 s to highlight a full screen.
+set redrawtime=6000

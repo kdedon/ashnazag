@@ -37,7 +37,7 @@
  * Built with SYS81 (t_mac81.c), the same with Mac OS 8.1 (/macsys/S81),
  * without the user's session.
  * Built with SYS6 (t_mac6.c), A/UX 2.0.1's startmac runs System 6.0.7
- * from its own root, /a201, on the IIci's ROM in 4 MB; checks as t_mac's
+ * on the IIci's ROM in 4 MB, its libraries and ROM A/UX 2's; checks as t_mac's
  * up to the System file, then the Finder's desktop without an alert,
  * SysVersion $0607, the Apple and Special menus, and the startup disk's
  * window opened and closed.  The session ends from the Finder: the first
@@ -77,10 +77,10 @@ extern int getksym();
 #define	OTHERUID "101"		/* restart's user, group display */
 
 #ifdef SYS6
-#define	ROOT6	"/a201"
-#define	SYSDIR	ROOT6 "/mac/sys/Sys6"
-#define	SYS6DIR	ROOT6 "/mac/sys/System Folder"
-#define	TBSYS	"/mac/sys/System Folder"
+#define	ROOT6	"/usr/aux/aux2"
+#define	SYSDIR	"/mac/lib/env/6/Sys6"
+#define	SYS6DIR	"/mac/lib/env/6/System Folder"
+#define	TBSYS	SYS6DIR
 #define	SYSVER	0x0607
 #define	TNAME	"mac6"
 #define	SHOT	"mac6_"
@@ -1720,7 +1720,7 @@ fiddlog()
 static void
 startmac()
 {
-	static char *av[] = { "/mac/bin/startmac", 0 };
+	static char *av[] = { STARTMAC, 0 };
 	char pat[80], *q1, *o, *s, *z;
 	int p[2], st, id, fd;
 	long npriv0, npriv, nal0, free0;
@@ -1759,10 +1759,6 @@ startmac()
 		close(p[1]);
 		for (fd = 3; fd < 20; fd++)
 			close(fd);
-#ifdef SYS6
-		if (chroot(ROOT6) < 0 || chdir("/") < 0)
-			_exit(126);
-#endif
 		execve(av[0], av, macenv);
 		_exit(127);
 	}
@@ -4540,6 +4536,8 @@ char **argv;
 		t_check("sysfolder", rename(SYSDIR, SYS6DIR) == 0, "%s", T_ERR);
 		t_check("macscrn", system("/usr/bin/macscrn '" SYS6DIR "/System'") == 0, "unfitted");
 		sys6links(1);
+		t_check("listed", system("/sbin/sh " ENVSH " -l | /usr/bin/grep '^6$' > /dev/null") == 0,
+		    "startmac -l");
 		startmac();
 		sys6links(0);
 		rename(SYS6DIR, SYSDIR);

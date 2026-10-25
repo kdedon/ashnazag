@@ -38,6 +38,9 @@
 #define RD_MINMEM	0x400000	/* memory left to VM above end */
 #define RD_MAXPA	0x40000000	/* identity-mapped limit */
 #define RD_MAGIC	0x52614D44	/* 'RaMD' */
+#ifndef RD_PGSHIFT
+#define RD_PGSHIFT	12		/* page frame number shift */
+#endif
 
 #define BI_LAST		0x0000
 #define BI_RAMDISK	0x0006
@@ -65,6 +68,7 @@ extern struct bootobj swapfile;
 extern int cdevcnt;
 extern int nodev();
 extern paddr_t vtop();
+extern u_int pages_base, pages_end;
 extern void mac_puts(), mac_puthex(), vr_free();
 
 int ramopen(), ramclose(), ramread(), ramwrite();
@@ -320,7 +324,9 @@ register struct buf *bp;
 		if (cc > n)
 			cc = n;
 		pa = vtop(va, bp->b_proc);
-		if (pa == 0) {
+		/* a user page outside RAM (a device mapping) has no kernel address */
+		if (pa == 0 || (bp->b_proc && (pa >> RD_PGSHIFT < pages_base ||
+		    pa >> RD_PGSHIFT >= pages_end))) {
 			bp->b_error = EFAULT;
 			bp->b_flags |= B_ERROR;
 			break;

@@ -1,8 +1,10 @@
 #!/bin/sh
 # mksys6.sh -- the System 6 Mac environment of A/UX 2.0.1 from its CD
-# image: a root to run it in (chroot) with A/UX 2.0.1's startmac and
-# shared libraries, and System 6.0.7 with Finder 6.1.7 and MultiFinder
-# in /mac/sys/System Folder (AppleSingle files, as A/UX 2 keeps them).
+# image, as a tree to lay over the root: A/UX 2.0.1's startmac and
+# shared libraries at their A/UX paths under /usr/aux/aux2, where the
+# kernel finds an A/UX 2 program's libraries, and the template System
+# Folder, System 6.0.7 with Finder 6.1.7 and MultiFinder, in
+# /mac/lib/env/6 (AppleSingle files, as A/UX 2 keeps them).
 # A/UX 2's volumes report a desktop database, so the Finder needs the
 # Desktop Manager, _DTInit.
 #
@@ -60,18 +62,20 @@ def get(src, dst):
     os.chmod(p, 0o755 if i['mode'] & 0o111 else 0o644)
 
 for p in ('/mac/bin/startmac', '/shlib/libc1_s', '/shlib/libmac1_s'):
-    get(p, p)
+    get(p, '/usr/aux/aux2' + p)
 sf = '/mac/sys/System Folder'
 for n in ('System', 'Finder', 'MultiFinder', 'DA Handler', '%AUX Resources',
           'Patch.067C', 'Patch.0178', 'General', 'Keyboard', 'Key Layout', 'Mouse',
           'Color', 'Monitors', 'Sound', '+Layers', '+NMgrFix', 'Scrapbook File', '_DTInit'):
-    get(sf + '/' + n, sf + '/' + n)
+    get(sf + '/' + n, '/mac/lib/env/6/System Folder/' + n)
 EOF
+S="$OUT/mac/lib/env/6/System Folder"
 # the A/UX screen in colour; startmac fits the size to the display
-python3 "$AUX/tools/rsrcedit.py" "$OUT/mac/sys/System Folder/System" -a scrn 0 \
+python3 "$AUX/tools/rsrcedit.py" "$S/System" -a scrn 0 \
 	0001007a000ee0000000008077fea801ffffffff0000000001e002800000
 # Log Out in the Apple menu, a desk accessory in the System file
-sh "$D/logout/build.sh" "$OUT/tmp/logout" "$OUT/mac/sys/System Folder/System"
-rm -rf "$OUT/tmp/logout"
-mkdir -p "$OUT/tmp" "$OUT/etc"
-echo "root::0:0:root:/:/bin/sh" > "$OUT/etc/passwd"
+sh "$D/logout/build.sh" "$OUT/tmp/logout" "$S/System"
+rm -rf "$OUT/tmp"
+# a digest of the template: users' copies follow its changes
+(cd "$S" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) |
+	sha256sum | cut -c1-16 > "$S/.stamp"

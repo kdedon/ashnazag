@@ -110,11 +110,8 @@ $CC -c "$M/macdiag.c" -o "$W/macdiag.o"
 link68 "$R/usr/bin/macdiag" "$W/macdiag.o" "$W"/lm/*.o
 $CC -I"$AUX/kernel/mac/display" -c "$M/macscrn.c" -o "$W/macscrn.o"
 link68 "$R/usr/bin/macscrn" "$W/macscrn.o" "$W"/lm/*.o
-for c in envlock mac6; do
-	$CC -c "$M/$c.c" -o "$W/$c.o"
-done
+$CC -c "$M/envlock.c" -o "$W/envlock.o"
 link68 "$R/usr/bin/envlock" "$W/envlock.o"
-link68 "$R/usr/aux/lib/mac6" "$W/mac6.o"
 cp "$M/startmac" "$R/usr/bin/startmac"
 cp "$M/S05aux" "$R/etc/rc2.d/"
 chmod 755 "$R"/usr/bin/*

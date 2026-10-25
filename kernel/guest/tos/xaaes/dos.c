@@ -898,7 +898,7 @@ sys_m_xalloc(long size, short mode)
 {
 	(void)mode;
 	if (size == -1)
-		return mem_largest();
+		return mem_largest() > KEEP ? mem_largest() - KEEP : 0;
 	return (long)kmalloc_o(size, ME);
 }
 

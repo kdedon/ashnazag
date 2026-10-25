@@ -50,6 +50,36 @@ tos_level()
 	return tosc.t_vblpend ? 4 : 0;
 }
 
+/* the highest level the guest can take now */
+static int
+tos_dlevel()
+{
+	if (mfp_ready())
+		return 6;
+	return tosc.t_vblpend ? 4 : 0;
+}
+
+#define	PVTCSVC	(caddr_t)(TOSPV + (int)&((struct tospv *)0)->pv_tcsvc)
+
+/*
+ * Timer C stays in service, as on the MFP, until its handler's end
+ * clears pv_tcsvc: a handler that lowers the IPL is not entered again.
+ * A second at most, for a handler that never gets there.
+ */
+static void
+tos_tcpoll(gp)
+	struct guest_proc *gp;
+{
+	struct tosctr *t = &tosc;
+
+	if (!t->t_tcsvc)
+		return;
+	if (fuword(PVTCSVC) <= 0 || lbolt - t->t_tcsince > HZ)
+		t->t_tcsvc = 0;
+	else if (t->t_ipend[CH_TIMERC] && GUEST_VIPL(gp) < 6)
+		t->t_st.ts_tcheld++;
+}
+
 /*
  * Something may want the guest.  A masked request waits for the IPL to
  * drop (gp_vpend sends that through the trap tail); a sleeping guest is
@@ -60,13 +90,12 @@ tos_kick(rr)
 	int rr;
 {
 	struct tosctr *t = &tosc;
-	int l;
 
 	if (t->t_state != 1 || t->t_paused)
 		return;
-	l = tos_level();
-	t->t_gp->gp_vpend = l << 8;
-	if (l <= GUEST_VIPL(t->t_gp))
+	/* a Timer C in service waits for the IPL drop at its handler's end */
+	t->t_gp->gp_vpend = tos_level() << 8;
+	if (tos_dlevel() <= GUEST_VIPL(t->t_gp))
 		return;
 	if (t->t_sleeping)
 		wakeup((caddr_t)&t->t_sleeping);
@@ -84,19 +113,25 @@ tos_stop_insn(gp, r)
 	char *r;
 {
 	struct tosctr *t = &tosc;
-	int s;
+	int s, e;
 	long t0 = lbolt;
 
 	if (gp->gp_flags & TGF_SOLO) {
 		guest_trapret();
 		return;
 	}
-	s = guest_splhi();
 	t->t_st.ts_stop++;
-	while (t->t_state == 1 && tos_level() <= GUEST_VIPL(gp)) {
-		t->t_sleeping = 1;
-		if (sleep((caddr_t)&t->t_sleeping, (PZERO + 1) | PCATCH))
+	for (;;) {
+		tos_tcpoll(gp);		/* a Timer C still in service does not end it */
+		s = guest_splhi();
+		if (t->t_state != 1 || tos_dlevel() > GUEST_VIPL(gp))
 			break;
+		t->t_sleeping = 1;
+		e = sleep((caddr_t)&t->t_sleeping, (PZERO + 1) | PCATCH);
+		t->t_sleeping = 0;
+		if (e)
+			break;
+		guest_splx(s);
 	}
 	t->t_sleeping = 0;
 	gp->gp_flags |= GPF_IDROP;	/* the CPU takes the interrupt that ends stop */
@@ -155,8 +190,9 @@ tos_intr(gp, r)
 		if (!(u.u_sigflag & USTKCLEAR))
 			return;
 	}
+	tos_tcpoll(gp);
 	s = guest_splhi();
-	while (!t->t_paused && (l = tos_level()) > GUEST_VIPL(gp)) {
+	while (!t->t_paused && (l = tos_dlevel()) > GUEST_VIPL(gp)) {
 		/* the tick posts the carrier again; meanwhile the gate's fast paths stay open */
 		if (tos_hold(gp)) {
 			sigdelset(&gp->gp_proc->p_sig, TOS_SIG);
@@ -189,13 +225,16 @@ tos_intr(gp, r)
 			psignal(curproc, SIGSEGV);
 			return;
 		}
+		if (vec == 0x40 + CH_TIMERC && (t->t_flags & TEF_TCEOI) && suword(PVTCSVC, 1) == 0) {
+			t->t_tcsvc = 1;
+			t->t_tcsince = lbolt;
+		}
 		if (GR_FV(r) >> 12)
 			u.u_sigflag |= USTKCLEAR;
 		s = guest_splhi();
 	}
-	l = tos_level();
-	gp->gp_vpend = l << 8;
-	if (!t->t_paused && l <= GUEST_VIPL(gp)) {
+	gp->gp_vpend = tos_level() << 8;
+	if (!t->t_paused && tos_dlevel() <= GUEST_VIPL(gp)) {
 		t->t_held = 0;
 		sigdelset(&gp->gp_proc->p_sig, TOS_SIG);
 	}
@@ -216,7 +255,7 @@ tos_fsig(p, gp)
 	s = guest_splhi();
 	h = p->p_hold;
 	sigdelset(&p->p_hold, TOS_SIG);
-	if (tosc.t_gp != gp || (!tosc.t_paused && (tos_level() <= GUEST_VIPL(gp) || tos_hold(gp))))
+	if (tosc.t_gp != gp || (!tosc.t_paused && (tos_dlevel() <= GUEST_VIPL(gp) || tos_hold(gp))))
 		sigaddset(&p->p_hold, TOS_SIG);
 	n = __amix_fsig(p);
 	p->p_hold = h;

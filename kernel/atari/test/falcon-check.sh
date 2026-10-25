@@ -14,7 +14,7 @@
 # TOSROM: the TOS 4.04 image or its zip (default: tos404*.zip in the
 # repo root).  Skips (exit 0) without the ROM or Hatari.  HOPTS: more
 # run-hatari.sh options, e.g. "-c 060 -t 32" for a CT60 with 32 MB FastRAM.
-# STAGES: any of vga rgb emutos scsi emutos-scsi mod tos tosint tosloop x xtos xdm xdmboots mac6 xaaes (mod, tos and tosloop need an
+# STAGES: any of vga rgb emutos scsi emutos-scsi mod tos tosint tosloop cubase x xtos xdm xdmboots mac6 xaaes (mod, tos and tosloop need an
 # image made with TESTS=modadmin MODS=<mod.d>, tos also takes TOSENV=1; x one made with X11=<pkg>)
 # (default "vga rgb").  x: startx in 256 colours, typing into xterm, the
 # server stopped and the console back; then in 2 colours with the German
@@ -31,6 +31,10 @@
 # Ctrl-C to TOS, Ctrl-C on the console ends it and the login comes back.
 # xdmboots (the same image): BOOTS (default 5) boots, each to the xdm
 # login without a crash; root logs in and restarts the machine.
+# cubase (an image made with TOSENV=1 TESTS=tosstat and mkcubase.sh's Cubase):
+# Cubase 3.1 started CUBOOTS times (default 5) in mono, each to its Arrange
+# window within CUBWAIT seconds (default 900), no hardware access after;
+# skips (exit 0) when the image holds no Cubase.
 # xaaes (an image made with TOSENV=1 TESTS=t_xaaes TESTROOT=tests/build/tos/root):
 # t_xaaes as root, on EmuTOS: the checks needing no host line.
 # mac6 (an image made with MACENV=1): System 6's Finder desktop; Command-A
@@ -81,7 +85,7 @@ run() {		# stage monitor
 		"${KERNEL:-$AUX/kernel/build/unix-atari$CPU.elf}" "root=c?d0s1 nfcons" 3 $BM > /dev/null
 	# tosloop writes its own
 	[ ! -f "$T/falcon-$1-keys.txt" ] || sed "s|OUT/|$OUT/$1-|g" "$T/falcon-$1-keys.txt" > "$OUT/$1-keys.txt"
-	WAIT=${WAIT:-600} sh "$A/run-hatari.sh" -c $CPU $CPUOPT $HOPTS -r "${R-$ROM}" -d "$OUT/disk.img" -b ${BUS:-ide} -f 400000 -T ${3:-1500} \
+	WAIT=${WAIT:-600} sh "$A/run-hatari.sh" -c $CPU $CPUOPT $HOPTS -r "${R-$ROM}" -d "$OUT/disk.img" -b ${BUS:-ide} -f ${FRAMES:-400000} -T ${3:-1500} \
 		-o "$OUT/$1-final.png" -l "$OUT/$1.log" -K "$OUT/$1-keys.txt" -- \
 		--natfeats yes --monitor "$2" > "$OUT/$1-run.txt" 2>&1 || true
 	if grep -q 'key script' "$OUT/$1-run.txt"; then echo "[FAIL] $1: key script"; fail=1; fi
@@ -108,6 +112,9 @@ for s in $STAGES; do
 		! grep -q '^modfail=\|PANIC\|panic' "$OUT/mod.log.out" || { echo "[FAIL] module load"; fail=1; } ;;
 	tos)	run tos vga
 		check "$OUT/tos.log.out" 'auxreg-rc=0' 'mods-done' '\^C' 'log-done' 'starttos-left=0' 'xaaes-log=1'
+		# the 640x480 1-bit console: TOS in ST high, not TT high
+		m=$(grep -a 'starttos: screen mode' "$OUT/tos.log.out" | tail -1)
+		case $m in *'mode 200 '*) echo "[OK] $m" ;; *) echo "[FAIL] TOS not in ST high: $m"; fail=1 ;; esac
 		# the desktop, the console on the hot key, the desktop again, the shell after
 		# the console's Ctrl-C
 		python3 "$T/tosshot.py" desktop "$OUT/tos-1-desktop.png" || fail=1
@@ -158,7 +165,7 @@ for s in $STAGES; do
 		check "$OUT/xaaes.log.out" 'PASS xaaes.preempt' 'PASS xaaes.pfork' 'xaaes-rc=0'
 		! grep -q 'FAIL xaaes\|PANIC\|panic' "$OUT/xaaes.log.out" || { echo "[FAIL] xaaes"; fail=1; } ;;
 	mac6)	run mac6 vga
-		check "$OUT/mac6.log.out" 'uinter: ROM /etc/aux/rom, 512 KB, version 67C' 'startmac-left=0'
+		check "$OUT/mac6.log.out" 'ROMSize  *= 0x80000' 'ROMVersion  *= 0x67c' 'startmac-left=0'
 		! grep -q 'BUS ERROR\|PANIC\|panic' "$OUT/mac6.log.out" || { echo "[FAIL] mac6: fault notice or kernel error"; fail=1; }
 		python3 "$T/tosshot.py" differ "$OUT/mac6-1-desktop.png" "$OUT/mac6-2-open.png" || fail=1
 		python3 "$T/tosshot.py" differ "$OUT/mac6-2-open.png" "$OUT/mac6-3-console.png" || fail=1 ;;
@@ -194,6 +201,39 @@ for s in $STAGES; do
 		run tosloop vga $((n * 200 + 600))
 		i=1; while [ $i -le $n ]; do
 			python3 "$T/tosshot.py" desktop "$OUT/tosloop-$i.png" || fail=1
+			i=$((i + 1))
+		done ;;
+	cubase)
+		D=guest/TOS/CUBASE/CUBASE31
+		python3 "$T/homefile.py" "$IMG" $D || { echo "[SKIP] cubase: no ~$D on the image"; continue; }
+		n=${CUBOOTS:-5}
+		{ printf '%s\n' 'wait login:' 'type root\n' 'wait # '
+		i=1; while [ $i -le $n ]; do
+			# 10-second counters while the guest runs
+			printf '%s\n' 'type (until /tests/tosstat > /dev/null 2>&1; do sleep 5; done; while /tests/tosstat 10; do :; done) > /tmp/cs.log 2>&1 &\n'
+			printf "%s\n" "type /usr/bin/starttos -M -C /home/$D -v 2> /tmp/st.log\\n"
+			echo "shot $OUT/cubase-$i.png arrange"
+			# then the hot key to the console, whose Ctrl-C ends the session
+			printf 'sleep 30\nevent keydown 0x1d\nevent keydown 0x38\nevent keypress 0x01\nevent keyup 0x38\nevent keyup 0x1d\nsleep 5\n'
+			printf 'event keydown 0x1d\nevent keypress 0x2e\nevent keyup 0x1d\nwait ^C\nsleep 5\n'
+			printf "%s\n" "type sleep 12; sed 's/^/cs-$i: /' /tmp/cs.log; echo cub-$i-done\\n"
+			echo "wait cub-$i-done"
+			i=$((i + 1))
+		done
+		echo "debug quit 0"; } > "$OUT/cubase-keys.txt"
+		w=$WAIT; WAIT=${CUBWAIT:-900}
+		# about 50000 VBLs a start
+		FRAMES=$((n * 60000 + 100000))
+		run cubase vga $((n * WAIT + 600))
+		WAIT=$w FRAMES=
+		i=1; while [ $i -le $n ]; do
+			python3 "$T/tosshot.py" arrange "$OUT/cubase-$i.png" || fail=1
+			# 100 s at the Arrange window, before the one holding the end: no hardware access
+			# (movep is Cubase's own)
+			l=$(grep -a "^cs-$i: tosstat: absent" "$OUT/cubase.log.out" | tail -11 | head -10)
+			k=$(printf '%s\n' "$l" | grep -c 'absent 0 top 0 berr 0 buserr 0 iow 0 mmu 0 illegal 0[^0-9]*$')
+			if [ "$k" -eq 10 ]; then echo "[OK] cubase $i: steady"
+			else echo "[FAIL] cubase $i: $k of 10 samples steady"; fail=1; fi
 			i=$((i + 1))
 		done ;;
 	esac

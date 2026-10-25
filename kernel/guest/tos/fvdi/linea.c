@@ -843,6 +843,8 @@ long CDECL la_call(long op, long *r)
 
 	/* a direct call runs in user mode: the system variable stays */
 	la_screen(op < 16);
+	if ((op & 15) != 0 && (op & 15) != 2)
+		fb_drawn();
 	switch (op & 15) {
 	case 0:
 		r[D0] = r[A0] = (long)la;

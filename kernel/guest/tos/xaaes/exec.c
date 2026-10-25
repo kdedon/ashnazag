@@ -5,6 +5,8 @@
 #include "xamint.h"
 
 #define	INITIALTPA (128 * 1024L)
+#define	MINTMARK 0x4d694e54L	/* "MiNT" in the header's reserved long */
+#define	F_SMALLTPA 0x08
 
 struct prghdr {
 	short	magic;
@@ -90,9 +92,10 @@ reloc(long fd, char *text, long size)
 
 /*
  * The program at host path hp into a new TPA owned by k: stack bytes
- * past its BSS, or (0) INITIALTPA, as MiNT gives, so programs started
- * together each get room; they take more with Malloc.  Its basepage,
- * or 0 and *err.
+ * past its BSS, or (0) as MiNT gives: INITIALTPA to a MiNT-aware
+ * program, which takes more with Malloc; a plain TOS program gets the
+ * largest free block, less KEEP for XaAES when there is room.  Its
+ * basepage, or 0 and *err.
  */
 static BASEPAGE *
 prg_read(const char *hp, struct kp *k, long stack, long *err)
@@ -100,6 +103,7 @@ prg_read(const char *hp, struct kp *k, long stack, long *err)
 	struct prghdr h;
 	BASEPAGE *b;
 	long fd, need, size, r;
+	short big;
 
 	fd = hc(H_OPEN, 3, (long)hp, 0L, 0L);
 	if (fd < 0) {
@@ -112,10 +116,21 @@ prg_read(const char *hp, struct kp *k, long stack, long *err)
 		return 0;
 	}
 	need = 256 + h.tlen + h.dlen + h.blen;
-	size = need + (stack ? stack : INITIALTPA);
+	big = 0;
+	if (stack)
+		size = need + stack;
+	else {
+		size = mem_largest();
+		if (size > need + INITIALTPA + KEEP)
+			size -= KEEP;
+		if ((h.res == MINTMARK || (h.flags & F_SMALLTPA)) && size > need + INITIALTPA)
+			size = need + INITIALTPA;
+		else
+			big = 1;
+	}
 	if (size < need + 1024)
 		size = need + 1024;
-	b = kmalloc_o(size, k);
+	b = big ? kmalloc_largest(size, k) : kmalloc_o(size, k);
 	if (!b) {
 		hc(H_CLOSE, 1, fd);
 		*err = ENOMEM;
@@ -386,7 +401,8 @@ sys_p_exec(short mode, const void *p1, const void *p2, const void *p3)
 		strncpy(k->p.fname, p1, sizeof k->p.fname - 1);
 		proc_setstart(k, b);
 		ready(k);
-		xlog("Pexec %d %s: pid %d", mode, (const char *)p1, k->p.pid);
+		xlog("Pexec %d %s: pid %d tpa %lx-%lx, %ld free", mode, (const char *)p1, k->p.pid,
+		    b->p_lowtpa, b->p_hitpa, mem_largest());
 		if (mode == 100)
 			return k->p.pid;
 		return waitchild(k);

@@ -571,6 +571,51 @@ test_kmem()
 	close(fd);
 }
 
+/*
+ * sh started by popen keeps a command substitution's output on its heap,
+ * which it grows through faults above the break.
+ */
+static void
+test_shcat()
+{
+	static int size[] = { 16384, 65536, 65536 + 700, 100000 };
+	static char buf[4096];
+	char cmd[128], f[32], line[64];
+	FILE *p;
+	int i, fd, n, bad = 0;
+
+	for (i = 0; i < sizeof size / sizeof size[0]; i++) {
+		sprintf(f, "/tmp/shcat%d", i);
+		if ((fd = creat(f, 0644)) == -1) {
+			t_fail("sh_cat", "%s: %s", f, T_ERR);
+			return;
+		}
+		memset(buf, 'x', sizeof buf);
+		for (n = 63; n < sizeof buf; n += 64)
+			buf[n] = '\n';
+		for (n = 0; n < size[i]; n += sizeof buf)
+			write(fd, buf, size[i] - n < sizeof buf ? size[i] - n : sizeof buf);
+		close(fd);
+		sprintf(cmd, "x=`cat %s`; echo \"$x\" | wc -c 2>&1", f);
+		n = -1;
+		line[0] = 0;
+		if ((p = popen(cmd, "r")) != 0) {
+			if (fgets(line, sizeof line, p) != 0)
+				n = atoi(line);
+			line[strcspn(line, "\n")] = 0;
+			pclose(p);
+		}
+		unlink(f);
+		/* the substitution drops a final newline, echo adds one */
+		if (n != size[i] + (size[i] % 64 != 0)) {
+			t_fail("sh_cat", "%d bytes: sh printed \"%s\"", size[i], line);
+			bad++;
+		}
+	}
+	if (!bad)
+		t_pass("sh_cat");
+}
+
 int
 main()
 {
@@ -608,5 +653,6 @@ main()
 	test_stack();
 	test_highshared();
 	test_kmem();
+	test_shcat();
 	return t_done();
 }

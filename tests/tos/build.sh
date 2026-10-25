@@ -3,8 +3,8 @@
 # system C: folder with C:\AUTO\UTEST.PRG (checks the host drives and
 # the XBIOS sound calls),
 # STIKTEST.PRG (checks the STiK transport), LATEST.PRG (the Line-A calls
-# under fVDI), EXITTEST.PRG and SESSION.ACC
-# (the session's exit),
+# under fVDI), STSHOW.TOS (the ST screen and a program's own under
+# fVDI), EXITTEST.PRG and SESSION.ACC (the session's exit),
 # EmuTOS and the user's TOS ROM image.
 #
 #   sh tests/tos/build.sh outdir
@@ -99,6 +99,15 @@ python3 "$T/tos/elf2prg.py" "$O/l0.bin" "$O/l0x10000.bin" \
 	$((0x$end - $(wc -c < "$O/l0.bin"))) "$O/latest.prg"
 mkdir -p "$R/tos/linea"
 cp "$O/latest.prg" "$R/tos/linea/LATEST.PRG"
+# STSHOW.TOS: a text screen and a screen of its own under fVDI
+"$BIN/m68k-elf-as" -m68040 --register-prefix-optional -o "$O/stshow.o" "$T/tos/stshow.s"
+for base in 0 0x10000; do
+	"$BIN/m68k-elf-ld" --no-warn-rwx-segments -N -Ttext=$base -o "$O/t$base.elf" "$O/stshow.o"
+	"$BIN/m68k-elf-objcopy" -O binary "$O/t$base.elf" "$O/t$base.bin"
+done
+end=$("$BIN/m68k-elf-nm" "$O/t0.elf" | awk '$3 == "_end" { print $1 }')
+python3 "$T/tos/elf2prg.py" "$O/t0.bin" "$O/t0x10000.bin" \
+	$((0x$end - $(wc -c < "$O/t0.bin"))) "$R/tos/linea/STSHOW.TOS"
 # EXITTEST.PRG: the session's host calls; SESSION.ACC, the accessory making them
 "$BIN/m68k-elf-as" -m68040 --register-prefix-optional -o "$O/exit.o" "$T/tos/exit.s"
 for base in 0 0x10000; do

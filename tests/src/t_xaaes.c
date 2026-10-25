@@ -40,9 +40,11 @@
 #define	XADIR	"/tos/xaaes"
 #define	FVDIDIR	"/tos/fvdi"
 #define	TICKPRG	"/tos/xatick/XATICK.PRG"
+#define	ENVF	"id=emutos\nname=emutos\nbase=emutos\ntemplate=/tos/xaaes\ndesktop=xaaes\n"
 #define	RUNTICK	"run c:\\xatick.prg\r\nrun c:\\xabusy.prg\r\nrun c:\\xamisc.prg\r\n"
 #define	XTDIR	"/tos/xatick"
-#define	CDIR	"/tmp/xac"
+#define	XHOME	"/tmp/xah"
+#define	CDIR	XHOME "/TOS"
 #define	UDIR	"/tmp/xau"
 #define	LOG	CDIR "/MINT/XAMINT.LOG"
 #define	XALOG	CDIR "/MINT/XAAES.LOG"
@@ -303,6 +305,7 @@ cmake()
 
 	tree(CDIR, (char *)0);
 	tree(UDIR, (char *)0);
+	mkdir(XHOME, 0755);
 	tree(XADIR, CDIR);
 	tree(FVDIDIR, CDIR);
 	tree(tddir, CDIR "/TERADESK");
@@ -318,6 +321,11 @@ cmake()
 	}
 	mkdir(CDIR "/CLIPBRD", 0755);
 	mkdir(UDIR, 0755);
+	/* the environment's desktop setting starts XaAES */
+	if ((fd = creat(CDIR "/.env", 0644)) >= 0) {
+		write(fd, ENVF, strlen(ENVF));
+		close(fd);
+	}
 }
 
 static void
@@ -332,8 +340,8 @@ start()
 		close(p[0]);
 		dup2(p[1], 1);
 		dup2(p[1], 2);
-		putenv("HOME=/tmp");
-		execl(starttos, "starttos", "-rom", EMUTOS, "-v", "-u", UDIR, "-C", CDIR, (char *)0);
+		putenv("HOME=" XHOME);
+		execl(starttos, "starttos", "-rom", EMUTOS, "-v", "-u", UDIR, "-e", "emutos", (char *)0);
 		_exit(127);
 	}
 	close(p[1]);
@@ -646,7 +654,7 @@ run()
 	nap(2000);
 	relay();
 	t_check("tos_console", holds(HELLO, "ok") && logged(LOG, "(XAHELLO) code 5"),
-	    "XAHELLO.TOS read no 'ok' or did not end");
+	    "XAHELLO.TOS read no 'ok', did not end or got a small TPA");
 	/* a MiNT program, a Unix process, in another */
 	ptrto(690, 392);
 	host("click 1");

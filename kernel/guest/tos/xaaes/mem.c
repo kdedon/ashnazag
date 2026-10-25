@@ -1,7 +1,10 @@
 /*
  * mem.c -- one memory pool for the kernel and every process: blocks in
- * address order, first fit, each owned by a process (or the kernel) so
- * a process's memory goes when it exits.  The header's MEMREGION is
+ * address order, each owned by a process (or the kernel) so a process's
+ * memory goes when it exits.  The kernel's large blocks (stacks, Pfork
+ * copies) are the last fit, from the top; the rest the first fit.  So
+ * the short-lived ones leave no holes among programs' blocks and the
+ * free space between stays in one piece.  The header's MEMREGION is
  * what addr2mem hands out.
  */
 #include "xamint.h"
@@ -9,6 +12,7 @@
 #define	MAGIC	0x584d454dL
 #define	HDR	((sizeof(struct blk) + 15) & ~15L)
 #define	MINSPLIT 64
+#define	TOPSIZE	16384		/* kernel blocks this large come from the top */
 
 struct blk {
 	MEMREGION	m;
@@ -66,29 +70,87 @@ split(struct blk *b, unsigned long n)
 	b->m.len = n;
 }
 
-void *
-kmalloc_o(unsigned long n, struct kp *owner)
+/* b in use by owner; spl s again */
+static void *
+take(struct blk *b, struct kp *owner, short s)
 {
-	struct blk *b;
-	short s;
-
-	n = (n + 15) & ~15L;
-	if (n == 0)
-		n = 16;
-	s = xa_spl7();
-	for (b = first; b; b = b->next)
-		if (!b->used && b->m.len >= n)
-			break;
-	if (!b) {
-		xa_splx(s);
-		xlog("out of memory: %ld bytes", n);
-		return 0;
-	}
-	split(b, n);
 	b->used = 1;
 	b->owner = owner;
 	xa_splx(s);
 	return (void *)b->m.loc;
+}
+
+/* the last n bytes of b as a block of their own when the rest is worth one */
+static struct blk *
+split_end(struct blk *b, unsigned long n)
+{
+	struct blk *r;
+
+	if (b->m.len < n + HDR + MINSPLIT)
+		return b;
+	r = (struct blk *)(b->m.loc + b->m.len - n - HDR);
+	bzero(r, HDR);
+	r->magic = MAGIC;
+	r->m.loc = (long)r + HDR;
+	r->m.len = n;
+	r->m.links = 1;
+	r->next = b->next;
+	r->prev = b;
+	if (b->next)
+		b->next->prev = r;
+	b->next = r;
+	b->m.len -= n + HDR;
+	return r;
+}
+
+void *
+kmalloc_o(unsigned long n, struct kp *owner)
+{
+	struct blk *b, *fit = 0;
+	short s, top;
+
+	n = (n + 15) & ~15L;
+	if (n == 0)
+		n = 16;
+	top = !owner && n >= TOPSIZE;
+	s = xa_spl7();
+	for (b = first; b; b = b->next)
+		if (!b->used && b->m.len >= n) {
+			fit = b;
+			if (!top)
+				break;
+		}
+	if (!fit) {
+		xa_splx(s);
+		xlog("out of memory: %ld bytes", n);
+		return 0;
+	}
+	b = fit;
+	if (top)
+		b = split_end(b, n);
+	else
+		split(b, n);
+	return take(b, owner, s);
+}
+
+/* n bytes at the start of the largest free block: a plain TOS program's TPA */
+void *
+kmalloc_largest(unsigned long n, struct kp *owner)
+{
+	struct blk *b, *fit = 0;
+	short s;
+
+	n = (n + 15) & ~15L;
+	s = xa_spl7();
+	for (b = first; b; b = b->next)
+		if (!b->used && (!fit || b->m.len > fit->m.len))
+			fit = b;
+	if (!fit || fit->m.len < n) {
+		xa_splx(s);
+		return 0;
+	}
+	split(fit, n);
+	return take(fit, owner, s);
 }
 
 static void

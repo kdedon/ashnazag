@@ -10,7 +10,9 @@
 # sourced in order).  apkg installs every package of the catalog over
 # HTTP from the host; the host logs in over SSH when a check prints
 # sshwait.  A check prints NAME=0 when it passes.  Results go to the
-# printer port (outdir/serial-b.log).
+# printer port (outdir/serial-b.log).  APKG=dir: an image without apkg
+# gets dir's APKGENG-*.pkg from the stock pkgadd, then APKG-*.pkg from
+# the engine's.
 set -e
 D=$(cd "$(dirname "$0")" && pwd)
 AUX=$(cd "$D/../../.." && pwd)
@@ -25,6 +27,7 @@ rm -rf "$OUT/pk" "$OUT/hostk" "$OUT/hostk.pub"
 mkdir -p "$OUT/pk/rel"
 cp -R "$REL/catalog" "$REL/catalog.md5" "$REL/pkgs" "$OUT/pk/rel/"
 cp "$D"/*.t "$OUT/pk/"
+[ -z "$APKG" ] || { mkdir -p "$OUT/pk/apkg"; cp "$APKG"/APKGENG-*.pkg "$APKG"/APKG-*.pkg "$OUT/pk/apkg/"; }
 ssh-keygen -q -t ed25519 -N '' -f "$OUT/hostk"
 cp "$OUT/hostk.pub" "$OUT/pk/"
 PORT=ptyrun
@@ -35,9 +38,17 @@ HP=$(free) SP=$(free)
 cat > "$OUT/pk/t.sh" <<EOI
 H=10.0.2.2:$HP A="-n -a envpkg"
 PATH=/opt/amix/bin:\$PATH:/usr/apkg/bin; export PATH
-mkdir -p /tmp/apkgc
+# downloads and pkgadd's spool on disk 1: the root holds only what installs
+mkdir -p /mnt/apkgc /mnt/tmp; TMPDIR=/mnt/tmp; export TMPDIR
+for p in /mnt/apkg/APKGENG-*.pkg /mnt/apkg/APKG-*.pkg; do
+	[ -f \$p ] && [ ! -x /usr/apkg/bin/apkg ] || continue
+	e=/usr/sbin/pkgadd; [ -x /usr/apkg/bin/pkgadd ] && e=/usr/apkg/bin/pkgadd
+	n=\`basename \$p | sed 's/-.*//'\`
+	\$e -n -a /var/sadm/install/admin/envpkg -d \$p \$n < /dev/null > /tmp/i.out 2>&1 && pkginfo -q \$n && echo setup-\$n=0 ||
+		{ echo setup-\$n=1; tail -5 /tmp/i.out; }
+done
 c=/tmp/rel.conf
-printf 'repo=%s\npkgadd=/usr/sbin/pkgadd\npkgrm=/usr/sbin/pkgrm\ncachedir=/tmp/apkgc\nadmin=/var/sadm/install/admin/envpkg\n' \
+printf 'repo=%s\ncachedir=/mnt/apkgc\nadmin=/var/sadm/install/admin/envpkg\n' \
 	file:///mnt/rel > \$c
 apkg -c \$c update > /dev/null 2>&1 && echo apkgfile=0 || echo apkgfile=1
 sed "s|^repo=.*|repo=http://\$H/|" \$c > \$c.h
@@ -54,7 +65,7 @@ EOI
 (cd "$OUT/pk" && find . ! -name . | sed 's|^\./||') | while read -r f; do
 	if [ -d "$OUT/pk/$f" ]; then echo "d /$f 755 0 3"; else echo "f /$f 755 0 3 $f"; fi
 done > "$OUT/pk.manifest"
-python3 "$AUX/kernel/mac/diskroot/mkufs.py" -s 48 -r "$OUT/pk" -m /mnt \
+python3 "$AUX/kernel/mac/diskroot/mkufs.py" -s 96 -r "$OUT/pk" -m /mnt \
 	"$OUT/pk.manifest" "$OUT/pk.img" > /dev/null
 (cd "$REL" && exec python3 -m http.server -b 127.0.0.1 "$HP") > "$OUT/http.log" 2>&1 &
 HTTPD=$!
@@ -65,7 +76,7 @@ QEXTRA="-g 640x480x8 $D1 -nic user,hostfwd=tcp:127.0.0.1:$SP-:22" setsid sh "$AU
 	--tmo 2400 "$ROM" "$IMG" 128 "$OUT" \
 	wait:150 'type:root\n' wait:5 'type:\n' wait:10 \
 	'type:test -b /dev/dsk/c1d0s0 || mknod /dev/dsk/c1d0s0 b 18 1\n' wait:3 \
-	'type:mount -F ufs -r /dev/dsk/c1d0s0 /mnt\n' wait:5 \
+	'type:mount -F ufs /dev/dsk/c1d0s0 /mnt\n' wait:5 \
 	'type:sh /mnt/t.sh > /dev/term/b 2>&1\n' wait:2300 quit > "$OUT/run.log" 2>&1 &
 QEMU=$!
 # timeout runs QEMU in a process group of its own

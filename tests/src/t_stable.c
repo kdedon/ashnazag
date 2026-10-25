@@ -50,11 +50,13 @@
 #define	TLOW	0x744c4f57		/* 'tLOW', Mac RAM */
 #define	MACVOL	"/macsys"
 #define	MACDEV	"/dev/dsk/c1d0s0"
-#define	ROOT6	"/a201"
-#define	SYS6DIR	ROOT6 "/mac/sys/System Folder"
+#define	ROOT6	"/usr/aux/aux2"
+#define	SYS6DIR	"/mac/lib/env/6/System Folder"
 #define	EMUTOS	"/etc/tos/emutos.img"
 #define	CDIR	"/tmp/stc"
 #define	UDIR	"/tmp/stu"
+#define	XHOME	"/tmp/sth"		/* the xaaes run's home: its C: is ~/TOS */
+#define	XCDIR	XHOME "/TOS"
 #define	CPMH	"/tmp/stcpm"
 #define	AMISYS	"/amiga/sys"
 #define	AMIDEV	"/dev/dsk/c0d0s0"
@@ -81,6 +83,7 @@ struct snap {
 static int hfd = -1, hseq, ufd = -1, cin = -1;
 static char hrep[160];
 static long base = -1;		/* host load at rest, per mille */
+static long busy;		/* the machine's busy share over load()'s time, per mille */
 static char *sys;		/* the Mac's System Folder */
 static int boxflag;
 static struct env *cur;
@@ -597,7 +600,7 @@ macprep(e)
 		if (rename(e->need, SYS6DIR) < 0)
 			return 0;
 		sys6links(1);
-		sys = "/mac/sys/System Folder";
+		sys = SYS6DIR;
 	} else if (strncmp(e->need, MACVOL, strlen(MACVOL)) == 0)
 		boxflag = 29;
 	if (boxflag) {
@@ -639,8 +642,8 @@ macexec(e)
 	env[3] = mem;
 	env[4] = 0;
 	system("/usr/bin/rm -rf /tmp/.mac");
-	if (strcmp(e->name, "mac6") == 0 && (chroot(ROOT6) < 0 || chdir("/") < 0))
-		_exit(126);
+	if (strcmp(e->name, "mac6") == 0)
+		av[0] = ROOT6 "/mac/bin/startmac";
 	execve(av[0], av, env);
 }
 
@@ -720,10 +723,13 @@ tosprep(e)
 		b[n > 0 ? n : 0] = 0;
 		wfile(CDIR "/EMUDESK.INF", b);
 	} else {
-		tree("/tos/xaaes", CDIR);
-		tree("/tos/fvdi", CDIR);
-		tree("/tos/teradesk/TERADESK", CDIR "/TERADESK");
-		mkdir(CDIR "/CLIPBRD", 0755);
+		tree(XCDIR, (char *)0);
+		mkdir(XHOME, 0755);
+		tree("/tos/xaaes", XCDIR);
+		tree("/tos/fvdi", XCDIR);
+		tree("/tos/teradesk/TERADESK", XCDIR "/TERADESK");
+		mkdir(XCDIR "/CLIPBRD", 0755);
+		wfile(XCDIR "/.env", "id=emutos\nbase=emutos\ndesktop=xaaes\n");
 	}
 	return 1;
 }
@@ -732,6 +738,11 @@ static void
 tosexec(e)
 	struct env *e;
 {
+	if (strcmp(e->name, "xaaes") == 0) {
+		putenv("HOME=" XHOME);
+		execl("/tos/bin/starttos", "starttos", "-rom", EMUTOS, "-u", UDIR, "-e", "emutos",
+		    (char *)0);
+	}
 	putenv("HOME=/tmp");
 	execl("/tos/bin/starttos", "starttos", "-rom", EMUTOS, "-u", UDIR, "-C", CDIR, (char *)0);
 }
@@ -741,6 +752,7 @@ tosdone(e)
 	struct env *e;
 {
 	tree(CDIR, (char *)0);
+	tree(XCDIR, (char *)0);
 	tree(UDIR, (char *)0);
 }
 
@@ -884,13 +896,13 @@ winexec(e)
 
 static struct env envs[] = {
 	{ "mac7", "/mac/sys/Sys7", "uinter", 200, macprep, macexec, macdone, 0, 0 },
-	{ "mac6", ROOT6 "/mac/sys/Sys6", "uinter", 200, macprep, macexec, macdone, 0, 0 },
+	{ "mac6", "/mac/lib/env/6/Sys6", "uinter", 200, macprep, macexec, macdone, 0, 0 },
 	{ "mac76", MACVOL "/S761", "uinter", 300, macprep, macexec, macdone, 0, macout },
 	{ "mac81", MACVOL "/S81", "uinter", 400, macprep, macexec, macdone, 0, macout },
 	{ "emudesk", "/tos/bin/starttos", "tosguest", 150, tosprep, tosexec, tosdone, CDIR "/.env", 0 },
 	{ "teradesk", "/tos/teradesk/TERADESK/DESKTOP.PRG", "tosguest", 150, tosprep, tosexec,
 	    tosdone, CDIR "/.env", 0 },
-	{ "xaaes", "/tos/xaaes/MINT", "tosguest", 200, tosprep, tosexec, tosdone, CDIR "/.env", 0 },
+	{ "xaaes", "/tos/xaaes/MINT", "tosguest", 200, tosprep, tosexec, tosdone, XCDIR "/.env", 0 },
 	{ "amiga", "/tests/amiga/startamiga", "amigaguest", 150, amiprep, amiexec, amidone, 0, 0 },
 	{ "cpm", "/cpm/bin/startcpm", "cpmguest", 90, cpmprep, cpmexec, cpmdone,
 	    CPMH "/CPM/t/.env", cpmout },
@@ -961,7 +973,7 @@ load(pid, ms, hl, cl)
 	procs(pid, &p0, 0);
 	h = hostcpu(&c0, &w0);
 	t0 = t_now_ms();
-	nap(ms);
+	busy = t_busy(ms);
 	h = hostcpu(&c1, &w1) && h;
 	procs(pid, &p1, 0);
 	dt = t_now_ms() - t0;
@@ -1195,8 +1207,8 @@ run(e)
 			procs(pid, (long *)0, 1);
 			sprintf(w, "shot %s_idle", e->name);
 			host(w);
-			t_info(e->name, "idle load %ld.%ld%% charged %ld.%ld%%", hl / 10, (hl < 0 ? -hl : hl) % 10,
-			    cl / 10, cl % 10);
+			t_info(e->name, "idle load %ld.%ld%% charged %ld.%ld%% busy %ld.%ld%%", hl / 10,
+			    (hl < 0 ? -hl : hl) % 10, cl / 10, cl % 10, busy / 10, (busy < 0 ? -busy : busy) % 10);
 			sprintf(n, "%s_idle_load", e->name);
 			if (hl != -1 || base > 0)
 				t_check(n, hl <= GATE * 10, "%ld per mille", hl);

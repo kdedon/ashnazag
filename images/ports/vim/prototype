@@ -1,0 +1,4 @@
+i pkginfo=pkginfo
+s none /opt/amix/bin/vimdiff=/opt/amix/bin/vim
+s none /opt/amix/bin/rvim=/opt/amix/bin/vim
+s none /opt/amix/bin/rview=/opt/amix/bin/vim

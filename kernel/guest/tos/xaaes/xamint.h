@@ -196,7 +196,9 @@ long xa_unserved(short n);
 /* mem.c */
 void mem_init(long lo, long hi);
 void *kmalloc_o(unsigned long n, struct kp *owner);
+void *kmalloc_largest(unsigned long n, struct kp *owner);
 void kfree_any(void *p);
+#define	KEEP	(64 * 1024L)	/* left free by programs for the layer and XaAES */
 long mem_largest(void);
 long mem_shrink(void *p, long n);
 void mem_freeproc(struct kp *k);

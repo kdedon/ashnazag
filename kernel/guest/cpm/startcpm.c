@@ -456,10 +456,10 @@ conin()
 		c = peeked;
 		peeked = -1;
 	} else {
-		/* a process that attached the console after we waited reads first */
+		/* a process that attached the console after we waited reads first; input that can't be polled is read */
 		pf.fd = cin;
 		pf.events = POLLIN;
-		while (poll(&pf, 1L, -1) < 0 || xconbusy())
+		while ((poll(&pf, 1L, -1) < 0 && errno == EINTR) || xconbusy())
 			xconwait();
 		do
 			n = read(cin, (char *)&c, 1);

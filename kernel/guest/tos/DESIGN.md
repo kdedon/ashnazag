@@ -39,7 +39,7 @@ A ROM in which a required routine is not found is refused at start, with its nam
 |---|---|---|---|
 | any absent or present chip | `check_read_byte` (all machine, RAM, sound, NVRAM, IDE, blitter, cartridge-space probes) | `move.l sp,d1; move.l $8.w,a1; lea (pc),a0; move.l a0,$8.w; moveq #0,d0` | host call: present or absent from the environment's machine table (constants) |
 | MFP Timer C, 200 Hz | `int_timerc`, set up by `xbtimer(2, ...)` | vector $114 | host timer raises level 6 vector $114 |
-| | its in-service clear | `move.b #$df,$fffffa11.w` (or `bclr #5`) before `rte` | `bra.s` to the `rte` |
+| | its in-service clear | `move.b #$df,$fffffa11.w` (or `bclr #5`) before `rte` | `clr.l` of the module's in-service flag: Timer C is not taken again until then, as on the MFP |
 | VBL | `int_vbl` | vector $70 | host timer raises level 4 |
 | MFP timers A, B, D | `xbtimer` | XBIOS 31 | timers A and B: host timer at the requested rate, vector from the MFP table; D (delay calibration) never fires, so EmuTOS keeps its default loop counts |
 | MFP enables | `jdisint`, `jenabint` (and `mfpint`, which calls them) | XBIOS 26, 27 | host calls: the module's enable mask; a disabled channel drops what it owed |

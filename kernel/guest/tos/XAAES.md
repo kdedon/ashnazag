@@ -24,8 +24,9 @@ the MiNT calls and XaAES's module interface (kentry).
   proc`, `struct file`, `kentry`, `dos_vecs` and the GEMDOS argument
   layout are FreeMiNT's; trap #1 copies the caller's raw arguments to the
   function, as FreeMiNT does.  FreeMiNT's libkern is linked in.
-- Boot: EmuTOS runs AUTO; XAMINT.PRG stays resident when
-  `C:\MINT\XAAES\XAAES.KM` exists and takes `exec_os`, so the shell
+- Boot: EmuTOS runs AUTO; XAMINT.PRG stays resident when the session's
+  desktop is XaAES (a cartridge word starttos sets) and
+  `C:\MINT\XAAES\XAAES.KM` exists, and takes `exec_os`, so the shell
   process TOS starts after AUTO becomes MiNT's root (pid 0).  It hooks
   trap #1/#2, `etv_timer` and the fault vectors, adds the `MiNT` cookie
   and calls `init_km` in a loader process (pid 1) whose environment names
@@ -38,8 +39,12 @@ the MiNT calls and XaAES's module interface (kentry).
   switched out after two 20 ms ticks.  The root is the idle loop: due timeouts run
   there (or at a return to user mode), never inside another's sleep;
   select waiters are polled; idle is `stop`.
-- Programs get a 128 KB initial TPA past their BSS, as MiNT gives, and
-  more with Malloc; memory is one pool, freed per process at exit.
+- TPA, as MiNT gives: a plain TOS program gets the largest free block,
+  less 64 KB for XaAES when there is room; a MiNT-aware one (`MiNT` in
+  its header, or the small-TPA flag) at most 128 KB past its BSS, and
+  more with Malloc.  Memory is one pool, freed per process at exit;
+  the layer's blocks of 16 KB and more (stacks, Pfork copies) come from
+  its top, so programs' free space stays in one piece.
 - AES: XaAES's trap #2 handler runs in the caller's context; VDI calls
   pass on to fVDI.  Mouse: moose on fVDI's vex vectors and the VBL
   queue.  Keyboard: `u:\dev\console` over BIOS Bconin, polled.
@@ -81,9 +86,9 @@ the MiNT calls and XaAES's module interface (kentry).
 
 ## Use
 
-`starttos -e xaaes` (guest's image has it); `starttos -e NAME -b xaaes` makes
-another.  TeraDesk is XaAES's shell (`XAAES.CNF`).  Plain EmuTOS
-environments are unchanged.  `XAAES=deb` at build time gives XaAES's
+`desktop=xaaes` in the environment's `.env`, or `starttos -X xaaes` for one
+session; every C: has XaAES's files.  TeraDesk is XaAES's shell
+(`XAAES.CNF`).  `-C` and `-i` boot single TOS.  `XAAES=deb` at build time gives XaAES's
 diagnostics in the layer's log.
 
 ## Limits

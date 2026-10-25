@@ -693,6 +693,60 @@ test_statvfs()
 	    strcmp(v.f_basetype, "s5") == 0, "implausible values");
 }
 
+/*
+ * A superblock write rewrites the device page holding it, which also holds
+ * the first inode blocks: it must not put back an older copy of them.
+ * Each pass: a file is made (superblock written), the root directory's
+ * inode (2) gets a new time and reaches the disk, the file is removed
+ * (superblock written again); the raw inode must keep the time.
+ */
+static void
+test_sb_inodes()
+{
+	struct stat sb, rb;
+	struct statvfs v;
+	struct utimbuf ut;
+	char path[64], ino[512];
+	long t0, t;
+	int fd, rfd, i;
+
+	if (stat("/", &sb) == -1 || stat("/dev/dsk/rd0", &rb) == -1 || sb.st_dev != rb.st_rdev ||
+	    statvfs("/", &v) == -1 || v.f_bsize > 1024 || strcmp(v.f_basetype, "s5") != 0 ||
+	    (rfd = open(RAWDEV, O_RDONLY)) < 0) {
+		t_skip("sb_inodes", "root is not s5 on rd0 with blocks of at most 1 KB");
+		return;
+	}
+	t0 = sb.st_mtime;
+	sprintf(path, D "/sbi");
+	for (i = 0; i < 4; i++) {
+		fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
+		t_fill(fd, 4096, i);
+		close(fd);
+		sync();
+		ut.actime = ut.modtime = 600000000L + i;
+		utime("/", &ut);
+		sync();
+		unlink(path);
+		sync();
+		if (!raw_read(rfd, 2 * (long)v.f_bsize, ino, 512L)) {
+			t_fail("sb_inodes", "inode read: %s", T_ERR);
+			break;
+		}
+		t = *(long *)(ino + 64 + 56);	/* inode 2's di_mtime */
+		if (t != 600000000L + i) {
+			t_fail("sb_inodes", "pass %d: root inode mtime on disk %ld, want %ld", i, t,
+			    600000000L + i);
+			break;
+		}
+	}
+	if (i == 4)
+		t_pass("sb_inodes");
+	close(rfd);
+	ut.actime = ut.modtime = t0;
+	utime("/", &ut);
+	sync();
+}
+
 int
 main()
 {
@@ -701,6 +755,7 @@ main()
 	test_statvfs();
 	test_sizes();
 	test_raw_readback();
+	test_sb_inodes();
 	test_cold();
 	test_large();
 	test_misc_io();

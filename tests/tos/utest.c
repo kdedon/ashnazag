@@ -397,6 +397,8 @@ main()
 	check("irq_movesr", (r = irqtest(2)) == 0, r);
 	check("irq_mask", (r = irqtest(3)) == 0, r);
 	check("irq_nest", (r = irqtest(4)) == 0, r);
+	r = irqtest(5);
+	check("irq_tcbusy", r == 0, r);
 
 	check("trap9", (r = traptest9()) == 0, r);
 	check("trap10", (r = traptest10()) == 0, r);

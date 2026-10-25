@@ -618,20 +618,28 @@ vblvideo()
 
 /*
  * Timer C's in-service clear at the end of its handler: `move.b
- * #$df,$fffffa11.w` or `bclr #5,$fffffa11.w`, then rte.  The host timer
- * has no in-service state; it becomes `bra.s` to the rte.
+ * #$df,$fffffa11.w` or `bclr #5,$fffffa11.w`, then rte.  It becomes
+ * `clr.l` of pv_tcsvc, the in-service state the module keeps.
  */
+int	tos_tceoi;	/* patched */
+
 static void
 timerc()
 {
 	unsigned char *p = (unsigned char *)rbase, *e = p + rsize - 8;
+	unsigned long a = TOSPV + (int)&((struct tospv *)0)->pv_tcsvc;
 
 	for (; p < e; p += 2)
 		if (((w16(p) == 0x11fc && w16(p + 2) == 0xdf) ||
 		    (w16(p) == 0x08b8 && w16(p + 2) == 5)) && w16(p + 4) == 0xfa11 &&
 		    w16(p + 6) == 0x4e73) {
-			p[0] = 0x60;
-			p[1] = 4;
+			p[0] = 0x42;
+			p[1] = 0xb9;
+			p[2] = a >> 24;
+			p[3] = a >> 16;
+			p[4] = a >> 8;
+			p[5] = a;
+			tos_tceoi = 1;
 		}
 }
 

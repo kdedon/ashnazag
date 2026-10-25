@@ -36,3 +36,36 @@ Lvt_ret:
 	unlk	%fp
 	rts
 	.balign	4
+
+| prmapin(p, va, writing): /proc's kernel address for a locked user page,
+| 0 for a frame outside RAM (a device mapping), which has none.
+	.globl	prmapin
+prmapin:
+	movel	%sp@(4),%sp@-		| p
+	movel	%sp@(12),%sp@-		| va
+	jsr	vtop
+	addqw	&8,%sp
+	movel	%d0,%d1
+	lsrl	&8,%d1
+	lsrl	&4,%d1			| page frame
+	cmpl	pages_base,%d1
+	bcsw	Lpm_none
+	cmpl	pages_end,%d1
+	bccw	Lpm_none
+	moveal	%d0,%a0
+	rts
+Lpm_none:
+	moveq	&0,%d0
+	moveal	%d0,%a0
+	rts
+
+| /proc's copy of one page: no kernel address is EFAULT.
+	.globl	dbg_uiomove_publish
+dbg_uiomove_publish:
+	tstl	%sp@(4)
+	beqw	Lpu_fault
+	jmp	__amix_dbg_uiomove_publish
+Lpu_fault:
+	moveq	&14,%d0			| EFAULT
+	moveal	%d0,%a0
+	rts
