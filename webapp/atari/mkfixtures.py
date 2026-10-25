@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""mkfixtures.py BOOTSEC LOADER OUTDIR -- write the test fixtures.
+"""mkfixtures.py BOOTSEC LOADER PRG OUTDIR -- write the test fixtures.
 
 A 512 MiB disk (4 MiB boot, 128 MiB root, 64 MiB swap, 312 MiB /home) gets
-the boot path from instboot.py; rootsec.bin and axb.bin are read back from
-it.  kernel.elf is a minimal m68k ELF with one loadable segment.
+the boot path from mkgemboot.py and instboot.py; rootsec.bin, axb.bin and
+gem.bin (the GEMDOS tail partition) are read back from it.  kernel.elf is a minimal m68k ELF with one loadable segment.
 """
 import os, struct, subprocess, sys, tempfile
 
 SEC = 512
 HERE = os.path.dirname(os.path.abspath(__file__))
 INST = os.path.join(HERE, '..', '..', 'kernel', 'atari', 'instboot.py')
+GEMB = os.path.join(HERE, '..', '..', 'kernel', 'atari', 'mkgemboot.py')
 
 
 def kernel():
@@ -34,7 +35,7 @@ def rootsector(disk, parts):
     return rs
 
 
-def main(bootsec, loader, out):
+def main(bootsec, loader, prg, out):
     os.makedirs(out, exist_ok=True)
     kern = kernel()
     with open(os.path.join(out, 'kernel.elf'), 'wb') as f:
@@ -48,6 +49,8 @@ def main(bootsec, loader, out):
         kf = os.path.join(d, 'kernel.elf')
         with open(kf, 'wb') as f:
             f.write(kern)
+        subprocess.run([sys.executable, GEMB, img, prg], check=True,
+                       stdout=subprocess.DEVNULL)
         subprocess.run([sys.executable, INST, img, bootsec, loader, kf,
                         'root=c0d0s1', '3'], check=True,
                        stdout=subprocess.DEVNULL)
@@ -55,12 +58,16 @@ def main(bootsec, loader, out):
             rs = f.read(SEC)
             f.seek(64 * SEC)
             axb = f.read(17 * SEC)
+            f.seek((512 << 20) - (3 << 20))
+            gem = f.read()
     with open(os.path.join(out, 'rootsec.bin'), 'wb') as f:
         f.write(rs)
     with open(os.path.join(out, 'axb.bin'), 'wb') as f:
         f.write(axb)
+    with open(os.path.join(out, 'gem.bin'), 'wb') as f:
+        f.write(gem)
 
 
-if len(sys.argv) != 4:
+if len(sys.argv) != 5:
     sys.exit(__doc__)
 main(*sys.argv[1:])

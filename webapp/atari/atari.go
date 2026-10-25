@@ -1,6 +1,8 @@
 // Package atari writes the Falcon disk layout: an AHDI root sector with
 // boot code, a boot partition (AXB) holding the loader, command line and
-// kernel, then root (AXR), swap (AXS) and /home (AXU) partitions.
+// kernel, then root (AXR), swap (AXS) and /home (AXU) partitions, and a
+// FAT16 tail partition (ICD entry GEM) whose \AUTO\AXBOOT.PRG lets EmuTOS
+// start the loader.
 package atari
 
 import (
@@ -18,6 +20,8 @@ var (
 	loader []byte
 	//go:embed axbload-nosv.bin
 	loaderNoSV []byte
+	//go:embed axboot.prg
+	autoPrg []byte
 )
 
 const (
@@ -26,6 +30,12 @@ const (
 	loadMax  = 15 * sector
 	cmdSec   = 15
 	kernSec  = 16
+	modTab   = 256
+	modMax   = 8
+	icd      = 0x156
+	gemSec   = 3 * mib
+	gemFat   = (gemSec*2 + sector - 1) / sector
+	gemData  = 1 + 2*gemFat + 32 // boot sector, two FATs, 512 root entries
 	axbStart = 64
 	mib      = 2048 // sectors per MiB
 	timeout  = 3
@@ -43,13 +53,21 @@ type Params struct {
 	Root, Home       io.ReaderAt
 	RootMiB, HomeMiB int
 	NoSuperVidel     bool // boot with the loader that has no SuperVidel probe
+	Modules          []Module
+}
+
+// Module is a boot module the loader reads from AXB.
+type Module struct {
+	Name string
+	Data []byte
 }
 
 // Sizes returns the boot partition and /home sizes in MiB for a disk, both
-// in 4 MiB steps, as the disk is laid out.
-func Sizes(diskMiB, kernelSize, rootMiB, swapMiB int) (axb, home int, err error) {
-	axb = (kernelSize + kernSec*sector + 4<<20 - 1) / (4 << 20) * 4
-	home = (diskMiB - axb - rootMiB - swapMiB - 1) / 4 * 4
+// in 4 MiB steps, as the disk is laid out. bootSize is the kernel's and boot
+// modules' bytes.
+func Sizes(diskMiB, bootSize, rootMiB, swapMiB int) (axb, home int, err error) {
+	axb = (bootSize + (kernSec+modMax)*sector + 4<<20 - 1) / (4 << 20) * 4
+	home = (diskMiB - axb - rootMiB - swapMiB - 4) / 4 * 4
 	if home < 4 {
 		return 0, 0, fmt.Errorf("the disk is too small for this root and swap")
 	}
@@ -76,6 +94,11 @@ func RootSector(diskMiB, axbMiB, rootMiB, swapMiB, homeMiB int) []byte {
 		be.PutUint32(e[8:], uint32(p.n))
 		st += uint32(p.n)
 	}
+	e := rs[icd:]
+	e[0] = 1
+	copy(e[1:], "GEM")
+	be.PutUint32(e[4:], uint32(diskMiB*mib-gemSec))
+	be.PutUint32(e[8:], gemSec)
 	copy(rs, bootSector)
 	be.PutUint16(rs[0x1FE:], 0x1234-wordSum(rs))
 	return rs
@@ -118,29 +141,110 @@ func kernelSum(k []byte) (uint32, error) {
 	return s, nil
 }
 
-// Boot returns the AXB contents: loader, command line, kernel.
-func Boot(kernel []byte, cmd string) ([]byte, error) { return boot(loader, kernel, cmd) }
+// Boot returns the AXB contents: loader, command line and module table,
+// kernel, modules.
+func Boot(kernel []byte, cmd string, mods ...Module) ([]byte, error) {
+	return boot(loader, kernel, cmd, mods)
+}
 
-func boot(loader, kernel []byte, cmd string) ([]byte, error) {
+func secs(n int) int { return (n + sector - 1) / sector }
+
+func boot(loader, kernel []byte, cmd string, mods []Module) ([]byte, error) {
 	if len(cmd) > 255 {
 		return nil, fmt.Errorf("command line longer than 255 bytes")
+	}
+	if len(mods) > modMax {
+		return nil, fmt.Errorf("more than %d boot modules", modMax)
 	}
 	sum, err := kernelSum(kernel)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]byte, kernSec*sector+(len(kernel)+sector-1)/sector*sector)
+	n := kernSec + secs(len(kernel))
+	for _, m := range mods {
+		if len(m.Name) > 15 {
+			return nil, fmt.Errorf("module name %s longer than 15 bytes", m.Name)
+		}
+		n += secs(len(m.Data))
+	}
+	out := make([]byte, n*sector)
 	copy(out, loader)
 	be.PutUint32(out[8:], timeout)
 	be.PutUint32(out[12:], sum)
 	copy(out[cmdSec*sector:], cmd)
+	t := out[cmdSec*sector+modTab:]
+	copy(t, "BMOD")
+	be.PutUint32(t[4:], uint32(len(mods)))
 	copy(out[kernSec*sector:], kernel)
+	s := kernSec + secs(len(kernel))
+	for i, m := range mods {
+		e := t[8+24*i:]
+		be.PutUint32(e, uint32(s))
+		be.PutUint32(e[4:], uint32(len(m.Data)))
+		copy(e[8:24], m.Name)
+		copy(out[s*sector:], m.Data)
+		s += secs(len(m.Data))
+	}
 	return out, nil
+}
+
+// GEMDOS returns the FAT16 tail partition holding \AUTO\AXBOOT.PRG:
+// cluster 2 is AUTO, 3 on the program.
+func GEMDOS(prg []byte) ([]byte, error) {
+	ncl := secs(len(prg))
+	if ncl == 0 || gemData+1+ncl > gemSec {
+		return nil, fmt.Errorf("AUTO program does not fit the GEMDOS partition")
+	}
+	le := binary.LittleEndian
+	fs := make([]byte, gemSec*sector)
+	copy(fs, "\xeb\x3c\x90AXBOOT  ")
+	le.PutUint16(fs[11:], sector)
+	fs[13] = 1 // sectors per cluster
+	le.PutUint16(fs[14:], 1)
+	fs[16] = 2
+	le.PutUint16(fs[17:], 512)
+	le.PutUint16(fs[19:], gemSec)
+	fs[21] = 0xF8
+	le.PutUint16(fs[22:], gemFat)
+	le.PutUint16(fs[24:], 32)
+	le.PutUint16(fs[26:], 64)
+	fs[0x26] = 0x29
+	copy(fs[0x2B:], "AXBOOT     FAT16   ")
+	fat := []uint16{0xFFF8, 0xFFFF, 0xFFFF}
+	for c := 4; c < 3+ncl; c++ {
+		fat = append(fat, uint16(c))
+	}
+	fat = append(fat, 0xFFFF)
+	for f := 0; f < 2; f++ {
+		for i, v := range fat {
+			le.PutUint16(fs[(1+f*gemFat)*sector+2*i:], v)
+		}
+	}
+	ent := func(b []byte, name string, attr byte, cl, size int) {
+		copy(b, name)
+		b[11] = attr
+		le.PutUint16(b[24:], 0x5521) // date
+		le.PutUint16(b[26:], uint16(cl))
+		le.PutUint32(b[28:], uint32(size))
+	}
+	root := fs[(1+2*gemFat)*sector:]
+	ent(root, "AXBOOT     ", 0x08, 0, 0)
+	ent(root[32:], "AUTO       ", 0x10, 2, 0)
+	auto := fs[gemData*sector:]
+	ent(auto, ".          ", 0x10, 2, 0)
+	ent(auto[32:], "..         ", 0x10, 0, 0)
+	ent(auto[64:], "AXBOOT  PRG", 0x20, 3, len(prg))
+	copy(auto[sector:], prg)
+	return fs, nil
 }
 
 // Assemble writes the whole disk to dst in order.
 func Assemble(ctx context.Context, dst io.Writer, p Params) error {
-	axb, home, err := Sizes(p.DiskMiB, len(p.Kernel), p.RootMiB, p.SwapMiB)
+	size := len(p.Kernel)
+	for _, m := range p.Modules {
+		size += len(m.Data)
+	}
+	axb, home, err := Sizes(p.DiskMiB, size, p.RootMiB, p.SwapMiB)
 	if err != nil {
 		return err
 	}
@@ -151,7 +255,11 @@ func Assemble(ctx context.Context, dst io.Writer, p Params) error {
 	if p.NoSuperVidel {
 		ld = loaderNoSV
 	}
-	axbImg, err := boot(ld, p.Kernel, p.CmdLine)
+	axbImg, err := boot(ld, p.Kernel, p.CmdLine, p.Modules)
+	if err != nil {
+		return err
+	}
+	gem, err := GEMDOS(autoPrg)
 	if err != nil {
 		return err
 	}
@@ -202,7 +310,8 @@ func Assemble(ctx context.Context, dst io.Writer, p Params) error {
 		func() error { return copyFS(p.Root, int64(p.RootMiB)<<20) },
 		func() error { return zero(int64(axbStart+(axb+p.RootMiB+p.SwapMiB)*mib) * sector) },
 		func() error { return copyFS(p.Home, int64(home)<<20) },
-		func() error { return zero(int64(p.DiskMiB) * mib * sector) },
+		func() error { return zero(int64(p.DiskMiB*mib-gemSec) * sector) },
+		func() error { return put(gem) },
 	}
 	for _, s := range steps {
 		if err := s(); err != nil {

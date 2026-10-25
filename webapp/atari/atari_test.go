@@ -14,15 +14,18 @@ type zeros struct{}
 
 func (zeros) ReadAt(b []byte, off int64) (int, error) { clear(b); return len(b), nil }
 
-// head keeps the first bytes written and counts the rest.
+// head keeps the first bytes and the last 3 MiB written and counts them.
 type head struct {
-	buf []byte
-	n   int64
+	buf, tail []byte
+	n         int64
 }
 
 func (h *head) Write(b []byte) (int, error) {
 	if room := 81*512 - len(h.buf); room > 0 {
 		h.buf = append(h.buf, b[:min(room, len(b))]...)
+	}
+	if skip := (509 << 20) - h.n; skip < int64(len(b)) {
+		h.tail = append(h.tail, b[max(skip, 0):]...)
 	}
 	h.n += int64(len(b))
 	return len(b), nil
@@ -36,9 +39,9 @@ func fixture(t *testing.T, name string) []byte {
 	return b
 }
 
-// The fixtures are the root sector and boot partition head that mkdisk.sh
-// and instboot.py produce for a 512 MiB disk with a 128 MiB root, 64 MiB
-// swap and the test kernel.
+// The fixtures are the root sector, boot partition head and GEMDOS partition
+// that mkdisk.sh, mkgemboot.py and instboot.py produce for a 512 MiB disk
+// with a 128 MiB root, 64 MiB swap and the test kernel.
 func TestLayoutMatchesMkdisk(t *testing.T) {
 	kernel := fixture(t, "kernel.elf")
 	axb, home, err := Sizes(512, len(kernel), 128, 64)
@@ -52,6 +55,10 @@ func TestLayoutMatchesMkdisk(t *testing.T) {
 	if err != nil || !bytes.Equal(boot, fixture(t, "axb.bin")) {
 		t.Fatalf("boot partition differs: %v", err)
 	}
+	gem, err := GEMDOS(autoPrg)
+	if err != nil || !bytes.Equal(gem, fixture(t, "gem.bin")) {
+		t.Fatalf("GEMDOS partition differs: %v", err)
+	}
 	var h head
 	err = Assemble(context.Background(), &h, Params{DiskMiB: 512, SwapMiB: 64, Kernel: kernel, CmdLine: "root=c0d0s1",
 		Root: zeros{}, RootMiB: 128, Home: zeros{}, HomeMiB: home})
@@ -59,8 +66,8 @@ func TestLayoutMatchesMkdisk(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := append(append(fixture(t, "rootsec.bin"), make([]byte, 63*512)...), fixture(t, "axb.bin")...)
-	if h.n != 512<<20 || !bytes.Equal(h.buf, want) {
-		t.Fatalf("disk is %d bytes; head differs: %v", h.n, !bytes.Equal(h.buf, want))
+	if h.n != 512<<20 || !bytes.Equal(h.buf, want) || !bytes.Equal(h.tail, gem) {
+		t.Fatalf("disk is %d bytes; head differs: %v; tail differs: %v", h.n, !bytes.Equal(h.buf, want), !bytes.Equal(h.tail, gem))
 	}
 }
 
@@ -98,7 +105,7 @@ func TestEmbeddedLoaderMatchesSource(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		got  []byte
-	}{{"bootsec.bin", bootSector}, {"axbload.bin", loader}} {
+	}{{"bootsec.bin", bootSector}, {"axbload.bin", loader}, {"AXBOOT.PRG", autoPrg}} {
 		want, err := os.ReadFile(filepath.Join(out, c.name))
 		if err != nil {
 			t.Fatal(err)

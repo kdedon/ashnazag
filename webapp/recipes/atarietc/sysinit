@@ -8,5 +8,12 @@ modadmin -r cdev auxsnd 47
 modadmin -r sdev dpn 58
 /usr/amiga/bin/setclk
 /sbin/bcheckrc
+# vfstab names the controller the root came from (IDE c0/c1 or SCSI c8-c15)
+c=`/etc/devnm / | sed -n 's,^/dev/dsk/\(c[0-9]*\)d0s.*,\1,p'`
+o=`sed -n 's,^/dev/dsk/\(c[0-9]*\)d0s[0-9]*[	 ].*[	 ]/[	 ].*,\1,p' /etc/vfstab`
+if [ -n "$c" -a -n "$o" -a "$c" != "$o" ]; then
+	sed "s,/${o}d0s,/${c}d0s,g" /etc/vfstab > /etc/vfstab.new &&
+		mv /etc/vfstab.new /etc/vfstab
+fi
 uname -S `cat /etc/nodename`
 echo "Node: `uname -n`"
