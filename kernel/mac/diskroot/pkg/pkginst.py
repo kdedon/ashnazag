@@ -4,9 +4,9 @@
 #
 #   pkginst.py outdir stream.pkg ...  > manifest lines
 #
-# One package per stream, class "none"; files with absolute paths.  Install
-# scripts are kept for pkgrm, not run: what they do must also happen at
-# boot.  outdir receives the files the manifest lines name.
+# One package per stream; files with absolute paths.  Install and class
+# scripts are kept, not run: into a fresh root every class lays its files
+# down as shipped, and what install scripts do must also happen at boot.  outdir receives the files the manifest lines name.
 import os, sys
 
 UID = {'root': 0, 'daemon': 1, 'bin': 2, 'sys': 3, 'adm': 4}
@@ -58,6 +58,8 @@ def main():
 		pkg, meta, files = stream(fname)
 		pkginfo = meta[pkg + '/pkginfo'][1].decode()
 		pkgmap = meta[pkg + '/pkgmap'][1].decode().split('\n')
+		classes = ([l[8:].split() for l in pkginfo.split('\n')
+			if l.startswith('CLASSES=')] or [['none']])[0]
 		sav = '/var/sadm/pkg/%s' % pkg
 		for d in (sav, sav + '/install', sav + '/save'):
 			print('d %s 755 0 0' % d)
@@ -72,23 +74,23 @@ def main():
 					print('f %s/install/%s 644 0 0 %s' % (sav, f[2], src))
 				continue
 			part, t, cls, path = f[:4]
-			if cls != 'none':
+			if cls not in classes:
 				die('%s: class %s' % (pkg, cls))
 			if t in 'sl':
 				p, target = path.split('=', 1)
 				print('%s %s %s' % ('l' if t == 's' else 'h', p, target))
-				entry = '%s=%s %s none' % (p, target, t)
+				entry = '%s=%s %s %s' % (p, target, t, cls)
 				path = p
 			elif t in 'cb':
 				mj, mn, mode, own, grp = f[4:9]
 				print('%s %s %s %d %d %s %s' % (t, path, mode, UID[own], GID[grp], mj, mn))
-				entry = '%s %s none %s %s %s %s %s' % (path, t, mj, mn, mode, own, grp)
+				entry = '%s %s %s %s %s %s %s %s' % (path, t, cls, mj, mn, mode, own, grp)
 			else:
 				mode, own, grp = f[4:7]
 				m = '%s %s %d %d' % (path, mode, UID[own], GID[grp])
 				if t == 'd':
 					print('d ' + m)
-					entry = '%s d none %s %s %s' % (path, mode, own, grp)
+					entry = '%s d %s %s %s %s' % (path, cls, mode, own, grp)
 				elif t in 'fev':
 					size, ck, mt = f[7:10]
 					data = files.get('root' + path, (0, None))[1]
@@ -99,8 +101,8 @@ def main():
 					open(src, 'wb').write(data)
 					print('f %s %s' % (m, src))
 					# stock pkgadd records an editable file as f, owner marked '\\'
-					entry = '%s %s none %s %s %s %s %s %s' % (path, 'f' if t == 'e' else t,
-						mode, own, grp, size, ck, mt)
+					entry = '%s %s %s %s %s %s %s %s %s' % (path, 'f' if t == 'e' else t,
+						cls, mode, own, grp, size, ck, mt)
 				else:
 					die('%s: entry type %s' % (pkg, t))
 			if path in contents:
@@ -112,7 +114,7 @@ def main():
 		# pkgadd's additions, in its order
 		kv = [l for l in pkginfo.split('\n') if l and not l.startswith('CLASSES=')]
 		info = os.path.join(out, pkg + '.pkginfo')
-		open(info, 'w').write('CLASSES= none\nTZ=GMT0\n'
+		open(info, 'w').write('CLASSES= %s\nTZ=GMT0\n' % ' '.join(classes) +
 			'PATH=/sbin:/usr/sbin:/usr/bin:/usr/sadm/install/bin\n'
 			'OAMBASE=/usr/sadm/sysadm\n' + ''.join(l + '\n' for l in kv) +
 			'PKGINST=%s\nPKGSAV=%s/save\nUPDATE=\nINSTDATE=%s\n' % (pkg, sav, INSTDATE))

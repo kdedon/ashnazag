@@ -29,6 +29,9 @@ int ttimeout() { ntimeout++; return 5; }
 int untimeout() { return 0; }
 void guest_cpage_unsink(s, r) struct guest_sess *s; char *r; { }
 void guest_cpage_free(s) struct guest_sess *s; { }
+void guest_ramdev_free(rd) struct guest_ramdev *rd; { }
+int guest_ramdev_mmap(rd, off) struct guest_ramdev *rd; off_t off; { return -1; }
+int guest_ramdev_segmap() { return EACCES; }
 int guest_cpage_fault() { return 1; }
 int guest_cpage_trace() { return 1; }
 
@@ -75,7 +78,7 @@ static int t_enter(s, a) struct guest_sess *s; caddr_t a; { nenter++; return a ?
 static void t_exit(s) struct guest_sess *s; { nexit++; }
 static void t_tick(s) struct guest_sess *s; { s->gs_pend |= 2; }
 static int t_sync(s) struct guest_sess *s; { return 1; }
-static int t_host(s, x, n) struct guest_sess *s; char *x; int n; { nhost++; hostn = n; return n == 5 ? -1 : 0; }
+static int t_host(s, x, n) struct guest_sess *s; char *x; int n; { nhost++; hostn = n; if (n == 7) GR_PC(x) = 0x2000; return n == 5 ? -1 : n == 7; }
 static int t_disp(gp, x, v) struct guest_proc *gp; char *x; int v; { return 9; }
 
 
@@ -224,6 +227,28 @@ main()
 	guest_env_intr(gp0, (char *)r);
 	EQ("sync: no frame", nreflect, 0);
 	env.ge_sync = 0;
+	/* the host's own code: a PC in its range or the usp on its stack */
+	env.ge_flags = GEF_HOSTHOLD;
+	gp0->gp_hostlo = 0x100;
+	gp0->gp_hosthi = 0x200;
+	gp0->gp_hstklo = 0x1000;
+	gp0->gp_hstkhi = 0x2000;
+	u.u_procp = &proc0;
+	GR_PC(r) = 0x180;
+	(void)genv_fsig(&proc0, gp0);
+	EQ("host pc holds", held, 1UL << 16);
+	guest_env_intr(gp0, (char *)r);
+	EQ("host pc: no frame", nreflect, 0);
+	GR_PC(r) = 0x200;
+	GR_USP(r) = 0x1ffc;
+	(void)genv_fsig(&proc0, gp0);
+	EQ("host stack holds", held, 1UL << 16);
+	GR_USP(r) = 0x2000;
+	(void)genv_fsig(&proc0, gp0);
+	EQ("guest code", held, 0);
+	gp0->gp_hostlo = gp0->gp_hosthi = gp0->gp_hstklo = gp0->gp_hstkhi = 0;
+	GR_PC(r) = GR_USP(r) = 0;
+	env.ge_flags = 0;
 	EQ("other signals", genv_sendsig(gp0, 2, (char *)0, 0), 7);
 
 	/* kick: a signal above the IPL, a wakeup when stopped, nothing below */
@@ -272,6 +297,9 @@ main()
 	EQ("host call", genv_hostgate(gp0, (char *)r, 4), 0);
 	EQ("service 3", hostn, 3);
 	EQ("past the trap", GR_PC(r), 0x1000000 + 3 * 8 + 2);
+	GR_PC(r) = 0x1000000 + 7 * 8;
+	EQ("pc set", genv_hostgate(gp0, (char *)r, 4), 0);
+	EQ("pc kept", GR_PC(r), 0x2000);
 	GR_PC(r) = 0x1000000 + 5 * 8;
 	EQ("declined", genv_hostgate(gp0, (char *)r, 4), 9);
 	GR_PC(r) = 0x1000000 + 3 * 8 + 2;

@@ -9,8 +9,7 @@
 #	etc/network-config, which leaves the Ethernet unconfigured
 # -s dir	put the files in dir in /var/spool/pkg
 # -p dir	install the datastreams dir/APKGENG-*.pkg and dir/APKG-*.pkg
-#	(pkginst.py); apkg uses the stock pkgadd and finds the repository
-#	through the hosts file
+#	(pkginst.py); apkg finds the repository through the hosts file
 # work	scratch directory; out.img defaults to work/q800-unix-disk.img
 # The A/UX root comes from tests/aux/auxroot, segment 07's tools from
 # tests/build/net07 (tests/net/getnet.sh); the tape segments from the live
@@ -53,7 +52,7 @@ done
 (cd "$D" && cp -a addparts.py fstree.py mkdiskimage.sh mkdiskroot.sh mks5fs.py \
 	mkufs.py root.manifest s5check.py ufscheck.py etc test "$WD/")
 cp -a "$D/build/tape" "$WD/build/tape"
-cp -a "$D/build/net07" "$WD/build/net07"
+cp -a "$NET07" "$WD/build/net07"
 
 # guest modules against this kernel; auxreg
 sh "$AUX/kernel/guest/build.sh" -m "$KERNEL" "$X/guest" > "$X/guest.log" 2>&1 ||
@@ -87,14 +86,6 @@ fi
 if [ -n "$PKGS" ]; then
 	$PY "$P/pkginst.py" "$X/pkg" "$PKGS"/APKGENG-*.pkg "$PKGS"/APKG-*.pkg \
 		>> "$X/add.manifest"
-	# the stock pkgadd/pkgrm: APKGENG's pkginstall faults once it has
-	# rewritten the contents database
-	c=$X/pkg/root/etc/apkg.conf
-	sed -e 's,^# pkgadd=/usr/sbin/pkgadd$,pkgadd=/usr/sbin/pkgadd,' \
-		-e 's,^# pkgrm=/usr/sbin/pkgrm$,pkgrm=/usr/sbin/pkgrm,' "$c" > "$c.new"
-	[ "$(grep -c '^pkg\(add\|rm\)=/usr/sbin/' "$c.new")" = 2 ] ||
-		{ echo "[FAIL] apkg.conf changed"; exit 1; }
-	mv "$c.new" "$c"
 	# the repository is a name-based virtual host; apkg reads the hosts file
 	ip=$(getent hosts pkg.amigaux.org | awk '{ print $1; exit }')
 	[ -n "$ip" ] || { echo "[FAIL] cannot resolve pkg.amigaux.org"; exit 1; }
@@ -102,4 +93,4 @@ if [ -n "$PKGS" ]; then
 fi
 cat "$X/add.manifest" >> "$WD/root.manifest"
 
-sh "$WD/mkdiskimage.sh" "$KERNEL" "$OUT"
+DSSOURCE=$AUX/kernel/mac/display sh "$WD/mkdiskimage.sh" "$KERNEL" "$OUT"

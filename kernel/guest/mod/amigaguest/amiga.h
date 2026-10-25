@@ -24,7 +24,6 @@ struct amigactr {
 	struct amigaenter ac_config;
 	struct amigastat ac_stat;
 	struct guest_proc *ac_gp;
-	unsigned long ac_mmu[10];
 	unsigned long ac_fraction, ac_epoch;
 	unsigned long ac_pvtb;	/* timer B as last copied to guest memory */
 	/* the interrupt words as guest memory held them when last read or written; 0x10000 unknown */

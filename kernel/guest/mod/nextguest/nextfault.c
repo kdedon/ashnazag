@@ -47,9 +47,9 @@ phys(a, wr)
 {
 	unsigned long pa;
 
-	if (!nx.gp)
+	if (!NX_SESS->gs_gp)
 		return a;
-	return guest_mmu_xlate(nx.gp, a, wr ? 2 : 1, &pa) ? NX_RAM : pa;
+	return guest_mmu_xlate(NX_SESS->gs_gp, a, wr ? 2 : 1, &pa) ? NX_RAM : pa;
 }
 
 /* 0: done, 1: not ours (the stock handler) */

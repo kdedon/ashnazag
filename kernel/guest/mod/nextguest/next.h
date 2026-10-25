@@ -7,7 +7,8 @@
 #include "kinc.h"
 #include "sys/sysm68k.h"
 #include "sys/time.h"
-#include "guest_mem.h"
+#include "guest_rpage.h"
+#include "guest_env.h"
 #include "../../next/profile.h"
 
 #define	SR_S	0x2000
@@ -23,20 +24,15 @@ extern int nx_dev(), nx_fault(), nx_service(), nx_census();
 extern void nx_board(), nx_post();
 
 struct nx {
-	int		state;		/* 0 free, 2 claimed, 1 running */
-	struct proc	*proc;
-	struct guest_proc *gp;
-	int		tid, sleeping, flags, opened;
+	int		tid, flags;
 	unsigned long	ramsize;
 	unsigned long	stat;		/* interrupts asked for, INT_* */
 	unsigned long	istat;		/* delivered and not yet acknowledged, INT_TIMER */
-	unsigned long	mmu[10];	/* movec control registers kept for the guest */
 	unsigned long	lastu;		/* the user address a host copy last faulted in */
-	struct guest_ram *ram;
-	pid_t		rampid;
 	struct nx_info	st;
 };
 extern struct nx nx;
+extern struct guest_env nx_env;
+#define	NX_SESS	(&nx_env.ge_sess[0])
 extern int nx_level();
-extern void nx_kick();
 extern unsigned long nx_us();

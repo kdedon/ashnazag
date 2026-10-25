@@ -866,6 +866,11 @@ kernel()
 		t_check("rc_boot_text", logfind("Setting up root mount entries"), "no rc.boot text on the console");
 		t_check("clock", logfind(year), "the date rc.boot printed is not this year");
 		t_check("rc_runs", logfind("error 0 result 0 rc\n"), "init did not start /etc/rc");
+		/* no network: rc.net brings up the loopback alone and the daemons bind to it */
+		t_check("loopback", logfind("lo0: address automatically set to 127.0.0.1") &&
+		    logfind("Reinitializing nmserver"), "rc.net did not configure lo0");
+		t_check("daemons_bind", !logfind("Can't assign requested address"), "a daemon could not bind to lo0");
+		t_check("rc_done", logfind("Starting standard daemons"), "/etc/rc stopped before its last daemons");
 	} else
 		t_check("rc_boot_done", logfind("error 2 result 0 hostconfig\n") && logfind("error 2 result 0 utmp\n"),
 		    "init did not get past rc.boot to the utmp file");

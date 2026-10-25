@@ -18,6 +18,8 @@
 #ifndef _GUEST_ENV_H
 #define _GUEST_ENV_H
 
+#include "guest_mem.h"
+
 /* gs_state */
 #define	GS_FREE		0
 #define	GS_RUN		1
@@ -27,6 +29,7 @@
 #define	GEF_SIGTAIL	0x01	/* an interrupt only where a signal return keeps it */
 #define	GEF_ONSTACK	0x02	/* the carrier waits while a host signal handler runs */
 #define	GEF_ONE		0x04	/* one interrupt per carrier */
+#define	GEF_HOSTHOLD	0x08	/* the carrier waits while the host's own code runs (GUEST_INHOST) */
 
 #define	GH_IPL		0x80000000UL	/* gs_halt: until a level above the IPL */
 
@@ -83,9 +86,10 @@ struct guest_env {
 	int	(*ge_ack)();		/* (s, regs, l): its vector, -1 none; 0: clear the gs_pend bit, autovector */
 	void	(*ge_tick)();		/* (s): each clock tick, under spl; 0 no tick */
 	int	(*ge_access)();		/* (s, regs, cpage, access): a write; 1 sends it to a copy */
-	int	(*ge_hostcall)();	/* (s, regs, n): 0 done, -1 the vector's disposition */
+	int	(*ge_hostcall)();	/* (s, regs, n): 0 done, 1 done with the PC set, -1 the vector's disposition */
 	int	(*ge_ioctl)();		/* (e, s, cmd, arg, mode, rvp): the other commands */
 	void	(*ge_note)();		/* (s, what, a, pc): guestcore's notices; 0 printf */
+	struct guest_ramdev	ge_ram;		/* the device's mmap, freed at the last close */
 	/* guestcore's */
 	struct guest_disp	ge_hostdisp, ge_faultdisp, ge_tracedisp;
 	struct guest_sess	*ge_sess;
@@ -106,6 +110,8 @@ extern void guest_env_note();		/* (s, what, a, pc) */
 extern int guest_env_open();		/* (e, devp, flags, otyp, cr) */
 extern int guest_env_close();		/* (e, dev, flags, otyp, cr) */
 extern int guest_env_ioctl();		/* (e, dev, cmd, arg, mode, cr, rvp) */
+extern int guest_env_mmap();		/* (e, dev, off, prot) */
+extern int guest_env_segmap();		/* (e, dev, off, as, addrp, len, prot, maxprot, flags, cr) */
 extern int guest_cpage_map();		/* (s, cp, n): from ge_enter */
 extern void guest_cpage_unsink();	/* (s, regs or 0) */
 extern int guest_cpage_set();		/* (s, va, bytes, n) */

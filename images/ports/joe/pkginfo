@@ -1,0 +1,8 @@
+PKG=joe
+NAME=joe 3.7 - Joe's Own Editor, with jpico
+ARCH=m68k
+VERSION=3.7-1
+CATEGORY=editor
+CLASSES=none
+VENDOR=Ash Nazag
+DESC=Full-screen editor that drives the terminal itself (no curses). jpico gives nano's keys (the nano this box cannot have); jmacs, jstar and rjoe give Emacs, WordStar and restricted modes. Without an FPU the math prompt takes integers only. In /opt/amix/bin.

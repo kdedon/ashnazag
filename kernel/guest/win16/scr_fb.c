@@ -6,7 +6,7 @@
  * copy what changed to the frame buffer at each flush, converting to
  * its depth and layout (8-bit packed with the palette in the CLUT;
  * 16 or 32-bit direct colour; 1-bit; 4 or 8 interleaved bitplanes),
- * then draw the pointer over it.  Key codes of each keyboard family
+ * the pointer composed in.  Key codes of each keyboard family
  * (ADB, Amiga, IKBD) become virtual keys; a key's PC scan code goes in
  * lParam as Windows has it.
  */
@@ -37,6 +37,7 @@ static struct rect dirty;
 static int hidden, ncol;
 static struct cursor *cur;
 static struct rect curr;		/* where the pointer is drawn */
+static int curmoved;			/* it moved or changed since */
 static u8 map16[256];			/* a palette index to the device's, when it has fewer */
 static u32 truecol[256];		/* direct colour pixels */
 static struct ev pend[64];
@@ -330,59 +331,88 @@ putrow(y, x0, x1, src)
 	}
 }
 
-/* the pointer over the frame buffer at (scr_mx, scr_my) */
+/* where the pointer goes at (scr_mx, scr_my) */
 static void
-drawcursor()
+cursrect(r)
+	struct rect *r;
 {
-	u8 row[64];
-	int x, y, w, h, x0, y0, k;
+	int x0, y0;
 
-	if (!cur)
+	if (!cur) {
+		r_set(r, 0, 0, 0, 0);
 		return;
+	}
 	x0 = scr_mx - cur->hx;
 	y0 = scr_my - cur->hy;
-	w = cur->w > 64 ? 64 : cur->w;
-	h = cur->h;
-	r_set(&curr, x0, y0, x0 + w, y0 + h);
-	for (y = 0; y < h; y++) {
-		int sy = y0 + y, xa = x0 < 0 ? -x0 : 0, xb = x0 + w > screen.w ? screen.w - x0 : w;
+	r_set(r, x0, y0, x0 + (cur->w > 64 ? 64 : cur->w), y0 + cur->h);
+}
 
-		if (sy < 0 || sy >= screen.h || xb <= xa)
+/*
+ * Part of the shadow to the device with the pointer (at pr) composed
+ * into each row it crosses, so the screen never shows it erased.
+ */
+static void
+putrect(r, pr)
+	struct rect *r, *pr;
+{
+	static u8 row[1280];
+	struct rect c;
+	int x, y, k, xa, xb;
+	u8 *s;
+
+	c = *r;
+	if (c.l < 0) c.l = 0;
+	if (c.t < 0) c.t = 0;
+	if (c.r > screen.w) c.r = screen.w;
+	if (c.b > screen.h) c.b = screen.h;
+	if (R_EMPTY(&c))
+		return;
+	xa = pr->l > c.l ? pr->l : c.l;
+	xb = pr->r < c.r ? pr->r : c.r;
+	for (y = c.t; y < c.b; y++) {
+		s = screen.pix + y * screen.rowb + c.l;
+		if (y < pr->t || y >= pr->b || xa >= xb) {
+			putrow(y, c.l, c.r, s);
 			continue;
-		for (x = xa; x < xb; x++) {
-			k = y * cur->w + x;
-			row[x] = screen.pix[sy * screen.rowb + x0 + x];
-			if (!cur->and[k])
-				row[x] = cur->xor[k] ? 255 : 0;
-			else if (cur->xor[k])
-				row[x] = 255 - row[x];
 		}
-		putrow(sy, x0 + xa, x0 + xb, row + xa);
+		memcpy(row, s, c.r - c.l);
+		for (x = xa; x < xb; x++) {
+			k = (y - pr->t) * cur->w + x - pr->l;
+			if (!cur->and[k])
+				row[x - c.l] = cur->xor[k] ? 255 : 0;
+			else if (cur->xor[k])
+				row[x - c.l] = 255 - row[x - c.l];
+		}
+		putrow(y, c.l, c.r, row);
 	}
 }
 
 void
 scr_flush()
 {
-	struct rect r;
-	int y;
+	struct rect pr, u;
 
 	if (hidden || !fb)
 		return;
-	r = dirty;
-	/* where the pointer was comes back from the shadow */
-	if (!R_EMPTY(&curr))
-		scr_dirty(&curr), r = dirty;
-	if (r.l < 0) r.l = 0;
-	if (r.t < 0) r.t = 0;
-	if (r.r > screen.w) r.r = screen.w;
-	if (r.b > screen.h) r.b = screen.h;
-	if (!R_EMPTY(&r))
-		for (y = r.t; y < r.b; y++)
-			putrow(y, r.l, r.r, screen.pix + y * screen.rowb + r.l);
+	cursrect(&pr);
+	if (curmoved) {
+		/* the old and new places in one pass */
+		u = pr;
+		if (R_EMPTY(&u))
+			u = curr;
+		else if (!R_EMPTY(&curr)) {
+			if (curr.l < u.l) u.l = curr.l;
+			if (curr.t < u.t) u.t = curr.t;
+			if (curr.r > u.r) u.r = curr.r;
+			if (curr.b > u.b) u.b = curr.b;
+		}
+		putrect(&u, &pr);
+	}
+	if (!R_EMPTY(&dirty))
+		putrect(&dirty, &pr);
 	r_set(&dirty, 0, 0, 0, 0);
-	r_set(&curr, 0, 0, 0, 0);
-	drawcursor();
+	curr = pr;
+	curmoved = 0;
 }
 
 void
@@ -391,8 +421,7 @@ scr_setcursor(c)
 {
 	if (c == cur)
 		return;
-	if (!R_EMPTY(&curr))
-		scr_dirty(&curr);
+	curmoved = 1;
 	cur = c;
 }
 
@@ -400,8 +429,7 @@ void
 scr_warp(x, y)
 	int x, y;
 {
-	if (!R_EMPTY(&curr))
-		scr_dirty(&curr);
+	curmoved = 1;
 	scr_mx = x;
 	scr_my = y;
 }
@@ -456,8 +484,7 @@ readinput(fd)
 				add(EV_KEY, 0, 0, ev[i].ie_value != 0, vk, 0);
 			break;
 		case IE_REL:
-			if (!R_EMPTY(&curr))
-				scr_dirty(&curr);
+			curmoved = 1;
 			if (ev[i].ie_code == IE_RELX)
 				scr_mx += ev[i].ie_value * (abs(ev[i].ie_value) > 6 ? 2 : 1);
 			else

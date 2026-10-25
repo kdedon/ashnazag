@@ -1,0 +1,8 @@
+PKG=bzip2
+NAME=bzip2 1.0.8 - block-sorting compressor
+ARCH=m68k
+VERSION=1.0.8-1
+CATEGORY=utility
+CLASSES=none
+VENDOR=Ash Nazag
+DESC=bzip2, bunzip2, bzcat and bzip2recover in /opt/amix/bin: opens .bz2 streams, including the .cpio.bz2 AMIX archives. 1.0.8 carries the CVE-2019-12900 fix. bzip2recover handles files up to 512 MB.

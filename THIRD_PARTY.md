@@ -20,6 +20,9 @@ The repository is MIT (`LICENSE`). Components below keep their own licences and 
 | Adobe / DEC 100dpi fonts | `kernel/guest/win16/fonts.c`, `mkfonts.py` | Copyright 1984-1989, 1994 Adobe Systems Incorporated; 1988, 1994 Digital Equipment Corporation. Permission notice in `NOTES.md` |
 | P96 SDK board offsets | `kernel/guest/amiga/rtg/p96offsets.inc` | CC-BY-4.0, attribution in `NOTICE` |
 | Wine 16-bit `.spec` facts | `kernel/guest/win16/apitab.c`, `mkapi.py` | Wine is LGPL-2.1. Only function names and ordinals are used, no spec text |
+| sdhcp | `images/envpkg/sdhcp` (from github.com/michaelforney/sdhcp at 5f9956c) | MIT, Copyright 2012 David Galos, 2014-2015 Hiltjo Posthuma, 2015 Michael Forney (`LICENSE`, installed with the package) |
+| top 3.5.1 | `images/envpkg/top` (from unixtop 3.5.1) | Freely redistributable with its notice intact, Copyright 1984-2004 William LeFebvre (`LICENSE`, installed with the package). Machine module and changes: MIT |
+| Dropbear, prngd, libamixcompat | `images/pkgs/dropbear`, `prngd` patches; `images/pkgs/port` builds jusii/amix-packages libamixcompat and passwd parsers | Fetched at build. Dropbear MIT (Matt Johnston and others); prngd free licence, Lutz Jaenicke; libamixcompat BSD-2 and amix-pwgr.c MIT, Jussi Alanärä |
 | go-lha | `webapp/internal/lhadecode` | MIT, Copyright (c) 2018 MURAOKA Taro (`LICENSE`, `NOTICE`) |
 | SMSQ/E | fetched | BSD 2-clause |
 | Digital Research CP/M-68K 1.3 CCP | `kernel/guest/cpm/ccp/ccp.c`, `ccpdef.h` | Copyright (c) 1982 Digital Research. Distributed under the Caldera 2001 licence and DR DOS, Inc.'s 2022 statement permitting use and redistribution with the notice kept. The file headers say "Portions Copyright (c) 2026 kdedon": only the additions are ours (MIT). `ccpext.c`, `ccpgo.c`, `ccpsv.h` and `cmd/*` are ours (MIT) |
@@ -84,6 +87,7 @@ These are separate programs, patches or separately loaded modules and keep their
 | Hatari (`kernel/atari/hatari-*.patch`, `ct60/svmodel.diff`) | patches to the emulator | GPL-2.0-or-later |
 | QEMU (`toolchain/qemu-patches`, `kernel/cow/*.diff`) | patches | GPL-2.0 |
 | hfsutils (`toolchain/hfsutils-patches`) | patches | GPL-2.0 |
+| GNU wget 1.11.4, Lynx 2.8.5 (`images/pkgs/wget`, `lynx`) | patches; separate programs in their packages | GPL-3.0-or-later, GPL-2.0 |
 | Quake (`gl/quake`, in `asokero/quake-amix`) | separate game program | GPL-2.0 |
 | fVDI (`kernel/guest/tos/fvdi`, `ashfb.c` built with it) | TOS-side program, separate image | GPL |
 | XaAES, TeraDesk, FreeMiNT | fetched at build, source shipped with the binaries | GPL |

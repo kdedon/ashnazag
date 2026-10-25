@@ -11,7 +11,6 @@ __pycache__/
 # your media and everything tools/setup.sh fetches or builds
 /toolchain/*
 !/toolchain/build-qemu.sh
-!/toolchain/build-gcc295.sh
 !/toolchain/build-amix-cross.sh
 !/toolchain/qemu-patches/
 !/toolchain/hfsutils-patches/

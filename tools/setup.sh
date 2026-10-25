@@ -40,7 +40,7 @@ N="nice -n 19"
 
 . "$AUX/kernel/port-tree.sh"
 IDE_URL=https://github.com/hmlio/amix-gayle-ide
-IDE_PIN=71480b065c6efbc1a6fc3e6c490a5f50d102f795
+IDE_PIN=ee21a9c42686957e943b49faa5e7f17abb5aaf7b
 CDFS_URL=https://github.com/jusii/amix-cdfs
 CDFS_PIN=34447c2d7ce783be7eed518607436841d592577a
 BU_V=2.43.1
@@ -259,8 +259,13 @@ fi
 G=$TC/src/gcc-cross-amix
 sh "$TC/build-amix-cross.sh" -s
 GCA="PREFIX=$TC/amix AMIX_ROOT=$R"
-if [ ! -x "$TC/amix/bin/m68k-cbm-sysv4-gcc" ]; then
-	if [ -n "$CROSS" ]; then
+# a toolchain from before the 64-bit shift fix is rebuilt
+OLDGCC=
+[ ! -x "$TC/amix/bin/m68k-cbm-sysv4-gcc" ] ||
+	python3 "$AUX/kernel/tools/chkasr16.py" -c "$TC/amix/bin/m68k-cbm-sysv4-gcc" >/dev/null 2>&1 ||
+	OLDGCC=1
+if [ ! -x "$TC/amix/bin/m68k-cbm-sysv4-gcc" ] || [ -n "$OLDGCC" ]; then
+	if [ -n "$CROSS" ] && [ -z "$OLDGCC" ]; then
 		step "AMIX cross toolchain from $CROSS"
 		[ -x "$CROSS/bin/m68k-cbm-sysv4-gcc" ] || die "$CROSS: no bin/m68k-cbm-sysv4-gcc"
 		cp -a "$(abs "$CROSS")" "$TC/amix"

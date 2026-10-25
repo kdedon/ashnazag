@@ -52,6 +52,11 @@ nm "$KERNEL" | awk '$3 ~ /^(freemem|availrmem|availsmem|lbolt|fpu_present|anonin
 KDIR=$KDIR sh "$T/dlm/build.sh" "$KERNEL" "$B/dlm"
 DSPB=$B/display
 sh "$KDIR/mac/display/mods.sh" "$KERNEL" "$DSPB"
+# t_kstat's module (none without module support)
+SYSB=$B/sys
+rm -rf "$SYSB"
+! "$AUX/toolchain/bin/m68k-elf-nm" "$KERNEL" 2>/dev/null | grep -q ' T dlm_init$' ||
+	sh "$KDIR/mods.sh" TARGET=$(sh "$KDIR/mods.sh" -t "$KERNEL") "$SYSB" KERNEL="$KERNEL" sys
 # t_otb's module (none without otbridge or its kernel linkages)
 KDIR=$KDIR sh "$T/otb/build.sh" "$KERNEL" "$B/otb"
 # t_aux's modules and A/UX programs (none without guest support)
@@ -329,7 +334,7 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 	fi
 	# t_sound's drivers, built with the kernel; the default module path
 	if [ -f "$DSPB/mod.d/dsuser" ] || [ -f "$KDIR/build/mac/sound/mod.d/asc" ] ||
-	    [ -f "$KDIR/build/mac/scsi/mod.d/ncr96" ]; then
+	    [ -f "$KDIR/build/mac/scsi/mod.d/ncr96" ] || [ -f "$SYSB/mod.d/kstat" ]; then
 		echo "d /etc/conf 755 0 3"
 		echo "d /etc/conf/mod.d 755 0 3"
 	fi
@@ -340,6 +345,10 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 		for f in asc auxsnd; do
 			echo "f /etc/conf/mod.d/$f 644 0 3 $KDIR/build/mac/sound/mod.d/$f"
 		done
+	fi
+	if [ -f "$SYSB/mod.d/kstat" ]; then
+		echo "f /etc/conf/mod.d/kstat 644 0 3 $SYSB/mod.d/kstat"
+		echo "c /dev/kstat 444 0 3 69 0"
 	fi
 	# the SCSI controller, loaded on the first disk open
 	if [ -f "$KDIR/build/mac/scsi/mod.d/ncr96" ]; then

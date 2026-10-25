@@ -1,0 +1,21 @@
+#!/bin/sh
+# dhcpinfo [-i ifname] [item] -- the lease sdhcp holds: every item, or one of
+# ip, mask, router, dns, server, lease (seconds), pid (sdhcp's).
+IF=
+if [ "$1" = -i ]; then IF=$2; shift 2; fi
+if [ -z "$IF" ]; then
+	for f in /etc/dhcp/*; do
+		[ -f "$f" ] && { IF=`echo "$f" | sed 's,.*/,,'`; break; }
+	done
+fi
+F=/etc/dhcp/$IF
+[ -n "$IF" ] && [ -f "$F" ] || { echo "dhcpinfo: no lease${IF:+ on $IF}" >&2; exit 1; }
+[ $# -eq 0 ] && exec cat "$F"
+case $1 in
+ip|mask|router|dns|server|lease|pid) ;;
+*) echo "dhcpinfo: no item $1" >&2; exit 1 ;;
+esac
+K=`echo "$1" | sed 'y/abcdefghijklmnopqrstuvwxyz/ABCDEFGHIJKLMNOPQRSTUVWXYZ/'`
+V=`sed -n "s/^$K=//p" "$F" | sed "s/'//g"`
+[ -n "$V" ] || exit 1
+echo "$V"

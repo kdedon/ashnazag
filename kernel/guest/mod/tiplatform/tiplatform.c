@@ -35,6 +35,7 @@ struct tictr {
 	unsigned long	scanout, modtab;
 	unsigned char	keys[10], on;
 	unsigned long	walked;		/* tick of the last uncache() */
+	int		n20, n1;	/* ticks to the next 20 Hz and 1 Hz interrupt */
 	struct ti_info	st;
 };
 #define	TIC(s)	((struct tictr *)(s)->gs_priv)
@@ -92,10 +93,14 @@ tick(s)
 
 	t->st.ticks++;
 	s->gs_pend |= 1 << 1;
-	if (t->st.ticks % (HZ / 20) == 0)
+	if (--t->n20 <= 0) {
+		t->n20 = HZ / 20;
 		s->gs_pend |= 1 << 5;
-	if (t->st.ticks % HZ == 0)
+	}
+	if (--t->n1 <= 0) {
+		t->n1 = HZ;
 		s->gs_pend |= 1 << 3;
+	}
 }
 
 static int
@@ -120,16 +125,6 @@ walk(t)
 		t->walked = t->st.ticks;
 		uncache(curproc->p_as, TI_FLASH);
 	}
-}
-
-/* the guest sleeps until a request it waits for; then the trap tail */
-static void
-ti_after(gp, r)
-	struct guest_proc *gp;
-	char *r;
-{
-	walk(tip(gp));
-	guest_env_after(sess(gp));
 }
 
 /*
@@ -358,19 +353,6 @@ exc(gp, r, v)
 	return 0;
 }
 
-static int
-ti_badaccess(gp, r, a, what)
-	struct guest_proc *gp;
-	char *r;
-	unsigned long a;
-	char *what;
-{
-	note(tip(gp), what, (long)a, GR_PC(r));
-	psignal(curproc, SIGBUS);
-	guest_trapret();
-	return 0;
-}
-
 /* a Flash store, or an access past Flash nothing is mapped at: AMS reached a routine nobody patched */
 static int
 hwfault(gp, r, v)
@@ -385,7 +367,8 @@ hwfault(gp, r, v)
 	    (fa < TI_FLASH + TI_FLASH_SIZE && (ssw & 0x100)))
 		return 1;
 	tip(gp)->st.io++;
-	return ti_badaccess(gp, r, fa, "hardware access");
+	note(tip(gp), "hardware access", (long)fa, GR_PC(r));
+	return guest_berr(gp, r, fa, ssw);
 }
 
 /* a stub at TI_HOST: the service; guestcore steps to its rts */
@@ -440,24 +423,6 @@ service(s, r, n)
 	return 0;
 }
 
-/*
- * guestcore's emulation; GPF_PRIV only meanwhile, since with it the gate's
- * fast path would pop rte frames of a 68010 and later
- */
-static int
-emulate(gp, r, v)
-	struct guest_proc *gp;
-	char *r;
-	int v;
-{
-	int e;
-
-	gp->gp_flags |= GPF_PRIV;
-	e = guest_priv(gp, r, v);
-	gp->gp_flags &= ~GPF_PRIV;
-	return e ? exc(gp, r, 4) : 0;
-}
-
 /* vector 8: what a 68000 in the guest's mode would do */
 static int
 priv(gp, r, v)
@@ -465,43 +430,16 @@ priv(gp, r, v)
 	char *r;
 	int v;
 {
-	unsigned char b[6];
-	long sp;
-	int op;
+	int e;
 
-	if (copyin((caddr_t)GR_PC(r), (caddr_t)b, 4))
-		return exc(gp, r, 8);
-	op = G16(b);
 	if ((tip(gp)->flags & TIF_CENSUS) && tip(gp)->nexc++ < 60)
-		printf("tiplatform: census priv %x pc %x sp %x vsr %x\n", op, (int)GR_PC(r),
+		printf("tiplatform: census priv %x pc %x sp %x vsr %x\n",
+		    (int)(fuword((caddr_t)GR_PC(r)) >> 16 & 0xffff), (int)GR_PC(r),
 		    (int)GR_USP(r), guest_getsr(gp, r));
-	if ((op & 0xffc0) == 0x40c0)		/* move SR,<ea>: any mode on a 68000 */
-		return emulate(gp, r, v);
-	if (!(gp->gp_vsr & SR_S))
-		return exc(gp, r, 8);
-	switch (op) {
-	case 0x4e73:				/* rte */
-		sp = GR_USP(r);
-		if (copyin((caddr_t)sp, (caddr_t)b, 6))
-			return exc(gp, r, 3);
-		GR_USP(r) = sp + 6;
-		GR_PC(r) = G32(b + 2);
-		guest_setsr(gp, r, (int)G16(b));
-		break;
-	case 0x4e72:				/* stop */
-		guest_setsr(gp, r, (int)G16(b + 2));
-		GR_PC(r) += 4;
-		if (sess(gp))
-			sess(gp)->gs_halt = 0xfe;
-		break;
-	case 0x4e70:				/* reset */
-		GR_PC(r) += 2;
-		break;
-	default:
-		return emulate(gp, r, v);
-	}
-	ti_after(gp, r);
-	return 0;
+	walk(tip(gp));
+	if ((e = guest_privtrap(gp, r, v)) <= 1)
+		return e;
+	return exc(gp, r, e);
 }
 
 static int
@@ -515,6 +453,8 @@ enter(s, arg)
 	if (copyin(arg, (caddr_t)&te, sizeof te))
 		return EFAULT;
 	t->st.lcd = TI_LCD;
+	t->n20 = HZ / 20;
+	t->n1 = HZ;
 	t->flags = te.flags;
 	t->scanout = te.scanout;
 	t->modtab = te.modtab;
@@ -585,7 +525,7 @@ load()
 	env.ge_major = TI_MAJOR;
 	env.ge_entercmd = TI_ENTER;
 	env.ge_ssize = sizeof (struct tictr);
-	env.ge_gpflags = GPF_FRAME68K;
+	env.ge_gpflags = GPF_FRAME68K | GPF_PRIV;
 	env.ge_nsess = 1;
 	env.ge_sig = TI_SIG;
 	env.ge_holdfmt = 1 << 7 | 1 << 9 | 1 << 0xa | 1 << 0xb;

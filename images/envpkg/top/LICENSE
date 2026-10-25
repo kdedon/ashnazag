@@ -1,0 +1,13 @@
+top 3.5.1, Copyright (c) 1984 through 2004, William LeFebvre.
+
+ *  This program may be freely redistributed,
+ *  but this entire comment MUST remain intact.
+ *
+ *  Copyright (c) 1984, 1989, William LeFebvre, Rice University
+ *  Copyright (c) 1989 - 1994, William LeFebvre, Northwestern University
+ *  Copyright (c) 1994, 1995, William LeFebvre, Argonne National Laboratory
+ *  Copyright (c) 1996, William LeFebvre, Group sys Consulting
+
+Changed for Ash Nazag: machine module m_ashnazag.c; load averages, CPU
+percentages and hours printed without floating point; snprintf and the
+68000 divide calls supplied (snprintf.c, divsi3.c).

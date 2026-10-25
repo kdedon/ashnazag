@@ -1,6 +1,7 @@
 #!/bin/sh
 # mkboot.sh OUTDIR -- build the root-sector boot code (bootsec.bin) and
-# the AXB loader (axbload.bin) for instboot.py.
+# the AXB loader (axbload.bin) for instboot.py, and EmuTOS's AUTO
+# launcher (AXBOOT.PRG) for mkgemboot.py.
 # CROSS=prefix selects another m68k toolchain (e.g. m68k-linux-gnu-).
 # SVIDEL=0 builds the loader without the SuperVidel probe.
 set -e
@@ -14,6 +15,9 @@ LD="${B}ld -N -Ttext=0 -z noexecstack --no-warn-rwx-segments"
 ${B}as -m68030 -o "$O/bootsec.o" "$A/bootsec.s"
 $LD -o "$O/bootsec.elf" "$O/bootsec.o"
 ${B}objcopy -O binary -j .text "$O/bootsec.elf" "$O/bootsec.bin"
+${B}as -m68030 -o "$O/axbauto.o" "$A/axbauto.s"
+$LD -o "$O/axbauto.elf" "$O/axbauto.o"
+${B}objcopy -O binary -j .text "$O/axbauto.elf" "$O/AXBOOT.PRG"
 ${B}as -m68030 -o "$O/axbstart.o" "$A/axbstart.s"
 ${B}gcc -m68030 -mtune=68060 -Os -mpcrel -ffreestanding -fno-builtin \
 	-fno-tree-loop-distribute-patterns -fomit-frame-pointer \

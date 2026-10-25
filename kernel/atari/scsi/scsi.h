@@ -1,7 +1,8 @@
 /*
  * SCSI core: per-target job queues over one host adapter (the Falcon or
  * TT NCR 5380, polled).  Jobs run to the end in the submitter's context,
- * never above SC_MAXIPL, so the clock and keyboard keep running.
+ * never above SC_MAXIPL except synchronous ones at IPL 7 (the root mount),
+ * so the clock and keyboard keep running.
  */
 #ifndef SCSI_H
 #define SCSI_H

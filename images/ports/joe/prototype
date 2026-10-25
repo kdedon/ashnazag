@@ -1,0 +1,5 @@
+i pkginfo=pkginfo
+s none /opt/amix/bin/jpico=/opt/amix/bin/joe
+s none /opt/amix/bin/jmacs=/opt/amix/bin/joe
+s none /opt/amix/bin/jstar=/opt/amix/bin/joe
+s none /opt/amix/bin/rjoe=/opt/amix/bin/joe

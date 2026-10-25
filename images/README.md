@@ -154,7 +154,7 @@ The default kernel is `kernel/build/unix-mac.elf`. `-c` stores a kernel command 
 | `/usr/aux/bin` | A/UX 3.1 `ls`, `more`, `sh`, `sleep`, `vi` |
 | `/shlib` | A/UX shared libraries (`libc_s`, `libc1_s`, `libmac_s`, `libmac1_s`, `libuucp_s`, `libX11_s`) |
 | `/usr/aux/lib` | the guest modules, registered at run level 2 (`/etc/rc2.d/S05aux`) |
-| `/usr/apkg` | apkg 0.2.2 and its engine package, installed; `/etc/inet/hosts` names `pkg.amigaux.org` |
+| `/usr/apkg` | apkg 0.2.3 and its engine package (APKGENG 1.12.3), installed; `/etc/inet/hosts` names `pkg.amigaux.org` |
 | Swap | 64 MB |
 
 ### A/UX programs
@@ -163,7 +163,7 @@ Run them by path, for example `/usr/aux/bin/ls -l /` or `/usr/aux/bin/vi file`. 
 
 ### Network and packages
 
-The root is set up for QEMU's user-mode network: address 10.0.2.15, gateway 10.0.2.2 (`/etc/inet/network-config`, run at boot) and DNS 10.0.2.3 (`/etc/resolv.conf`). On real hardware edit both files for your network. By hand:
+The root is set up for QEMU's user-mode network: address 10.0.2.15, gateway 10.0.2.2 (`/etc/inet/network-config`, run at boot) and DNS 10.0.2.3 (`/etc/resolv.conf`). With the `sdhcp` package (see Environment packages) it takes a DHCP lease instead, and falls back to these addresses without one. On real hardware without DHCP edit both files for your network. By hand:
 
 ```sh
 /usr/sbin/slink addaen /dev/aen0 aen0
@@ -180,14 +180,38 @@ apkg install gzip less       # dependencies too
 apkg list installed
 ```
 
-Most packages install into `/opt/amix/bin`; add it to `PATH`. apkg is set to use the stock `pkgadd` and `pkgrm` (`/etc/apkg.conf`). The engine package's `pkgadd` stops with a bus error in `pkginstall` once it has rewritten the package database itself.
+Most packages install into `/opt/amix/bin`; add it to `PATH`.
 
 ### Rebuilding
 
 ```sh
 sh kernel/mac/diskroot/pkg/getapkg.sh DIR                  # apkg datastreams, md5-checked
 sh kernel/mac/diskroot/pkg/mkpkgimage.sh -p DIR WORK [kernel.elf [out.img]]
+sh images/ports/mkports.sh OUT [NAME ...]                  # the ports: OUT/catalog, OUT/pkgs
+sh images/mkrelease.sh OUT                                 # every package: the ports and the environment packages
+sh images/ports/check/check.sh IMAGE OUT                   # install OUT's packages in QEMU and use each one
 ```
+
+### Our packages
+
+`images/ports` builds bash, bzip2, dropbear, infozip (zip, unzip), joe, lynx, prngd, screen and wget from source into `/opt/amix`, one binary set for every host: no instruction the 68060 lacks, FPU instructions only in float formatting. The image builders pre-install them and the environment packages. A release carries every package as assets of its GitHub release:
+
+```sh
+sh images/mkrelease.sh REL
+gh release upload TAG REL/catalog REL/catalog.md5 REL/pkgs/*.pkg -R kdedon/ashnazag
+```
+
+apkg reads `REPO/catalog` and `REPO/pkgs/FILE`, so fetch a release's assets into that layout, copy the directory to the host or serve it over HTTP, and point a second configuration at it (`apkg -c FILE`; the default one keeps pkg.amigaux.org):
+
+```sh
+gh release download TAG -R kdedon/ashnazag -D REPO -p 'catalog*'
+gh release download TAG -R kdedon/ashnazag -D REPO/pkgs -p '*.pkg'
+# on the host
+sed 's|^repo=.*|repo=file:///REPO|' /etc/apkg.conf > /etc/apkg-rel.conf     # or repo=http://SERVER/
+apkg -c /etc/apkg-rel.conf update && apkg -c /etc/apkg-rel.conf install screen
+```
+
+The network packages have no TLS. `dropbear` (SSH server at boot, `dbclient`/`ssh`, `dropbearkey`) offers curve25519 and ed25519 only and needs `prngd`, which serves entropy on TCP localhost:708 (AMIX has neither `/dev/random` nor UNIX-domain stream sockets). Accounts without a password log in by key only (`~/.ssh/authorized_keys`).
 
 `mkpkgimage.sh` builds from a copy of `kernel/mac/diskroot` in `WORK` with `root.manifest` plus `pkg/root.manifest.add`. It needs the A/UX root named in `tests/aux/auxroot`, `tests/build/net07` (`tests/net/getnet.sh`) and the tape segments in `kernel/mac/diskroot/build/tape`. `-q` configures the Ethernet for an emulator's user-mode network (10.0.2.15, gateway 10.0.2.2).
 
@@ -209,8 +233,15 @@ Each environment is an SVR4 package, built from source by `images/envpkg/mkenvpk
 | `lisaenv` | `startlisa`, the native Lisa host, `/dev/lisa` (`S05lisa`) |
 | `v200env` | `startvoyage200`, the native Voyage 200 host, `/dev/tiplatform` (`S05v200`) |
 | `nextenv` | `startnext`, the native NeXT host, `/dev/nextguest` (`S05next`) |
+| `sdhcp` | the DHCP client `sdhcp` and `dhcpinfo`, in `/opt/amix/bin` |
+| `kstat` | system statistics: `/dev/kstat` and its module, `libkstat` (`kernel/kstat/README.md`) |
+| `top` | `top` 3.5.1, in `/opt/amix/bin`; needs `kstat` |
 
 Install scripts register the modules at once; the rc2 scripts do it at each boot. `pkgrm` unloads them, and refuses while one is in use (quit the environment first); a registration lasts until the next boot. `pkgadd -n -a envpkg` and `pkgrm -n -a envpkg` (`envcore`'s admin file, which apkg uses too) run without questions. `pkgrm` refuses a package another one needs: remove `smsqenv` before `tosenv`. Images carry the datastreams in `/var/spool/pkg`; `images/envpkg/roundtrip.sh` checks the refusal, a removal and a reinstall. Modules built for the Mac kernel serve every host, except those `mod.atari`, `mod.atari060` and `mod.amiga` replace. Every package of one build has the same version (`images/envpkg/version.sh`: release and commit), and `depend` asks for it. The image builders pre-install the packages. ROMs, OS media and other files of yours never go in a package: the image builders add them, or you copy them in.
+
+`sdhcp aen0` (`ne0` on the Amiga, `dpn0` for a DaynaPORT) links the interface if needed, takes a lease, sets the address, netmask and default route with `ifconfig` and `route`, writes `/etc/resolv.conf`, then stays in the background to renew it; `-t 30` gives up after 30 s without one, `-f` stays in the foreground, and SIGTERM releases the lease. `/etc/inet/network-config` runs it at boot when the package is installed. Scripts read the lease with `dhcpinfo`: `dhcpinfo router`, `dhcpinfo -i aen0 dns`; items `ip`, `mask`, `router`, `dns`, `server`, `lease`, `pid`; no item prints them all. The image builders pre-install it.
+
+`top` shows the busiest processes, CPU states, memory and swap, refreshed every 5 s; `q` quits, `-b -d2` prints two screens without a terminal. The image builders pre-install `kstat` and `top`.
 
 ## The Mac environment
 

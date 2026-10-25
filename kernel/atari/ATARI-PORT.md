@@ -88,7 +88,7 @@ Disk layout: AHDI root sector (what the ROM boots and TOS understands), sector 0
 | `AXS` | swap and dump | s2 |
 | `AXU` | /home | s3 |
 
-s0 = whole disk, as on the Mac (`apm.c` → `ahdi.c`, same slice policy and `root=cNd0sM` boot argument). Ids `AXB/AXR/AXS/AXU` are ours; ASV's `UNX` (VTOC inside) and NetBSD's `NB?` ids are left alone. XGM extended partitions: read, not created. The boot loader honours the NVRAM boot preference (none or 0x40 SysV: Unix; anything else, 0x80 TOS included: TOS).
+s0 = whole disk, as on the Mac (`apm.c` → `ahdi.c`, same slice policy and `root=cNd0sM` boot argument; N 0–1 IDE, 8–15 SCSI ID 0–7). Ids `AXB/AXR/AXS/AXU` are ours; ASV's `UNX` (VTOC inside) and NetBSD's `NB?` ids are left alone. XGM extended partitions: read, not created. The boot loader honours the NVRAM boot preference (none or 0x40 SysV: Unix; anything else, 0x80 TOS included: TOS).
 
 Image builder: `mkdisk.sh` writes a raw 512 MB image (`DISKMB`): root sector with boot code, AXB 4 MB, ufs root 128 MB, swap 64 MB, `/home` the rest (`GEM=1`: a TOS FAT partition instead). Hatari writes to images: always boot a copy.
 

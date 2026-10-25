@@ -1,0 +1,6 @@
+PKG=kstat
+NAME=kstat: system statistics (/dev/kstat), libkstat
+ARCH=m68k
+CATEGORY=system
+CLASSES=none
+VENDOR=Ash Nazag

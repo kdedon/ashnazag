@@ -1,0 +1,8 @@
+PKG=dropbear
+NAME=Dropbear 2025.88: SSH server and client
+ARCH=m68k
+VERSION=2025.88-1
+CATEGORY=network
+CLASSES=none
+VENDOR=Ash Nazag
+DESC=SSH server (dropbear, started at boot on port 22, log in /var/adm/dropbear.log) and client (dbclient, also as ssh), with dropbearkey. curve25519 key exchange and ed25519 keys only. Accounts without a password cannot log in: set one or put a key in ~/.ssh/authorized_keys. Host key made on first connection in /opt/amix/etc/dropbear. Needs prngd.

@@ -458,6 +458,49 @@ amiga_refl(gp, r, v)
 {
 	return guest_reflcpu(gp, r, GR_PC(r), (GR_FV(r) & 0xf000) | (v << 2), (char *)0);
 }
+/* reset: the interrupt state and the pv page as at power-on */
+static void
+amiga_reset(gp, r)
+	struct guest_proc *gp;
+	char *r;
+{
+	struct amigactr *a = AMIGAP(gp);
+	int s;
+
+	amiga_pvput(gp, 0);
+	a->ac_pvtb = 0x10000;
+	s = guest_splhi();
+	amiga_intreset(a);
+	a->ac_epoch++;
+	gp->gp_vpend = 0; a->ac_fraction = 0;
+	sigdelset(&gp->gp_proc->p_sig, AMIGA_SIG);
+	guest_splx(s);
+	amiga_pvreset(a);
+	amiga_pvpush(gp);
+}
+/* stop: the pv page's interrupt state first, then the session's wait */
+static void
+amiga_stop(gp, r)
+	struct guest_proc *gp;
+	char *r;
+{
+	struct amigactr *a = AMIGAP(gp);
+	int c, s;
+
+	a->ac_stat.as_stop++;
+	amiga_pvpull(gp);
+	c = amiga_pvget(gp);
+	s = guest_splhi();
+	amiga_pvsync(gp, c);
+	guest_splx(s);
+	if ((c = amiga_slot(gp)) < 0) {
+		guest_trapret();
+		return;
+	}
+	amiga_env.ge_sess[c].gs_halt = GH_IPL;
+	guest_env_after(&amiga_env.ge_sess[c]);
+	amiga_pvclock(gp);
+}
 static int
 amiga_priv(gp, r, v)
 	struct guest_proc *gp;
@@ -465,99 +508,24 @@ amiga_priv(gp, r, v)
 	int v;
 {
 	struct amigactr *a = AMIGAP(gp);
-	unsigned char b[4];
-	unsigned long *cp, *rp, value;
-	int op, ext, c, s;
-	if (!(gp->gp_vsr & 0x2000))
-		return amiga_refl(gp, r, v);
-	a->ac_stat.as_priv++;
-	a->ac_stat.as_lastpc = GR_PC(r);
-	if (copyin((caddr_t)GR_PC(r), (caddr_t)b, 2))
-		return 1;
-	op = G16(b);
-	if (a->ac_config.ae_flags & AMIGAF_CENSUS) {
-		struct amigacensus *cc = &a->ac_census;
-		for (c = 0; c < AMIGA_NOTHER && cc->priv[c][1]; c++)
-			if (cc->priv[c][0] == GR_PC(r)) break;
-		if (c < AMIGA_NOTHER) {
-			cc->priv[c][0] = GR_PC(r);
-			cc->priv[c][2] = op;
-			cc->priv[c][1]++;
+	int e, c;
+	if (v == 8 && (gp->gp_vsr & 0x2000)) {
+		a->ac_stat.as_priv++;
+		a->ac_stat.as_lastpc = GR_PC(r);
+		if (a->ac_config.ae_flags & AMIGAF_CENSUS) {
+			struct amigacensus *cc = &a->ac_census;
+			for (c = 0; c < AMIGA_NOTHER && cc->priv[c][1]; c++)
+				if (cc->priv[c][0] == GR_PC(r)) break;
+			if (c < AMIGA_NOTHER) {
+				cc->priv[c][0] = GR_PC(r);
+				cc->priv[c][2] = fuword((caddr_t)GR_PC(r)) >> 16 & 0xffff;
+				cc->priv[c][1]++;
+			}
 		}
 	}
-	if (op == 0x4e70) {
-		amiga_pvput(gp, 0);
-		a->ac_pvtb = 0x10000;
-		s = guest_splhi();
-		amiga_intreset(a);
-		a->ac_epoch++;
-		gp->gp_vpend = 0; a->ac_fraction = 0;
-		GR_PC(r) += 2;
-		sigdelset(&gp->gp_proc->p_sig, AMIGA_SIG);
-		guest_splx(s);
-		amiga_pvreset(a);
-		amiga_pvpush(gp);
-		guest_trapret();
-		return 0;
-	}
-	if (op == 0x4e72) {
-		if (copyin((caddr_t)GR_PC(r) + 2, (caddr_t)b, 2))
-			return 1;
-		guest_setsr(gp, r, (int)G16(b));
-		GR_PC(r) += 4;
-		a->ac_stat.as_stop++;
-		amiga_pvpull(gp);
-		c = amiga_pvget(gp);
-		s = guest_splhi();
-		amiga_pvsync(gp, c);
-		guest_splx(s);
-		if ((c = amiga_slot(gp)) < 0)
-			return 1;
-		amiga_env.ge_sess[c].gs_halt = GH_IPL;
-		guest_env_after(&amiga_env.ge_sess[c]);
-		amiga_pvclock(gp);
-		return 0;
-	}
-	if ((op & 0xfffe) == 0x4e7a) {
-		if (copyin((caddr_t)GR_PC(r) + 2, (caddr_t)b, 2))
-			return 1;
-		ext = G16(b); c = ext & 0xfff; cp = 0;
-		if (c == 2) cp = &gp->gp_vcacr;
-		if (c >= 3 && c <= 7) cp = &a->ac_mmu[c - 3];
-		if (c == 0x805 || c == 0x806 || c == 0x807) cp = &a->ac_mmu[c - 0x800];
-		if (c == 0x803 || c == 0x804)
-			return amiga_refl(gp, r, 4);
-		if (cp) {
-			rp = ext >> 12 == 15 ? (unsigned long *)&GR_USP(r) :
-			    (unsigned long *)(r + 4 + (ext >> 12) * 4);
-			if (op & 1) {
-				value = *rp;
-				if (c == 2) {
-					value &= (amiga_cpup && *amiga_cpup >= 40) ? 0x80008000UL : 0x00003f1fUL;
-					dlm_cacheflush();
-				}
-				*cp = value;
-			} else *rp = *cp;
-			GR_PC(r) += 4;
-			guest_trapret();
-			return 0;
-		}
-	}
-	if (guest_priv(gp, r, v) == 0)
-		return 0;
-	return amiga_refl(gp, r, 4);
-}
-static int
-amiga_fline(gp, r, v)
-	struct guest_proc *gp;
-	char *r;
-	int v;
-{
-	unsigned char b[2];
-	if (copyin((caddr_t)GR_PC(r), (caddr_t)b, 2) == 0 &&
-	    ((G16(b) >> 9) & 7) == 1 && fpu_present)
-		return 1;
-	return amiga_refl(gp, r, v);
+	if ((e = guest_privtrap(gp, r, v)) <= 1)
+		return e;
+	return amiga_refl(gp, r, e);
 }
 /* the boot extension's host calls */
 static int
@@ -760,6 +728,9 @@ amigaguest_load()
 	amiga_env.ge_entercmd = AMIGAIOC_ENTER;
 	amiga_env.ge_privsz = sizeof(struct amigactr);
 	amiga_env.ge_gpflags = GPF_PRIV | GPF_FTRAP | GPF_FTRAP13;
+	amiga_env.ge_prof.gpf_reset = amiga_reset;
+	amiga_env.ge_prof.gpf_stop = amiga_stop;
+	amiga_env.ge_prof.gpf_privf = GPR_ISPILL;
 	amiga_env.ge_nsess = AMIGA_NGUEST;
 	amiga_env.ge_sig = AMIGA_SIG;
 	amiga_env.ge_flags = GEF_SIGTAIL | GEF_ONSTACK;
@@ -782,7 +753,7 @@ amigaguest_load()
 		d = &amiga_env.ge_prof.gpf_disp[v];
 		d->gd_flags = GDF_USER;
 		d->gd_kind = GD_EMULATE;
-		d->gd_fn = v == 2 ? amiga_fault : v == 8 ? amiga_priv : v == 11 ? amiga_fline : amiga_refl;
+		d->gd_fn = v == 2 ? amiga_fault : v == 8 || v == 11 ? amiga_priv : amiga_refl;
 	}
 	return guest_env_add(&amiga_env);
 }

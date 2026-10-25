@@ -9,7 +9,7 @@
 # image installed as /etc/aux/rom for hosts without one.  The
 # desktop database is made in QEMU (mkdesktop.py, the Quadra 800 ROM).
 # The environment packages (images/envpkg/mkenvpkgs.sh and its inputs)
-# are installed as pkgadd would; AMIGASTAGE adds the Amiga's Kickstart and
+# and the ports (images/ports) are installed as pkgadd would; AMIGASTAGE adds the Amiga's Kickstart and
 # SYS:, CUBASE (mkcubase.sh's) Cubase to guest's ~/TOS, V200ZIP (default
 # media/v200.zip; V200ROM picks the dump) guest's ~/Voyage200, LISAMEDIA
 # guest's ~/Lisa, NEXTCD guest's ~/NeXT/openstep, WINMEDIA (default media/) Windows for Workgroups 3.11
@@ -46,10 +46,11 @@ mkdir -p "$P"
 KERNEL=$KERNEL sh "$AUX/images/envpkg/mkenvpkgs.sh" "$P/envpkg" > "$P/envpkg.log" 2>&1 ||
 	{ tail "$P/envpkg.log"; exit 1; }
 ENVPKGS=
-for p in envcore macenv tosenv amigaenv cpmenv win16env lisaenv v200env nextenv; do
+for p in envcore macenv tosenv amigaenv cpmenv win16env lisaenv v200env nextenv sdhcp kstat top; do
 	f=`echo "$P/envpkg/pkgs/env/$p"-*.pkg`
 	[ ! -f "$f" ] || ENVPKGS="$ENVPKGS $f"
 done
+ENVPKGS="$ENVPKGS `sh "$AUX/images/ports/cached.sh"`"
 I=$P/image.manifest
 G=$P/envpkg/guest/home/guest
 # the user's Windows for Workgroups 3.11 (WFW) and Windows 3.11 (WIN311)

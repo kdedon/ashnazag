@@ -35,7 +35,6 @@ images. The last four packages are only for building QEMU.
 | Where | What | Source |
 |---|---|---|
 | `toolchain/amix` | AMIX cross compiler `m68k-cbm-sysv4`: gcc 2.7.2.3, binutils 2.8.1 | [gcc-cross-amix](https://github.com/isoriano1968/gcc-cross-amix) at `206bc95`, `make all PREFIX=toolchain/amix AMIX_ROOT=toolchain/amix-root` |
-| `toolchain/amix-gcc295` | gcc 2.95.3 (C) for `m68k-cbm-sysv4`, for Mesa and DRI code; shares `toolchain/amix`'s binutils, sysroot and assembler fixups | GNU `gcc-core-2.95.3`, sha256 pinned; `sh toolchain/build-gcc295.sh` after setup |
 | `toolchain/src/gcc-cross-amix/build/env.sh` | its environment, sourced by the kernel scripts | written by `make env`; setup rewrites it on every run |
 | `toolchain/amix-root` | AMIX headers, libraries and link kit | your tape, segments 02 (core), 04 (Cdev), 19 (conf) |
 | `toolchain/bin` | `m68k-elf` binutils 2.43.1 | GNU, `--target=m68k-elf --disable-nls --disable-werror` |
@@ -103,7 +102,7 @@ Optional open-source downloads: `--tos-src` (EmuTOS 1.4, fVDI), `--x11` (X11R6.3
 | suite (minimum) | `sh tests/run-qemu.sh` | kernel + patched QEMU. No ROM: QEMU boots the kernel directly. Guest tests skip without their media. |
 | disk | `sh images/mkimage.sh --small`, `images/mkboot.sh`, `kernel/mac/diskroot/mkdiskimage.sh` | suite + A/UX 3.1 CD, hfsutils, tape 03, 07 and 10; Quadra 800 ROM to boot it |
 | x11 | `x11/build.sh`, `x11/mkimage.sh` | disk + tape 13, 14, `--x11` |
-| gl | `sh gl/build.sh`; `tests/run-qemu.sh` (t_gl, `GROUP=gl`) | suite + `toolchain/amix-gcc295`, `--gl`; libGL and glxgears also x11's `clibs` |
+| gl | `sh gl/build.sh`; `tests/run-qemu.sh` (t_gl, `GROUP=gl`) | suite + `--gl`; libGL and glxgears also x11's `clibs` |
 | mac | `images/macenv/mkmacimage.sh` | x11 + Mac OS 7.6.1 CD, Quadra 700 ROM, the A/UX root tree (`tests/aux/auxroot`, from `--aux-cd`); optional 8.1, System 6 and CP/M media above |
 | tos | `tests/run-qemu.sh` (t_tos) | suite + `--tos-src` |
 | v200 | `tests/run-qemu.sh` (t_v200, `GROUP=v200`); `v200env` from `images/envpkg/mkenvpkgs.sh` | suite; a Voyage 200 image of yours to run it |

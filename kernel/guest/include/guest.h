@@ -55,7 +55,14 @@ struct guest_profile {
 	void			(*gpf_intr)();	/* (gp, regs): before the trap tail */
 	struct guest_profile	*gpf_next;
 	int			gpf_fpu040;	/* sees a 68040 FPU: its fsave frames on a 68060 */
+	void			(*gpf_reset)();	/* (gp, regs): reset, 0 none */
+	void			(*gpf_stop)();	/* (gp, regs): stop's wait, then the trap tail; 0 the tail */
+	int			gpf_privf;	/* GPR_* */
 };
+
+/* gpf_privf: movec of MSP and ISP, which otherwise reach the one stack */
+#define	GPR_ISPSHADOW	0x01	/* read back what was written */
+#define	GPR_ISPILL	0x02	/* illegal, as on a 68060 */
 
 struct guest_ctr;
 
@@ -81,7 +88,18 @@ struct guest_proc {
 	struct guest_mmu	*gp_mmu;	/* 68040 MMU shadow, 0 = none */
 	void			(*gp_space)();	/* (gp, sr): vSR.S changed, 0 = none */
 	unsigned long		gp_ualine;	/* user-mode A-line entry, 0 = none */
+	unsigned long		gp_vmmu[10];	/* movec TC, ITT0-1, DTT0-1, MMUSR, URP, SRP, MSP, ISP without gp_mmu */
+	int			gp_pkind;	/* GPK_*: what guest_privtrap last did */
+	unsigned long		gp_hstklo, gp_hstkhi;	/* the host's stack: code using it is the host's */
+	unsigned long		gp_holdlo, gp_holdhi;	/* host code whose exceptions stay the guest's */
 };
+
+/* gp_pkind */
+#define	GPK_OTHER	0
+#define	GPK_STOP	1
+#define	GPK_RESET	2
+#define	GPK_CACHE	3	/* cinv, cpush, a CACR write */
+#define	GPK_MMU		4	/* a 68030 MMU instruction or a 68040 ptest in line F */
 
 /* gp_flags; the gates read the low 17 bits at offsets 13 to 15 */
 #define	GPF_ALINE	0x01	/* A-line: frame to vVBR + $28 */
@@ -157,6 +175,12 @@ struct guest_ctr {
 /* the guest's interrupt mask */
 #define	GUEST_VIPL(gp)	((gp)->gp_vsr >> 8 & 7)
 
+/* the host's own code runs: a PC in gp_hostlo..hi or gp_holdlo..hi, or the usp on the host's stack */
+#define	GUEST_INHOST(gp, r) \
+	((unsigned long)GR_PC(r) - (gp)->gp_hostlo < (gp)->gp_hosthi - (gp)->gp_hostlo || \
+	 (unsigned long)GR_PC(r) - (gp)->gp_holdlo < (gp)->gp_holdhi - (gp)->gp_holdlo || \
+	 (unsigned long)GR_USP(r) - (gp)->gp_hstklo < (gp)->gp_hstkhi - (gp)->gp_hstklo)
+
 /* host interrupts off; the old SR */
 static __inline__ int
 guest_splhi()
@@ -197,6 +221,7 @@ extern int guest_profile_add();		/* (pf) */
 extern void guest_profile_del();	/* (pf) */
 extern int guest_aline();		/* disposition: A-line reflection */
 extern int guest_priv();		/* disposition: privilege emulation */
+extern int guest_privtrap();		/* (gp, regs, v): vector 8 or 11; 0 done, 1 the host's, else the guest's vector */
 extern int guest_fline();		/* the same for 68030 MMU instructions in line F */
 extern int guest_illeg();		/* the same for movec taken as illegal */
 extern int guest_movep();		/* (gp, regs, &fa, &ssw): 0 done, -1 other, -2 fault */
@@ -206,6 +231,7 @@ extern int guest_bfcycle();		/* (regs, &v): a 68030 cycle to finish here */
 extern void guest_bfdone();		/* (regs, v): finished */
 extern int guest_bframe();		/* (f, sr, pc, fa, ssw, cpu030): vector-2 frame */
 extern int guest_ssw030();		/* (ssw): the 68030's SSW */
+extern int guest_berr();		/* (gp, regs, fa, ssw): a bus error to the guest's vector 2 */
 extern int guest_detach();		/* (pf): curproc leaves its guest */
 extern int guest_attach();		/* (pf): curproc becomes a guest */
 extern int guest_getsr();		/* (gp, regs): the SR the guest sees */

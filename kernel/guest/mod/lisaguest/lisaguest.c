@@ -41,8 +41,7 @@ int	lisa_trace;		/* console lines for unknown accesses and guest bus errors */
 
 static struct guest_profile lisa_profile;
 static int lisa_nopen;
-static struct guest_ram *lisa_ram, *lisa_romram;
-static struct proc *lisa_rproc;
+static struct guest_ramdev lisa_rd;	/* RAM, then the ROM from LISA_ROMOFF */
 static int lisadevflag[1] = { 0 };
 static int ntrace;
 static long lasttrace;
@@ -150,7 +149,7 @@ mapat(t, a, w, n)
 {
 	int prot = PROT_READ | PROT_EXEC | PROT_USER | (w & M_RO ? 0 : PROT_WRITE);
 
-	return guest_ram_map(w & M_ROM ? lisa_romram : lisa_ram, t->l_dev, (off_t)((w & 0xfffff) << 12), curproc->p_as,
+	return guest_ram_map(w & M_ROM ? lisa_rd.rd_hi : lisa_rd.rd_ram, t->l_dev, (off_t)((w & 0xfffff) << 12), curproc->p_as,
 	    &a, (u_int)(n << 12), (u_int)prot, (u_int)PROT_ALL, (u_int)(MAP_SHARED | MAP_FIXED));
 }
 
@@ -301,10 +300,7 @@ lisa_berr(gp, r, a, ssw)
 	long a;
 	int ssw;
 {
-	char f[24];
-	u_long pc;
-
-	if ((u_long)GR_PC(r) - gp->gp_hostlo < gp->gp_hosthi - gp->gp_hostlo || (u_long)GR_USP(r) >= 0x1000000) {
+	if (GUEST_INHOST(gp, r)) {
 		printf("lisa: bus error at %x in a host call, pc %x\n", (int)a, (int)GR_PC(r));
 		psignal(curproc, SIGSEGV);
 		guest_trapret();
@@ -315,27 +311,7 @@ lisa_berr(gp, r, a, ssw)
 	lisac.l_st.ls_berrpc = GR_PC(r);
 	lisac.l_st.ls_flags |= LSF_FAULT;
 	trace("bus error", a, GR_PC(r));
-	bzero(f, sizeof f);
-	/*
-	 * The 68000 frame: access word (function code, read), address, instruction word.
-	 * The OS restarts a fetch fault at the address when the word is rte's, which is
-	 * where this CPU resumes; a data fault gives the instruction and its pc + 2.
-	 */
-	P16(f, (ssw & 0x100 ? 0x10 : 0) | (a == GR_PC(r) ? 2 : 1) | (gp->gp_vsr & 0x2000 ? 4 : 0));
-	P32(f + 2, a);
-	pc = GR_PC(r);
-	if (a == pc)
-		P16(f + 6, 0x4e73);
-	else if (copyin((caddr_t)pc, f + 6, 2) == 0)
-		pc += 2;
-	if (guest_reflect(gp, r, pc, 8, f, 10, -1) < 0) {
-		printf("lisa: bus error with no guest stack, pc %x\n", (int)GR_PC(r));
-		psignal(curproc, SIGSEGV);
-	}
-	if (GR_FV(r) >> 12)
-		u.u_sigflag |= USTKCLEAR;
-	guest_trapret();
-	return 0;
+	return guest_berr(gp, r, (unsigned long)a, ssw);
 }
 
 static int
@@ -437,11 +413,33 @@ static void
 lisa_post(t)
 	struct lisactr *t;
 {
+	if (t->l_sleeping)
+		wakeup((caddr_t)&t->l_sleeping);
 	if (t->l_state != 1 || !t->l_gp)
 		return;
 	t->l_gp->gp_vpend = lisa_level(t) << 8;
 	if (lisa_level(t) > GUEST_VIPL(t->l_gp))
 		psignal(t->l_proc, LISA_SIG);
+}
+
+/* stop: until a request above the new IPL */
+static void
+lisa_stop(gp, r)
+	struct guest_proc *gp;
+	char *r;
+{
+	struct lisactr *t = &lisac;
+	int s = guest_splhi();
+
+	while (t->l_state == 1 && t->l_gp == gp && lisa_level(t) <= GUEST_VIPL(gp)) {
+		t->l_sleeping = 1;
+		if (sleep((caddr_t)&t->l_sleeping, (PZERO + 1) | PCATCH))
+			break;
+	}
+	t->l_sleeping = 0;
+	gp->gp_flags |= GPF_IDROP;
+	guest_splx(s);
+	guest_trapret();
 }
 
 /* every request above the IPL, a frame each, between instructions */
@@ -454,8 +452,7 @@ lisa_intr(gp, r)
 	int l, s;
 
 	/* a host call finishes first, in our code or the C library on our stack; the request stays latched */
-	if (t->l_gp != gp || (u_long)GR_PC(r) - gp->gp_hostlo < gp->gp_hosthi - gp->gp_hostlo ||
-	    (u_long)GR_USP(r) >= 0x1000000)
+	if (t->l_gp != gp || GUEST_INHOST(gp, r))
 		return;
 	switch (GR_FV(r) >> 12) {
 	case 7: case 9: case 0xa: case 0xb:
@@ -572,10 +569,7 @@ lisaclose(dev, flag, otyp, cr)
 	struct cred *cr;
 {
 	lisa_nopen = 0;			/* the last close only */
-	guest_ram_free(lisa_ram);
-	guest_ram_free(lisa_romram);
-	lisa_ram = lisa_romram = 0;
-	lisa_rproc = 0;
+	guest_ramdev_free(&lisa_rd);
 	return 0;
 }
 
@@ -594,10 +588,7 @@ lisammap(dev, off, prot)
 	off_t off;
 	int prot;
 {
-	if (off < 0)
-		return -1;
-	return off < LISA_ROMOFF ? guest_ram_frame(lisa_ram, (unsigned long)off) :
-	    guest_ram_frame(lisa_romram, (unsigned long)(off - LISA_ROMOFF));
+	return guest_ramdev_mmap(&lisa_rd, off);
 }
 
 int
@@ -609,11 +600,7 @@ lisasegmap(dev, off, as, addrp, len, prot, maxprot, flags, cr)
 	u_int len, prot, maxprot, flags;
 	struct cred *cr;
 {
-	if (curproc != lisa_rproc)
-		return EACCES;
-	if (off >= LISA_ROMOFF)
-		return guest_ram_map(lisa_romram, dev, off - LISA_ROMOFF, as, addrp, len, prot, maxprot, flags);
-	return guest_ram_map(lisa_ram, dev, off, as, addrp, len, prot, maxprot, flags);
+	return guest_ramdev_segmap(&lisa_rd, dev, off, as, addrp, len, prot, maxprot, flags);
 }
 
 static int
@@ -625,19 +612,18 @@ ram(size)
 
 	if (GUESTP(curproc))
 		return EPERM;
-	if (lisa_ram)
+	if (lisa_rd.rd_ram)
 		return EBUSY;
 	if (size < 0x80000 || size > LISA_RAMMAX || (size & 0x7fff))
 		return EINVAL;
 	/* the Lisa's code copies code and runs it with no cache push: on a 68040 the RAM writes through */
-	if ((e = guest_ram_new(size, ct && *ct >= 40 ? GMR_WT : 0, 0UL, &lisa_ram)) != 0)
+	if ((e = guest_ramdev_new(&lisa_rd, size, ct && *ct >= 40 ? GMR_WT : 0, 0UL)) != 0)
 		return e;
-	if ((e = guest_ram_new((unsigned long)LISA_ROMSZ, 0, 0UL, &lisa_romram)) != 0) {
-		guest_ram_free(lisa_ram);
-		lisa_ram = 0;
+	if ((e = guest_ram_new((unsigned long)LISA_ROMSZ, 0, 0UL, &lisa_rd.rd_hi)) != 0) {
+		guest_ramdev_free(&lisa_rd);
 		return e;
 	}
-	lisa_rproc = curproc;
+	lisa_rd.rd_hioff = LISA_ROMOFF;
 	lisac.l_ramsize = size;
 	return 0;
 }
@@ -654,7 +640,7 @@ enter(dev, arg)
 
 	if (copyin(arg, (caddr_t)&le, sizeof le))
 		return EFAULT;
-	if (!lisa_ram || curproc != lisa_rproc || t->l_state)
+	if (!guest_ramdev_mine(&lisa_rd) || t->l_state)
 		return EBUSY;
 	if (le.le_rom < le.le_phys || ((le.le_rom | le.le_phys) & 0xfff))
 		return EINVAL;
@@ -663,6 +649,9 @@ enter(dev, arg)
 	GUESTP(curproc)->gp_flags = (GUESTP(curproc)->gp_flags & ~GPF_FTRAP) | GPF_FRAME68K;
 	GUESTP(curproc)->gp_hostlo = le.le_hostlo;
 	GUESTP(curproc)->gp_hosthi = le.le_hosthi;
+	/* the launcher's stack lies above the Lisa's 16 MB */
+	GUESTP(curproc)->gp_hstklo = 0x1000000;
+	GUESTP(curproc)->gp_hstkhi = ~0UL;
 	bzero((caddr_t)t, sizeof *t);
 	t->l_ramsize = sz;
 	t->l_tzoff = le.le_tzoff;
@@ -899,6 +888,7 @@ lisaguest_load()
 	lisa_profile.gpf_disp[10].gd_fn = lisa_aline;
 	lisa_profile.gpf_exit = lisa_pexit;
 	lisa_profile.gpf_intr = lisa_intr;
+	lisa_profile.gpf_stop = lisa_stop;
 	lisa_profile.gpf_fsig = lisa_fsig;
 	lisa_profile.gpf_sendsig = lisa_sendsig;
 	return 0;

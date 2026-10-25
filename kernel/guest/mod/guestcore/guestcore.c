@@ -240,7 +240,7 @@ gc_host(gp, r, v)
 	int op;
 
 	if (!(gp->gp_flags & GPF_PRIV) || (GR_SR(r) & 0x2000) || v == 2 || v == 8 || v == 32 ||
-	    v == 47)
+	    v == 47 || (v >= 48 && v <= 55))
 		return 1;
 	op = fuword((caddr_t)GR_PC(r)) >> 16 & 0xffff;
 	if (v == 11 && (op >> 9 & 7) == 1)

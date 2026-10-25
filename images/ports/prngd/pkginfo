@@ -1,0 +1,8 @@
+PKG=prngd
+NAME=prngd 0.9.29: entropy daemon for systems without /dev/random
+ARCH=m68k
+VERSION=0.9.29-1
+CATEGORY=system
+CLASSES=none
+VENDOR=Ash Nazag
+DESC=Gathers entropy from system commands and serves it (EGD protocol) on TCP localhost:708 for dropbear. Started at boot; seed kept in /opt/amix/etc/prngd-seed. Always give it a socket argument: without one it dumps core.

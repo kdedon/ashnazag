@@ -27,10 +27,8 @@ export TMPDIR="${TMPDIR:-$B/tmp}"
 
 mkdir -p "$O" "$BIN" "$TMPDIR"
 LIBGCC=$(ls "$TC"/lib/gcc-lib/m68k-cbm-sysv4/*/libgcc.a | tail -1)
-# t_cc295's second compiler; without it t_cc295 skips
-CC295=$AUX/toolchain/amix-gcc295/bin/m68k-cbm-sysv4-gcc
-LIBGCC295=$(ls "$AUX"/toolchain/amix-gcc295/lib/gcc-lib/m68k-cbm-sysv4/*/libgcc.a 2>/dev/null | tail -1)
-[ -x "$CC295" ] || CC295=$CC
+# the compiler GL code is built with (t_dlopen's shared objects)
+sh "$AUX/gl/mkgcc.sh" "$O/gcc"
 # t_gl's library (gl/build.sh); without it t_gl skips
 GLW=${GLW:-$AUX/images/work/gl}
 
@@ -46,9 +44,9 @@ cc() {	# src obj [flags]
 	nice -n 19 "$CC" $CFLAGS "$@" -I"$T/src" -c "$src" -o "$obj"
 }
 
-cc295() {	# src obj [flags]
+glcc() {	# src obj [flags]
 	src=$1; obj=$2; shift 2
-	nice -n 19 "$CC295" -O2 -Wall -Wno-implicit -Wno-return-type "$@" -I"$T/src" -c "$src" -o "$obj"
+	nice -n 19 "$O/gcc" -O2 -Wall -Wno-implicit -Wno-return-type "$@" -I"$T/src" -c "$src" -o "$obj"
 }
 
 link() {	# out obj...
@@ -75,23 +73,16 @@ for c in nativehost nativehost_platform nativehost_ui; do
 done
 nice -n 19 "$TC/bin/m68k-cbm-sysv4-as" -o "$O/nativecall.o" "$NH/nativecall.s"
 nice -n 19 "$TC/bin/m68k-cbm-sysv4-as" -o "$O/ncprobe.o" "$T/nativecall/probe.s"
+# t_kstat's library and top, as the top package builds them
+sh "$AUX/images/envpkg/top/build.sh" "$O/top" > "$O/top.log" 2>&1 || { tail "$O/top.log"; exit 1; }
+cp "$O/top/top" "$BIN/top"
 for s in ${ONLY:-"$T"/src/t_*.c "$T/src/runall.c"}; do
 	n=$(basename "$s" .c)
 	[ -n "$ONLY" ] || case $n in t_stable|t_smsqe) continue ;; esac
-	if [ $n = t_cc295 ]; then
-		cc "$s" "$O/$n.o"
-		cc295 "$T/src/cc295abi.c" "$O/cc295abi.o"
-		link "$BIN/$n" "$O/$n.o" "$O/cc295abi.o" "$O/t.o" $LIBGCC295
-		cc295 "$T/src/t_arith.c" "$O/cc295_arith.o" $XA
-		cc295 "$T/src/t.c" "$O/cc295_t.o"
-		link "$BIN/cc295_arith" "$O/cc295_arith.o" "$O/cc295_t.o" $LIBGCC295
-		echo "[ok] $n"
-		continue
-	fi
 	if [ $n = t_dlopen ]; then
-		cc295 "$T/src/dlso_a.c" "$O/dlso_a.o" -fPIC
-		cc295 "$T/src/dlso_b.c" "$O/dlso_b.o" -fPIC
-		cc295 "$T/src/dlso_c.c" "$O/dlso_c.o"
+		glcc "$T/src/dlso_a.c" "$O/dlso_a.o" -fPIC
+		glcc "$T/src/dlso_b.c" "$O/dlso_b.o" -fPIC
+		glcc "$T/src/dlso_c.c" "$O/dlso_c.o"
 		nice -n 19 "$LD" -shared -soname /tests/libdla.so -o "$BIN/libdla.so" "$O/dlso_a.o"
 		nice -n 19 "$LD" -shared -o "$BIN/libdlb.so" "$O/dlso_b.o" "$O/dlso_c.o"
 		cc "$s" "$O/$n.o"
@@ -100,9 +91,9 @@ for s in ${ONLY:-"$T"/src/t_*.c "$T/src/runall.c"}; do
 		continue
 	fi
 	if [ $n = t_gl ]; then
-		if [ -f "$GLW/lib/libOSMesa.a" ] && [ "$CC295" != "$CC" ]; then
-			cc295 "$s" "$O/$n.o" -m68020-60 -D_XOPEN_SOURCE -I"$GLW/include"
-			link "$BIN/$n" "$O/$n.o" "$O/t.o" "$GLW/lib/libOSMesa.a" "$GLW/lib/libfastmem.a" $LIBGCC295
+		if [ -f "$GLW/lib/libOSMesa.a" ]; then
+			glcc "$s" "$O/$n.o" -m68020-40 -D_XOPEN_SOURCE -I"$GLW/include"
+			link "$BIN/$n" "$O/$n.o" "$O/t.o" "$GLW/lib/libOSMesa.a" "$GLW/lib/libfastmem.a"
 		else
 			cc "$s" "$O/$n.o" -DNOGL
 			link "$BIN/$n" "$O/$n.o" "$O/t.o"
@@ -112,7 +103,7 @@ for s in ${ONLY:-"$T"/src/t_*.c "$T/src/runall.c"}; do
 	fi
 	cc "$s" "$O/$n.o" $XA -I"$KDIR/dlm/include" -I"$KDIR/mac/display" -I"$KDIR/mac/sound" \
 		-I"$KDIR/guest/mod/tosguest" -I"$KDIR/guest/include" -I"$KDIR/guest/amiga" -I"$KDIR/net" \
-		-I"$KDIR/amiga/radeon" $NHI
+		-I"$KDIR/amiga/radeon" -I"$KDIR/kstat" $NHI
 	extra=
 	case $n in t_dlm|t_display|t_guestdlm|t_envram|t_aux|t_mac|t_mac6|t_mac76|t_mac81|t_ot81|t_coff81|t_coff81d|t_coff76|t_coff76c|t_tos|t_xaaes|t_mint|t_cpm|t_smsqe|t_amiga|t_sound|t_stable|t_scsi) extra=$MODO ;; esac
 	case $n in
@@ -125,6 +116,7 @@ for s in ${ONLY:-"$T"/src/t_*.c "$T/src/runall.c"}; do
 		"$LD" --verbose | sed -e '1,/^=====/d' -e '/^=====/,$d' -e "s/0x80000000/$HOST/" > "$O/next.ld"
 		extra="-T $O/next.ld $MODO" ;;
 	t_radeon) cc "$KDIR/amiga/radeon/rdsinit.c" "$O/rdsinit.o"; extra=$O/rdsinit.o ;;
+	t_kstat) extra="$O/top/libkstat.a $MODO" ;;
 	esac
 	link "$BIN/$n" "$O/$n.o" "$O/t.o" $extra
 	echo "[ok] $n"
@@ -173,6 +165,12 @@ if [ -z "$ONLY" ]; then
 		link "$B/netbin/$n" "$O/$n.o" "$O/t.o" $MODO -L"$SYS/usr/lib" -lsocket -lnsl
 		echo "[ok] $n"
 	done
+	# t_dhcp's DHCP client, as its package builds it
+	D=$AUX/images/envpkg/sdhcp
+	cc "$D/sdhcp.c" "$O/sdhcp.o"
+	cc "$D/eprintf.c" "$O/eprintf.o"
+	link "$B/netbin/sdhcp" "$O/sdhcp.o" "$O/eprintf.o" -L"$SYS/usr/lib" -lsocket -lnsl
+	cp "$D/dhcpinfo" "$B/netbin/dhcpinfo"
 fi
 
 # xh_<kind><target>: exec targets whose stripped file size mod 4096 is

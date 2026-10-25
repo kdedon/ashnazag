@@ -6,7 +6,7 @@
 #
 # Sets: guest (environment modules), display (dsuser), drivers (the
 # target's hardware modules), fs (cdfs, from CDFS_SRC or ref/amix-cdfs),
-# boot (the disk controller modules alone: amigaide ncr770, ncr96);
+# sys (kstat), boot (the disk controller modules alone: amigaide ncr770, ncr96);
 # default all but boot.  The amigaide module needs GAYLE_IDE (default
 # ref/amix-gayle-ide).  Out: OUT/mod.d/*, plus
 # OUT/modadmin for the Atari drivers.
@@ -37,13 +37,13 @@ fi
 
 . "$AUX/toolchain/src/gcc-cross-amix/build/env.sh"
 export PATH
-usage() { echo "usage: mods.sh TARGET=mac|amiga|atari030|atari060 OUT [KERNEL=elf] [guest|display|drivers|fs]..." >&2; exit 2; }
+usage() { echo "usage: mods.sh TARGET=mac|amiga|atari030|atari060 OUT [KERNEL=elf] [guest|display|drivers|fs|sys]..." >&2; exit 2; }
 case $1 in TARGET=*) TARGET=${1#TARGET=} ;; *) usage ;; esac
 [ -n "$2" ] || usage
 O=$2; shift 2
 KERNEL=
 case $1 in KERNEL=*) KERNEL=${1#KERNEL=}; shift ;; esac
-SETS=${*:-guest display drivers fs}
+SETS=${*:-guest display drivers fs sys}
 ONLY=
 case " $SETS " in *" boot "*)
 	SETS=drivers
@@ -291,10 +291,25 @@ fs() {
 	mkmod "$d"
 }
 
+# target-independent modules
+sys() {
+	for m in kstat; do
+		d=$O/src/$m
+		rm -rf "$d"; mkdir -p "$d"
+		$KC -Wall -Wno-comment -I"$DLM/include" -c "$K/$m/$m.c" -o "$d/$m.o" 2> "$d/$m.o.warn" ||
+			{ cat "$d/$m.o.warn"; exit 1; }
+		warn "$K/$m/$m.c" "$d/$m.o"
+		python3 "$K/atari/chk64.py" "$d/$m.o"
+		m68k-cbm-sysv4-ld -r -o "$d/Driver.o" "$d/$m.o"
+		cp "$K/$m/Master" "$d/"
+		mkmod "$d"
+	done
+}
+
 rm -rf "$O/mod.d"
 for s in $SETS; do
 	case $s in
-	guest|display|fs) $s ;;
+	guest|display|fs|sys) $s ;;
 	drivers)
 		case $TARGET in
 		mac) mac ;;

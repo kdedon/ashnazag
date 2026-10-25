@@ -21,7 +21,7 @@ Direct boot also runs `display/hostio.py`: `t_display` sends it requests on SCC 
 | Group | Programs |
 |---|---|
 | `smoke` | t_sys t_file t_proc t_pipe t_dlm t_guestdlm t_envram t_gate t_vtop |
-| `core` | smoke plus t_arith t_fpimm t_mem t_sig t_streams t_time t_prof t_tty t_page t_moddemo t_stress t_env t_ufs |
+| `core` | smoke plus t_kstat t_arith t_fpimm t_mem t_sig t_streams t_time t_prof t_tty t_page t_moddemo t_stress t_env t_ufs |
 | `mac` | t_aux t_mac t_mac6 t_mac76 t_mac81 t_env |
 | `tos` | t_tos t_xaaes t_env |
 | `mint`, `cpm`, `amiga`, `display`, `sound`, `win16`, `gl` | t_mint; t_cpm; t_amiga t_radeon t_env; t_display; t_sound; t_win16; t_gl t_dlopen |
@@ -68,8 +68,10 @@ INFO time.clk_tck: 60
 | `t_arith` | 32/64-bit multiply, divide, shifts; FP and libm in a child; FP state across context switches; on a 68060, cas2 and a page-crossing cas on untouched pages, and cas2 on a read-only page ending in a signal |
 | `t_fpimm` | FP immediates and the instructions a 68060 leaves to the kernel; fp2-fp7 kept |
 | `t_sys` | uname, sysinfo, getppid, limits, EMFILE, environment through exec, `/proc` readdir/PIOCPSINFO/PIOCSTATUS/memory read, kernel counters via `/dev/kmem` |
+| `t_kstat` | `/dev/kstat` loaded on open: records, memory, CPU ticks, short reads, no writers; the 1-minute load and user time rise under a busy loop; `top -b` lists the spinner with CPU and memory lines; `top` on a pty draws and quits on `q` |
 | `t_streams` | `/dev/null`, `/dev/zero`, sad autopush query and module validation, clone open, I_PUSH/I_LOOK/I_POP, pseudo-terminal pair |
 | `t_net` (`--net` only) | DLPI on `/dev/aen0` (info, address, SNAP bind, multicast limit, bad offset), slink/ifconfig/route, ping 10.0.2.2, 64 KB TCP echo via guestfwd, refused connect, ifconfig down/up, CA1 interrupt count |
+| `t_dhcp` (`--net` only) | `sdhcp` from an unconfigured `aen0`: lease, address, default route, `resolv.conf`, `dhcpinfo`, ping 10.0.2.2, a DNS query to the leased server, release on SIGTERM |
 | `t_stress` | 20 s of fork + pipe + file I/O + exec + malloc; checks freemem, availsmem and filesystem counts before and after |
 | `t_ufs` | a ufs volume (SCSI disk 2, from `mkufs.py`) mounted, used (read, write, chown, shared mmap, directories) and unmounted 10 times, then remounted read-only; after each unmount, s5 I/O and exec, and writes at the end of fresh file-window slots must not fault on the next slot |
 | `t_page` | 4 processes, 2 generations, touch twice free memory (within what swap can reserve) and verify every page forwards, backwards and after fork (copy on write); `swapctl` free space drops while held and recovers; a holder stuck 300 s fails with its wait channel. Pages out only when swap exceeds free memory: on the RAM-disk root boot with `rdswap=MB`, e.g. `MEM=48 CMDLINE=rdswap=28` |

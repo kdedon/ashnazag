@@ -1,7 +1,8 @@
 #!/bin/sh
 # mkdisk.sh -- build the Falcon IDE disk image (raw): AHDI root sector
 # with boot code, AXB (loader, kernel and disk modules), AXR (root, s1), AXS
-# (swap, s2) and AXU (/home, s3).  TOS 3/4 boot it from power on.
+# (swap, s2) and AXU (/home, s3).  TOS 3/4 boot it from power on; EmuTOS
+# through \AUTO\AXBOOT.PRG on a 3 MB GEMDOS partition (ICD entry).
 #
 #   sh mkdisk.sh [kernel.elf [out.img]]
 #
@@ -21,7 +22,7 @@
 # mod.d) to put in /tests/mod.d, with /tests/auxreg, /dev/uinter0 and
 # /dev/tos.  TOSOUT: mktos.sh's outdir; starttos and the cartridge go in /tests.
 # TOSENV and MACENV install the environment packages
-# (images/envpkg/mkenvpkgs.sh), their modules the Mac kernel's (MACKERNEL,
+# (images/envpkg/mkenvpkgs.sh) and the ports (images/ports), their modules the Mac kernel's (MACKERNEL,
 # default kernel/build/unix-mac.elf, else this one) with this kernel's
 # where they differ.
 # TESTROOT: a directory whose tree goes on the root too (e.g. tests/build/root's
@@ -154,7 +155,8 @@ if [ -n "$TOSENV$MACENV" ]; then
 	ATARIKERNEL=$KERNEL KERNEL=$MK AMIGAKERNEL=/nonexistent ATARI060KERNEL=/nonexistent \
 		sh "$K/../images/envpkg/mkenvpkgs.sh" "$E/envpkg" > "$E/envpkg.log" 2>&1 ||
 		{ tail "$E/envpkg.log"; exit 1; }
-	pk="$pk `echo "$EP"/envcore-*.pkg`"
+	pk="$pk `echo "$EP"/envcore-*.pkg` `echo "$EP"/sdhcp-*.pkg` `echo "$EP"/kstat-*.pkg` `echo "$EP"/top-*.pkg`"
+	pk="$pk `sh "$K/../images/ports/cached.sh"`"
 	[ "$MACENV" != 1 ] || pk="$pk `echo "$EP"/macenv-*.pkg`"
 	if [ "$TOSENV" = 1 ]; then
 		for p in tosenv cpmenv win16env; do ef=`echo "$EP/$p"-*.pkg`; [ ! -f "$ef" ] || pk="$pk $ef"; done
@@ -167,12 +169,16 @@ if [ "$MACENV" = 1 ]; then
 	R6=$E/mac6/a201
 	sh "$K/../images/macenv/mksys6.sh" "${CD201:-$K/../media/AUX_2.0.1_CD_Image.iso}" "$R6" \
 		> "$E/mac6.log" 2>&1 || { tail "$E/mac6.log"; exit 1; }
-	mkdir -p "$R6/dev" "$R6/etc/aux"
+	mkdir -p "$R6/dev" "$R6/etc/aux" "$R6/home/guest"
 	cp "${ROM6:-$K/../368CADFE - Mac IIci.ROM}" "$R6/etc/aux/rom"
+	echo "guest::100:1:guest:/home/guest:/bin/sh" >> "$R6/etc/passwd"
+	: > "$R6/mac/sys/System Folder/.stamp"
 	# root runs the Mac: nothing in its root writable by others
 	chmod -R go-w "$R6"
 	chmod 1777 "$R6/tmp"
+	# guest's System Folder, owned by guest, as on the Mac image
 	{ printf 't\t/a201\t0\t3\t%s\n' "$R6"
+	  printf 't\t%s\t100\t1\t%s\n' "/a201/home/guest/System Folder" "$R6/mac/sys/System Folder"
 	  echo 'c /a201/dev/uinter0 660 0 25 54 0'
 	  echo 'c /a201/dev/console 620 0 7 0 0'; } >> "$W/root.manifest"
 fi
@@ -232,8 +238,8 @@ fi
   echo ' Sound  sndtest         a tone through the DMA sound'
   echo
   echo ' Ctrl-Alt-0 shows the console, Ctrl-Alt-1 to -9 the sessions.'
-  echo ' Network: set ADDR in /etc/inet/network-config and reboot; NETIF=aen0'
-  echo ' is the NetUSBee, NETIF=dpn0 a BlueSCSI or DaynaPORT.'
+  echo ' Network: DHCP on NETIF in /etc/inet/network-config (aen0 NetUSBee, dpn0'
+  echo ' BlueSCSI or DaynaPORT); set ADDR there for a fixed address and reboot.'
   "$K/../toolchain/linux/bin/m68k-linux-gnu-nm" "$KERNEL" | grep -q ' ata_svidel$' &&
 	echo " SuperVidel mode: bootline 'root=c?d0s1 sv=1024x768x16' (8, 16, 32 bpp)"
   echo ' bootline shows or sets the kernel command line (root).'
@@ -253,7 +259,8 @@ DISKROOT_BUILD=$W/src/build DISKROOT_SRCDIR=$W/src DISKROOT_MANIFEST=$W/root.man
 BM=
 for m in ${BOOTMODS-ataide scsi sd}; do BM="$BM $W/src/build/mods/mod.d/$m"; done
 AXBMB=$(( ($(cat "$KERNEL" $BM | wc -c) + (16 + 8) * 512 + 4194303) / 4194304 * 4 ))
-HOMEMB=$(( (DISKMB - AXBMB - ROOTMB - SWAPMB - 1) / 4 * 4 ))
+# 3 MB at the end: EmuTOS's GEMDOS partition
+HOMEMB=$(( (DISKMB - AXBMB - ROOTMB - SWAPMB - 4) / 4 * 4 ))
 [ $HOMEMB -ge 4 ] || { echo "[FAIL] DISKMB too small"; exit 1; }
 if [ "$GEM" = 1 ]; then
 	[ $HOMEMB -le 508 ] || HOMEMB=508
@@ -310,6 +317,7 @@ for pid, st, n in parts:
 	print('%s %d+%d' % (pid.decode(), st, n))
 PYEOF
 sh "$A/mkboot.sh" "$W/boot"
+$PY "$A/mkgemboot.py" "$OUT.new" "$W/boot/AXBOOT.PRG"
 $PY "$A/instboot.py" "$OUT.new" "$W/boot/bootsec.bin" "$W/boot/axbload.bin" \
 	"$KERNEL" "$BOOTARGS" 3 $BM
 

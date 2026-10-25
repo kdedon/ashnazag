@@ -70,7 +70,7 @@ archives list them: owners, modes, times, hard links and device nodes kept. Chan
 | `/usr/sbin/swap` | page shift 12 for 11 (5 bytes) | `-l`/`-s` counted 2 KB pages; this kernel's are 4 KB |
 | `/usr/amiga/bin/setclk` | `exit 0` | `date` runs `setclk -s`; the kernel sets the RTC |
 | `/etc/saf/_sactab` | empty; port-monitor directories removed | Amiga screens, serial boards, tcp/inetd/xdm |
-| `/etc/inet/network-config` | QEMU user network (10.0.2.15, gateway 10.0.2.2) | on real hardware edit it |
+| `/etc/inet/network-config` | DHCP with the sdhcp package, else QEMU user network (10.0.2.15, gateway 10.0.2.2) | on real hardware without DHCP edit it |
 | `/etc/resolv.conf` | `nameserver 10.0.2.3` | QEMU default; edit on real hardware |
 | `/dev/aen0`, `ping`, `route`, `arp`, `netstat` | added (c 18 0; tape segment 07) | `slink addaen` and the tools use them |
 | `/var/adm/utmp`, `utmpx` | added, empty | |

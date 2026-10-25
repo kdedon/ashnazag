@@ -470,7 +470,7 @@ operand(pi, mode, reg, sz, vp, wr, src)
 	return 0;
 }
 
-/* movec control register: 0 known, -1 not */
+/* movec control register: 0 known, -1 not, -3 illegal for this guest */
 static int
 creg(gp, pi, c, vp, wr)
 	struct guest_proc *gp;
@@ -490,11 +490,21 @@ creg(gp, pi, c, vp, wr)
 	case 0x800: cp = &gp->gp_vusp; break;
 	case 0x801: cp = &gp->gp_vvbr; break;
 	case 0x803: case 0x804:		/* MSP, ISP: the one stack */
-		cp = (unsigned long *)&GR_USP(pi->r);
+		if (gp->gp_prof->gpf_privf & GPR_ISPILL)
+			return -3;
+		if (gp->gp_prof->gpf_privf & GPR_ISPSHADOW)
+			cp = &gp->gp_vmmu[c - 0x7fb];
+		else
+			cp = (unsigned long *)&GR_USP(pi->r);
 		break;
 	case 0x003: case 0x004: case 0x005: case 0x006: case 0x007:
-	case 0x802: case 0x805: case 0x806: case 0x807:
-		cp = &zero;		/* MMU and CAAR: recorded nowhere */
+		cp = &gp->gp_vmmu[c - 3];
+		break;
+	case 0x805: case 0x806: case 0x807:
+		cp = &gp->gp_vmmu[c - 0x800];
+		break;
+	case 0x802:
+		cp = &zero;		/* CAAR: recorded nowhere */
 		break;
 	default:
 		return -1;
@@ -505,6 +515,13 @@ creg(gp, pi, c, vp, wr)
 	}
 	if (c == 0x801 && (*vp & 1))
 		return -1;
+	if (c == 0x002) {
+		/* the bits of the CPU the guest sees */
+		long *__volatile__ ct = &g_cputype;
+
+		*vp &= (gp->gp_flags & GPF_CPU030) || !ct || *ct < 40 ? 0x3f1fL : 0x80008000L;
+		gp->gp_pkind = GPK_CACHE;
+	}
 	/* a 68030's CD and CI clear its caches */
 	if (c == 0x002 && *cp == *vp && !((gp->gp_flags & GPF_CPU030) && (*vp & 0x808)))
 		return 0;
@@ -757,7 +774,7 @@ pmmu030(pi, op)
 
 /*
  * One privileged instruction.  0: emulated, PC past it; 1: PC set;
- * -1: not emulated; -2: operand fault.
+ * -1: not emulated; -2: operand fault; -3: illegal, unreported.
  */
 static int
 priv1(gp, pi)
@@ -810,8 +827,8 @@ priv1(gp, pi)
 			v = ext & 0x8000 ? *areg(pi, (ext >> 12) & 7) : GR_D(r, (ext >> 12) & 7);
 			return creg(gp, pi, ext & 0xfff, &v, 1);
 		}
-		if (creg(gp, pi, ext & 0xfff, &v, 0))
-			return -1;
+		if ((e = creg(gp, pi, ext & 0xfff, &v, 0)) != 0)
+			return e;
 		if (ext & 0x8000)
 			*areg(pi, (ext >> 12) & 7) = v;
 		else
@@ -845,6 +862,7 @@ priv1(gp, pi)
 		return 0;
 	}
 	if ((op & 0xff00) == 0xf400) {			/* cinv, cpush */
+		gp->gp_pkind = GPK_CACHE;
 		if (guest_cache_insn(gp, (int)op, (unsigned long)*areg(pi, reg)) < 0) {
 			dlm_cacheflush();
 			guest_cflush_all++;
@@ -919,6 +937,65 @@ guest_priv(gp, r, v)
 		return 0;
 	}
 	return 1;			/* stock: SIGILL */
+}
+
+/*
+ * Vector 8 or 11 of an environment: FPU instructions go to the host's
+ * FPU, 68030 MMU instructions and a 68040's ptest on a 68060 to the
+ * emulation, fsave and frestore without an FPU to vector 11; stop
+ * waits in gpf_stop.  0: done; 1: the host's; else the vector the
+ * guest takes: 4, 8 or 11.
+ */
+int
+guest_privtrap(gp, r, v)
+	struct guest_proc *gp;
+	char *r;
+	int v;
+{
+	struct guest_profile *pf = gp->gp_prof;
+	unsigned char b[4];
+	int op;
+
+	gp->gp_pkind = GPK_OTHER;
+	if (copyin((caddr_t)GR_PC(r), (caddr_t)b, 2))
+		return v == 11 ? 11 : 1;
+	op = G16(b);
+	if (v == 11 || (op & 0xffc0) == 0xf000) {
+		if ((op >> 9 & 7) == 1 && fpu_present)
+			return 1;
+		if ((op & 0xffd8) != 0xf548 && !((gp->gp_flags & GPF_CPU030) && (op & 0xffc0) == 0xf000))
+			return 11;
+		if (!(gp->gp_vsr & SR_S))
+			return 8;
+		gp->gp_pkind = GPK_MMU;
+		return guest_priv(gp, r, 8) ? 11 : 0;
+	}
+	/* a 68000 reads SR in user mode too */
+	if (!(gp->gp_vsr & SR_S) && !((gp->gp_flags & GPF_FRAME68K) && (op & 0xffc0) == 0x40c0))
+		return 8;
+	if (!fpu_present && (op & 0xfe00) == 0xf200 && (op >> 7 & 3) == 2)
+		return 11;
+	if (op == 0x4e70) {
+		gp->gp_pkind = GPK_RESET;
+		GR_PC(r) += 2;
+		if (pf->gpf_reset)
+			(*pf->gpf_reset)(gp, r);
+		trapret();
+		return 0;
+	}
+	if (op == 0x4e72) {
+		if (copyin((caddr_t)GR_PC(r) + 2, (caddr_t)b + 2, 2))
+			return 1;
+		gp->gp_pkind = GPK_STOP;
+		vsr_set(gp, r, (int)G16(b + 2));
+		GR_PC(r) += 4;
+		if (pf->gpf_stop)
+			(*pf->gpf_stop)(gp, r);
+		else
+			trapret();
+		return 0;
+	}
+	return guest_priv(gp, r, 8) ? 4 : 0;
 }
 
 /*
@@ -1014,6 +1091,59 @@ guest_fnote(gp, r, v)
 		gp->gp_flags = (gp->gp_flags & ~GPF_UNOTE) | GPF_FAULT;
 	}
 	return 1;
+}
+
+/*
+ * A bus error at fa (ssw in the 68040's layout) through the guest's
+ * vector 2, in the frame of the CPU it sees: a 68000's group 0 frame,
+ * a 68030's short bus fault (format $A) or a 68040's format 7.  1: the
+ * host's own code faulted, the stock handler's.
+ */
+int
+guest_berr(gp, r, fa, ssw)
+	struct guest_proc *gp;
+	char *r;
+	unsigned long fa;
+	int ssw;
+{
+	char f[60];
+	unsigned long pc = GR_PC(r);
+	int n;
+
+	if (pc - gp->gp_hostlo < gp->gp_hosthi - gp->gp_hostlo)
+		return 1;
+	bzero(f, sizeof f);
+	ssw = (ssw & ~4) | (gp->gp_vsr & SR_S ? 4 : 0);	/* the guest's mode */
+	if (gp->gp_flags & GPF_FRAME68K) {
+		/*
+		 * Access word (read, instruction or data, function code), address,
+		 * instruction word.  A fetch fault resumes at the address with rte's
+		 * word; a data fault gives the instruction and its pc + 2.
+		 */
+		P16(f, (ssw & 0x100 ? 0x10 : 0) | (fa == pc ? 2 : 1) | (ssw & 4));
+		P32(f + 2, fa);
+		if (fa == pc)
+			P16(f + 6, 0x4e73);
+		else if (copyin((caddr_t)pc, f + 6, 2) == 0)
+			pc += 2;
+		n = guest_reflect(gp, r, pc, 8, f, 10, -1);
+	} else if (gp->gp_flags & GPF_CPU030) {
+		P16(f + 2, guest_ssw030((ssw & ~3) | 1));	/* data */
+		P32(f + 8, fa);
+		n = guest_reflect(gp, r, pc, 0xa008, f, 26, -1);
+	} else {
+		(void)guest_bframe(f, GR_SR(r) | gp->gp_vsr, pc, fa, ssw, 0);
+		n = guest_reflect(gp, r, pc, 0x7008, f + 8, 54, -1);
+	}
+	if (n < 0) {
+		printf("NOTICE: guest pid %d: bus error at %x with no guest stack, pc %x\n",
+		    (int)curproc->p_pid, (int)fa, (int)GR_PC(r));
+		psignal(curproc, SIGSEGV);
+	}
+	if (GR_FV(r) >> 12)
+		u.u_sigflag |= USTKCLEAR;
+	trapret();
+	return 0;
 }
 
 /*

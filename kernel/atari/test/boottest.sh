@@ -3,6 +3,8 @@
 # bootable BGM partition, AXB, ICD entries and a bad-sector list.  The
 # install must keep every byte outside the boot code and checksum and
 # outside AXB, and give a sector the ROM runs (word sum 0x1234).
+# mkgemboot.py: a FAT16 partition in the ICD slot whose \AUTO\AXBOOT.PRG
+# is the launcher; the root sector stays bootable, a used tail is refused.
 set -e
 A=$(cd "$(dirname "$0")/.." && pwd)
 T=$(mktemp -d "${TMPDIR:-/tmp}/boottest.XXXXXX")
@@ -59,3 +61,53 @@ f = open(sys.argv[1], 'r+b'); s = bytearray(f.read(512)); $bad; f.seek(0); f.wri
 	cmp "$T/bad.img" "$T/bad0.img"
 done
 echo '[OK] bad layouts refused and left alone; old boot code restored'
+
+# EmuTOS's GEMDOS partition in the free last 3 MB
+python3 - "$T/gem.img" <<'EOF'
+import struct, sys
+s = bytearray(512)
+struct.pack_into('>I', s, 0x1C2, 16384)
+struct.pack_into('>B3sII', s, 0x1C6, 0x01, b'AXB', 64, 1024)
+struct.pack_into('>B3sII', s, 0x1D2, 0x01, b'AXR', 1088, 9000)
+open(sys.argv[1], 'wb').write(s + bytes(16383 * 512))
+EOF
+python3 "$A/instboot.py" "$T/gem.img" "$T/bootsec.bin" "$T/axbload.bin" "$T/kernel" 'root=c?d0s1' > /dev/null
+cp "$T/gem.img" "$T/gem0.img"
+python3 "$A/mkgemboot.py" "$T/gem.img" "$T/AXBOOT.PRG"
+python3 - "$T/gem0.img" "$T/gem.img" "$T/AXBOOT.PRG" "$T/part.img" <<'EOF'
+import struct, sys
+a, b, prg = (open(f, 'rb').read() for f in sys.argv[1:4])
+assert sum(struct.unpack('>256H', b[:512])) & 0xFFFF == 0x1234, 'root sector not bootable'
+assert a[:0x156] == b[:0x156] and a[0x1C2:0x1FE] == b[0x1C2:0x1FE], 'boot code or primaries changed'
+assert a[512:(16384 - 6144) * 512] == b[512:(16384 - 6144) * 512], 'partitions changed'
+flg, pid, st, n = struct.unpack_from('>B3sII', b, 0x156)
+assert (flg & 1, pid, st, n) == (1, b'GEM', 16384 - 6144, 6144), 'ICD entry'
+p = b[st * 512:(st + n) * 512]
+open(sys.argv[4], 'wb').write(p)
+bps, spc, res, nf, nroot, _, _, fsz = struct.unpack_from('<HBHBHHBH', p, 11)
+root = (res + nf * fsz) * 512
+data = root + nroot * 32
+def find(d, name):
+	for i in range(0, 512, 32):
+		if d[i:i + 11] == name:
+			return struct.unpack_from('<HI', d, i + 26)
+	raise SystemExit('[FAIL] no %s' % name)
+cl, _ = find(p[root:root + nroot * 32], b'AUTO       ')
+cl, size = find(p[data + (cl - 2) * 512:], b'AXBOOT  PRG')
+fat = p[res * 512:(res + fsz) * 512]
+got = b''
+while cl < 0xFFF8:
+	got += p[data + (cl - 2) * 512:data + (cl - 1) * 512]
+	cl, = struct.unpack_from('<H', fat, 2 * cl)
+assert got[:size] == prg and size == len(prg), 'AXBOOT.PRG content'
+assert prg[:2] == b'\x60\x1a', 'not a TOS program'
+print('[OK] GEMDOS partition holds the launcher; root sector bootable, partitions kept')
+EOF
+! command -v fsck.fat > /dev/null || fsck.fat -n "$T/part.img" > /dev/null
+python3 -c "import struct, sys
+f = open(sys.argv[1], 'r+b'); s = bytearray(f.read(512))
+struct.pack_into('>I', s, 0x1D6 + 4, 16384 - 1088); f.seek(0); f.write(s)" "$T/gem0.img"
+if python3 "$A/mkgemboot.py" "$T/gem0.img" "$T/AXBOOT.PRG" > /dev/null; then
+	echo '[FAIL] used tail taken'; exit 1
+fi
+echo '[OK] used tail refused'

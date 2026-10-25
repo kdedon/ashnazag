@@ -11,6 +11,8 @@ typedef unsigned long u_long;
 typedef unsigned long k_sigset_t;
 typedef unsigned long dev_t;
 typedef void _VOID;
+typedef char *addr_t;
+struct as;
 struct cred { int dummy; };
 struct modwrapper { int dummy; };
 struct evpd;
@@ -28,7 +30,7 @@ struct guest_ram { int dummy; };
 #define	kmem_zalloc(n, f)	calloc(1, n)
 #define	kmem_free(p, n)	free(p)
 
-struct t_user { int u_sigflag; char *u_ar0; };
+struct t_user { int u_sigflag; char *u_ar0; struct proc *u_procp; };
 extern struct t_user u;
 #define	psignal	t_psignal
 extern struct proc *curproc;

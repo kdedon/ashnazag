@@ -10,6 +10,7 @@
 
 struct lisactr {
 	int		l_state;	/* 0 free, 1 running */
+	int		l_sleeping;	/* in stop */
 	struct proc	*l_proc;
 	struct guest_proc *l_gp;
 	dev_t		l_dev;

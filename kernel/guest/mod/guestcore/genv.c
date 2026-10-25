@@ -109,6 +109,8 @@ guest_env_intr(gp, r)
 	/* a fault frame resumes part way through its instruction */
 	if ((e->ge_holdfmt >> (GR_FV(r) >> 12) & 1) && !(u.u_sigflag & USTKCLEAR))
 		return;
+	if ((e->ge_flags & GEF_HOSTHOLD) && GUEST_INHOST(gp, r))
+		return;
 	if (e->ge_sync && (*e->ge_sync)(s))
 		return;
 	x = guest_splhi();
@@ -156,7 +158,8 @@ genv_fsig(p, gp)
 	k_sigset_t h;
 	int x, n, held;
 
-	held = s && e->ge_sync && (*e->ge_sync)(s);
+	held = s && (((e->ge_flags & GEF_HOSTHOLD) && p == u.u_procp && u.u_ar0 && GUEST_INHOST(gp, u.u_ar0)) ||
+	    (e->ge_sync && (*e->ge_sync)(s)));
 	x = guest_splhi();
 	h = p->p_hold;
 	sigdelset(&p->p_hold, e->ge_sig);
@@ -216,6 +219,19 @@ guest_env_after(s)
 	guest_trapret();
 }
 
+/* stop: until a level above the new IPL */
+static void
+genv_stop(gp, r)
+	struct guest_proc *gp;
+	char *r;
+{
+	struct guest_sess *s = guest_env_sess(gp);
+
+	if (s)
+		s->gs_halt = GH_IPL;
+	guest_env_after(s);
+}
+
 static void
 genv_tick(arg)
 	caddr_t arg;
@@ -273,10 +289,12 @@ genv_hostgate(gp, r, v)
 	struct guest_env *e = GENV(gp);
 	struct guest_sess *s = guest_env_sess(gp);
 	unsigned long o = GR_PC(r) - e->ge_hostva;
+	int n;
 
 	if (s && s->gs_state == GS_RUN && o < (unsigned long)e->ge_hostn * e->ge_hoststep &&
-	    o % e->ge_hoststep == 0 && (*e->ge_hostcall)(s, r, (int)(o / e->ge_hoststep)) == 0) {
-		GR_PC(r) += e->ge_hostlen;
+	    o % e->ge_hoststep == 0 && (n = (*e->ge_hostcall)(s, r, (int)(o / e->ge_hoststep))) >= 0) {
+		if (n == 0)
+			GR_PC(r) += e->ge_hostlen;
 		guest_env_after(s);
 		return 0;
 	}
@@ -354,8 +372,37 @@ guest_env_close(e, dev, flags, otyp, cr)
 	int flags, otyp;
 	struct cred *cr;
 {
+	int i;
+
 	e->ge_nopen = 0;
+	for (i = 0; i < e->ge_nsess; i++)
+		if (e->ge_sess[i].gs_state != GS_FREE)
+			return 0;
+	guest_ramdev_free(&e->ge_ram);
 	return 0;
+}
+
+int
+guest_env_mmap(e, dev, off, prot)
+	struct guest_env *e;
+	dev_t dev;
+	off_t off;
+	int prot;
+{
+	return guest_ramdev_mmap(&e->ge_ram, off);
+}
+
+int
+guest_env_segmap(e, dev, off, as, addrp, len, prot, maxprot, flags, cr)
+	struct guest_env *e;
+	dev_t dev;
+	off_t off;
+	struct as *as;
+	addr_t *addrp;
+	u_int len, prot, maxprot, flags;
+	struct cred *cr;
+{
+	return guest_ramdev_segmap(&e->ge_ram, dev, off, as, addrp, len, prot, maxprot, flags);
 }
 
 /* the caller's session, else the first */
@@ -407,6 +454,8 @@ guest_env_add(e)
 	pf->gpf_fsig = genv_fsig;
 	pf->gpf_sendsig = genv_sendsig;
 	pf->gpf_intr = guest_env_intr;
+	if (!pf->gpf_stop)
+		pf->gpf_stop = genv_stop;
 	if (e->ge_hostcall && e->ge_hostn > 0 && e->ge_hoststep > 0) {
 		d = &pf->gpf_disp[e->ge_hostvec];
 		e->ge_hostdisp = *d;

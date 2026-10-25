@@ -13,6 +13,7 @@ set -e
 TC=$(cd "$(dirname "$0")" && pwd)
 GCA_URL=https://github.com/isoriano1968/gcc-cross-amix
 GCA_PIN=206bc9589dc8b0bae1cb2deb1c5bc7e5d3d8e190
+GCC_V=2.7.2.3
 G=$TC/src/gcc-cross-amix
 R=$1
 
@@ -30,5 +31,7 @@ else
 	T="install-binutils install-gcc install-gcc-wrapper install-target-ar env"
 fi
 [ ! -d "$TC/amix" ] || chmod -R u+w "$TC/amix"
+nice -n 19 make -C "$G" extract > "$TC/amix-build.log" 2>&1 || { tail -20 "$TC/amix-build.log"; exit 1; }
+sh "$TC/fix-ashrdi16.sh" "$G/src/gcc-$GCC_V/config/m68k/m68k.md"
 nice -n 19 make -C "$G" $T PREFIX="$TC/amix" AMIX_ROOT="$R" MAKE_JOBS="${JOBS:-1}" \
-	> "$TC/amix-build.log" 2>&1 || { tail -20 "$TC/amix-build.log"; exit 1; }
+	>> "$TC/amix-build.log" 2>&1 || { tail -20 "$TC/amix-build.log"; exit 1; }

@@ -1,0 +1,8 @@
+PKG=wget
+NAME=GNU wget 1.11.4: HTTP and FTP downloader
+ARCH=m68k
+VERSION=1.11.4-1
+CATEGORY=network
+CLASSES=none
+VENDOR=Ash Nazag
+DESC=Fetches files over plain HTTP and FTP; no HTTPS (fetch those through a TLS proxy). Installs /opt/amix/bin/wget. AMIX has no resolver: name hosts in /etc/inet/hosts or use addresses.

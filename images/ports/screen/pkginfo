@@ -1,0 +1,8 @@
+PKG=screen
+NAME=GNU screen 4.0.3 - terminal multiplexer
+ARCH=m68k
+VERSION=4.0.3-1
+CATEGORY=utility
+CLASSES=none
+VENDOR=Ash Nazag
+DESC=Many shells on one terminal: detach a session, log out or drop the link, reattach later with screen -r. Holding one login open also sidesteps inetd's per-service throttle. No load meter. In /opt/amix/bin.

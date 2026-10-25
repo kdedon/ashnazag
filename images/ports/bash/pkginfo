@@ -1,0 +1,7 @@
+PKG=bash
+NAME=GNU bash 3.2.57 in /opt/amix/bin, with job control and line editing
+ARCH=m68k
+VERSION=3.2.57
+CATEGORY=utility
+CLASSES=none
+VENDOR=Ash Nazag

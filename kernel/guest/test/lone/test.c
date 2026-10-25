@@ -16,12 +16,16 @@ typedef char *caddr_t;
 #define GPF_FTRAP 256
 #define GPF_FRAME68K 0x10000
 #define USTKCLEAR 1
+#define GPK_OTHER 0
+#define GPK_STOP 1
+#define GPK_RESET 2
+#define GPK_MMU 4
 struct modwrapper { int dummy; };
 struct guest_disp { int gd_flags, gd_kind; int (*gd_fn)(); };
 struct guest_profile { char *gpf_name; struct modwrapper *gpf_wrapper;
 	struct guest_disp gpf_disp[256]; int (*gpf_fsig)(); };
 struct guest_proc { unsigned gp_flags, gp_vsr, gp_vpend;
-	unsigned long gp_vusp, gp_vvbr, gp_vcacr, gp_ualine; };
+	unsigned long gp_vusp, gp_vvbr, gp_vcacr, gp_ualine; int gp_pkind; };
 struct frame { long pc, usp; unsigned fv, sr; char padding[100]; };
 #define GR_PC(r) (((struct frame *)(r))->pc)
 #define GR_FV(r) (((struct frame *)(r))->fv)
@@ -39,16 +43,13 @@ static long rpc; static int rfv, rn; static char *rtail;
 int fpu_present;
 static int __amix_fsig(void *p) { return 0; }
 static long fuword(caddr_t p) { return vectors[(uintptr_t)p/4]; }
-static int copyin(caddr_t p, char *b, int n) { int v=(uintptr_t)p==4096?opword:imm;
-	if(copyfail) return 1;
-	b[0]=v>>8; b[1]=v; return 0; }
 #define psignal model_psignal
 static void psignal(void *p, int s) { signal_seen=s; }
 static void guest_trapret(void) { tails++; }
 static int guest_reflect(struct guest_proc *g, char *r,long pc,int fv,char *tail,int n,int level)
 	{ reflects++; rpc=pc; rfv=fv; rn=n; rtail=tail; return reflectfail?-1:0; }
-static int guest_priv(struct guest_proc *g,char *r,int v) { privcalls++;return privret; }
-static void guest_setsr(struct guest_proc *g,char *r,int sr) { setsr=sr;g->gp_vsr=sr; }
+static int pkind;
+static int guest_privtrap(struct guest_proc *g,char *r,int v) { privcalls++;g->gp_pkind=pkind;return privret; }
 static int guest_profile_add(struct guest_profile *p) { added++;return 7; }
 static int attached;
 static struct guest_profile *owner;
@@ -71,7 +72,7 @@ static struct frame r;
 static void reset(int v) { memset(&r,0,sizeof r);r.pc=4096;r.fv=v*4;
 	memset(&model_gp,0,sizeof model_gp); model_gp.gp_vsr=0x2700;memset(vectors,0,sizeof vectors);
 	memset(&guest_lone_stat,0,sizeof guest_lone_stat);u.u_sigflag=0;signal_seen=tails=reflects=privcalls=setsr=0;
-	opword=0x1234;imm=0x2000;copyfail=reflectfail=0;fpu_present=0;privret=1; }
+	opword=0x1234;imm=0x2000;copyfail=reflectfail=0;fpu_present=0;privret=1;pkind=GPK_OTHER; }
 int main(void) {
 	int v,f;struct guest_profile pf;struct modwrapper wrapper;
 	memset(&pf,0xff,sizeof pf);
@@ -109,29 +110,22 @@ int main(void) {
 				CHECK(rtail==(char*)&r+72 && tails==1 && u.u_sigflag==(f?USTKCLEAR:0));}
 		}
 	}
-	reset(8);opword=0x4e70;
-	CHECK(!guest_lone_trap(&model_gp,(char*)&r,8)&&r.pc==4098&&tails==1&&!reflects&&!privcalls);
-	reset(8);opword=0x4e72;
-	CHECK(!guest_lone_trap(&model_gp,(char*)&r,8)&&r.pc==4100&&setsr==0x2000&&tails==1);
-	reset(8);model_gp.gp_vsr=0;opword=0x4e70;vectors[8]=8192;
-	CHECK(!guest_lone_trap(&model_gp,(char*)&r,8)&&r.pc==4096&&reflects==1&&!privcalls);
-	reset(8);privret=0;CHECK(!guest_lone_trap(&model_gp,(char*)&r,8)&&privcalls==1&&!reflects);
-	reset(8);vectors[4]=8192;CHECK(!guest_lone_trap(&model_gp,(char*)&r,8)&&rfv==16&&rn==2);
-	reset(8);CHECK(guest_lone_trap(&model_gp,(char*)&r,8)==1&&!reflects&&!tails);
-	reset(8);opword=0xf000;vectors[8]=8192;
-	CHECK(!guest_lone_trap(&model_gp,(char*)&r,8)&&rfv==32&&!privcalls);
-	reset(8);opword=0xf000;vectors[11]=8192;
-	CHECK(guest_lone_trap(&model_gp,(char*)&r,8)==1&&!reflects&&!signal_seen);
-	reset(8);opword=0xf300;vectors[11]=8192;
-	CHECK(!guest_lone_trap(&model_gp,(char*)&r,8)&&rfv==44&&rn==2&&!privcalls);
-	reset(8);opword=0xf300;
-	CHECK(guest_lone_trap(&model_gp,(char*)&r,8)==1&&!signal_seen);
-	reset(11);opword=0xf200;fpu_present=1;
-	CHECK(guest_lone_trap(&model_gp,(char*)&r,11)==1&&!reflects&&!tails);
-	reset(11);opword=0xf200;
+	/* guest_privtrap's answer: 1 the host's, the trap's vector with the CPU frame, another with a format 0 one */
+	reset(8);CHECK(guest_lone_trap(&model_gp,(char*)&r,8)==1&&privcalls==1&&!reflects&&!tails);
+	reset(8);privret=8;vectors[8]=8192;r.fv=0x2000|32;
+	CHECK(!guest_lone_trap(&model_gp,(char*)&r,8)&&reflects==1&&rfv==(int)r.fv&&rn==6);
+	reset(8);privret=4;vectors[4]=8192;r.fv=0x2000|32;
+	CHECK(!guest_lone_trap(&model_gp,(char*)&r,8)&&rfv==16&&rn==2&&rpc==4096);
+	reset(8);privret=11;vectors[11]=8192;
+	CHECK(!guest_lone_trap(&model_gp,(char*)&r,8)&&rfv==44&&rn==2);
+	reset(11);privret=11;
 	CHECK(!guest_lone_trap(&model_gp,(char*)&r,11)&&signal_seen==SIGILL);
-	reset(11);copyfail=1;vectors[11]=8192;
-	CHECK(!guest_lone_trap(&model_gp,(char*)&r,11)&&reflects==1);
+	reset(8);privret=0;pkind=GPK_RESET;
+	CHECK(!guest_lone_trap(&model_gp,(char*)&r,8)&&!reflects&&guest_lone_stat.resets==1&&guest_lone_stat.privileged==1);
+	reset(8);privret=0;pkind=GPK_STOP;
+	CHECK(!guest_lone_trap(&model_gp,(char*)&r,8)&&guest_lone_stat.stops==1&&guest_lone_stat.privileged==1);
+	reset(11);privret=0;pkind=GPK_MMU;
+	CHECK(!guest_lone_trap(&model_gp,(char*)&r,11)&&!guest_lone_stat.privileged&&!reflects);
 	reset(10);vectors[10]=8192;reflectfail=1;r.fv|=0x2000;
 	CHECK(!guest_lone_trap(&model_gp,(char*)&r,10)&&signal_seen==SIGSEGV&&tails==1&&u.u_sigflag==USTKCLEAR);
 	CHECK(cpm_flag==0);

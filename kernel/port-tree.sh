@@ -1,7 +1,7 @@
 # port-tree.sh -- sourced: the 68040/68060 port tree is upstream at
 # PORT_PIN plus PORT_DIFFS, nothing else.  Needs AUX.
 PORT_URL=https://github.com/asokero/amix-040-060-port
-PORT_PIN=54fba4de3da276e5d09d5ea09e2c76a13ec20ffa
+PORT_PIN=23546bc644ab4abb595a958a3db8dff097757aa9
 PORT_DIFFS="$AUX/kernel/port-local.diff $AUX/kernel/port-segvn.diff
 	$AUX/kernel/mac/hat-boundary/hat-chgprot040.diff $AUX/kernel/port-isp060.diff"
 

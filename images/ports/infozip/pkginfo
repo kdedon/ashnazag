@@ -1,0 +1,8 @@
+PKG=infozip
+NAME=Info-ZIP zip 3.0 and unzip 6.0
+ARCH=m68k
+VERSION=3.0-6.0
+CATEGORY=utility
+CLASSES=none
+VENDOR=Ash Nazag
+DESC=zip, unzip, zipinfo, zipnote, zipsplit, zipcloak, funzip, unzipsfx and zipgrep in /opt/amix/bin: makes and opens .zip archives, with traditional encryption. Archives up to 2 GB; no bzip2 method.

@@ -16,103 +16,23 @@
 #include "sys/mman.h"
 #include "vm/as.h"
 
-extern int nodev(), ttimeout(), untimeout(), fpu_present;
+extern int nodev(), untimeout(), fpu_present;
 extern void dlm_cacheflush();
-extern int __amix_sendsig(), __amix_fsig();
 extern struct modwrapper nextguest_wrapper;
 extern void guest_priv_stats(), guest_priv_pcs();
 
-static struct guest_profile profile;
+struct guest_env nx_env;
 static int device_flag;
 
-/* the launcher's own code, such as a host call's stub, finishes first */
+/* the request at level l goes in through its autovector */
 static int
-hostpc(p)
-	struct proc *p;
-{
-	return (nx.flags & NXF_HOST) && p == u.u_procp && u.u_ar0 && (unsigned long)GR_PC(u.u_ar0) >= NX_TOP;
-}
-
-/* a request above the guest's IPL wakes a halted guest or sends the carrier; under spl */
-void
-nx_kick()
-{
-	int l;
-
-	if (nx.state != 1)
-		return;
-	l = nx_level();
-	nx.gp->gp_vpend = l << 8;
-	if (l <= GUEST_VIPL(nx.gp))
-		return;
-	if (nx.sleeping)
-		wakeup((caddr_t)&nx.sleeping);
-	else
-		psignal(nx.proc, NX_SIG);
-}
-
-static void
-nx_intr(gp, r)
-	struct guest_proc *gp;
+nx_ack(es, r, l)
+	struct guest_sess *es;
 	char *r;
+	int l;
 {
-	int s = guest_splhi(), l = nx_level();
-
-	if (nx.gp != gp || nx.state != 1) {
-		guest_splx(s);
-		return;
-	}
-	gp->gp_vpend = l << 8;
-	guest_splx(s);
-	/* the frame goes to guest memory, which may fault */
-	if (l > GUEST_VIPL(gp) && guest_sigtail(r)) {
-		nx_post(l);
-		if (guest_reflect(gp, r, GR_PC(r), (24 + l) << 2, (char *)0, 2, l) < 0)
-			psignal(curproc, SIGSEGV);
-		else {
-			nx.st.ints++;
-			if (GR_FV(r) >> 12)
-				u.u_sigflag |= USTKCLEAR;
-		}
-	}
-	s = guest_splhi();
-	l = nx_level();
-	gp->gp_vpend = l << 8;
-	if (l <= GUEST_VIPL(gp))
-		sigdelset(&gp->gp_proc->p_sig, NX_SIG);
-	guest_splx(s);
-}
-
-/* the carrier waits while the guest's IPL masks every request */
-static int
-nx_fsig(p, gp)
-	struct proc *p;
-	struct guest_proc *gp;
-{
-	k_sigset_t h;
-	int s = guest_splhi(), n;
-
-	h = p->p_hold;
-	sigdelset(&p->p_hold, NX_SIG);
-	if (nx.gp != gp || nx_level() <= GUEST_VIPL(gp) || guest_onstack(p) || hostpc(p))
-		sigaddset(&p->p_hold, NX_SIG);
-	n = __amix_fsig(p);
-	p->p_hold = h;
-	guest_splx(s);
-	return n;
-}
-
-static int
-nx_sendsig(gp, sig, sip, hdlr)
-	struct guest_proc *gp;
-	int sig;
-	char *sip;
-	int (*hdlr)();
-{
-	if (sig != NX_SIG)
-		return __amix_sendsig(sig, sip, hdlr);
-	nx_intr(gp, (char *)u.u_ar0);
-	return 1;
+	nx_post(l);
+	return 24 + l;
 }
 
 /* the guest's space spans quadrants 0 to 2, which the stock rule refuses */
@@ -146,206 +66,114 @@ refl(gp, r, v)
 
 /* a host call from the kernel's patched routines; anything else illegal is the guest's */
 static int
-hcall(gp, r, v)
-	struct guest_proc *gp;
+nx_hostcall(es, r, n)
+	struct guest_sess *es;
 	char *r;
-	int v;
+	int n;
 {
 	int s, e;
 
-	if ((unsigned long)GR_PC(r) != HF_HCALL + 4 || !(gp->gp_vsr & SR_S) || (e = nx_service(gp, r)) < 0)
-		return refl(gp, r, v);
-	if (e == 0)
-		GR_PC(r) += 2;
+	if (!(es->gs_gp->gp_vsr & SR_S) || (e = nx_service(es->gs_gp, r)) < 0)
+		return -1;
 	s = guest_splhi();
-	gp->gp_vpend = nx_level() << 8;
+	es->gs_gp->gp_vpend = nx_level() << 8;
 	guest_splx(s);
-	guest_trapret();
-	return 0;
+	return e;
 }
 
+/* reset: the peripherals, not memory or the clock chip */
+static void
+nx_reset(gp, r)
+	struct guest_proc *gp;
+	char *r;
+{
+	int s = guest_splhi();
+
+	nx.stat = nx.istat = 0;
+	if (nx.tid > 0)
+		untimeout(nx.tid);
+	nx.tid = 0;
+	guest_splx(s);
+}
+
+/* vectors 8 and 11: what guestcore leaves is the guest's */
 static int
 priv(gp, r, v)
 	struct guest_proc *gp;
 	char *r;
 	int v;
 {
-	unsigned char b[4];
-	unsigned long *cp, *rp, value;
-	int op, ext, c, s;
+	int e;
 
-	if (!(gp->gp_vsr & SR_S))
-		return refl(gp, r, v);
-	if (copyin((caddr_t)GR_PC(r), (caddr_t)b, 2))
-		return 1;
-	op = G16(b);
-	if (op == 0x4e70) {			/* reset: the peripherals, not memory or the clock chip */
-		s = guest_splhi();
-		nx.stat = nx.istat = 0;
-		if (nx.tid > 0)
-			untimeout(nx.tid);
-		nx.tid = 0;
-		guest_splx(s);
-		GR_PC(r) += 2;
-		guest_trapret();
-		return 0;
-	}
-	if (op == 0x4e72) {			/* stop */
-		if (copyin((caddr_t)GR_PC(r) + 2, (caddr_t)b, 2))
-			return 1;
-		guest_setsr(gp, r, (int)G16(b));
-		GR_PC(r) += 4;
-		s = guest_splhi();
-		while (nx.state == 1 && nx_level() <= GUEST_VIPL(gp)) {
-			nx.sleeping = 1;
-			if (sleep((caddr_t)&nx.sleeping, (PZERO + 1) | PCATCH))
-				break;
-		}
-		nx.sleeping = 0;
-		gp->gp_flags |= GPF_IDROP;
-		guest_splx(s);
-		guest_trapret();
-		return 0;
-	}
-	if ((op & 0xfffe) == 0x4e7a) {		/* movec: the MMU registers are the guest's to read back */
-		if (copyin((caddr_t)GR_PC(r) + 2, (caddr_t)b, 2))
-			return 1;
-		ext = G16(b);
-		c = ext & 0xfff;
-		cp = 0;
-		if (c == 2)
-			cp = &gp->gp_vcacr;
-		if (c >= 3 && c <= 7 && !gp->gp_mmu)
-			cp = &nx.mmu[c - 3];
-		if ((c == 0x805 || c == 0x806 || c == 0x807) && !gp->gp_mmu)
-			cp = &nx.mmu[c - 0x800];
-		if (c == 0x803 || c == 0x804)
-			cp = &nx.mmu[c - 0x7fb];
-		if (cp) {
-			rp = ext >> 12 == 15 ? (unsigned long *)&GR_USP(r) : (unsigned long *)(r + 4 + (ext >> 12) * 4);
-			if (op & 1) {
-				value = *rp;
-				if (c == 2) {
-					value &= 0x80008000UL;
-					if (value != *cp) {
-						dlm_cacheflush();
-						guest_cflush_all++;
-					}
-				}
-				*cp = value;
-			} else
-				*rp = *cp;
-			GR_PC(r) += 4;
-			guest_trapret();
-			return 0;
-		}
-	}
-	if (guest_priv(gp, r, v) == 0)
-		return 0;
-	return refl(gp, r, 4);
+	if ((e = guest_privtrap(gp, r, v)) <= 1)
+		return e;
+	return refl(gp, r, e);
 }
 
-/* floating point goes to the host; anything else in line F is the guest's */
+/* data types the FPU leaves to software, such as packed decimal, go to the host's FP package */
 static int
-fline(gp, r, v)
+fpdata(gp, r, v)
 	struct guest_proc *gp;
 	char *r;
 	int v;
 {
-	unsigned char b[2];
-
-	if (copyin((caddr_t)GR_PC(r), (caddr_t)b, 2) == 0 && ((G16(b) >> 9) & 7) == 1 && fpu_present)
-		return 1;
-	return refl(gp, r, v);
+	return fpu_present ? 1 : refl(gp, r, v);
 }
 
 static void
-nx_exit(gp)
-	struct guest_proc *gp;
+nx_exit(es)
+	struct guest_sess *es;
 {
-	if (nx.gp != gp)
-		return;
 	if (nx.tid > 0)
 		untimeout(nx.tid);
 	nx.tid = 0;
-	nx.state = 0;
-	nx.proc = 0;
-	nx.gp = 0;
-	if (nx.ram)
-		guest_ram_free(nx.ram);
-	nx.ram = 0;
-	sigdelset(&gp->gp_proc->p_sig, NX_SIG);
-	if (nx.sleeping)
-		wakeup((caddr_t)&nx.sleeping);
-}
-
-static int
-nx_fork(parent, child)
-	struct guest_proc *parent, *child;
-{
-	return EINVAL;
+	guest_ramdev_free(&nx_env.ge_ram);
+	sigdelset(&es->gs_proc->p_sig, NX_SIG);
 }
 
 /* ---- the device ---- */
 
 static int
-enter(arg)
+enter(es, arg)
+	struct guest_sess *es;
 	caddr_t arg;
 {
 	struct nx_enter ne;
-	struct guest_proc *gp;
-	int e, s;
+	struct guest_proc *gp = es->gs_gp;
 
 	if (copyin(arg, (caddr_t)&ne, sizeof ne))
 		return EFAULT;
 	if (ne.width < 16 || ne.width > 4092 || ne.height < 16 || ne.height > 4095 ||
 	    ne.width / 4 * ne.height > NX_VRAM_SIZE)
 		return EINVAL;
-	s = guest_splhi();
-	if (nx.state) {
-		guest_splx(s);
-		return EBUSY;
-	}
-	nx.state = 2;
-	guest_splx(s);
-	if ((e = guest_attach(&profile)) != 0) {
-		nx.state = 0;
-		return e;
-	}
-	gp = GUESTP(curproc);
-	gp->gp_vsr = 0x2700;
-	gp->gp_vpend = 0;
-	gp->gp_vusp = gp->gp_vvbr = gp->gp_vcacr = 0;
-	gp->gp_flags = GPF_PRIV | GPF_FTRAP | GPF_FTRAP13 | GPF_ALINE;
 	bzero((caddr_t)&nx.st, sizeof nx.st);
 	bcopy((caddr_t)ne.nvram, (caddr_t)nx.st.nvram, NX_NVRAM);
-	bzero((caddr_t)nx.mmu, sizeof nx.mmu);
 	nx.lastu = ~0UL;
 	nx.ramsize = ne.ramsize;
 	nx.flags = ne.flags;
-	nx.sleeping = 0;
 	nx.stat = nx.istat = 0;
 	nx.tid = 0;
 	nx_board(ne.width, ne.height);
-	if (nx.ram && guest_mmu_init(gp, NX_PHYS, NX_LIMIT, 0UL, NX_TOP))
+	/* the launcher above the guest's space finishes before an interrupt; its privileged instructions are emulated */
+	if (ne.flags & NXF_HOST) {
+		gp->gp_holdlo = NX_TOP;
+		gp->gp_holdhi = ~0UL;
+	}
+	if (nx_env.ge_ram.rd_ram && guest_mmu_init(gp, NX_PHYS, NX_LIMIT, 0UL, NX_TOP))
 		printf("NOTICE: next: no MMU shadow on this host\n");
 	else if (ne.flags & NXF_PMAP)
 		(void)guest_mmu_svc(gp, 1, 0UL, 0UL, 0UL, 0UL);
-	nx.proc = curproc;
-	nx.gp = gp;
 	dlm_cacheflush();
-	nx.state = 1;
 	return 0;
 }
 
-/* the RAM object, for the process that made it */
 static int
 mmap_device(dev, off, prot)
 	dev_t dev;
 	off_t off;
 	int prot;
 {
-	return off < 0 ? -1 : guest_ram_frame(nx.ram, (unsigned long)off);
+	return guest_env_mmap(&nx_env, dev, off, prot);
 }
 
 static int
@@ -357,9 +185,7 @@ segmap_device(dev, off, as, addrp, len, prot, maxprot, flags, cr)
 	u_int len, prot, maxprot, flags;
 	struct cred *cr;
 {
-	if (!nx.ram || curproc->p_pid != nx.rampid)
-		return EACCES;
-	return guest_ram_map(nx.ram, dev, off, as, addrp, len, prot, maxprot, flags);
+	return guest_env_segmap(&nx_env, dev, off, as, addrp, len, prot, maxprot, flags, cr);
 }
 
 static int
@@ -368,10 +194,7 @@ open_device(dev, flags, kind, credentials)
 	int flags, kind;
 	struct cred *credentials;
 {
-	if (getminor(*dev))
-		return ENXIO;
-	nx.opened++;
-	return 0;
+	return guest_env_open(&nx_env, dev, flags, kind, credentials);
 }
 
 static int
@@ -380,12 +203,7 @@ close_device(dev, flags, kind, credentials)
 	int flags, kind;
 	struct cred *credentials;
 {
-	nx.opened = 0;
-	if (!nx.state && nx.ram) {
-		guest_ram_free(nx.ram);
-		nx.ram = 0;
-	}
-	return 0;
+	return guest_env_close(&nx_env, dev, flags, kind, credentials);
 }
 
 static int
@@ -396,35 +214,41 @@ ioctl_device(dev, command, argument, mode, credentials, result)
 	struct cred *credentials;
 	int *result;
 {
+	return guest_env_ioctl(&nx_env, dev, command, argument, mode, credentials, result);
+}
+
+static int
+nx_ioctl(e, es, command, argument, mode, result)
+	struct guest_env *e;
+	struct guest_sess *es;
+	int command, mode;
+	caddr_t argument;
+	int *result;
+{
 	unsigned long size;
 	struct nx_mmu q;
 	int s;
 
 	switch (command) {
 	case NX_MMU:
-		if (nx.state != 1 || curproc != nx.proc)
+		if (es->gs_state != GS_RUN || curproc != es->gs_proc)
 			return ENXIO;
 		nx.st.hcalls[0]++;
 		return copyin(argument, (caddr_t)&q, sizeof q) ? EFAULT :
-		    guest_mmu_svc(nx.gp, (int)q.op, q.key, q.start, q.end, q.pa);
-	case NX_ENTER:
-		return GUESTP(curproc) ? EBUSY : enter(argument);
+		    guest_mmu_svc(es->gs_gp, (int)q.op, q.key, q.start, q.end, q.pa);
 	case NX_RAMNEW:
-		if (nx.state || GUESTP(curproc))
+		if (es->gs_state != GS_FREE || GUESTP(curproc))
 			return EBUSY;
-		if (nx.ram)
-			guest_ram_free(nx.ram);
-		nx.ram = 0;
-		nx.rampid = curproc->p_pid;
 		return copyin(argument, (caddr_t)&size, sizeof size) ? EFAULT :
-		    guest_ram_new(size, 0, 0UL, &nx.ram);
+		    guest_ramdev_new(&e->ge_ram, size, 0, 0UL);
 	case NX_INFO:
-		if (nx.state != 1)
+		if (es->gs_state != GS_RUN)
 			return ENXIO;
-		guest_mmu_stats(nx.gp, nx.st.mmu);
+		guest_mmu_stats(es->gs_gp, nx.st.mmu);
 		guest_priv_stats(nx.st.privk);
 		guest_priv_pcs(nx.st.privpc);
 		s = guest_splhi();
+		nx.st.ints = es->gs_ints;
 		nx.st.level = nx_level();
 		nx.st.stat = nx.stat;
 		guest_splx(s);
@@ -436,40 +260,53 @@ ioctl_device(dev, command, argument, mode, credentials, result)
 static int
 load()
 {
+	struct guest_env *e = &nx_env;
+	struct guest_profile *pf = &e->ge_prof;
 	struct guest_disp *d;
 	int v;
 
-	bzero((caddr_t)&profile, sizeof profile);
-	profile.gpf_name = "next";
-	profile.gpf_wrapper = &nextguest_wrapper;
-	profile.gpf_exit = nx_exit;
-	profile.gpf_fork = nx_fork;
-	profile.gpf_fsig = nx_fsig;
-	profile.gpf_sendsig = nx_sendsig;
-	profile.gpf_vur = nx_vur;
-	profile.gpf_intr = nx_intr;
+	bzero((caddr_t)e, sizeof *e);
+	e->ge_name = "next";
+	e->ge_wrapper = &nextguest_wrapper;
+	e->ge_major = NX_MAJOR;
+	e->ge_entercmd = NX_ENTER;
+	e->ge_gpflags = GPF_PRIV | GPF_FTRAP | GPF_FTRAP13 | GPF_ALINE;
+	e->ge_nsess = 1;
+	e->ge_sig = NX_SIG;
+	e->ge_flags = GEF_ONE | GEF_SIGTAIL | GEF_ONSTACK | GEF_HOSTHOLD;
+	e->ge_hostva = HF_HCALL + 4;
+	e->ge_hostn = 1;
+	e->ge_hoststep = 2;
+	e->ge_hostvec = 4;
+	e->ge_hostlen = 2;
+	e->ge_enter = enter;
+	e->ge_exit = nx_exit;
+	e->ge_level = nx_level;
+	e->ge_ack = nx_ack;
+	e->ge_hostcall = nx_hostcall;
+	e->ge_ioctl = nx_ioctl;
+	pf->gpf_vur = nx_vur;
+	pf->gpf_reset = nx_reset;
+	pf->gpf_privf = GPR_ISPSHADOW;
 	for (v = 2; v < 48; v++) {
 		if (v > 11 && v < 32)
 			continue;
-		d = &profile.gpf_disp[v];
+		d = &pf->gpf_disp[v];
 		d->gd_kind = GD_EMULATE;
 		d->gd_flags = GDF_USER;
-		d->gd_fn = v == 2 ? nx_fault : v == 4 ? hcall : v == 8 ? priv : v == 11 ? fline : refl;
+		d->gd_fn = v == 2 ? nx_fault : v == 8 || v == 11 ? priv : refl;
 	}
-	d = &profile.gpf_disp[55];
+	d = &pf->gpf_disp[55];
 	d->gd_kind = GD_EMULATE;
 	d->gd_flags = GDF_USER;
-	d->gd_fn = refl;
-	return guest_profile_add(&profile);
+	d->gd_fn = fpdata;
+	return guest_env_add(e);
 }
 
 static int
 unload()
 {
-	if (nx.state || nx.opened)
-		return EBUSY;
-	guest_profile_del(&profile);
-	return 0;
+	return guest_env_del(&nx_env);
 }
 
 struct mod_drv_data nextguest_drvdata[] = {

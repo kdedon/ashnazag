@@ -1,0 +1,9 @@
+# The SSH server; host key made on the first connection.  Not on the
+# console: a daemon holding it there drops its connections.
+case $1 in
+'start')
+	[ -x /opt/amix/sbin/dropbear ] &&
+		/opt/amix/sbin/dropbear -R < /dev/null >> /var/adm/dropbear.log 2>&1 ;;
+'stop')
+	[ -f /var/run/dropbear.pid ] && kill `cat /var/run/dropbear.pid` ;;
+esac

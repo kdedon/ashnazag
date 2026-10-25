@@ -16,6 +16,9 @@
 #   lisaenv   startlisa, the native Lisa host (S05lisa)
 #   v200env   startvoyage200, the native Voyage 200 host (S05v200)
 #   nextenv   startnext, the native NeXT host (S05next)
+#   sdhcp     the DHCP client sdhcp and dhcpinfo, in /opt/amix/bin
+#   kstat     /dev/kstat's module (S03kstat), libkstat
+#   top       top, in /opt/amix/bin
 #
 # Out: outdir/pkgs/env/PKG-VERSION.pkg, outdir/catalog in apkg's format,
 # outdir/guest/home/guest (guest's TOS, SMSQ and WIN16 folders, for disk
@@ -189,9 +192,36 @@ for e in "lisa lisaenv lisaguest startlisa lisaboot" "voyage200 v200env tiplatfo
 	cp "$D/$p"/S05* "$R/etc/rc2.d/"
 done
 
+# sdhcp: also libsocket, libnsl and libc's archive-only parts
+R=$W/sdhcp
+mkdir -p "$R/opt/amix/bin" "$R/opt/amix/doc/sdhcp"
+for c in sdhcp eprintf; do
+	nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -w -c "$D/sdhcp/$c.c" -o "$W/$c.o"
+done
+"$TC/bin/m68k-cbm-sysv4-ld" -o "$R/opt/amix/bin/sdhcp" "$SYS/usr/ccs/lib/crt1.o" \
+	"$SYS/usr/ccs/lib/crti.o" "$W/sdhcp.o" "$W/eprintf.o" -L"$SYS/usr/lib" -lsocket -lnsl \
+	"$SYS/usr/lib/libc.so.1" "$SYS/usr/ccs/lib/libc.so" \
+	`ls "$TC"/lib/gcc-lib/m68k-cbm-sysv4/*/libgcc.a | tail -1` "$SYS/usr/ccs/lib/crtn.o"
+cp "$D/sdhcp/dhcpinfo" "$R/opt/amix/bin/"
+cp "$D/sdhcp/LICENSE" "$R/opt/amix/doc/sdhcp/"
+
+# kstat: one module serves every host's kernel
+sh "$AUX/kernel/mods.sh" TARGET=mac "$W/ks" KERNEL="$KERNEL" sys > "$W/ks.log" 2>&1 ||
+	{ tail "$W/ks.log"; exit 1; }
+sh "$D/top/build.sh" "$W/top.b" > "$W/top.log" 2>&1 || { tail "$W/top.log"; exit 1; }
+R=$W/kstat
+mkdir -p "$R/etc/conf/mod.d" "$R/etc/rc2.d" "$R/usr/lib" "$R/usr/include"
+cp "$W/ks/mod.d/kstat" "$R/etc/conf/mod.d/"
+cp "$D/kstat/S03kstat" "$R/etc/rc2.d/"
+cp "$W/top.b/libkstat.a" "$R/usr/lib/"
+cp "$AUX/kernel/kstat/kstat.h" "$R/usr/include/"
+R=$W/top
+mkdir -p "$R/opt/amix/bin" "$R/opt/amix/doc/top"
+cp "$W/top.b/top" "$R/opt/amix/bin/"
+cp "$D/top/LICENSE" "$R/opt/amix/doc/top/"
 # the datastreams and their catalog
 echo '#apkg-catalog 1' > "$OUT/catalog"
-for p in envcore macenv macnet tosenv amigaenv cpmenv smsqenv win16env lisaenv v200env nextenv; do
+for p in envcore macenv macnet tosenv amigaenv cpmenv smsqenv win16env lisaenv v200env nextenv sdhcp kstat top; do
 	if [ ! -d "$W/$p" ]; then
 		echo "[skip] $p: inputs missing (see $W/*.log)"
 		continue
@@ -205,7 +235,8 @@ for p in envcore macenv macnet tosenv amigaenv cpmenv smsqenv win16env lisaenv v
 		VERSION=$VERSION PSTAMP=ashnazag-$p-$VERSION
 	deps=`sed -n 's/^P[	 ]*\([a-z0-9]*\).*/\1/p' "$D/$p/depend" 2> /dev/null | paste -sd, -`
 	name=`sed -n 's/^NAME=//p' "$D/$p/pkginfo"`
-	echo "$p|$VERSION|$p|$f|`md5sum < "$OUT/pkgs/$f" | cut -d' ' -f1`|`wc -c < "$OUT/pkgs/$f"`|${deps:-none}|system|$name" >> "$OUT/catalog"
+	cat=`sed -n 's/^CATEGORY=//p' "$D/$p/pkginfo"`
+	echo "$p|$VERSION|$p|$f|`md5sum < "$OUT/pkgs/$f" | cut -d' ' -f1`|`wc -c < "$OUT/pkgs/$f"`|${deps:-none}|$cat|$name" >> "$OUT/catalog"
 	echo "[ok] $p: `wc -c < "$OUT/pkgs/$f"` bytes"
 done
 rm -rf "$W"

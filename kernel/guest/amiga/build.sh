@@ -19,16 +19,16 @@ mkdir "$O/extra"
 # Warp3D.library's host side: Mesa's software renderer, all of it exported
 # for the card's DRI driver, which it loads at run time
 GLW=${GLW:-$AUX/images/work/gl}
-TC95=$AUX/toolchain/amix-gcc295
-for f in "$GLW/lib/libOSMesa.a" "$GLW/lib/libdrihost.a" "$TC95/bin/m68k-cbm-sysv4-gcc"; do
+for f in "$GLW/lib/libOSMesa.a" "$GLW/lib/libdrihost.a"; do
     [ -f "$f" ] || { echo "[FAIL] $f missing: build Mesa (gl/build.sh) or set GLW" >&2; exit 1; }
 done
-nice -n 19 "$TC95/bin/m68k-cbm-sysv4-gcc" -O2 -m68040 -fomit-frame-pointer -Wall -DW3D_DRI -I"$AUX/kernel/mac/display" \
+sh "$AUX/gl/mkgcc.sh" "$O/gcc"
+nice -n 19 "$O/gcc" -O2 -m68040 -fomit-frame-pointer -Wall -DW3D_DRI -I"$AUX/kernel/mac/display" \
     -I"$GLW/include" -I"$G/amiga" -c "$G/amiga/w3d.c" -o "$O/w3d.o"
-nice -n 19 "$TC95/bin/m68k-cbm-sysv4-gcc" -O2 -m68040 -fomit-frame-pointer -Wall \
+nice -n 19 "$O/gcc" -O2 -m68040 -fomit-frame-pointer -Wall \
     -c "$G/amiga/fastmem.c" -o "$O/fastmem.o"
 W3D=-DWARP3D
-GL="$O/fastmem.o $O/w3d.o --whole-archive $GLW/lib/libdrihost.a $GLW/lib/libOSMesa.a --no-whole-archive $SYS/usr/ccs/lib/libm.a $(ls "$TC95"/lib/gcc-lib/m68k-cbm-sysv4/*/libgcc.a | tail -1)"
+GL="$O/fastmem.o $O/w3d.o --whole-archive $GLW/lib/libdrihost.a $GLW/lib/libOSMesa.a --no-whole-archive $SYS/usr/ccs/lib/libm.a $LIBGCC"
 for source in amiga/startamiga amiga/migdisp amiga/rtgtransport amiga/input amiga/hostfs \
     amiga/hostfsbroker amiga/sysroot amiga/miglog amiga/migsnd amiga/migfloppy amiga/amfm sndout; do
     nice -n 19 "$TC/bin/m68k-cbm-sysv4-gcc" -O -Wall -D__STDC__=0 $W3D \

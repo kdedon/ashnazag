@@ -32,7 +32,7 @@ export PATH
 BASE="${1:-$PORT/build/unix-040}"
 SVIDEL=${SVIDEL:-1}
 # move.w #$2400,sr sites: the base's and the page-table wait's
-SPL_SITES=426
+SPL_SITES=424
 case $SVIDEL in
 1)	OUT="${2:-$K/build/unix-atari060}" W="$K/build/atari060" SV=-DATA_SV ;;
 0)	OUT="${2:-$K/build/unix-atari060-nosv}" W="$K/build/atari060-nosv" SV= ;;

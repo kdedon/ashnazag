@@ -18,6 +18,8 @@ ata_sndbuf
 ata_sndhw
 ata_vminfo
 availrmem
+availsmem
+avenrun
 bcmp
 bcopy
 bzero
@@ -144,6 +146,7 @@ physmem
 pid_rele
 pollwakeup
 ppcopy
+practive
 preempt
 prfind
 printf
@@ -179,10 +182,12 @@ strlen
 strncmp
 strncpy
 subyte
+sum
 sup_cacr
 suser
 suword
 sync
+sysconfig
 sysent
 sysinfo
 timeout

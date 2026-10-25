@@ -673,27 +673,34 @@ register char *s, *w;
 }
 
 /*
- * root=cNd0sM: IDE unit N (0 master, 1 slave), slice M; swap is slice 2
- * of the same unit, so M may not be 0 or 2.
+ * root=cNd0sM: controller N (0-1 IDE master/slave, 8-15 SCSI ID 0-7),
+ * slice M; swap is slice 2 of the same disk, so M may not be 0 or 2.
  */
 static void
 ata_rootparse(s)
 char *s;
 {
 	register char *p;
+	register int n;
 
 	for (p = s; *p; p++) {
 		if ((p != s && p[-1] != ' ') || p[0] != 'r' || p[1] != 'o'
 		|| p[2] != 'o' || p[3] != 't' || p[4] != '=')
 			continue;
-		if (p[5] == 'c' && (p[6] == '0' || p[6] == '1')
-		&& p[7] == 'd' && p[8] == '0' && p[9] == 's'
+		n = -1;
+		if (p[5] == 'c' && p[6] == '1' && p[7] >= '0' && p[7] <= '5') {
+			n = 10 + p[7] - '0';
+			p++;
+		} else if (p[5] == 'c' && (p[6] == '0' || p[6] == '1'
+		|| p[6] == '8' || p[6] == '9'))
+			n = p[6] - '0';
+		if (n >= 0 && p[7] == 'd' && p[8] == '0' && p[9] == 's'
 		&& p[10] >= '1' && p[10] <= '7' && p[10] != '2'
 		&& (p[11] == 0 || p[11] == ' ')) {
-			ata_rootarg = (p[10] - '0') << 4 | (p[6] - '0');
+			ata_rootarg = (p[10] - '0') << 4 | n;
 			return;
 		}
-		ata_puts("config: root=: not cNd0sM (N 0-1, M 1 or 3-7), ignored\n");
+		ata_puts("config: root=: not cNd0sM (N 0-1 or 8-15, M 1 or 3-7), ignored\n");
 	}
 }
 
@@ -1021,7 +1028,7 @@ unsigned long arg0, arg1;
 	if (ata_rootarg >= 0) {
 		(void)ata_rd_config(0);
 		rootdev = DD_BMAJ << 18 | ata_rootarg;
-		dumpdev = DD_BMAJ << 18 | 2 << 4 | (ata_rootarg & 7);
+		dumpdev = DD_BMAJ << 18 | 2 << 4 | (ata_rootarg & 15);
 		ata_dskname(swapfile + SWAP_NAME, dumpdev & 0xFF);
 	} else if (!ata_rd_config(1))
 		ata_halt("config: no RAM-disk root image");
@@ -1054,7 +1061,9 @@ long m;
 
 	for (s = "/dev/dsk/c"; *s; )
 		*d++ = *s++;
-	*d++ = '0' + (m & 7);
+	if ((m & 15) >= 10)
+		*d++ = '1';
+	*d++ = '0' + (m & 15) % 10;
 	*d++ = 'd';
 	*d++ = '0';
 	*d++ = 's';

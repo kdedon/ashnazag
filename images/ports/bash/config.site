@@ -1,0 +1,12 @@
+# bash's cross-configure answers for AMIX's SVR4.  Left to their cross
+# defaults these turn job control off.
+bash_cv_job_control_missing=present
+bash_cv_signal_vintage=posix
+bash_cv_func_sigsetjmp=present
+bash_cv_must_reinstall_sighandlers=no
+bash_cv_pgrp_pipe=yes
+bash_cv_sys_named_pipes=present
+bash_cv_dev_fd=absent
+bash_cv_dev_stdin=absent
+# libc lacks it in its shared part; the package brings its own
+ac_cv_func_getpwent=yes

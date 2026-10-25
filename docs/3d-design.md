@@ -149,7 +149,7 @@ Vertex work: Quake draws one multitextured polygon per surface, binding a textur
 
 Vertex arrays: tdfx and r200 offer `GL_EXT_multi_draw_arrays`, drawing adjacent primitives of one call as one vertex buffer through one pipeline run. Quake, when the extension is there, copies each texture chain's polygons, grouped by lightmap, into an array and draws each group with one call, and an alias model's strips, then its fans, each with one call, instead of a GL call per vertex attribute (5.7 to 6.6 fps). In a clipped buffer, runs of unclipped independent triangles go to tdfx whole; Quake skips particles before the near plane, which the clipper would drop (6.6 to 6.8 fps). A guard band (x and y clipped at up to 3 w, the hardware clipping the rest) gained under 0.5% and was left out. Left per frame: transform and clip test 13% (floating point bound), filling Quake's arrays 8%, vertex emit to buffer or fifo 8%, alias strips and fans with a clipped vertex drawn a triangle each about 4%. Alias models put strips before fans and keep s/t at load, so a frame converts only positions and light (demo1 143.3 to 141.2 s, within noise). Start-up: the 15-to-8-bit colour table, searched per cube of 4x4x4 colours against only the palette entries that can be nearest, takes about 2.6 s instead of 12.
 
-68060: Mesa, Glide, Quake and the GL tests build with `-m68020-60`, which emits no FScc; with `-m68040` gcc stores float compares with FScc, which the 68060 traps to its FPSP at about 1,500 cycles each (software Quake demo1: 632 a frame, about the 9% system time measured on a 50 MHz 060). Programs we link (GL, Quake, X through `amixld.sh`) carry `fastmem.c`: memcpy, memmove, memset, bcopy and bzero by aligned longs (libc's move bytes: 2 MB/s to a Voodoo3 behind a Mediator against 8) and sqrt by `fsqrt` (libm's is software).
+68060: gcc stores float compares with FScc, which the 68060 traps to its FPSP at about 1,500 cycles each (software Quake demo1: 632 a frame, about the 9% system time measured on a 50 MHz 060). Mesa, Glide, Quake and the GL tests build through `gl/mkgcc.sh`, whose `asmfix.pl` turns each FScc into `st`, `fbcc` and `sf`. Programs we link (GL, Quake, X through `amixld.sh`) carry `fastmem.c`: memcpy, memmove, memset, bcopy and bzero by aligned longs (libc's move bytes: 2 MB/s to a Voodoo3 behind a Mediator against 8) and sqrt by `fsqrt` (libm's is software).
 
 Assembly: vertex routines in `gl/src/m68k_*.s`, chosen at start-up by CPU (`m68k_asm.c`: `MESA_M68K=30|40|60|c`, else `sysinfo(SI_ARCHITECTURE)` `m68030`/`m68040`/`m68060`, else C), as Mesa picks its x86 code. Transform, clip test and divide of 3-component positions. Display lists: at compile, a cassette holding only positions and normals is packed as fans (a primitive spanning cassettes goes with the one it ends in; the cassettes it links replay together or not at all). On replay, when the driver takes them (tdfx: flat or smooth, untextured, no fallback), state allows (one infinite light, no fog, texture or clip planes) and the chain's bounding box is inside the clip volume, each normal is lit once in object space, each vertex is transformed once by the viewport-projection-modelview product into fifo words, and each fan copies its vertices' words into the fifo. Transform schedules for the 68030+6888x (rows in turn), 68040 (rows interleaved) and 68060 (rows interleaved, integer work beside the FPU). `t_gl` checks each CPU's routines against the C bit for bit, checks the packed fans against the geometry given, and times glxgears' scene (`gears.time`, `gears.asm`, `list.time*`).
 
@@ -230,7 +230,7 @@ Recommendation: **A**. X is one client of the display service like the Amiga env
 
 | Fact | Consequence |
 |---|---|
-| `libdl.so` with `dlopen(RTLD_LAZY/RTLD_NOW)`, no `RTLD_GLOBAL` | binutils 2.8.1 `ld -shared` objects load (`t_dlopen`): PLT, GOT, copy and text relocations. A `dlopen`ed object sees the program and its libraries, so a driver `.so` resolves Mesa from `libGL.so`. gcc 2.95.3 `-fPIC` needs the wrapper's label and `bsr.l` fixes and saving the GOT register in every function that loads it (`toolchain/build-gcc295.sh`) |
+| `libdl.so` with `dlopen(RTLD_LAZY/RTLD_NOW)`, no `RTLD_GLOBAL` | binutils 2.8.1 `ld -shared` objects load (`t_dlopen`): PLT, GOT, copy and text relocations. A `dlopen`ed object sees the program and its libraries, so a driver `.so` resolves Mesa from `libGL.so`. gcc `-fPIC` needs `asmfix.pl`'s label and `bsr.l` fixes, and its save of the GOT register where gcc loads it only for constants reload placed in memory |
 | No threads | build without `THREADS`; `glthread.c` uses its single-thread path |
 | No `snprintf` | Mesa's `vsnprintf.c`; 2 `snprintf` in `dri_glx.c` |
 | `libm.a` only | static libm; Mesa uses double functions only |
@@ -239,7 +239,7 @@ Recommendation: **A**. X is one client of the display service like the Amiga env
 
 ### 3.3 First build: software only
 
-1. `libOSMesa.a`: core + swrast + tnl + OSMesa, with gcc 2.95.3 (2.7.2.3 as a check). Test: `osdemo` writes a PPM; compare with the same demo on the host. `MAX_ARRAY_LOCK_SIZE` is 256, not 3000: every tnl stage allocates that many vertices, and a context then needs about 0.7 MB plus its depth buffer, which a Warp3D host beside the guest's memory can spare.
+1. `libOSMesa.a`: core + swrast + tnl + OSMesa, with gcc 2.7.2.3. Test: `osdemo` writes a PPM; compare with the same demo on the host. `MAX_ARRAY_LOCK_SIZE` is 256, not 3000: every tnl stage allocates that many vertices, and a context then needs about 0.7 MB plus its depth buffer, which a Warp3D host beside the guest's memory can spare.
 2. `libGL.so`/`libGL.a` from `src/X` (Xlib driver) against X11R6.3 client libs; `glxgears` under Xamix. The server needs no GLX for this: the Xlib driver draws with core X requests.
 3. GLU and the MesaDemos as a package.
 
@@ -370,7 +370,7 @@ Rules from the display service:
 
 | # | Task | Needs | Test where |
 |---|---|---|---|
-| 1 | gcc 2.95.3 + newer binutils for m68k SVR4 | – | host, then QEMU q800 (rebuild of a few modules) |
+| 1 | gcc 2.7.2.3 assembly fixups for GL code (`gl/asmfix.pl`) | – | host, then QEMU q800 |
 | 2 | Mesa 5.0.2 OSMesa static; `osdemo` | 1 | QEMU q800 |
 | 3 | Software libGL (Xlib driver) with X11R6.3 client libs; `glxgears` on Xamix | 2 | QEMU q800 |
 | 4 | RTG card 16/32-bit modes; Warp3D.library + glue + host table + PC range; OSMesa backend; per-call counters | 2 | QEMU q800 (Amiga environment), Amiberry; Cow3D, WarpTest, StarshipW3D, then the user's titles to fix the tiers |

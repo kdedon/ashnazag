@@ -1,5 +1,7 @@
-# Interfaces beyond loopback.  For the built-in Ethernet, set the address,
-# netmask and gateway and remove the '#'s.
+# Interfaces beyond loopback: DHCP with the sdhcp package.  For a fixed
+# address on the built-in Ethernet, set the address, netmask and gateway and
+# remove the '#'s.
+[ ! -x /opt/amix/bin/sdhcp ] || /opt/amix/bin/sdhcp -t 30 aen0
 #/usr/sbin/slink addaen /dev/aen0 aen0 &&
 #	/usr/sbin/ifconfig aen0 192.168.1.80 netmask 255.255.255.0 up -trailers &&
 #	/usr/sbin/route add default 192.168.1.1 1 >/dev/null

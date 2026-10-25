@@ -1,0 +1,4 @@
+i pkginfo=pkginfo
+i depend=depend
+f none /opt/amix/bin/top 0755 root bin
+f none /opt/amix/doc/top/LICENSE 0644 root bin

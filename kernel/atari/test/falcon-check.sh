@@ -14,7 +14,7 @@
 # TOSROM: the TOS 4.04 image or its zip (default: tos404*.zip in the
 # repo root).  Skips (exit 0) without the ROM or Hatari.  HOPTS: more
 # run-hatari.sh options, e.g. "-c 060 -t 32" for a CT60 with 32 MB FastRAM.
-# STAGES: any of vga rgb mod tos tosint tosloop x xtos xdm xdmboots mac6 xaaes (mod, tos and tosloop need an
+# STAGES: any of vga rgb emutos scsi emutos-scsi mod tos tosint tosloop x xtos xdm xdmboots mac6 xaaes (mod, tos and tosloop need an
 # image made with TESTS=modadmin MODS=<mod.d>, tos also takes TOSENV=1; x one made with X11=<pkg>)
 # (default "vga rgb").  x: startx in 256 colours, typing into xterm, the
 # server stopped and the console back; then in 2 colours with the German
@@ -36,6 +36,9 @@
 # mac6 (an image made with MACENV=1): System 6's Finder desktop; Command-A
 # and Command-O open its windows; the hot key to the console, whose
 # Ctrl-C ends it.
+# emutos: power-on boot on EmuTOS (no root-sector boot; the AUTO
+# launcher starts the loader) to a root login, root and /home on IDE.
+# scsi, emutos-scsi: the same on SCSI ID 0, on TOS 4.04 and on EmuTOS.
 # CPU=060: a CT60 Falcon (68060, TTRAM MB of FastRAM, default 64) on
 # unix-atari060.elf.
 set -e
@@ -78,7 +81,7 @@ run() {		# stage monitor
 		"${KERNEL:-$AUX/kernel/build/unix-atari$CPU.elf}" "root=c?d0s1 nfcons" 3 $BM > /dev/null
 	# tosloop writes its own
 	[ ! -f "$T/falcon-$1-keys.txt" ] || sed "s|OUT/|$OUT/$1-|g" "$T/falcon-$1-keys.txt" > "$OUT/$1-keys.txt"
-	WAIT=${WAIT:-600} sh "$A/run-hatari.sh" -c $CPU $CPUOPT $HOPTS -r "$ROM" -d "$OUT/disk.img" -f 400000 -T ${3:-1500} \
+	WAIT=${WAIT:-600} sh "$A/run-hatari.sh" -c $CPU $CPUOPT $HOPTS -r "${R-$ROM}" -d "$OUT/disk.img" -b ${BUS:-ide} -f 400000 -T ${3:-1500} \
 		-o "$OUT/$1-final.png" -l "$OUT/$1.log" -K "$OUT/$1-keys.txt" -- \
 		--natfeats yes --monitor "$2" > "$OUT/$1-run.txt" 2>&1 || true
 	if grep -q 'key script' "$OUT/$1-run.txt"; then echo "[FAIL] $1: key script"; fail=1; fi
@@ -88,6 +91,16 @@ for s in $STAGES; do
 	vga)	run vga vga
 		check "$OUT/vga.log.out" 'login:' 'uname=' 'ps-lines= *[1-9]' 'proc on /proc' \
 			'session 1 hidden, serial' 'session 1 shown, serial' 'guest-id=uid=100' ;;
+	emutos|scsi|emutos-scsi)
+		# multi-user login, root and /home from the boot disk
+		c=c0; case $s in *scsi) c=c8 ;; esac
+		printf '%s\n' 'wait login:' 'type root\n' 'wait # ' \
+			'type echo disk-root=`/etc/devnm /` home=`/etc/devnm /home`\n' \
+			'wait home=/dev' 'debug quit 0' > "$OUT/$s-keys.txt"
+		case $s in emutos*) R= ;; esac
+		case $s in *scsi) BUS=scsi ;; esac
+		run $s vga; unset R BUS
+		check "$OUT/$s.log.out" 'The system is ready' "disk-root=/dev/dsk/${c}d0s1 / home=/dev/dsk/${c}d0s3 /home" ;;
 	rgb)	run rgb rgb
 		check "$OUT/rgb.log.out" 'login:' 'uname=' 'ps-lines= *[1-9]' ;;
 	mod)	run mod vga

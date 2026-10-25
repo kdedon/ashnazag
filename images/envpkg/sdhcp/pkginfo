@@ -1,0 +1,6 @@
+PKG=sdhcp
+NAME=sdhcp: DHCP client (sdhcp aen0), dhcpinfo
+ARCH=m68k
+CATEGORY=network
+CLASSES=none
+VENDOR=Ash Nazag

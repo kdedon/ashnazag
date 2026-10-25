@@ -1,0 +1,6 @@
+# System statistics: /dev/kstat (major 69) loads its module on first open.
+PATH=/usr/bin:/sbin:/usr/sbin
+case $1 in
+'start')
+	modadmin -r cdev kstat 69 > /dev/null ;;
+esac

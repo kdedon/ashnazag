@@ -19,7 +19,8 @@
 # A3000's accelerator RAM); /stand/unix is linked there.
 # PKG: stage.sh's outdir, for the display module and the environment
 # packages.  ENVPKG: images/envpkg/mkenvpkgs.sh's outdir (AMIGAKERNEL this
-# kernel's .elf), whose packages are installed instead.  AMIGAENV:
+# kernel's .elf), whose packages are installed instead, with the ports
+# (images/ports).  AMIGAENV:
 # mkamiga.sh's outdir, for Kickstart, the floppies and SYS:.  X11PKG:
 # x11/package.sh's pkg directory; X and the tape's clients are installed.
 # GLBIN: gl/build.sh's bin directory; its dritest, glprobe, glxgears, miptest
@@ -114,9 +115,12 @@ CARDS="zz9000 voodoo3 radeonds"
 DEPTH=16
 DSP
 cat > "$S/network-config" <<'NC'
-/usr/sbin/slink addaen /dev/ne0 ne0 &&
+if [ -x /opt/amix/bin/sdhcp ] && /opt/amix/bin/sdhcp -t 30 ne0; then :
+else
+	{ /usr/sbin/ifconfig ne0 > /dev/null 2>&1 || /usr/sbin/slink addaen /dev/ne0 ne0; } &&
 	/usr/sbin/ifconfig ne0 10.0.2.15 netmask 255.255.255.0 up -trailers &&
 	/usr/sbin/route add default 10.0.2.2 1 >/dev/null
+fi
 NC
 
 sh "$A/mods.sh" "$KERNEL.elf" "$S/mods" amiga > "$S/mods.log"
@@ -164,7 +168,7 @@ fi
 if [ -n "$ENVPKG" ]; then
 	EP=$(cd "$ENVPKG/pkgs/env" && pwd)
 	ENV="$ENV
-`$PY "$DR/pkg/pkginst.py" "$S/pkgs" $(ls "$EP"/*.pkg | grep -v macnet)`"
+`$PY "$DR/pkg/pkginst.py" "$S/pkgs" $(ls "$EP"/*.pkg | grep -v macnet) $(sh "$AUX/images/ports/cached.sh")`"
 fi
 if [ -n "$AMIGAENV" ]; then
 	AE=$(cd "$AMIGAENV/root" && pwd)

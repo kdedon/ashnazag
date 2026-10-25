@@ -386,3 +386,67 @@ u_int len, prot, maxprot, flags;
 	args.ram = ram;
 	return as_map(as, *addrp, len, gm_create, (caddr_t)&args);
 }
+
+/* a device's guest RAM: one object, and a second from rd_hioff up if rd_hi */
+int
+guest_ramdev_new(rd, size, flags, limit)
+struct guest_ramdev *rd;
+unsigned long size, limit;
+int flags;
+{
+	int e;
+
+	guest_ramdev_free(rd);
+	if ((e = guest_ram_new(size, flags, limit, &rd->rd_ram)) != 0)
+		return e;
+	rd->rd_proc = curproc;
+	rd->rd_pid = curproc->p_pid;
+	return 0;
+}
+
+/* a session's mappings hold their own reference */
+void
+guest_ramdev_free(rd)
+struct guest_ramdev *rd;
+{
+	guest_ram_free(rd->rd_ram);
+	guest_ram_free(rd->rd_hi);
+	rd->rd_ram = rd->rd_hi = 0;
+	rd->rd_proc = 0;
+}
+
+/* the process that made it */
+int
+guest_ramdev_mine(rd)
+struct guest_ramdev *rd;
+{
+	return rd->rd_ram && curproc == rd->rd_proc && curproc->p_pid == rd->rd_pid;
+}
+
+int
+guest_ramdev_mmap(rd, off)
+struct guest_ramdev *rd;
+off_t off;
+{
+	if (off < 0)
+		return -1;
+	if (rd->rd_hi && (unsigned long)off >= rd->rd_hioff)
+		return guest_ram_frame(rd->rd_hi, (unsigned long)off - rd->rd_hioff);
+	return guest_ram_frame(rd->rd_ram, (unsigned long)off);
+}
+
+int
+guest_ramdev_segmap(rd, dev, off, as, addrp, len, prot, maxprot, flags)
+struct guest_ramdev *rd;
+dev_t dev;
+off_t off;
+struct as *as;
+addr_t *addrp;
+u_int len, prot, maxprot, flags;
+{
+	if (!guest_ramdev_mine(rd))
+		return EACCES;
+	if (rd->rd_hi && off >= 0 && (unsigned long)off >= rd->rd_hioff)
+		return guest_ram_map(rd->rd_hi, dev, off - (off_t)rd->rd_hioff, as, addrp, len, prot, maxprot, flags);
+	return guest_ram_map(rd->rd_ram, dev, off, as, addrp, len, prot, maxprot, flags);
+}

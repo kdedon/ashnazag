@@ -1,10 +1,9 @@
 #!/bin/sh
-# build.sh -- cross-build Mesa 5.0.2 for AMIX with gcc 2.95.3.
+# build.sh -- cross-build Mesa 5.0.2 for AMIX.
 #
 #   sh gl/build.sh
 #
-# Needs toolchain/amix-gcc295 (toolchain/build-gcc295.sh) and the Mesa
-# source from tools/setup.sh --gl.  Work tree: $GLW (default
+# Needs the Mesa source from tools/setup.sh --gl.  Work tree: $GLW (default
 # images/work/gl).  Out in $GLW: lib/libOSMesa.a (core, software
 # rasteriser, OSMesa, snprintf; no threads), lib/libdrm.a,
 # lib/libdrihost.a (DRI set-up without X: drihost.h), bin/glxgears (with
@@ -19,23 +18,26 @@ AUX=$(cd "$D/.." && pwd)
 GLW=${GLW:-$AUX/images/work/gl}
 X11W=${X11W:-$AUX/images/work/x11-mac}
 TGZ=$AUX/ref/mesa/dist/MesaLib-5.0.2.tar.gz
-TC=$AUX/toolchain/amix-gcc295
+TC=$AUX/toolchain/amix
 T=m68k-cbm-sysv4
 CC=$TC/bin/$T-gcc
-AR=$TC/bin/$T-ar
+AR=ar
 N="nice -n 19"
-# AMIX's math.h has M_PI only outside strict ANSI or under X/Open.  68020-60:
-# no FScc, which the 68060 traps (thousands of cycles each)
-CFLAGS="-O2 -m68020-60 -fomit-frame-pointer -D_XOPEN_SOURCE -DBYTE_ORDER=4321 -DBIG_ENDIAN=4321"
+# AMIX's math.h has M_PI only outside strict ANSI or under X/Open
+CFLAGS="-O2 -m68020-40 -fomit-frame-pointer -D_XOPEN_SOURCE -DBYTE_ORDER=4321 -DBIG_ENDIAN=4321"
 TMPDIR=$GLW/tmp
 export TMPDIR
 OD=$GLW/obj
 [ -z "$PIC" ] || { CFLAGS="$CFLAGS -fPIC"; OD=$GLW/pic; }
 
-[ -x "$CC" ] || { echo "$CC missing: sh toolchain/build-gcc295.sh" >&2; exit 1; }
-[ -f "$TGZ" ] || { echo "$TGZ missing: sh tools/setup.sh --gl" >&2; exit 1; }
-M=$GLW/Mesa-5.0.2
+[ -x "$CC" ] || { echo "$CC missing: sh toolchain/build-amix-cross.sh" >&2; exit 1; }
 mkdir -p "$TMPDIR" "$OD" "$GLW/lib"
+python3 "$AUX/kernel/tools/chkasr16.py" -c "$CC" ||
+	{ echo "rebuild it: sh toolchain/build-amix-cross.sh" >&2; exit 1; }
+[ -f "$TGZ" ] || { echo "$TGZ missing: sh tools/setup.sh --gl" >&2; exit 1; }
+sh "$D/mkgcc.sh" "$GLW/gcc"
+CC=$GLW/gcc
+M=$GLW/Mesa-5.0.2
 if [ ! -d "$M" ]; then
 	$N tar xzf "$TGZ" -C "$GLW"
 	for p in "$D"/patches/*.diff; do
@@ -67,7 +69,7 @@ for p in "$D"/patches/*.diff; do
 	basename "$p" >> "$M/.applied"
 done
 # a patch may change a header, or the flags change: then every object is stale
-SUM=$( (cat "$D"/patches/*.diff; echo "$CFLAGS") | cksum)
+SUM=$( (cat "$D"/patches/*.diff "$D/asmfix.pl"; echo "$CFLAGS") | cksum)
 if [ "$(cat "$OD/.patches" 2>/dev/null)" != "$SUM" ]; then
 	rm -f "$OD"/*.o
 	echo "$SUM" > "$OD/.patches"

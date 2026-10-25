@@ -35,25 +35,13 @@ tos_berr(gp, r, a, ssw, absent)
 	long a;
 	int ssw, absent;
 {
-	char f[24];
-
 	if (absent)
 		tosc.t_st.ts_absent++;
 	else
 		tosc.t_st.ts_berr++;
 	tosc.t_st.ts_refl[2]++;
 	trace(absent ? "absent" : "bus error", a, GR_PC(r));
-	bzero(f, sizeof f);
-	P16(f + 2, guest_ssw030((ssw & ~7) | 5));	/* supervisor data */
-	P32(f + 8, a);
-	if (guest_reflect(gp, r, GR_PC(r), 0xa008, f, 26, -1) < 0) {
-		printf("tos: bus error with no guest stack, pc %x\n", (int)GR_PC(r));
-		psignal(curproc, SIGSEGV);
-	}
-	if (GR_FV(r) >> 12)
-		u.u_sigflag |= USTKCLEAR;
-	guest_trapret();
-	return 0;
+	return guest_berr(gp, r, (unsigned long)a, ssw);
 }
 
 /* a write a 68040 left in its write-back buffers (real 68040s complete them here) */
@@ -95,10 +83,8 @@ tos_access(gp, r, fa, ssw)
 		tosc.t_st.ts_top++;
 	else if (as_segat(curproc->p_as, (caddr_t)fa) != 0)
 		return 1;
-	else {
-		tos_berr(gp, r, (long)fa, ssw, IOWIN(fa));
-		return 2;
-	}
+	else
+		return tos_berr(gp, r, (long)fa, ssw, IOWIN(fa)) ? 1 : 2;
 	return 0;
 }
 

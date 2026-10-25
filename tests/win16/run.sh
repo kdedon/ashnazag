@@ -24,6 +24,10 @@ echo "[ok] startwin for this host"
 cc -std=gnu89 -O1 -w -I"$G" $(sh "$G/ft/freetype.sh" flags) -o "$B/textw" "$T/win16/textw.c" \
 	$(ls "$B"/obj/*.o | grep -v /startwin.o) "$B"/ftobj/*.o -lm
 "$B/textw"
+# the pointer on the frame buffer
+cc -std=gnu89 -O1 -w -I"$G" -I"$AUX/kernel/mac/display" $(sh "$G/ft/freetype.sh" flags) -o "$B/fbflick" \
+	"$T/win16/fbflick.c" $(ls "$B"/obj/*.o | grep -v -e /startwin.o -e /scr_null.o) "$B"/ftobj/*.o -lm
+"$B/fbflick"
 # -install from setup disks: SETUP.INF placing the files, SZDD expanded,
 # our own modules (USER.EXE) left out
 I=$B/install

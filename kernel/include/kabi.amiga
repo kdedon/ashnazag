@@ -21,6 +21,8 @@ as_segat
 as_unmap
 autocon
 availrmem
+availsmem
+avenrun
 bcmp
 bcopy
 bdevcnt
@@ -176,6 +178,7 @@ plat_vtop
 plat_zorro
 pollwakeup
 ppcopy
+practive
 preempt
 prfind
 printf
@@ -213,10 +216,12 @@ strlen
 strncmp
 strncpy
 subyte
+sum
 sup_cacr
 suser
 suword
 sync
+sysconfig
 sysent
 sysinfo
 timeout

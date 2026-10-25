@@ -1,0 +1,7 @@
+i pkginfo=pkginfo
+i postinstall=postinstall
+f none /etc/conf/mod.d/kstat 0644 root sys
+f none /etc/rc2.d/S03kstat 0744 root sys
+c none /dev/kstat 69 0 0444 root sys
+f none /usr/lib/libkstat.a 0644 root bin
+f none /usr/include/kstat.h 0644 root bin

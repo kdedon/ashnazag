@@ -1,0 +1,20 @@
+/* curve25519 and ed25519 only: no bignum key exchange or host keys */
+#define DSS_PRIV_FILENAME "/opt/amix/etc/dropbear/dropbear_dss_host_key"
+#define RSA_PRIV_FILENAME "/opt/amix/etc/dropbear/dropbear_rsa_host_key"
+#define ECDSA_PRIV_FILENAME "/opt/amix/etc/dropbear/dropbear_ecdsa_host_key"
+#define ED25519_PRIV_FILENAME "/opt/amix/etc/dropbear/dropbear_ed25519_host_key"
+#define DROPBEAR_REEXEC 0
+#define DROPBEAR_RSA 0
+#define DROPBEAR_ECDSA 0
+#define DROPBEAR_SK_KEYS 0
+#define DROPBEAR_DH_GROUP14_SHA256 0
+#define DROPBEAR_DH_GROUP1_CLIENTONLY 0
+#define DROPBEAR_ECDH 0
+#define DROPBEAR_SNTRUP761 0
+#define DROPBEAR_MLKEM768 0
+#define DROPBEAR_USE_PRNGD 1
+#define DROPBEAR_PRNGD_SOCKET "tcp/127.0.0.1:708"
+#define DROPBEAR_SFTPSERVER 0
+#define DROPBEAR_PATH_SSH_PROGRAM "/opt/amix/bin/dbclient"
+#define DEFAULT_PATH "/opt/amix/bin:/usr/bin:/bin"
+#define DEFAULT_ROOT_PATH "/opt/amix/bin:/usr/sbin:/usr/bin:/sbin:/bin"

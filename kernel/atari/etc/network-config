@@ -1,6 +1,10 @@
 # Interfaces beyond loopback: NETIF aen0 (NetUSBee) or dpn0 (BlueSCSI or
-# DaynaPORT); none until ADDR is set.
+# DaynaPORT); DHCP with the sdhcp package until ADDR is set, else none.
 NETIF=aen0 ADDR= MASK=255.255.255.0 GATEWAY=
-[ -z "$ADDR" ] || { /usr/sbin/slink addaen /dev/$NETIF $NETIF &&
+if [ -n "$ADDR" ]; then
+	/usr/sbin/slink addaen /dev/$NETIF $NETIF &&
 	/usr/sbin/ifconfig $NETIF $ADDR netmask $MASK up -trailers &&
-	{ [ -z "$GATEWAY" ] || /usr/sbin/route add default $GATEWAY 1 > /dev/null; }; }
+	{ [ -z "$GATEWAY" ] || /usr/sbin/route add default $GATEWAY 1 > /dev/null; }
+elif [ -x /opt/amix/bin/sdhcp ]; then
+	/opt/amix/bin/sdhcp -t 30 $NETIF
+fi

@@ -6,7 +6,7 @@
  * AXB layout (512-byte sectors): 0-14 this loader, 15 the command line
  * (text, NUL-terminated) and from byte 256 the boot module table, 16 on
  * the kernel ELF, then the modules.  In the command line, "root=c?" gets
- * the IDE unit of the boot disk.
+ * the boot disk's controller: c0/c1 IDE, c8-c15 SCSI ID 0-7.
  *
  * Module table: 'BMOD', count, then per module its first sector in
  * AXB, its size in bytes and its name (16 bytes, NUL-padded).
@@ -255,7 +255,7 @@ loader(long dev, unsigned long axb, unsigned char *root)
 	unsigned long off, va, fs, ms, sum, osoff, mtop, msec;
 	int ent = 0;
 	struct go *g;
-	char *p, *base;
+	char *p, *q, *base;
 
 	(void)root;
 	if (!want_unix())
@@ -270,8 +270,18 @@ loader(long dev, unsigned long axb, unsigned char *root)
 		return fail("no m68k ELF kernel");
 	for (p = (char *)cmd; *p; p++)
 		if (p[0] == 'r' && p[1] == 'o' && p[2] == 'o' && p[3] == 't'
-		    && p[4] == '=' && p[5] == 'c' && p[6] == '?')
-			p[6] = dev == 16 || dev == 17 ? '0' + dev - 16 : '?';
+		    && p[4] == '=' && p[5] == 'c' && p[6] == '?') {
+			if (dev == 16 || dev == 17)		/* IDE: c0, c1 */
+				p[6] = '0' + dev - 16;
+			else if (dev >= 8 && dev <= 9)		/* SCSI ID n: c8+n */
+				p[6] = '0' + dev;
+			else if (dev >= 10 && dev <= 15) {
+				for (q = (char *)cmd + 254; q > p + 7; q--)
+					q[0] = q[-1];
+				p[6] = '1';
+				p[7] = '0' + dev - 10;
+			}
+		}
 
 	/* every bound below 2 GB, so no sum wraps; entry in a segment */
 	kend = fend = 0;

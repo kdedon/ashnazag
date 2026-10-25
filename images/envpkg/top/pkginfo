@@ -1,0 +1,6 @@
+PKG=top
+NAME=top 3.5.1: processes, CPU, memory and swap on one screen
+ARCH=m68k
+CATEGORY=system
+CLASSES=none
+VENDOR=Ash Nazag

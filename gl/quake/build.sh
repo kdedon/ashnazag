@@ -3,12 +3,10 @@
 #
 #   sh gl/quake/build.sh
 #
-# Needs ref/quake-amix (tools/setup.sh --gl) and toolchain/amix-gcc295
-# (toolchain/build-gcc295.sh).  CC295=no builds with gcc 2.7.2.3 instead.
-# ARCH (default 68020-60: no FScc, which the 68060 traps) is the -m target.  Out: $QW/quake (default
-# images/work/quake).  GL=yes builds $QW/glquake instead: id's GL renderer
-# (ref/quake-id) in an X window, against $GLW's libGL.so and $X11W's client
-# libraries (gl/build.sh).
+# Needs ref/quake-amix (tools/setup.sh --gl).  ARCH (default 68020-40) is
+# the -m target.  Out: $QW/quake (default images/work/quake).  GL=yes
+# builds $QW/glquake instead: id's GL renderer (ref/quake-id) in an X
+# window, against $GLW's libGL.so and $X11W's client libraries (gl/build.sh).
 set -e
 
 D=$(cd "$(dirname "$0")" && pwd)
@@ -18,24 +16,23 @@ QW=${QW:-$AUX/images/work/quake}
 QID=${QID:-$AUX/ref/quake-id}
 GLW=${GLW:-$AUX/images/work/gl}
 X11W=${X11W:-$AUX/images/work/x11-mac}
-ARCH=${ARCH:-68020-60}
+ARCH=${ARCH:-68020-40}
 T=m68k-cbm-sysv4
 OLD=$AUX/toolchain/amix
 SYS=$OLD/$T/sysroot
 N="nice -n 19"
-if [ "${CC295:-yes}" = no ]; then
-	TC=$OLD
-	OPT="-O"
-else
-	TC=$AUX/toolchain/amix-gcc295
-	OPT="-O2 -fomit-frame-pointer"
-fi
-CC=$TC/bin/$T-gcc
-LIBGCC=$(ls "$TC"/lib/gcc-lib/$T/*/libgcc.a | tail -1)
+OPT="-O2 -fomit-frame-pointer"
+CC=$OLD/bin/$T-gcc
+LIBGCC=$(ls "$OLD"/lib/gcc-lib/$T/*/libgcc.a | tail -1)
 TMPDIR=$QW/tmp
 export TMPDIR
 
-[ -x "$CC" ] || { echo "$CC missing: sh toolchain/build-gcc295.sh" >&2; exit 1; }
+[ -x "$CC" ] || { echo "$CC missing: sh toolchain/build-amix-cross.sh" >&2; exit 1; }
+mkdir -p "$TMPDIR"
+python3 "$AUX/kernel/tools/chkasr16.py" -c "$CC" ||
+	{ echo "rebuild it: sh toolchain/build-amix-cross.sh" >&2; exit 1; }
+sh "$AUX/gl/mkgcc.sh" "$QW/gcc"
+CC=$QW/gcc
 [ -f "$QSRC/src/host.c" ] || { echo "$QSRC missing: sh tools/setup.sh --gl" >&2; exit 1; }
 
 CORE="chase cl_demo cl_input cl_main cl_parse cl_tent cmd common console crc cvar
@@ -47,7 +44,7 @@ CORE="chase cl_demo cl_input cl_main cl_parse cl_tent cmd common console crc cva
 	sys_amix net_amix snd_null cd_null"
 
 S=$QW/src
-O=$QW/obj-$ARCH-$(basename "$TC")
+O=$QW/obj-$ARCH
 PATCHES="$D/patches/*.diff"
 DEFS=-DAMIX
 OUT=quake
@@ -61,7 +58,7 @@ if [ "${GL:-no}" = yes ]; then
 	CORE="$CORE r_part gl_draw gl_mesh gl_model gl_refrag gl_rlight gl_rmain gl_rmisc
 		gl_rsurf gl_screen gl_test gl_warp"
 	S=$QW/glsrc
-	O=$QW/globj-$ARCH-$(basename "$TC")
+	O=$QW/globj-$ARCH
 	PATCHES="$PATCHES $D/glpatches/*.diff"
 	DEFS="-DAMIX -DGLQUAKE -I$GLW/include -I$XINC"
 	OUT=glquake
@@ -84,7 +81,7 @@ if [ ! -f "$QW/libextra.a" ]; then
 fi
 
 # objects do not track headers: a changed one rebuilds them all
-SUM=$(cat "$S"/*.h $([ "$OUT" = quake ] || echo "$GLW"/include/GL/*.h) | cksum)
+SUM=$(cat "$S"/*.h "$AUX/gl/asmfix.pl" $([ "$OUT" = quake ] || echo "$GLW"/include/GL/*.h) | cksum)
 if [ "$(cat "$O/.headers" 2>/dev/null)" != "$SUM" ]; then
 	rm -f "$O"/*.o
 	echo "$SUM" > "$O/.headers"

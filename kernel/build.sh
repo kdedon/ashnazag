@@ -32,6 +32,11 @@ mkdir -p "$LOG"
 pass() { echo "PASS $1"; }
 fail() { echo "FAIL $1: $2 (log: $LOG/$1.log)"; exit 1; }
 
+# gcc 2.7 drops the high word of a signed 64-bit shift right by 16
+asr16() { python3 "$K/tools/chkasr16.py" "$@" >> "$LOG/asr16.log" 2>&1 || fail asr16 "see log"; }
+: > "$LOG/asr16.log"
+asr16 -c "$AUX/toolchain/amix/bin/m68k-cbm-sysv4-gcc"
+
 # 1. layout-matched 2.1c base kernel
 {
 	sh "$K/tools/mk-kit21c.sh" &&
@@ -44,24 +49,38 @@ pass kit-2.1c
 if [ "${PLATFORM:-mac}" = atari ]; then
 	sh "$K/atari/relink-atari.sh" > "$LOG/atari.log" 2>&1 || fail atari "relink-atari.sh failed"
 	pass atari
+	asr16 "$K/build/unix-atari030.elf" $(ls -d "$K/build/atari"/* | grep -v '/disk$')
+	pass asr16
 	exit 0
 fi
 
 # 2. the port's 68040 kernel
 sh "$PORT/relink-040.sh" > "$LOG/port.log" 2>&1 || fail port "relink-040.sh failed"
 grep -q 'TOTAL complaints: 0 ' "$LOG/port.log" || fail port "validator complaints"
+# opt-in passes: ttcompat state cleared at open, the 68060 integer package
+B="$PORT/build"
+{
+	sh "$PORT/relink-040-ttcompat.sh" "$B/unix-040" "$B/unix-040" &&
+	sh "$PORT/relink-040-isp060.sh" "$B/unix-040" "$B/unix-040-isp060" &&
+	mv "$B/unix-040-isp060" "$B/unix-040"
+} >> "$LOG/port.log" 2>&1 || fail port "opt-in passes failed"
 pass port
 
 if [ "${PLATFORM:-mac}" = atari060 ]; then
 	sh "$K/atari/relink-atari060.sh" > "$LOG/atari060.log" 2>&1 ||
 		fail atari060 "relink-atari060.sh failed"
 	pass atari060
+	n=; [ "${SVIDEL:-1}" != 0 ] || n=-nosv
+	asr16 "$K/build/unix-atari060$n.elf" "$K/build/atari060$n"
+	pass asr16
 	exit 0
 fi
 
 if [ "${PLATFORM:-mac}" = amiga ]; then
 	sh "$K/amiga/relink-amiga.sh" > "$LOG/amiga.log" 2>&1 || fail amiga "relink-amiga.sh failed"
 	pass amiga
+	asr16 "$K/build/unix-amiga.elf" "$K/build/amiga"
+	pass asr16
 	exit 0
 fi
 
@@ -85,6 +104,8 @@ fi
 # 4. Mac overlay on build/unix-040
 sh "$K/mac/relink-mac.sh" > "$LOG/mac.log" 2>&1 || fail mac "relink-mac.sh failed"
 pass mac
+asr16 "$K/build/unix-mac.elf" "$K/build/mac"
+pass asr16
 
 # 5. static checks on the Mac image
 ELF="$K/build/unix-mac.elf"

@@ -1,0 +1,2 @@
+sh /etc/rc2.d/S74dropbear start
+exit 0

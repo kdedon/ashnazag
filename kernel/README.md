@@ -22,7 +22,7 @@ Stages, one `PASS`/`FAIL` line each, logs in `build/logs/`:
 1. **kit-2.1c** — `tools/mk-kit21c.sh` builds the 2.1p2a link kit in `kit-2.1c/` and
    `tools/relink-kit.sh` relinks it to `amix-2.1p2a/stand/unix`; sha256 must be
    `b37cb0ed…1af0`.
-2. **port** — the AMIX 040/060 port's `relink-040.sh` → `amix-040-060-port/build/unix-040`;
+2. **port** — the AMIX 040/060 port's `relink-040.sh`, then its ttcompat and isp060 passes → `amix-040-060-port/build/unix-040`;
    all byte-patch assertions pass and the relocation validator reports `TOTAL complaints: 0`.
 3. **root** — with `AMIX_TAPE` set, `mac/ramdisk/mkroot.sh` rebuilds the s5 root image
    `mac/ramdisk/build/root.img`; an existing image must pass `s5check.py`. No image is
@@ -30,6 +30,8 @@ Stages, one `PASS`/`FAIL` line each, logs in `build/logs/`:
 4. **mac** — `mac/relink-mac.sh` builds the SCC, SCSI and RAM-disk drivers, overlays the
    Mac platform layer on `unix-040` → `build/unix-mac` (`ld -r`) and `build/unix-mac.elf`
    (fully linked at 0x10000); the root image is linked in as `rd_image`.
+   **asr16** — `tools/chkasr16.py`: no gcc signed 64-bit `>> 16` miscompile in the kernel
+   ELF or its build directory (every platform; the compiler is probed before stage 1).
 5. **checks** — no unresolved symbols, validator clean, ELF is EXEC with two PT_LOAD and
    entry `mac_entry`, and `stext` no longer contains the 68030 `pflusha` (`f000 2400`).
 6. **coff** — `mac/boot/mkcoff.sh` wraps the ELF as `build/unix-mac.coff` for A/UX

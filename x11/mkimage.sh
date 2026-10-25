@@ -59,14 +59,9 @@ done
 [ -z "$APKG" ] || pk="$pk $(ls "$APKG"/APKGENG-*.pkg "$APKG"/APKG-*.pkg)"
 [ -z "$ENVPKGS" ] || pk="$pk $ENVPKGS"
 [ -z "$pk" ] || python3 "$R/pkg/pkginst.py" "$X11W/xpkgs" $pk >> "$R/root.manifest"
-# apkg on the stock pkgadd and pkgrm (the engine's pkginstall faults);
 # the repository is a name-based virtual host, found through the hosts file
 if [ -n "$APKG" ]; then
 	c=$X11W/xpkgs/root/etc/apkg.conf
-	sed -i -e 's,^# pkgadd=/usr/sbin/pkgadd$,pkgadd=/usr/sbin/pkgadd,' \
-		-e 's,^# pkgrm=/usr/sbin/pkgrm$,pkgrm=/usr/sbin/pkgrm,' "$c"
-	[ "$(grep -c '^pkg\(add\|rm\)=/usr/sbin/' "$c")" = 2 ] ||
-		{ echo "[FAIL] apkg.conf changed"; exit 1; }
 	# the environment packages' admin file: no questions, needed packages kept
 	case $ENVPKGS in
 	*envcore*)

@@ -1,0 +1,9 @@
+# The entropy daemon dropbear reads from; TCP, as AMIX has no
+# UNIX-domain stream sockets.
+case $1 in
+'start')
+	[ -x /opt/amix/sbin/prngd ] && /opt/amix/sbin/prngd -p /var/run/prngd.pid tcp/localhost:708 \
+		< /dev/null > /dev/null 2>&1 ;;
+'stop')
+	[ -f /var/run/prngd.pid ] && kill `cat /var/run/prngd.pid` ;;
+esac

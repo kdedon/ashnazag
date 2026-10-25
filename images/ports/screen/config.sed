@@ -1,0 +1,11 @@
+# config.h for AMIX: configure's run tests cannot cross-compile
+s,^#define UTMPOK,/* no utmp: not setuid */,
+s,^#define LOGINDEFAULT.*,,
+s,^#define LOGOUTOK.*,,
+s,/usr/local/etc/screenrc,/opt/amix/etc/screenrc,
+s,/usr/local/lib/screen/encodings,/opt/amix/share/screen/utf8encodings,
+s,^#undef \(NOSYSLOG\|SVR4\|POSIX\|BSDJOBS\|TERMIO\|TERMINFO\|SYSV\|SIGVOID\|HAVE_DIRENT_H\) *$,#define \1 1,
+s,^#undef \(BUGGYGETLOGIN\|USEMEMMOVE\|USEVARARGS\|HAVE_STRERROR\|NAMEDPIPE\) *$,#define \1 1,
+s,^#undef \(HAVE_RENAME\|HAVE__EXIT\|HAVE_LSTAT\|HAVE_FCHOWN\|HAVE_FCHMOD\|HAVE_VSNPRINTF\) *$,#define \1 1,
+s,^#undef \(HAVE_GETCWD\|HAVE_SETLOCALE\|HAVE_STRFTIME\|HAVE_SVR4_PTYS\) *$,#define \1 1,
+s,^#undef NAME_MAX$,#define NAME_MAX 14,

@@ -88,10 +88,10 @@ nx_tick(arg)
 	int s = guest_splhi();
 
 	nx.tid = 0;
-	if (nx.state == 1) {
+	if (NX_SESS->gs_state == GS_RUN) {
 		nx.st.ticks++;
 		nx.stat |= INT_TIMER;
-		nx_kick();
+		guest_env_kick(NX_SESS);
 	}
 	guest_splx(s);
 }
@@ -324,7 +324,7 @@ nx_service(gp, r)
 	case HC_SOFT:
 		s = guest_splhi();
 		nx.stat |= GR_D(r, 1) >> 24 & (INT_SOFT1 | INT_SOFT2);
-		nx_kick();
+		guest_env_kick(NX_SESS);
 		guest_splx(s);
 		break;
 	case HC_TIME:

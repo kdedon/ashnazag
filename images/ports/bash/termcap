@@ -1,0 +1,15 @@
+# Terminals for bash's line editor.
+dumb|80-column dumb tty:\
+	:am:co#80:bl=^G:cr=^M:do=^J:sf=^J:
+vt100|vt102|vt220|ansi|vt100 compatible:\
+	:am:xn:mi:ms:co#80:li#24:it#8:\
+	:bl=^G:cr=^M:le=^H:nd=\E[C:up=\E[A:do=^J:sf=^J:\
+	:cl=\E[H\E[J:cd=\E[J:ce=\E[K:cm=\E[%i%d;%dH:ho=\E[H:\
+	:so=\E[7m:se=\E[m:us=\E[4m:ue=\E[m:md=\E[1m:me=\E[m:\
+	:ks=\E[?1h\E=:ke=\E[?1l\E>:\
+	:ku=\EOA:kd=\EOB:kr=\EOC:kl=\EOD:kh=\E[1~:@7=\E[4~:kD=\E[3~:
+xterm|xterm-color|X11 terminal emulator:\
+	:km:li#24:kh=\EOH:@7=\EOF:\
+	:ks=\E[?1h\E=:ke=\E[?1l\E>:\
+	:ku=\EOA:kd=\EOB:kr=\EOC:kl=\EOD:kD=\E[3~:\
+	:dc=\E[P:DC=\E[%dP:ic=\E[@:IC=\E[%d@:tc=vt100:

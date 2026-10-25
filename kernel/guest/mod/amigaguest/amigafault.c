@@ -22,8 +22,8 @@ site(c, pc, a)
 /*
  * A bus error outside the constant pages.  Guest RAM and the host's
  * windows above the 24-bit space are paged in by the kernel; the rest is
- * hardware nothing answers: counted, the first few logged, and left to
- * the kernel as a bus error.
+ * hardware nothing answers: counted, the first few logged, and a bus
+ * error to the guest.
  */
 int
 amiga_fault(gp, r, v)
@@ -52,7 +52,7 @@ amiga_fault(gp, r, v)
 		amiga_nlog++;
 		printf("amiga: hardware access at pc %x, address %x\n", (int)GR_PC(r), (int)fa);
 	}
-	return 1;
+	return guest_berr(gp, r, fa, ssw);
 }
 
 /*

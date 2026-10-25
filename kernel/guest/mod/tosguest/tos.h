@@ -47,7 +47,6 @@ struct tosctr {
 	long		t_heldsince;	/* lbolt when the first was held */
 	pid_t		t_ppid;		/* who paused it */
 	struct proc	*t_pproc;
-	unsigned long	t_stklo, t_stkhi;	/* te_stklo, te_stkhi */
 	unsigned long	t_sinkva;	/* the writable I/O page, saved in the sink; 0 none */
 	unsigned long	t_sinkoff;	/* that I/O page's offset in the RAM object */
 

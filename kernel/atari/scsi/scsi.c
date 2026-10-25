@@ -4,7 +4,8 @@
  * A job runs to the end on the adapter (polled), then its completion is
  * called.  Completions may queue more work: the running loop picks it up,
  * so they never nest.  Jobs queued above SC_MAXIPL (an interrupt or a
- * timeout) wait for the next submission from below it.
+ * timeout) wait for the next submission from below it, except a
+ * synchronous one at IPL 7 (the boot's root mount), which runs.
  *
  * Per job: CHECK CONDITION fetches the sense; UNIT ATTENTION, BUSY and a
  * stalled bus (reset by the adapter) are retried sj_retries times.
@@ -20,6 +21,7 @@ long		scsi_deferred;
 
 static struct scsi_job	*sq_head[SC_NTARGET], *sq_tail[SC_NTARGET];
 static int		sc_running;
+static int		sc_sync;	/* scsi_run's job is being queued */
 static int		sc_next;	/* target served next */
 
 #ifdef FS_HOST
@@ -154,7 +156,8 @@ sc_kick()
 	int s, t, n;
 
 	s = SC_SPLHI();
-	if (sc_running || ((s >> 8) & 7) > SC_MAXIPL) {
+	t = (s >> 8) & 7;
+	if (sc_running || (t > SC_MAXIPL && !(sc_sync && t == 7))) {
 		if (!sc_running)
 			scsi_deferred++;
 		SC_SPLX(s);
@@ -205,7 +208,7 @@ struct scsi_job *j;
 /*
  * Synchronous: the job and anything queued before it run now.  When the
  * queues are already being run (a call from a completion) or the IPL is
- * too high, the job is taken back and FS_DEFER returned.
+ * too high (4-6), the job is taken back and FS_DEFER returned.
  */
 int
 scsi_run(j)
@@ -215,7 +218,9 @@ struct scsi_job *j;
 	int s, t = j->sj_target & (SC_NTARGET - 1);
 
 	j->sj_intr = 0;
+	sc_sync = 1;
 	scsi_start(j);
+	sc_sync = 0;
 	if (j->sj_flags & SJF_DONE)
 		return j->sj_status;
 	s = SC_SPLHI();

@@ -1,0 +1,4 @@
+i pkginfo=pkginfo
+f none /opt/amix/bin/sdhcp 0755 root bin
+f none /opt/amix/bin/dhcpinfo 0755 root bin
+f none /opt/amix/doc/sdhcp/LICENSE 0644 root bin

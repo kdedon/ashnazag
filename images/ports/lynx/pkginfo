@@ -1,0 +1,8 @@
+PKG=lynx
+NAME=Lynx 2.8.5: text web browser
+ARCH=m68k
+VERSION=2.8.5-1
+CATEGORY=network
+CLASSES=none
+VENDOR=Ash Nazag
+DESC=Text-mode web browser on curses, for HTTP, FTP and Gopher; no HTTPS. lynx -dump URL prints a rendered page. Configuration in /opt/amix/lib/lynx.cfg. Set TERM (vt100 on the console).

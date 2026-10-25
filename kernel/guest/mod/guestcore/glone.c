@@ -2,7 +2,6 @@
 #include "sys/sysm68k.h"
 #include "guest_lone.h"
 
-extern int fpu_present;
 static struct guest_lone_stat guest_lone_stat;
 
 void
@@ -88,8 +87,7 @@ struct guest_proc *gp;
 char *r;
 int v;
 {
-	char b[2];
-	int op = -1;
+	int e;
 	guest_lone_stat.traps++;
 	if (v == 2)
 		return 1;
@@ -110,35 +108,19 @@ int v;
 	}
 	if (v != 8 && v != 11)
 		return lone_reflect(gp, r, v, GR_PC(r), GR_FV(r));
-	if (!copyin((caddr_t)GR_PC(r), b, 2))
-		op = G16(b);
-	/* a 68000 reads SR in user mode too */
-	if (v == 8 && !(gp->gp_vsr & 0x2000) && !((gp->gp_flags & GPF_FRAME68K) && (op & 0xffc0) == 0x40c0))
-		return lone_reflect(gp, r, 8, GR_PC(r), GR_FV(r));
-	if (v == 11 || (op & 0xffc0) == 0xf000) {
-		if (((op >> 9) & 7) == 1 && fpu_present)
-			return 1;
+	if ((e = guest_privtrap(gp, r, v)) == 1)
+		return 1;
+	if (e == v)
 		return lone_reflect(gp, r, v, GR_PC(r), GR_FV(r));
-	}
-	if (!fpu_present && (op & 0xfe00) == 0xf200 && (op >> 7 & 3) == 2)
-		return lone_reflect(gp, r, 11, GR_PC(r), -1);
-	guest_lone_stat.privileged++;
-	if (op == 0x4e70) {
+	if (e)
+		return lone_reflect(gp, r, e, GR_PC(r), -1);
+	if (gp->gp_pkind != GPK_MMU)
+		guest_lone_stat.privileged++;
+	if (gp->gp_pkind == GPK_RESET)
 		guest_lone_stat.resets++;
-		GR_PC(r) += 2;
-		guest_trapret();
-		return 0;
-	}
-	if (op == 0x4e72 && !copyin((caddr_t)GR_PC(r) + 2, b, 2)) {
+	if (gp->gp_pkind == GPK_STOP)
 		guest_lone_stat.stops++;
-		guest_setsr(gp, r, G16(b));
-		GR_PC(r) += 4;
-		guest_trapret();
-		return 0;
-	}
-	if (!guest_priv(gp, r, v))
-		return 0;
-	return lone_reflect(gp, r, 4, GR_PC(r), -1);
+	return 0;
 }
 
 int

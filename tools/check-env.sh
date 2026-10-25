@@ -55,7 +55,6 @@ x11() {
 }
 gl() {
 	suite
-	has "gcc 2.95.3 (sh toolchain/build-gcc295.sh)" f "$TC/amix-gcc295/bin/m68k-cbm-sysv4-gcc"
 	has "Mesa 5.0.2 (setup.sh --gl)" f "$AUX/ref/mesa/dist/MesaLib-5.0.2.tar.gz"
 }
 mac() {

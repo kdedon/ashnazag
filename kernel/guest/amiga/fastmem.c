@@ -18,15 +18,23 @@ memcpy(void *dst, const void *src, __SIZE_TYPE__ n)
         n--;
     }
     if ((k = n >> 5) != 0) {
+        /* saves its own registers: gcc cannot allocate around eight clobbers */
         __asm__ volatile (
-            "1: movem.l (%0)+,%%d1-%%d7/%%a2\n"
-            "   movem.l %%d1-%%d7/%%a2,(%1)\n"
-            "   lea 32(%1),%1\n"
-            "   subq.l &1,%2\n"
-            "   jne 1b"
-            : "=a" (s), "=a" (d), "=d" (k)
-            : "0" (s), "1" (d), "2" (k)
-            : "d1", "d2", "d3", "d4", "d5", "d6", "d7", "a2", "memory");
+            "   move.l %0,%%a0\n"
+            "   move.l %1,%%a1\n"
+            "   move.l %2,%%d0\n"
+            "   movem.l %%d2-%%d7/%%a2,-(%%sp)\n"
+            "1: movem.l (%%a0)+,%%d1-%%d7/%%a2\n"
+            "   movem.l %%d1-%%d7/%%a2,(%%a1)\n"
+            "   lea 32(%%a1),%%a1\n"
+            "   subq.l &1,%%d0\n"
+            "   jne 1b\n"
+            "   movem.l (%%sp)+,%%d2-%%d7/%%a2"
+            :
+            : "g" (s), "g" (d), "g" (k)
+            : "d0", "d1", "a0", "a1", "memory");
+        s += k << 5;
+        d += k << 5;
         n &= 31;
     }
     for (; n >= 4; n -= 4, d += 4, s += 4)
@@ -45,21 +53,26 @@ fill32(void *dst, unsigned long v, unsigned long n)
 
     if ((k = n >> 5) != 0) {
         __asm__ volatile (
-            "   move.l %3,%%d1\n"
-            "   move.l %3,%%d2\n"
-            "   move.l %3,%%d3\n"
-            "   move.l %3,%%d4\n"
-            "   move.l %3,%%d5\n"
-            "   move.l %3,%%d6\n"
-            "   move.l %3,%%d7\n"
-            "   move.l %3,%%a2\n"
-            "1: movem.l %%d1-%%d7/%%a2,(%0)\n"
-            "   lea 32(%0),%0\n"
-            "   subq.l &1,%1\n"
-            "   jne 1b"
-            : "=a" (d), "=d" (k)
-            : "0" (d), "g" (v), "1" (k)
-            : "d1", "d2", "d3", "d4", "d5", "d6", "d7", "a2", "memory");
+            "   move.l %0,%%a1\n"
+            "   move.l %1,%%d1\n"
+            "   move.l %2,%%d0\n"
+            "   movem.l %%d2-%%d7/%%a2,-(%%sp)\n"
+            "   move.l %%d1,%%d2\n"
+            "   move.l %%d1,%%d3\n"
+            "   move.l %%d1,%%d4\n"
+            "   move.l %%d1,%%d5\n"
+            "   move.l %%d1,%%d6\n"
+            "   move.l %%d1,%%d7\n"
+            "   move.l %%d1,%%a2\n"
+            "1: movem.l %%d1-%%d7/%%a2,(%%a1)\n"
+            "   lea 32(%%a1),%%a1\n"
+            "   subq.l &1,%%d0\n"
+            "   jne 1b\n"
+            "   movem.l (%%sp)+,%%d2-%%d7/%%a2"
+            :
+            : "g" (d), "g" (v), "g" (k)
+            : "d0", "d1", "a1", "memory");
+        d += k << 5;
         n &= 31;
     }
     for (; n >= 4; n -= 4, d += 4)
