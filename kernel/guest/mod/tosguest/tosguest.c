@@ -280,6 +280,31 @@ tos_pauser()
 	return p && p == tosc.t_pproc && p->p_stat != SZOMB;
 }
 
+/* a paused guest sleeps until resumed, its pauser exits or a signal comes */
+static void
+tos_pausewait(gp)
+	struct guest_proc *gp;
+{
+	int s, id, e;
+
+	if (!tosc.t_paused || tosc.t_gp != gp)
+		return;
+	s = guest_splhi();
+	while (tosc.t_paused && tosc.t_gp == gp) {
+		if (!tos_pauser()) {
+			tosc.t_paused = 0;
+			break;
+		}
+		id = ttimeout(wakeup, (caddr_t)&tosc.t_paused, (long)HZ);
+		e = sleep((caddr_t)&tosc.t_paused, (PZERO + 1) | PCATCH);
+		if (id != -1)
+			untimeout(id);
+		if (e)
+			break;
+	}
+	guest_splx(s);
+}
+
 /* the carrier: one interrupt frame through the guest's vector table */
 static int
 tos_sendsig(gp, sig, sip, hdlr)
@@ -289,26 +314,12 @@ tos_sendsig(gp, sig, sip, hdlr)
 	int (*hdlr)();
 {
 	char *r = (char *)u.u_ar0;
-	int s, l, id;
 
 	if (sig != TOS_SIG || (gp->gp_flags & TGF_SOLO))
 		return __amix_sendsig(sig, sip, hdlr);
 	if (tosc.t_gp != gp)
 		return 1;
-	s = guest_splhi();
-	while (tosc.t_paused && tosc.t_gp == gp) {
-		if (!tos_pauser()) {
-			tosc.t_paused = 0;
-			break;
-		}
-		id = ttimeout(wakeup, (caddr_t)&tosc.t_paused, (long)HZ);
-		l = sleep((caddr_t)&tosc.t_paused, (PZERO + 1) | PCATCH);
-		if (id != -1)
-			untimeout(id);
-		if (l)
-			break;
-	}
-	guest_splx(s);
+	tos_pausewait(gp);
 	tos_intr(gp, r);
 	return 1;
 }
@@ -330,6 +341,7 @@ tos_refl(gp, r, v)
 {
 	if (gp->gp_flags & TGF_SOLO)
 		return guest_lone_trap(gp, r, v);
+	tos_pausewait(gp);
 	if (!guest_fvsize(GR_FV(r)))
 		return 1;
 	TST(gp)->ts_lastpc = GR_PC(r);
@@ -362,6 +374,7 @@ tos_priv(gp, r, v)
 
 	if (gp->gp_flags & TGF_SOLO)
 		return guest_lone_trap(gp, r, v);
+	tos_pausewait(gp);
 	TST(gp)->ts_lastpc = GR_PC(r);
 	if ((e = guest_privtrap(gp, r, v)) == 1)
 		return 1;
@@ -403,18 +416,21 @@ tos_tick(arg)
 	caddr_t arg;
 {
 	struct tosctr *t = &tosc;
-	int s;
+	int s, n;
 
 	t->t_tid = 0;
 	if (t->t_state != 1)
 		return;
+	/* the callout can run a tick late: the timers count clock ticks, not runs */
+	n = lbolt - t->t_tickbolt;
+	t->t_tickbolt = lbolt;
 	s = guest_splhi();
 	if (t->t_vblpend && curproc == t->t_proc && GUEST_VIPL(t->t_gp) >= 4)
 		t->t_st.ts_vblheld++;
 	else if (t->t_vblpend && t->t_held && t->t_vblowed < 2)
 		t->t_vblowed++;		/* goes out after the held one */
 	t->t_vblpend = 1;
-	tos_timers();
+	tos_timers(n < HZ ? n : HZ);
 	guest_splx(s);
 	tos_kick(1);
 	if ((t->t_tid = ttimeout(tos_tick, (caddr_t)0, 1L)) == -1)
@@ -694,6 +710,7 @@ enter(arg, cr)
 	(void)tos_toppage();
 	dlm_cacheflush();		/* the launcher's ROM and cartridge stores reach memory */
 	t->t_state = 1;
+	t->t_tickbolt = lbolt;
 	if ((t->t_tid = ttimeout(tos_tick, (caddr_t)0, 1L)) == -1)
 		t->t_tid = 0;
 	return 0;
@@ -869,7 +886,7 @@ tosioctl(dev, cmd, arg, mode, cr, rvp)
 	return EINVAL;
 }
 
-/* vector 61: movep on a 68060, its accesses resolved as tos_fault's */
+/* vector 61 on a 68060, its accesses resolved as tos_fault's */
 int
 tos_isp(gp, r, v)
 	struct guest_proc *gp;
@@ -880,8 +897,8 @@ tos_isp(gp, r, v)
 	int ssw, e, n;
 
 	for (n = 0; n < 4; n++) {
-		if ((e = guest_movep(gp, r, &fa, &ssw)) == -1)
-			return 1;	/* the host's: 64-bit multiplies */
+		if ((e = guest_isp(gp, r, &fa, &ssw)) == -1)
+			return 1;
 		if (e == 0) {
 			TST(gp)->ts_isp++;
 			guest_trapret();

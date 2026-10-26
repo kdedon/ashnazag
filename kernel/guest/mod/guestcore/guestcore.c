@@ -268,7 +268,7 @@ gc_trap(r)
 		return 1;
 	if ((gp->gp_flags & GPF_NCALL) && v != GNC_VECTOR)
 		return gc_host(gp, r, v);
-	if (v == 61 && d->gd_fn == 0 && guest_movep(gp, r, &fa, &ssw) == 0) {
+	if (v == 61 && d->gd_fn == 0 && guest_isp(gp, r, &fa, &ssw) == 0) {
 		u.u_ar0 = (struct pcb *)r;
 		guest_trapret();	/* to RAM only: a fault goes to the host */
 		return 0;

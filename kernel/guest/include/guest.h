@@ -224,7 +224,7 @@ extern int guest_priv();		/* disposition: privilege emulation */
 extern int guest_privtrap();		/* (gp, regs, v): vector 8 or 11; 0 done, 1 the host's, else the guest's vector */
 extern int guest_fline();		/* the same for 68030 MMU instructions in line F */
 extern int guest_illeg();		/* the same for movec taken as illegal */
-extern int guest_movep();		/* (gp, regs, &fa, &ssw): 0 done, -1 other, -2 fault */
+extern int guest_isp();		/* (gp, regs, &fa, &ssw): vector 61; 0 done, -1 other, -2 fault */
 extern int guest_fnote();		/* disposition: note an access fault */
 extern int guest_bfault();		/* (regs, &fa, &ssw): 0 data, 1 fetch, -1 none */
 extern int guest_bfcycle();		/* (regs, &v): a 68030 cycle to finish here */

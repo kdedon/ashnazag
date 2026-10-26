@@ -32,6 +32,7 @@ struct tosctr {
 	struct guest_proc *t_gp;
 	uid_t		t_uid;
 	int		t_tid;		/* tick callout */
+	long		t_tickbolt;	/* lbolt at its last run */
 	unsigned long	t_ramsize;
 	unsigned long	t_flags;	/* TEF_* */
 

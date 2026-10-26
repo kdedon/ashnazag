@@ -998,13 +998,117 @@ guest_privtrap(gp, r, v)
 	return guest_priv(gp, r, 8) ? 4 : 0;
 }
 
+/* hi:lo = a * b, unsigned, from 16-bit products (the 64-bit mulu.l is the one emulated here) */
+static void
+umul64(a, b, hp, lp)
+	unsigned long a, b, *hp, *lp;
+{
+	unsigned long lo = (a & 0xffff) * (b & 0xffff), m = (a >> 16) * (b & 0xffff);
+	unsigned long hi = (a >> 16) * (b >> 16), t = (a & 0xffff) * (b >> 16);
+
+	if ((m += t) < t)
+		hi += 0x10000;
+	hi += m >> 16;
+	m <<= 16;
+	if ((lo += m) < m)
+		hi++;
+	*hp = hi;
+	*lp = lo;
+}
+
+/* hi:lo / d, unsigned: quotient in hi:lo, remainder in *rp */
+static void
+udiv64(hp, lp, d, rp)
+	unsigned long *hp, *lp, d, *rp;
+{
+	unsigned long hi = *hp, lo = *lp, rm = 0, top;
+	int i;
+
+	for (i = 0; i < 64; i++) {
+		top = rm >> 31;
+		rm = rm << 1 | hi >> 31;
+		hi = hi << 1 | lo >> 31;
+		lo <<= 1;
+		if (top || rm >= d) {
+			rm -= d;
+			lo |= 1;
+		}
+	}
+	*hp = hi;
+	*lp = lo;
+	*rp = rm;
+}
+
 /*
- * movep, which a 68060 takes at vector 61.  0: done; -1: not a movep;
- * -2: the byte at *fa faulted (*ssw), the registers unchanged and the
+ * mul.l and div.l with a 64-bit product or dividend.  0: done; -1: not
+ * one, or a zero divisor (the host raises vector 5); -2: the source faulted.
+ */
+static int
+muldiv64(pi, op)
+	struct pi *pi;
+	int op;
+{
+	char *r = pi->r;
+	u_short ext;
+	unsigned long s, hi, lo, rm;
+	long *dl, *dh;
+	int sgn, neg, ccr, e;
+
+	if (iword(pi, &ext) || (ext & 0x83f8) || !(ext & 0x400))
+		return -1;
+	if ((e = operand(pi, op >> 3 & 7, op & 7, 4, (long *)&s, 0, 1)) < 0)
+		return e;
+	dl = &GR_D(r, ext >> 12 & 7);
+	dh = &GR_D(r, ext & 7);
+	sgn = ext & 0x800;
+	ccr = GR_SR(r) & ~0xf;
+	if (!(op & 0x40)) {
+		umul64((unsigned long)*dl, s, &hi, &lo);
+		if (sgn)
+			hi -= (*dl < 0 ? s : 0) + ((long)s < 0 ? *dl : 0);
+		*dl = lo;
+		*dh = hi;
+		ccr |= ((long)hi < 0 ? 8 : 0) | ((hi | lo) == 0 ? 4 : 0);
+	} else {
+		if (s == 0)
+			return -1;
+		hi = *dh;
+		lo = *dl;
+		neg = 0;
+		if (sgn && (long)hi < 0) {
+			hi = ~hi + (lo == 0);
+			lo = -lo;
+			neg = 3;
+		}
+		if (sgn && (long)s < 0) {
+			s = -s;
+			neg ^= 1;
+		}
+		udiv64(&hi, &lo, s, &rm);
+		if (hi || (sgn && lo > ((neg & 1) ? 0x80000000UL : 0x7fffffffUL)))
+			ccr |= 2;
+		else {
+			if (neg & 1)
+				lo = -lo;
+			if (neg & 2)
+				rm = -rm;
+			*dh = rm;
+			*dl = lo;
+			ccr |= ((long)lo < 0 ? 8 : 0) | (lo == 0 ? 4 : 0);
+		}
+	}
+	GR_SR(r) = ccr;
+	return 0;
+}
+
+/*
+ * Vector 61 on a 68060: movep, and mul.l and div.l with a 64-bit product
+ * or dividend.  0: done; -1: another instruction, left to the host; -2:
+ * the byte at *fa faulted (*ssw), the registers unchanged and the
  * instruction to rerun once the profile has resolved the fault.
  */
 int
-guest_movep(gp, r, fa, ssw)
+guest_isp(gp, r, fa, ssw)
 	struct guest_proc *gp;
 	char *r;
 	unsigned long *fa;
@@ -1012,14 +1116,30 @@ guest_movep(gp, r, fa, ssw)
 {
 	struct pi pi;
 	u_short op, d;
-	long a, v, *dp;
+	long a, v, *dp, sv[16];
 	char b;
 	int i, n, wr;
 
 	pi.r = r;
 	pi.pc = GR_PC(r);
 	pi.len = 0;
-	if (iword(&pi, &op) || (op & 0xf138) != 0x0108 || iword(&pi, &d))
+	pi.fssw = pi.fc = 0;
+	pi.ugp = 0;
+	if (iword(&pi, &op))
+		return -1;
+	if ((op & 0xff80) == 0x4c00) {
+		bcopy(r, (caddr_t)sv, sizeof sv);	/* (An)+ and -(An) undone on a fault */
+		if ((i = muldiv64(&pi, (int)op)) < 0) {
+			bcopy((caddr_t)sv, r, sizeof sv);
+			*fa = pi.fa;
+			*ssw = 0x101;
+			return i;
+		}
+		GR_PC(r) = pi.pc + pi.len;
+		guest_npriv++;
+		return 0;
+	}
+	if ((op & 0xf138) != 0x0108 || iword(&pi, &d))
 		return -1;
 	n = op & 0x40 ? 4 : 2;
 	wr = op & 0x80;

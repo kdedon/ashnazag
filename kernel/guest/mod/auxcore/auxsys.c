@@ -21,6 +21,9 @@ extern int nosys();
 extern int preempt(), issig();
 extern void psig();
 extern int runrun;
+extern void dlm_cacheflush();
+__asm__(".weak cputype");
+extern long aux_cputype __asm__("cputype");
 
 int aux_lstatdiag;
 long aux_lstatpid,aux_lstatcount;
@@ -349,6 +352,22 @@ socktrace(num, a, v)
 }
 
 /*
+ * A file read into a Mac task's memory may be code, which a copyback data
+ * cache hides from the instruction fetch: push it.  A 68030's write-through
+ * cache never needed this, and A/UX 2's Toolbox does not.
+ */
+static void
+aux_publish(fd)
+	int fd;
+{
+	long *__volatile__ ct = &aux_cputype;
+	file_t *fp;
+
+	if (ct && *ct >= 40 && getf(fd, &fp) == 0 && fp->f_vnode->v_type == VREG)
+		dlm_cacheflush();
+}
+
+/*
  * The entry, from the trap #0 / #15 gates of an A/UX process.  Mirrors
  * the stock system call path, ending with its preemption and signal
  * checks; the gate then leaves through the stock trap return.
@@ -429,6 +448,8 @@ aux_systrap(gp, r, vec)
 		e = (*ae->ae_fn)(ap, a, &rv, r);
 	else
 		e = aux_amix(ae->ae_amix, a, &rv);
+	if (!e && (num == 3 || num == 106) && rv.r_val1 > 0 && (ap->ap_mac & APM_TASK))
+		aux_publish((int)a[0]);
 	if(aux_lstatdiag)lstatdiag(gp,num,a,e,rv.r_val1,r);
 	if(aux_filediag)filediag(gp,num,a,e,rv.r_val1,GR_PC(r));
 	if (!e && aux_macgfd && (num==5 || num==6 || num==41 || num==62))

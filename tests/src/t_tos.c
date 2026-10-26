@@ -1089,6 +1089,30 @@ cputimes(g, d)
 		closedir(dp);
 }
 
+/* paused, the guest sleeps: no clock, no CPU; resumed, it runs */
+static void
+paused()
+{
+	long h0, h1, h2, g0, g1, d;
+
+	if (ioctl(tfd, TOSIOC_PAUSE, 1) < 0) {
+		t_check(N("pause_sleeps"), 0, "TOSIOC_PAUSE: %s", strerror(errno));
+		return;
+	}
+	nap(500);
+	h0 = peek((long)HZ200, 4);
+	cputimes(&g0, &d);
+	nap(2000);
+	h1 = peek((long)HZ200, 4);
+	cputimes(&g1, &d);
+	ioctl(tfd, TOSIOC_PAUSE, 0);
+	nap(1000);
+	h2 = peek((long)HZ200, 4);
+	t_check(N("pause_sleeps"), h0 >= 0 && h1 == h0 && g1 - g0 < 200,
+	    "_hz_200 %ld -> %ld, guest CPU %ld ms in 2 s", h0, h1, g1 - g0);
+	t_check(N("pause_resumes"), h2 - h1 >= 100, "_hz_200 %ld -> %ld in 1 s", h1, h2);
+}
+
 /* ms from t0 until two screen dumps in a row match, -1 if they never do */
 static long
 settle(t0, tag)
@@ -1604,6 +1628,7 @@ run(rom)
 			solotraps();
 			ucheck();
 			timers();
+			paused();
 		}
 		idle();
 		ioctl(tfd, TOSIOC_STAT, &st);

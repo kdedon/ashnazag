@@ -227,23 +227,24 @@ tevent()
 	}
 }
 
-/* each clock tick: the timers' periods */
+/* n clock ticks: the timers' periods */
 void
-tos_timers()
+tos_timers(n)
+	int n;
 {
 	struct tosctr *t = &tosc;
 	struct tostimer *tm;
-	int i, n;
+	int i, k;
 
 	/* subtracted, not divided: a constant divisor is a 64-bit multiply, which the 68060 traps */
-	t->t_tcacc += 200;
-	for (n = 0; t->t_tcacc >= HZ; n++)
+	t->t_tcacc += 200 * n;
+	for (k = 0; t->t_tcacc >= HZ; k++)
 		t->t_tcacc -= HZ;
-	owe(CH_TIMERC, n);
+	owe(CH_TIMERC, k);
 	for (i = 0; i < 2; i++) {
 		tm = &t->t_tm[i];
 		if (tm->tm_per) {
-			tm->tm_acc += 2457600 / HZ;
+			tm->tm_acc += 2457600 / HZ * n;
 			owe(i ? CH_TIMERB : CH_TIMERA, (int)(tm->tm_acc / tm->tm_per));
 			tm->tm_acc %= tm->tm_per;
 		}

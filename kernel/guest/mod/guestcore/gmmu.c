@@ -214,7 +214,11 @@ hostpfn(as, a)
 	return (long)((*d & ~(HP - 1)) / HP);
 }
 
-/* cpushl or cpushp of host physical a; c: 1 data, 2 instruction, 3 both caches */
+/*
+ * cpushl or cpushp of host physical a; c: 1 data, 2 instruction, 3 both
+ * caches.  The instruction cache holds nothing to push: it is invalidated
+ * (cinvl, cinvp), which is what a push of it does.
+ */
 static void
 hcpush(a, c, page)
 	unsigned long a;
@@ -222,13 +226,17 @@ hcpush(a, c, page)
 {
 	register unsigned long r __asm__("a0") = a;
 
-	switch (c | page << 2) {
-	case 1: __asm__ __volatile__(".short 0xf468" : : "a" (r) : "memory"); break;
-	case 2: __asm__ __volatile__(".short 0xf4a8" : : "a" (r) : "memory"); break;
-	case 3: __asm__ __volatile__(".short 0xf4e8" : : "a" (r) : "memory"); break;
-	case 5: __asm__ __volatile__(".short 0xf470" : : "a" (r) : "memory"); break;
-	case 6: __asm__ __volatile__(".short 0xf4b0" : : "a" (r) : "memory"); break;
-	case 7: __asm__ __volatile__(".short 0xf4f0" : : "a" (r) : "memory"); break;
+	if (c & 1) {
+		if (page)
+			__asm__ __volatile__(".short 0xf470" : : "a" (r) : "memory");
+		else
+			__asm__ __volatile__(".short 0xf468" : : "a" (r) : "memory");
+	}
+	if (c & 2) {
+		if (page)
+			__asm__ __volatile__(".short 0xf490" : : "a" (r) : "memory");
+		else
+			__asm__ __volatile__(".short 0xf488" : : "a" (r) : "memory");
 	}
 }
 
@@ -1045,11 +1053,24 @@ guest_cache_insn(gp, op, a)
 		return -1;
 	if (c == 0)
 		return 0;
-	n = sc == 1 ? 16 : m && (m->tc & TC_P) ? 2 * HP : HP;
+	/* without a guest MMU its page size is unknown: cover 8 KB */
+	n = sc == 1 ? 16 : !m || (m->tc & TC_P) ? 2 * HP : HP;
 	a &= ~(n - 1);
 	if (m && a > m->plimit - n)
 		return 0;
 	h = m ? m->pbase + a : a;
+	/*
+	 * A Mac moves code with no push of where it lands and runs it later,
+	 * which works where the data cache is small enough to have evicted
+	 * those lines first.  A 68060's 8 KB data cache keeps them: push it all.
+	 */
+	if ((c & 1) && *gmu_cpu >= 60) {
+		__asm__ __volatile__(".short 0xf478" : : : "memory");	/* cpusha dc */
+		if ((c &= ~1) == 0) {
+			guest_cflush_scoped++;
+			return 0;
+		}
+	}
 	do {
 		if ((d = leaf(as, h)) != 0 && (*d & 1))
 			hcpush((*d & ~(HP - 1)) | (h & (HP - 1)), c, sc == 2);

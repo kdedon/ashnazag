@@ -58,5 +58,9 @@ main(argc, argv)
 		printf("tosstat: %d s: trap13 %lu/s priv %lu/s fpriv %lu/s ftrap %lu/s\n", n,
 		    (b.ts_refl[45] - a.ts_refl[45]) / n, (b.ts_priv - a.ts_priv) / n,
 		    (b.ts_fpriv - a.ts_fpriv) / n, (b.ts_ftrap - a.ts_ftrap) / n);
+	if (n > 0)
+		printf("tosstat: %d s: timer A %lu/s B %lu/s C %lu/s\n", n,
+		    (b.ts_ints[13] - a.ts_ints[13]) / n, (b.ts_ints[8] - a.ts_ints[8]) / n,
+		    (b.ts_ints[5] - a.ts_ints[5]) / n);
 	return 0;
 }
