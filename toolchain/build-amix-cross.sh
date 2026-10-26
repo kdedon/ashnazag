@@ -43,3 +43,5 @@ nice -n 19 make -C "$G" extract > "$TC/amix-build.log" 2>&1 || { tail -20 "$TC/a
 sh "$TC/fix-ashrdi16.sh" "$G/src/gcc-$GCC_V/config/m68k/m68k.md"
 nice -n 19 make -C "$G" $T PREFIX="$TC/amix" AMIX_ROOT="$R" MAKE_JOBS="${JOBS:-1}" \
 	>> "$TC/amix-build.log" 2>&1 || { tail -20 "$TC/amix-build.log"; exit 1; }
+# a compile-only toolchain has no AMIX libc for env.sh to check
+[ "$T" = all ] || sed -i '/is not an ELF shared object/d' "$G/build/env.sh"
