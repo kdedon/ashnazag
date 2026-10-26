@@ -475,6 +475,60 @@ out:
     close(fd);return ok;
 }
 
+static int moveto();
+
+/* the terminal window's content origin on the screen; 1 when read */
+static int
+cofforigin(pid,hp,vp)
+int pid,*hp,*vp;
+{
+    unsigned char ptr[4],port[24],bitmap[14];
+    char path[48];unsigned long window,pixmap;
+    int fd,ok=0;
+    sprintf(path,"/proc/%d",pid);
+    if((fd=open(path,O_RDONLY))<0)return 0;
+    if(lseek(fd,(off_t)0x1004c260L,0)==-1 || read(fd,(char *)ptr,4)!=4)goto out;
+    window=coffword(ptr);
+    if(window<0x10000L || !cofframrange(fd,window,sizeof port) ||
+        lseek(fd,(off_t)window,0)==-1 || read(fd,(char *)port,sizeof port)!=sizeof port)goto out;
+    if((port[6]&0xc0)==0xc0) {
+        pixmap=coffword(port+2);
+        if(pixmap<0x10000L || !cofframrange(fd,pixmap,4) ||
+            lseek(fd,(off_t)pixmap,0)==-1 || read(fd,(char *)ptr,4)!=4)goto out;
+        pixmap=coffword(ptr);
+        if(pixmap<0x10000L || !cofframrange(fd,pixmap,sizeof bitmap) ||
+            lseek(fd,(off_t)pixmap,0)==-1 || read(fd,(char *)bitmap,sizeof bitmap)!=sizeof bitmap)goto out;
+        memmove(bitmap,bitmap+6,8);
+    } else memcpy(bitmap,port+8,8);
+    *vp=(short)((port[16]<<8)|port[17])-(short)((bitmap[0]<<8)|bitmap[1]);
+    *hp=(short)((port[18]<<8)|port[19])-(short)((bitmap[2]<<8)|bitmap[3]);
+    ok=1;
+out:
+    close(fd);return ok;
+}
+
+/* the window dragged by its title bar; the mouse answers afterwards */
+static void
+coffdrag(pid)
+int pid;
+{
+    int h0=-1,v0=-1,h1=-1,v1=-1,there,back;
+    long b0=getsym("uin_nbtnin");
+    if(!t_check("coff_drag_window",cofforigin(pid,&h0,&v0),""))return;
+    there=moveto(h0+80,v0-10);
+    host("button 1");pause_ms(600L);
+    moveto(h0+120,v0+30);pause_ms(400L);
+    host("button 0");pause_ms(1500L);
+    cofforigin(pid,&h1,&v1);
+    back=moveto(h1+60,v1+60);
+    /* a stuck Mac would hold the console: CommandShell goes */
+    if(!t_check("coff_drag",there && back && h1-h0>=30 && v1-v0>=30,
+        "origin %d,%d to %d,%d; reached %d after %d; buttons %ld",h0,v0,h1,v1,there,back,
+        getsym("uin_nbtnin")-b0))
+        kill(pid,SIGKILL);
+    t_rearm(120);
+}
+
 static unsigned long
 cofffsword(b)
 unsigned char *b;
@@ -3185,6 +3239,7 @@ commanddirect81once()
     cursorshown("coff_cursor_open");
     coffsnapshot(pid);
     coffordinary(pid);
+    coffdrag(pid);
     setsym("aux_trace",16L);
     unlink("/tmp/coffio");
     q="touch /tmp/coffio";
@@ -3777,6 +3832,7 @@ command76once()
     cursorshown("coff_cursor_open");
     coffsnapshot(pid);
     coffordinary(pid);
+    coffdrag(pid);
     setsym("aux_trace",16L);
     unlink("/tmp/coffio");
     q="touch /tmp/coffio";

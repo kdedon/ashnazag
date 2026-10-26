@@ -451,7 +451,8 @@ fvdi(tv)
 		ttm = tv->tv_ttmode;
 		stale = 1;
 		draws = fs->fs_draw;
-		st = 0;
+		/* until the driver draws, the ST screen (console text) is the newer one */
+		st = draws == 0;
 		stchanged(tv);
 	}
 	/* a program set its own screen: show that */

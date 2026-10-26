@@ -3,7 +3,8 @@
  * loaded by startlisa: the loader reads its files from the folder, the screen
  * shows text, nothing faulted, and in steady state the guest takes no faults
  * on hardware pages.  "t_lisa office", run next, boots the folder the first
- * run left and makes, saves, renames and deletes a LisaWrite document.
+ * run left and makes, saves, renames and deletes a LisaWrite document, and
+ * saves and reopens a LisaCalc paper.
  * Skips without the image.
  */
 #include <sys/types.h>
@@ -147,7 +148,7 @@ follow()
 		buf[n > 0 ? n : 0] = 0;
 		for (l = buf; (e = strchr(l, '\n')) != 0; l = e + 1) {
 			*e = 0;
-			prog = !strncmp(l, "lisa: pc ", 9) || !strncmp(l, "lisa: screen ", 13);
+			prog = !strncmp(l, "lisa: pc ", 9) || !strncmp(l, "lisa: screen ", 13) || !strncmp(l, "lisa: drew ", 11);
 			if (!prog || t_now_ms() - last >= 20000) {
 				if (prog)
 					last = t_now_ms();
@@ -206,22 +207,40 @@ nap(ms)
 	poll((struct pollfd *)0, 0, ms);
 }
 
-/* the pointer's top left on the host screen: what changes when it moves 1 right and down, alone */
+/*
+ * The pointer's top left on the host screen: what changes when it moves 1
+ * right and down, alone, or besides what changes by itself (a title's
+ * blinking caret).
+ */
 static int
 pointer(x, y)
 	int *x, *y;
 {
-	int x1, y1, k;
+	char req[64];
+	int x1, y1, k, i, b[4], ig[4] = { 0, 0, -1, -1 };
 
 	for (k = 0; k < 10; k++) {
 		host("shot lp0");
 		host("move 1 1");
 		nap(700);
 		host("shot lp1");
-		if (host("box lp0 lp1") && sscanf(hrep, "%d %d %d %d", x, y, &x1, &y1) == 4 && x1 - *x < 40 &&
+		sprintf(req, "box lp0 lp1 0 %d %d %d %d", ig[0], ig[1], ig[2], ig[3]);
+		if (host(req) && sscanf(hrep, "%d %d %d %d", x, y, &x1, &y1) == 4 && x1 - *x < 40 &&
 		    y1 - *y < 40)
 			return 1;
-		nap(1000);
+		/* what changes with no input over a second */
+		for (i = 0; i < 4; i++) {
+			nap(300);
+			host(i & 1 ? "shot lp1" : "shot lp0");
+			if (i && host("box lp0 lp1") && sscanf(hrep, "%d %d %d %d", &b[0], &b[1], &b[2], &b[3]) == 4) {
+				if (ig[2] < 0)
+					memcpy(ig, b, sizeof ig);
+				ig[0] = b[0] < ig[0] ? b[0] : ig[0];
+				ig[1] = b[1] < ig[1] ? b[1] : ig[1];
+				ig[2] = b[2] > ig[2] ? b[2] : ig[2];
+				ig[3] = b[3] > ig[3] ? b[3] : ig[3];
+			}
+		}
 	}
 	return 0;
 }
@@ -301,14 +320,14 @@ changed(a, b)
 #define	LY(y)	(top + (y) * sh / 364)
 
 static int w, h, sw, sh, top;		/* the host screen, the Lisa's on it */
-static void office(), mandel(), watch(), menu();
+static void office(), mandel(), watch(), menu(), calc();
 static int offmode;			/* the office run: files made, renamed, deleted */
 static int offpid, offgone;		/* its startlisa; gone after the power switch */
 
 static void
 input()
 {
-	char *log = readlog(), *s;
+	char *log = readlog(), *s, *e;
 	int x, y;
 
 	if ((s = strstr(log, "lisa: display ")) != 0)
@@ -322,6 +341,17 @@ input()
 		return;
 	}
 	t_check("mouse", pointer(&x, &y), "the pointer did not move");
+	/* screen drawing and pointer latency, with the PCs while the pointer moves */
+	host("prof 4 lisa_point");
+	host("glide 100 2 1 40");
+	nap(5000);
+	log = readlog();
+	if ((s = strstr(log, "lisa: full-screen draw ")) != 0 && (e = strchr(s, '\n')) != 0)
+		t_info("draw", "%.*s", (int)(e - s - 6), s + 6);
+	for (s = log, e = 0; (s = strstr(s, "input to screen ")) != 0; s++)
+		e = s;
+	if (e)
+		t_info("pointer", "%.*s", (int)strcspn(e, "\n"), e);
 	if (t_check("to_cancel", moveto(LX(596), LY(70)), "pointer not at the dialog's Cancel")) {
 		host("shot li0");
 		host("click 1");
@@ -611,8 +641,7 @@ office()
 		if (strstr(nw[k], "%z"))
 			bad = nw[k];
 	t_check("no_strays", !bad, "%s left", bad);
-	/* the desktop writes a document's label when it goes into the Wastebasket */
-	moveto(LX(80), LY(310));
+	/* the desktop writes a document's label when it goes into the Wastebasket; the pointer is still on the document */
 	host("button 1 500");
 	moveto(LX(418), LY(337));
 	host("button 0");
@@ -660,6 +689,7 @@ office()
 	host("button 0");
 	watch(20000);
 	t_check("rename", doc2[0] && holds(p2, "776f726c64") > 0, "%s: no new title", doc2[0] ? p2 : "no second document");
+	calc();
 	/* the power switch shuts down cleanly */
 	host("key power");
 	k = stop(offpid, 0, 150, &st);
@@ -672,6 +702,79 @@ office()
 	    !doc2[0] || holds(doc2, "") < 0 ? 5 : 0;
 	t_check("delete", k == 0, k == 5 ? "%s gone from the Wastebasket" : "%s still there",
 	    k == 1 ? doc : k == 2 ? p : k == 3 ? list : k == 4 ? p2 : doc2);
+}
+
+/* pixels of column A, rows 2 and 3, dark in shot y and not in x; -1 unknown */
+static int
+cells(x, y)
+	char *x, *y;
+{
+	char req[80];
+	int n;
+
+	sprintf(req, "glyph %s %s %d %d %d %d", x, y, LX(36), LY(89), LX(100), LY(112));
+	return host(req) && sscanf(hrep, "glyph %*d %d", &n) == 1 ? n : -1;
+}
+
+/*
+ * LisaCalc: a paper torn off its stationery, two cells typed, saved and
+ * put away holds them; opened again, the cells show as typed.
+ */
+static void
+calc()
+{
+	char *nw[40], doc[40], list[400];
+	int n, k, j, a, b, c, d;
+
+	names(1, (char **)0, 0);
+	moveto(LX(71), LY(100));
+	host("click 1");
+	nap(3000);
+	host("click 1");
+	nap(3000);
+	menu(127);			/* Tear Off Stationery */
+	watch(20000);
+	menu(82);			/* Open */
+	watch(90000);
+	host("shot lce");
+	moveto(LX(68), LY(83));
+	host("click 1");
+	nap(2000);
+	type("hello");
+	host("key ret");
+	type("4321");
+	host("key ret");
+	watch(5000);
+	host("shot lc1");
+	menu(68);			/* Save & Put Away */
+	watch(30000);
+	host("shot lc2");
+	doc[0] = list[0] = 0;
+	n = names(0, nw, 40);
+	for (k = 0; k < n; k++) {
+		if (strlen(list) + strlen(nw[k]) < sizeof list - 2)
+			strcat(strcat(list, " "), nw[k]);
+		if ((j = 0, sscanf(nw[k], "{D%*dT%*d}%n", &j), j) && !nw[k][j] && !doc[0])
+			strcpy(doc, nw[k]);
+	}
+	if (!t_check("calc_saved", doc[0] && holds(doc, "hello") > 0, "%s:%s", doc[0] ? "no cells in it" : "no document", list)) {
+		moveto(LX(596), LY(70));	/* the alert's Cancel */
+		host("click 1");
+		watch(5000);
+		return;
+	}
+	/* put away, it stays selected */
+	menu(82);
+	watch(90000);
+	host("shot lc4");
+	/* column A, rows 2 and 3: lit by the typing, the same when reopened */
+	a = cells("lce", "lc1");
+	b = cells("lc1", "lc4");
+	c = cells("lc4", "lc1");
+	d = a > 20 && !b && !c;
+	t_check("calc_reopen", d, "%d pixels typed, %d and %d differ reopened", a, b, c);
+	menu(68);
+	watch(30000);
 }
 
 static void
@@ -836,7 +939,7 @@ main(argc, argv)
 	char **argv;
 {
 	offmode = argc > 1 && !strcmp(argv[1], "office");
-	t_init(offmode ? "lisaoffice" : "lisa", offmode ? 1700 : 1300);
+	t_init(offmode ? "lisaoffice" : "lisa", offmode ? 2300 : 1300);
 	boot();
 	return t_done();
 }

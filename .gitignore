@@ -13,6 +13,7 @@ __pycache__/
 !/toolchain/build-qemu.sh
 !/toolchain/build-amix-cross.sh
 !/toolchain/fix-ashrdi16.sh
+!/toolchain/gcc-cross-amix-patches/
 !/toolchain/qemu-patches/
 !/toolchain/hfsutils-patches/
 /media/

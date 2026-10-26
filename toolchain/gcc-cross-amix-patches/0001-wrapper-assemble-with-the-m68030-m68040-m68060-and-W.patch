@@ -1,0 +1,88 @@
+From e2950d3a5d7c6d514b207509b962ef4c675bb17f Mon Sep 17 00:00:00 2001
+From: kdedon <kdedon@users.noreply.github.com>
+Date: Sat, 24 Oct 2026 22:44:12 -0500
+Subject: [PATCH 1/3] wrapper: assemble with the -m68030/-m68040/-m68060 and
+ -Wa options given
+
+---
+ amix-gcc-wrapper.sh | 30 ++++++++++++++++++++----------
+ 1 file changed, 20 insertions(+), 10 deletions(-)
+
+diff --git a/amix-gcc-wrapper.sh b/amix-gcc-wrapper.sh
+index 4115038..510d5c6 100644
+--- a/amix-gcc-wrapper.sh
++++ b/amix-gcc-wrapper.sh
+@@ -306,6 +306,19 @@ fix_asm()
+ 	fi
+ }
+ 
++# as options for the compile flags: the CPU and each -Wa,a,b option
++as_flags()
++{
++	local a w
++	asflags=(-m68020)
++	for a in "$@"; do
++		case "$a" in
++			-m68030|-m68040|-m68060) asflags[0]="$a" ;;
++			-Wa,*) IFS=, read -ra w <<< "${a#-Wa,}"; asflags+=("${w[@]}") ;;
++		esac
++	done
++}
++
+ compile_one()
+ {
+ 	local src="$1"
+@@ -324,16 +337,11 @@ compile_one()
+ 	# neither is implemented in the 68060's FPU -- every one of them traps into
+ 	# the FPSP and is emulated.  At -m68040 gcc emits FSMUL/FSDIV instead,
+ 	# which both the 040 and the 060 execute in hardware.
+-	local asarch=-m68020
+-	for a in "$@"; do
+-		case "$a" in
+-			-m68030|-m68040|-m68060) asarch="$a" ;;
+-		esac
+-	done
++	as_flags "$@"
+ 
+ 	"$real" -S "${common_cflags[@]}" "$@" "$src" -o "$asmfile"
+ 	fix_asm "$asmfile"
+-	"$as" "$asarch" -o "$obj" "$asmfile"
++	"$as" "${asflags[@]}" -o "$obj" "$asmfile"
+ 
+ 	# Optional post-check: AMIX_SCAN060=1 runs the installed scanner over
+ 	# the object and fails the compile, removing the object, if it holds an
+@@ -357,13 +365,15 @@ assemble_one()
+ {
+ 	local src="$1"
+ 	local obj="$2"
++	shift 2
++	as_flags "$@"
+ 
+ 	# Unlike compile_one, this handles hand-written .s sources directly, not
+ 	# GCC-generated assembly. fix_asm's cmp operand swap is a workaround for
+ 	# a GCC-specific codegen quirk and must not be applied here: hand-written
+ 	# files already use correct operand order, and swapping them turns valid
+ 	# instructions into invalid ones.
+-	"$as" -m68020 -o "$obj" "$src"
++	"$as" "${asflags[@]}" -o "$obj" "$src"
+ }
+ 
+ # fix (linking): emit the ld argument for one "-lNAME", preferring the "-lNAME"
+@@ -658,7 +668,7 @@ if test "$has_c" = yes; then
+ 		obj="$compile_out"
+ 		# like gcc: "-c dir/foo.s" writes foo.o in the current directory
+ 		test -n "$obj" || obj="$(basename "${src%.*}").o"
+-		assemble_one "$src" "$obj"
++		assemble_one "$src" "$obj" "${compile_flags[@]}"
+ 	done
+ 	exit 0
+ fi
+@@ -673,7 +683,7 @@ done
+ for src in "${asm_sources[@]}"; do
+ 	obj="$(mktemp "${TMPDIR:-/tmp}/amix-gcc.XXXXXX.o")"
+ 	tmpfiles+=("$obj")
+-	assemble_one "$src" "$obj"
++	assemble_one "$src" "$obj" "${compile_flags[@]}"
+ 	objects+=("$obj")
+ done
+ 

@@ -1,0 +1,69 @@
+From 3564e339faa227352a8135a79c889fb9cfdd9c3a Mon Sep 17 00:00:00 2001
+From: kdedon <kdedon@users.noreply.github.com>
+Date: Sat, 24 Oct 2026 22:28:18 -0500
+Subject: [PATCH 2/3] install-gcc, the wrapper and libgcc through temporary
+ files
+
+---
+ Makefile | 33 +++++++++++++++++++++------------
+ 1 file changed, 21 insertions(+), 12 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index a39ae15..098f1e5 100644
+--- a/Makefile
++++ b/Makefile
+@@ -389,12 +389,15 @@ gcc: $(GCC_BUILD)/config.status
+ 
+ install-gcc: gcc
+ 	mkdir -p $(PREFIX)/bin $(GCC_LIBDIR)
+-	cp $(GCC_BUILD)/xgcc $(PREFIX)/bin/$(TARGET)-gcc
+-	cp $(GCC_BUILD)/xgcc $(GCC_REAL)
+-	cp $(GCC_BUILD)/cc1 $(GCC_LIBDIR)/cc1
+-	cp $(GCC_BUILD)/cccp $(GCC_LIBDIR)/cpp
+-	PATH="$(PATH_FOR_BUILD)" $(GCC_BUILD)/xgcc -B$(GCC_BUILD)/ -dumpspecs > $(GCC_LIBDIR)/specs
+-	chmod 755 $(PREFIX)/bin/$(TARGET)-gcc $(GCC_REAL) $(GCC_LIBDIR)/cc1 $(GCC_LIBDIR)/cpp
++	@# through a temporary file, so compiles running meanwhile keep working;
++	@# an installed wrapper stays in place until install-gcc-wrapper replaces it
++	grep -q 'amix gcc wrapper' $(PREFIX)/bin/$(TARGET)-gcc 2>/dev/null || \
++		$(call install_tmp,$(GCC_BUILD)/xgcc,$(PREFIX)/bin/$(TARGET)-gcc)
++	$(call install_tmp,$(GCC_BUILD)/xgcc,$(GCC_REAL))
++	$(call install_tmp,$(GCC_BUILD)/cc1,$(GCC_LIBDIR)/cc1)
++	$(call install_tmp,$(GCC_BUILD)/cccp,$(GCC_LIBDIR)/cpp)
++	PATH="$(PATH_FOR_BUILD)" $(GCC_BUILD)/xgcc -B$(GCC_BUILD)/ -dumpspecs > $(GCC_LIBDIR)/specs.tmp
++	mv -f $(GCC_LIBDIR)/specs.tmp $(GCC_LIBDIR)/specs
+ 
+ gcc-full: $(GCC_BUILD)/config.status check-runtime
+ 	PATH="$(PATH_FOR_BUILD)" $(MAKE) -C $(GCC_BUILD) -j$(MAKE_JOBS) \
+@@ -403,11 +406,16 @@ gcc-full: $(GCC_BUILD)/config.status check-runtime
+ 		MAKEINFO="$(AMIX_MAKEINFO)" \
+ 		$(GCC_FULL_BUILD_TARGETS)
+ 
++# install_tmp SRC,DEST: copy to DEST.tmp, then rename over DEST
++install_tmp = (cp -f $(1) $(2).tmp && chmod 755 $(2).tmp && mv -f $(2).tmp $(2))
++
+ define install_gcc_wrapper
+-	sed 's/@TARGET@/$(TARGET)/g' $(HERE)/amix-gcc-wrapper.sh > $(PREFIX)/bin/$(TARGET)-gcc
+-	chmod 755 $(PREFIX)/bin/$(TARGET)-gcc
+-	sed 's/@TARGET@/$(TARGET)/g' $(HERE)/amix-scan060.py > $(PREFIX)/bin/$(TARGET)-scan060
+-	chmod 755 $(PREFIX)/bin/$(TARGET)-scan060
++	sed 's/@TARGET@/$(TARGET)/g' $(HERE)/amix-gcc-wrapper.sh > $(PREFIX)/bin/$(TARGET)-gcc.tmp
++	chmod 755 $(PREFIX)/bin/$(TARGET)-gcc.tmp
++	mv -f $(PREFIX)/bin/$(TARGET)-gcc.tmp $(PREFIX)/bin/$(TARGET)-gcc
++	sed 's/@TARGET@/$(TARGET)/g' $(HERE)/amix-scan060.py > $(PREFIX)/bin/$(TARGET)-scan060.tmp
++	chmod 755 $(PREFIX)/bin/$(TARGET)-scan060.tmp
++	mv -f $(PREFIX)/bin/$(TARGET)-scan060.tmp $(PREFIX)/bin/$(TARGET)-scan060
+ endef
+ 
+ install-gcc-wrapper: install-gcc
+@@ -473,8 +481,9 @@ libgcc: install-target-ar
+ 
+ install-libgcc: libgcc
+ 	mkdir -p $(GCC_LIBDIR)
+-	cp $(LIBGCC2_BUILD_DIR)/libgcc.a $(LIBGCC_A)
+-	"$(TARGET_RANLIB)" $(LIBGCC_A)
++	cp -f $(LIBGCC2_BUILD_DIR)/libgcc.a $(LIBGCC_A).tmp
++	"$(TARGET_RANLIB)" $(LIBGCC_A).tmp
++	mv -f $(LIBGCC_A).tmp $(LIBGCC_A)
+ 	@echo "Installed $(LIBGCC_A)"
+ 
+ env:

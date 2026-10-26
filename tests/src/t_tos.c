@@ -2039,8 +2039,8 @@ middle(name, x, y, w)
 /*
  * Under fVDI the desktop starts STSHOW.TOS: its console text on the ST
  * screen shows, then the screen it sets with Setscreen, then the
- * desktop again.  White per mille in the middle: 0 for the reversed
- * text, half for its striped screen.
+ * desktop again.  White per mille in the middle: about half for its
+ * banded text and for its striped screen.
  */
 static void
 strun()
@@ -2075,7 +2075,7 @@ strun()
 		nap(1000);
 	nap(1500);
 	n = middle("text", &x, &y, &w);
-	t_check(N("text"), access(FDIR "/stshow.1", 0) == 0 && w >= 320 && n == 0,
+	t_check(N("text"), access(FDIR "/stshow.1", 0) == 0 && w >= 320 && n >= 300 && n <= 700,
 	    "width %d, white %d of 1000", w, n);
 	host("key ret");
 	st = marked("stshow.2");

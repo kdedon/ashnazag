@@ -30,6 +30,8 @@
 #include <signal.h>
 #include <poll.h>
 #include <time.h>
+#include <sys/time.h>
+#include <sys/times.h>
 #include "hostcall.h"
 #include "lisaio.h"
 #include "nativehost.h"
@@ -2180,9 +2182,10 @@ hcdata(r)
 	}
 	if (verbose && !said++)
 		fprintf(stderr, "lisa: OS files from host: s-file %d, %ld RAM searches\n", s, nscan);
+	/* a page boundary at or past the logical end: no page yet, as the OS's own code leaves it */
 	if (rel >= 0) {
 		P16(poff, off);
-		P32(ppage, sfabs(f, rel));
+		P32(ppage, !off && rel * 512 >= leof ? -1L : sfabs(f, rel));
 	}
 	P32(G32(fp + 18), done);
 	errout(G32(fp + 34), e);
@@ -3662,19 +3665,19 @@ static unsigned char adb2lisa[128] = {
 	0x00, 0x00, 0x00, 0x7e, 0x7c, 0x00, 0x00, 0x00	/* rshift ropt */
 };
 
-/* host input to the module's queue as Lisa key bytes (bit 7 down; the mouse button is 6) and mouse deltas */
-static void
+/* host input to the module's queue as Lisa key bytes (bit 7 down; the mouse button is 6) and mouse deltas; 1 if any */
+static int
 events(lf, kfd, mfd)
 	int lf, kfd, mfd;
 {
 	static int cmd;
 	struct inev ev[32];
 	long dx = 0, dy = 0, x, y;
-	int fd, n, i, k;
+	int fd, n, i, k, got = 0;
 
 	for (fd = kfd; fd >= 0; fd = fd == kfd ? mfd : -1)
 		while ((n = read(fd, (char *)ev, sizeof ev)) > 0)
-			for (i = 0; i < n / (int)sizeof ev[0]; i++)
+			for (i = 0, got = 1; i < n / (int)sizeof ev[0]; i++)
 				switch (ev[i].ie_type) {
 				case IE_KEY:
 					if (ev[i].ie_code == 0x37)
@@ -3706,6 +3709,7 @@ events(lf, kfd, mfd)
 		dx -= x;
 		dy -= y;
 	}
+	return got;
 }
 
 /*
@@ -3713,13 +3717,193 @@ events(lf, kfd, mfd)
  * A screen narrower or shorter than the Lisa's gets it scaled down, centred: Lisa
  * columns (rows) that land on one host column (row) are ORed, so one-pixel black
  * strokes survive.  At 640 wide one column in nine pairs with its neighbour.
+ *
+ * Rows are compared every REFRESH ms while the screen changes or input comes,
+ * less often when it stays the same.  A row is converted by table, a byte at a time.
  */
+#define	REFRESH	20		/* ms between compares */
+#define	CALM	8		/* unchanged compares before each doubling, up to 8 * REFRESH */
+
+static unsigned long ex[256][2];	/* a Lisa byte at full width: 8 host pixels, black 0 */
+static unsigned long (*sxt)[256][2];	/* scaled: per column pattern, a byte ANDed onto up to 8 pixels */
+static unsigned long sline[SCRW / 4 + 2];	/* a scaled row */
+static struct {
+	unsigned long *pat;		/* a byte column's pattern */
+	unsigned long *at;		/* the line from its first host column */
+} sx[SCRW / 8];
+static unsigned char last[SCRB];
+static int ow, oh;
+
+extern int gettimeofday();
+
+/* ms since the first call */
+static long
+msnow()
+{
+	static long t0;
+	struct timeval tv;
+
+	gettimeofday(&tv, (void *)0);
+	if (t0 == 0)
+		t0 = tv.tv_sec;
+	return (tv.tv_sec - t0) * 1000L + tv.tv_usec / 1000;
+}
+
+/* this process's CPU time, ms */
+static long
+cpums()
+{
+	struct tms t;
+
+	times(&t);
+	return (t.tms_utime + t.tms_stime) * 1000L / sysconf(_SC_CLK_TCK);
+}
+
+/* the scaling tables; 0 if out of memory */
+static int
+scaling()
+{
+	unsigned char o[SCRW / 8][8];
+	int j, k, b, p, x, np = 0;
+
+	for (j = 0; j < SCRW / 8; j++) {
+		x = 8L * j * ow / SCRW;
+		sx[j].at = (unsigned long *)((unsigned char *)sline + x);
+		for (k = 0; k < 8; k++)
+			o[j][k] = (8L * j + k) * ow / SCRW - x;
+	}
+	for (j = 0; j < SCRW / 8; j++) {
+		for (p = 0; p < j && memcmp(o[p], o[j], 8); p++)
+			;
+		np += p == j;
+	}
+	if ((sxt = (unsigned long (*)[256][2])malloc(np * sizeof *sxt)) == 0)
+		return 0;
+	for (j = np = 0; j < SCRW / 8; j++) {
+		for (p = 0; p < j && memcmp(o[p], o[j], 8); p++)
+			;
+		if (p < j) {
+			sx[j].pat = sx[p].pat;
+			continue;
+		}
+		sx[j].pat = sxt[np][0];
+		for (b = 0; b < 256; b++) {
+			sxt[np][b][0] = sxt[np][b][1] = ~0UL;
+			for (k = 0; k < 8; k++)
+				if (b >> (7 - k) & 1)
+					sxt[np][b][o[j][k] / 4] &= ~(0xffUL << (8 * (3 - o[j][k] % 4)));
+		}
+		np++;
+	}
+	return 1;
+}
+
+/* 1 if n bytes (even, 2-byte aligned) match */
+static int
+same(a, b, n)
+	unsigned char *a, *b;
+	long n;
+{
+	unsigned long *p = (unsigned long *)a, *q = (unsigned long *)b;
+	unsigned short *u, *v;
+
+	for (; n >= 16; n -= 16)
+		if (*p++ != *q++ || *p++ != *q++ || *p++ != *q++ || *p++ != *q++)
+			return 0;
+	for (u = (unsigned short *)p, v = (unsigned short *)q; n > 0; n -= 2)
+		if (*u++ != *v++)
+			return 0;
+	return 1;
+}
+
+/*
+ * Lisa row l scaled onto host line d.  Pointer loops, bounds in locals and
+ * a small function keep the old compiler's loops short: it reloads globals
+ * after every store and spills in a big function.
+ */
+static void
+srow(l, d)
+	unsigned char *l;
+	unsigned long *d;
+{
+	unsigned long *t, *u, *z;
+	unsigned char *e = l + SCRW / 8;
+	int b, n = ow;
+	struct { unsigned long *pat, *at; } *x;
+
+	for (u = sline, z = sline + (n + 3) / 4; u + 4 <= z; u += 4)
+		u[0] = u[1] = u[2] = u[3] = ~0UL;
+	while (u < z)
+		*u++ = ~0UL;
+	/* a pattern's longs may start at any byte */
+	for (x = (void *)sx; l < e; x++)
+		if ((b = *l++) != 0) {
+			t = x->pat + 2 * b;
+			u = x->at;
+			u[0] &= t[0];
+			u[1] &= t[1];
+		}
+	for (t = sline, z = sline + n / 4; t + 4 <= z; t += 4, d += 4) {
+		d[0] = t[0];
+		d[1] = t[1];
+		d[2] = t[2];
+		d[3] = t[3];
+	}
+	while (t < z)
+		*d++ = *t++;
+	memcpy((char *)d, (char *)t, n % 4);
+}
+
+/* the screen's changed rows (all of them when all) to fb; the Lisa rows drawn */
+static int
+draw(scr, fb, rb, all)
+	unsigned char *scr, *fb;
+	long rb;
+	int all;
+{
+	static unsigned char acc[SCRW / 8];
+	unsigned char *s, *l;
+	unsigned long *d;
+	int y, e, r, j, oy, rows = 0;
+
+	if (!all && same(last, scr, (long)SCRB))
+		return 0;
+	/* rows y..e-1 land on host row oy */
+	for (y = 0; y < SCRH; y = e) {
+		oy = (long)y * oh / SCRH;
+		for (e = y + 1; e < SCRH && (long)e * oh / SCRH == oy; e++)
+			;
+		s = scr + y * (SCRW / 8);
+		l = last + y * (SCRW / 8);
+		if (!all && same(l, s, (e - y) * (SCRW / 8L)))
+			continue;
+		memcpy(l, s, (e - y) * (SCRW / 8));
+		rows += e - y;
+		if (e - y > 1) {
+			memcpy(acc, l, SCRW / 8);
+			for (r = 1; r < e - y; r++)
+				for (j = 0; j < SCRW / 8; j++)
+					acc[j] |= l[r * (SCRW / 8) + j];
+			l = acc;
+		}
+		if (ow == SCRW) {
+			d = (unsigned long *)(fb + oy * rb);
+			for (j = 0; j < SCRW / 8; j++, d += 2) {
+				d[0] = ex[l[j]][0];
+				d[1] = ex[l[j]][1];
+			}
+			continue;
+		}
+		srow(l, (unsigned long *)(fb + oy * rb));
+	}
+	return rows;
+}
+
 static void
 show(fd)
 	int fd;
 {
-	static unsigned short colx[SCRW];
-	static unsigned char last[SCRB], line[SCRW], bits[256];
+	static unsigned char bits[256];
 	struct nh_display d;
 	struct fbcmap colors;
 	unsigned short grey[256];
@@ -3727,7 +3911,8 @@ show(fd)
 	unsigned char *scr, *fb;
 	pid_t pp = getppid();
 	unsigned long lit, lastlit = 0, vid = ~0UL;
-	int x, y, e, r, i, n = 0, have = 0, ev = 0, ow, oh, oy;
+	long t = 0, tlog = 0, tlit = 0, tin = 0, t0, tdraw = 0, nrows = 0, lrows = 0, lat = 0, nlat = 0, per;
+	int i, k, rows, have = 0, calm = 0;
 	struct pollfd pf[2];
 
 	close(vfd);
@@ -3746,11 +3931,17 @@ show(fd)
 	oh = d.info.fi_height < SCRH ? d.info.fi_height : SCRH;
 	fb = (unsigned char *)d.mapping + d.info.fi_offset +
 	    (d.info.fi_height - oh) / 2 * d.info.fi_rowbytes + (d.info.fi_width - ow) / 2;
-	for (x = 0; x < SCRW; x++)
-		colx[x] = (long)x * ow / SCRW;
+	if (ow < SCRW && !scaling()) {
+		fprintf(stderr, "startlisa: display: out of memory\n");
+		kill(pp, SIGKILL);
+		_exit(1);
+	}
 	for (i = 0; i < 256; i++) {
 		bits[i] = (i & 1) + bits[i / 2];
 		grey[i] = i * 257;
+		for (k = 0; k < 8; k++)
+			if (!(i >> (7 - k) & 1))
+				ex[i][k / 4] |= 0xffUL << (8 * (3 - k % 4));
 	}
 	memset(&colors, 0, sizeof colors);
 	colors.cm_count = 256;
@@ -3763,17 +3954,24 @@ show(fd)
 	pf[0].fd = d.keyboard;
 	pf[1].fd = d.mouse;
 	pf[0].events = pf[1].events = POLLIN;
-	for (;; n++) {
-		if (poll(pf, 2, 50) > 0) {
+	for (per = REFRESH;;) {
+		i = t + per - msnow();
+		if (poll(pf, 2, i < 0 ? 0 : i > per ? per : i) > 0) {
 			if ((pf[0].revents | pf[1].revents) & (POLLHUP | POLLERR)) {
 				kill(pp, SIGTERM);	/* the session closed */
 				pf[0].fd = pf[1].fd = -1;
 				continue;
 			}
-			events(fd, d.keyboard, d.mouse);
-			if (++ev % 4)
-				continue;
+			if (events(fd, d.keyboard, d.mouse)) {
+				calm = 0;
+				if (!tin)
+					tin = msnow();
+			}
 		}
+		per = REFRESH << (calm < 3 * CALM ? calm / CALM : 3);
+		if (msnow() - t < per)
+			continue;
+		t = msnow();
 		if (kill(pp, 0) < 0)
 			_exit(0);
 		if (ioctl(fd, LISAIOC_STAT, &st) < 0)
@@ -3788,36 +3986,49 @@ show(fd)
 			fprintf(stderr, "lisa: bus error at %#lx, pc %#lx\n", st.ls_berraddr, st.ls_berrpc);
 		if (st.ls_hwfault != was.ls_hwfault)
 			fprintf(stderr, "lisa: hardware access at %#lx, pc %#lx\n", st.ls_hwaddr, st.ls_hwpc);
-		if (verbose && n % 40 == 0)
+		if (verbose && t - tlog >= 4000) {
+			tlog = t;
 			fprintf(stderr, "lisa: remaps %lu intr %lu blocks %lu last %lu faults %lu switches %lu a-line %lu alias %lu pushes %lu\n",
 			    st.ls_remap, st.ls_intr, st.ls_pfreads, st.ls_pfblock,
 			    st.ls_hwfault, st.ls_ctxsw, st.ls_aline, st.ls_alias, st.ls_cpush);
+			if (nrows != lrows)
+				fprintf(stderr, "lisa: drew %ld rows in %ld ms, input to screen %ld ms\n", nrows, tdraw, nlat ? lat / nlat : 0);
+			lrows = nrows;
+		}
 		was = st;
 		if (!(st.ls_flags & LSF_VIDEO) || (unsigned long)st.ls_vid * 0x8000 + SCRB > RAMSZ)
 			continue;
 		scr = (unsigned char *)PHYS + st.ls_vid * 0x8000UL;
-		lit = 0;
-		for (i = 0; verbose && n % 10 == 0 && i < SCRB; i++)
-			lit += bits[scr[i]];
-		/* rows y..e-1 land on host row oy; only changed ones are drawn */
-		for (y = 0; y < SCRH; y = e) {
-			oy = (long)y * oh / SCRH;
-			for (e = y + 1; e < SCRH && (long)e * oh / SCRH == oy; e++)
-				;
-			if (vid == st.ls_vid && !memcmp(last + y * (SCRW / 8), scr + y * (SCRW / 8), (e - y) * (SCRW / 8)))
-				continue;
-			memcpy(last + y * (SCRW / 8), scr + y * (SCRW / 8), (e - y) * (SCRW / 8));
-			memset(line, 255, ow);
-			for (r = y; r < e; r++)
-				for (x = 0; x < SCRW; x++)
-					if (last[r * (SCRW / 8) + x / 8] >> (7 - x % 8) & 1)
-						line[colx[x]] = 0;
-			memcpy(fb + oy * d.info.fi_rowbytes, line, ow);
+		if (verbose && t - tlit >= 500) {
+			tlit = t;
+			for (lit = i = 0; i < SCRB; i++)
+				lit += bits[scr[i]];
+			if (lit != lastlit) {
+				lastlit = lit;
+				fprintf(stderr, "lisa: screen %lu pixels lit\n", lit);
+			}
 		}
+		if (verbose && vid == ~0UL) {
+			for (k = 0, t0 = cpums(); k < 256 && cpums() - t0 < 500; k++)
+				draw(scr, fb, (long)d.info.fi_rowbytes, 1);
+			t0 = (cpums() - t0) * 10 / k;
+			fprintf(stderr, "lisa: full-screen draw %ld.%ld ms\n", t0 / 10, t0 % 10);
+		}
+		t0 = msnow();
+		rows = draw(scr, fb, (long)d.info.fi_rowbytes, vid != st.ls_vid);
 		vid = st.ls_vid;
-		if (verbose && lit != lastlit && n % 10 == 0) {
-			lastlit = lit;
-			fprintf(stderr, "lisa: screen %lu pixels lit\n", lit);
+		tdraw += msnow() - t0;
+		nrows += rows;
+		if (!rows) {
+			if (calm < 3 * CALM)
+				calm++;
+			continue;
+		}
+		calm = 0;
+		if (tin) {
+			lat += msnow() - tin;
+			nlat++;
+			tin = 0;
 		}
 	}
 }

@@ -1,14 +1,17 @@
 | stshow.s -- STSHOW.TOS: a text screen, then a screen of its own.
-| Fills the console with reversed spaces, makes C:\STSHOW.1 and waits for
-| a key; sets its own screen at the same resolution (Setscreen with the
-| resolution given), fills it with stripes, makes C:\STSHOW.2 and waits;
-| puts the screen back, makes C:\STSHOW.3 and ends.
+| Fills the console with rows of spaces, reversed and plain in turn, makes
+| C:\STSHOW.1 and waits for a key; sets its own screen at the same
+| resolution (Setscreen with the resolution given), fills it with stripes,
+| makes C:\STSHOW.2 and waits; puts the screen back, makes C:\STSHOW.3
+| and ends.
 	.text
 	.globl	_start
 _start:	pea	clear
 	bsr	cconws
-	moveq	#23,d3
-1:	pea	row
+	moveq	#11,d3
+1:	pea	rowr
+	bsr	cconws
+	pea	row
 	bsr	cconws
 	dbra	d3,1b
 	pea	norm
@@ -80,7 +83,9 @@ key:	move.w	#2,-(sp)
 	addq.l	#4,sp
 	rts
 	.data
-clear:	.asciz	"\033E\033f\033w\033p"
+clear:	.asciz	"\033E\033f\033w"
+rowr:	.ascii	"\033p"
+	.asciz	"                                                                               \r\n\033q"
 row:	.asciz	"                                                                               \r\n"
 norm:	.asciz	"\033H\033q"
 m1:	.asciz	"C:\\STSHOW.1"

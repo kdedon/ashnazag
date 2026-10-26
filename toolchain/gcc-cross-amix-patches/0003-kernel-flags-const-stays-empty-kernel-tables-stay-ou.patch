@@ -1,0 +1,62 @@
+From 20220746f296805aa155d75e2e6628c9393be574 Mon Sep 17 00:00:00 2001
+From: kdedon <kdedon@users.noreply.github.com>
+Date: Sat, 24 Oct 2026 22:56:45 -0500
+Subject: [PATCH 3/3] kernel flags: const stays empty, kernel tables stay out
+ of .rodata
+
+---
+ Makefile  | 14 ++++++++------
+ README.md |  7 ++++---
+ 2 files changed, 12 insertions(+), 9 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 098f1e5..a65a16b 100644
+--- a/Makefile
++++ b/Makefile
+@@ -48,7 +48,9 @@ CONFIG_SUB ?= /usr/share/misc/config.sub
+ CPUFLAGS ?= -m68020
+ AMIX_KERNEL_CPPFLAGS ?= -D_KERNEL -DSVR40 -DSVR4
+ AMIX_KERNEL_INCLUDES ?= -I$(AMIX_ROOT)/usr/include -I$(AMIX_ROOT)/usr/sys -I$(AMIX_ROOT)/usr/sys/amiga/inc
+-AMIX_KERNEL_CFLAGS ?= -O -traditional -fno-builtin -Dinline=__inline__ -Dvolatile=__volatile__ -Dconst=__const__ $(CPUFLAGS) $(AMIX_KERNEL_CPPFLAGS) $(AMIX_KERNEL_INCLUDES)
++# const stays as the headers leave it: __const__ would move kernel tables to
++# .rodata, which the AMIX kernel loader does not bind
++AMIX_KERNEL_CFLAGS ?= -O -traditional -fno-builtin -Dinline=__inline__ -Dvolatile=__volatile__ $(CPUFLAGS) $(AMIX_KERNEL_CPPFLAGS) $(AMIX_KERNEL_INCLUDES)
+ SYSROOT ?= $(PREFIX)/$(TARGET)/sysroot
+ AMIX_USR_LIB ?= $(AMIX_ROOT)/usr/lib
+ AMIX_CRT_DIR ?= $(SYSROOT)/usr/ccs/lib
+@@ -1048,12 +1050,12 @@ test-kernel-volatile: refresh-gcc-wrapper
+ 	$(TARGET_CC) -c $(AMIX_KERNEL_CFLAGS) -o $(BUILDDIR)/test/kvolatile.o $(BUILDDIR)/test/kvolatile.c
+ 	@set -e; status=0; \
+ 	defs="$$($(TARGET_CC) $(AMIX_KERNEL_CFLAGS) -dM -E $(BUILDDIR)/test/kvolatile.c)"; \
+-	echo "==== -dM -E: volatile/const ===="; \
+-	printf '%s\n' "$$defs" | grep -E '^#define[[:space:]]+(volatile|const)([[:space:]]|$$)' || true; \
+-	if printf '%s\n' "$$defs" | grep -Eq '^#define[[:space:]]+(volatile|const)[[:space:]]*$$'; then \
+-		echo "  FAIL <sys/types.h> defines volatile/const away (empty #define)"; status=1; \
++	echo "==== -dM -E: volatile ===="; \
++	printf '%s\n' "$$defs" | grep -E '^#define[[:space:]]+volatile([[:space:]]|$$)' || true; \
++	if printf '%s\n' "$$defs" | grep -Eq '^#define[[:space:]]+volatile[[:space:]]*$$'; then \
++		echo "  FAIL <sys/types.h> defines volatile away (empty #define)"; status=1; \
+ 	else \
+-		echo "  ok   no empty #define volatile/const"; \
++		echo "  ok   no empty #define volatile"; \
+ 	fi; \
+ 	dis="$$($(PREFIX)/bin/$(TARGET)-objdump -d $(BUILDDIR)/test/kvolatile.o)"; \
+ 	guard="$$(printf '%s\n' "$$dis" | sed -n '/<guard>:$$/,/^$$/p')"; \
+diff --git a/README.md b/README.md
+index c76c03c..f1d2275 100644
+--- a/README.md
++++ b/README.md
+@@ -505,9 +505,10 @@ the stock `<sys/types.h>` then does `#define volatile` and `#define const`
+ primitives in `<sys/inline.h>`, so gcc deletes `splx()` and any `spl6()` whose
+ result only feeds it, and every MMIO `volatile` access is erased too (a 32-bit
+ register poll read once, as a byte, then spinning on a register). The flags
+-therefore carry `-Dvolatile=__volatile__ -Dconst=__const__` beside
+-`-Dinline=__inline__`, which the header's `#ifndef` guards respect;
+-`make test-kernel-volatile` gates it.
++therefore carry `-Dvolatile=__volatile__` beside `-Dinline=__inline__`,
++which the header's `#ifndef` guards respect; `make test-kernel-volatile` gates
++it. `const` stays empty: `__const__` would move kernel tables to `.rodata`,
++which the AMIX kernel loader does not bind.
+ Objects built with the old flags should be rebuilt.
+ 
+ ### User CFLAGS: the same trap

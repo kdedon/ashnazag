@@ -629,7 +629,16 @@ ev_owntick(gp)
 	struct guest_proc *gp;
 {
 	static long last;
+	struct uitask *t = ui_task(gp);
+	void (*h)() = u.u_signal[SIGIOT - 1];
 
+	/*
+	 * A joined task that catches the tick signal takes the layer's
+	 * tick while it runs: Mac code may spin on Ticks with no call.
+	 */
+	if (t && !t->t_tick && t->t_proc == u.u_procp && gp == ui.l_active &&
+	    !(AUXP(gp)->ap_flags & APF_AUX2) && h != SIG_DFL && h != SIG_IGN)
+		t->t_tick = 1;
 	if (gp == ui.l_active && !ev_ticks(gp) && last != lbolt) {
 		last = lbolt;
 		ui_update(gp);
