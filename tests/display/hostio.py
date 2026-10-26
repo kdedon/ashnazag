@@ -20,6 +20,7 @@
 #   box A B [Y0]        "X0 Y0 X1 Y1" bounding the pixels that differ (in
 #                       rows Y0 and below), or "none"
 #   lit NAME            pixels of dump NAME that are not black
+#   ext NAME            "X0 Y0 X1 Y1" bounding its lit pixels, or "none"
 #   tos NAME            TOS screen: guest box, menu-bar white, desktop colour
 #   busy SECS LO HI     PC samples for SECS s: "BUSY END": ms not in the idle
 #                       loop LO-HI (hex), and ms to the end of the last
@@ -400,6 +401,15 @@ def serve(q, cmd, a):
     if cmd == 'lit':
         w, h, px = readppm(os.path.join(D, os.path.basename(a[0]) + '.ppm'))
         return '%d' % sum(1 for i in range(0, len(px), 3) if px[i:i + 3] != b'\0\0\0')
+    if cmd == 'ext':
+        # the box holding every lit pixel
+        w, h, px = readppm(os.path.join(D, os.path.basename(a[0]) + '.ppm'))
+        dark = bytes(w * 3)
+        rows = [y for y in range(h) if px[y * w * 3:(y + 1) * w * 3] != dark]
+        if not rows:
+            return 'none'
+        cols = [x for x in range(w) if any(px[(y * w + x) * 3:(y * w + x) * 3 + 3] != b'\0\0\0' for y in rows[::max(1, len(rows) // 64)])]
+        return '%d %d %d %d' % (cols[0], rows[0], cols[-1], rows[-1]) if cols else 'none'
     if cmd == 'mac':
         w, h, px = readppm(os.path.join(D, os.path.basename(a[0]) + '.ppm'))
         return macscreen(w, h, px, *[int(v) for v in a[1:5]])

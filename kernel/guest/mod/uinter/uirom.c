@@ -35,6 +35,7 @@
 extern int execmap(), as_map(), as_unmap(), segvn_create(), strlen();
 extern struct vnode *makespecvp();
 extern caddr_t zfod_argsp;
+extern void dlm_cacheflush();
 extern int fpu_present;
 __asm__(".weak cputype\n.weak mac_model\n.weak mac_romva\n.weak rd_romdev");
 extern long ui_cputype __asm__("cputype");	/* 40, 60; absent: 68020/030 */
@@ -130,6 +131,91 @@ findprod(b, n)
 		return;
 	ui_rom.r_prodoff = best;
 	bcopy((char *)b + best, (char *)ui_rom.r_prod, UI_PRODSIZE);
+}
+
+/*
+ * A 68030 ROM's _LoadSeg writes a jmp into the jump table and returns
+ * into it, and _UnloadSeg writes the entries back, with no cache flush:
+ * fine on a write-through data cache, stale on a copyback one.  Found
+ * by the rewrite loops; the patched tail pushes the caches.
+ */
+static unsigned char lsloop[] = {	/* cmpi.w #$4ef9,2(a1) ... rts */
+	0x0c, 0x69, 0x4e, 0xf9, 0x00, 0x02, 0x67, 0x20, 0x30, 0x28, 0x00, 0x02,
+	0x67, 0x1a, 0x32, 0x2f, 0x00, 0x18, 0x74, 0x00, 0x34, 0x19, 0x33, 0x41,
+	0xff, 0xfe, 0x32, 0xfc, 0x4e, 0xf9, 0x48, 0x70, 0x28, 0x04, 0x22, 0xdf,
+	0x53, 0x40, 0x66, 0xec, 0x22, 0x6f, 0x00, 0x14, 0x5d, 0x89, 0x2f, 0x49,
+	0x00, 0x16, 0x4c, 0xdf, 0x03, 0x07, 0x54, 0x4f, 0x4a, 0x38, 0x01, 0x2d,
+	0x67, 0x02, 0xa9, 0xff, 0x4e, 0x75
+};
+#define	LSTAIL	40			/* the tail rewritten, from movea.l */
+static unsigned char lsnew[] = {
+	0x4c, 0xdf, 0x03, 0x07,		/* movem.l (sp)+,d0-d2/a0-a1 */
+	0x5d, 0x97,			/* subq.l #6,(sp): the entry */
+	0x4a, 0x38, 0x01, 0x2d,		/* tst.b LoadTrap */
+	0x67, 0x02,			/* beq.s */
+	0xa9, 0xff,			/* _Debugger */
+	0xf4, 0xf8,			/* cpusha bc */
+	0x4e, 0x74, 0x00, 0x02,		/* rtd #2 */
+	0xf4, 0xf8,			/* _UnloadSeg's exit: cpusha bc */
+	0x4e, 0x75,			/* rts */
+	0x4e, 0x71
+};
+#define	USEXIT	20			/* _UnloadSeg's exit in lsnew */
+static unsigned char usloop[] = {	/* move.w 2(a0),d0 ... rts */
+	0x30, 0x28, 0x00, 0x02, 0x67, 0x1a, 0x32, 0x11, 0x24, 0x29, 0x00, 0x04,
+	0x94, 0x88, 0x59, 0x82, 0x32, 0xc2, 0x32, 0xfc, 0x3f, 0x3c, 0x32, 0xc1,
+	0x32, 0xfc, 0xa9, 0xf0, 0x53, 0x40, 0x66, 0xe6, 0x2e, 0x9f, 0x4e, 0x75
+};
+
+static long
+findseq(b, n, s, sn)
+	unsigned char *b, *s;
+	long n;
+	int sn;
+{
+	long i;
+
+	for (i = 0; i + sn <= n; i += 2)
+		if (b[i] == s[0] && bcmp((char *)b + i, (char *)s, sn) == 0)
+			return i;
+	return -1;
+}
+
+static void
+findsegld(b, n)
+	unsigned char *b;
+	long n;
+{
+	long d;
+
+	ui_rom.r_lstail = ui_rom.r_usret = -1;
+	if ((d = findseq(b, n, lsloop, sizeof lsloop)) < 0)
+		return;
+	ui_rom.r_lstail = d + LSTAIL;
+	if ((d = findseq(b, n, usloop, sizeof usloop)) < 0)
+		return;
+	d += sizeof usloop - 2;
+	if (ui_rom.r_lstail + USEXIT - (d + 2) >= -128 &&
+	    ui_rom.r_lstail + USEXIT - (d + 2) < 0)
+		ui_rom.r_usret = d;
+}
+
+/* the ROM mapped at a: a copyback cache gets the pushing tails */
+static void
+patchsegld(a)
+	caddr_t a;
+{
+	unsigned char bra[2];
+
+	if (ui_rom.r_lstail < 0 || !cpup || *cpup < 40 ||
+	    copyout((caddr_t)lsnew, a + ui_rom.r_lstail, sizeof lsnew))
+		return;
+	if (ui_rom.r_usret >= 0) {
+		bra[0] = 0x60;			/* bra.s */
+		bra[1] = ui_rom.r_lstail + USEXIT - (ui_rom.r_usret + 2);
+		(void)copyout((caddr_t)bra, a + ui_rom.r_usret, 2);
+	}
+	dlm_cacheflush();
 }
 
 /*
@@ -291,6 +377,7 @@ romload1(aux2)
 	if (ui_box < 0)
 		ui_box = pickbox(ui_rom.r_sum);
 	findprod(b ? b : ui_hwrom, head);
+	findsegld(b ? b : ui_hwrom, head);
 	ui_rom.r_low = (unsigned char *)kmem_zalloc(UI_LOWSIZE, KM_SLEEP);
 	if (ui_rom.r_prodoff >= 0) {
 		int hw = G16(ui_rom.r_prod + 0x10) & ~0x1000;
@@ -409,6 +496,8 @@ ui_rommap(a, aux2)
 	} else
 		e = execmap(ui_rom.r_vp, a, ui_rom.r_size, 0L, 0L,
 		    PROT_READ | PROT_WRITE | PROT_EXEC | PROT_USER);
+	if (e == 0 && aux2)
+		patchsegld(a);
 	/*
 	 * The Process Manager runs on a stack at 0x3fffff00, heap end
 	 * 0x3fff0000, while it disposes of a process: zero-fill memory.

@@ -958,8 +958,9 @@ register mblk_t *mp;
 
 /*
  * Console output while the screen is the console: draw all of it now and
- * mirror what fits into the SCC ring, dropping and counting the rest, so
- * the serial line never paces the screen.  Frees mp.
+ * mirror it into the SCC ring, fed straight to the chip when full while
+ * the chip is ready.  What it cannot take at once is dropped and counted,
+ * so the serial line never paces the screen.  Frees mp.
  */
 static void
 scc_conout(sp, mp)
@@ -976,6 +977,11 @@ mblk_t *mp;
 	for (bp = mp; bp; bp = bp->b_cont)
 		while (bp->b_rptr < bp->b_wptr) {
 			next = (sp->sc_tput + 1) & (TBSZ - 1);
+			while (next == sp->sc_tget && (RR0(sp) & R0_TXRDY)) {
+				sp->sc_flags &= ~SCF_TXBUSY;
+				if (!scc_txnext(sp))
+					break;
+			}
 			if (next == sp->sc_tget) {
 				scc_nmirdrop += bp->b_wptr - bp->b_rptr;
 				break;

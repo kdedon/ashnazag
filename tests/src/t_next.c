@@ -535,6 +535,13 @@ screen()
 {
 	int fd, n;
 
+	/* the launcher dumps the screen on request */
+	if (direct && (fd = creat(sidefile("vram.req"), 0600)) >= 0) {
+		close(fd);
+		for (n = 0; n < 60 && access(sidefile("vram.req"), 0) == 0; n++)
+			poll((struct pollfd *)0, 0, 50);
+		unlink(sidefile("vram.req"));
+	}
 	if ((fd = open(sidefile("vram"), O_RDONLY)) < 0)
 		return -1;
 	n = read(fd, screenmem, direct ? scrrow * scrh : sizeof screenmem);
@@ -756,8 +763,9 @@ kernel()
 			if (full) {
 				long b = t_busy(30000L);
 
-				/* a spinning idle thread keeps it near 100% */
-				t_check("idle_busy", b >= 0 && b < 500, "%ld per mille busy at the Workspace", b);
+				t_info("idle_busy", "%ld per mille", b);
+				/* the console alone is 16: at most 5% above it */
+				t_check("idle_busy", b >= 0 && b < 66, "%ld per mille busy at the Workspace", b);
 			}
 		}
 		if (full ? i % 1200 == 1199 : i == 60 || i == 190) {

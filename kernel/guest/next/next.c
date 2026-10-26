@@ -106,19 +106,28 @@ present(vram, shown)
 }
 
 /* the host screen's size, the guest's within its video memory */
-/* the host screen's frame in ROOT.vram, as the 2-bit path keeps it, for the census */
+/*
+ * The host screen's frame in ROOT.vram, as the 2-bit path keeps it, for the census.
+ * Written when ROOT.vram.req exists, which is then removed: a dump every second
+ * kept the host disk busy.
+ */
 static void
-dumpscreen(root)
+dumpscreen(root, always)
 	char *root;
+	int always;
 {
-	char path[1100];
+	char path[1100], req[1100];
 	int fd;
 
+	sprintf(req, "%s.vram.req", root);
+	if (!always && access(req, 0) != 0)
+		return;
 	sprintf(path, "%s.vram", root);
 	if ((fd = open(path, O_WRONLY | O_CREAT, 0600)) >= 0) {
 		(void)write(fd, (char *)frame, rowbytes * height);
 		close(fd);
 	}
+	unlink(req);
 }
 
 static int
@@ -437,8 +446,8 @@ host(root)
 				fprintf(stderr, "next: console %lux%lu, %lu pixels a long\n", coni,
 				    L(NX_PHYS + kmconi + 16), L(NX_PHYS + kmconi));
 			}
-			if (dump && direct && loops % 50 == 0)
-				dumpscreen(root);
+			if (dump && direct)
+				dumpscreen(root, 0);
 			if (dump && info.ncensus != shownc && loops % 100 == 0) {
 				shownc = info.ncensus;
 				census(&info);
@@ -446,6 +455,8 @@ host(root)
 		}
 	}
 	console();
+	if (dump && direct)
+		dumpscreen(root, 1);
 	if (dump && ioctl(bridge, NX_INFO, &info) == 0)
 		census(&info);
 	nh_display_close(&display);

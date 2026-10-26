@@ -1,0 +1,67 @@
+wait login:
+type guest\n
+sleep 5
+type TBWARN=1 startmac -e 6 2> /tmp/m6.log; echo m6-rc=$?\n
+sleep 150
+debug screenshot OUT/1-1-desktop.png
+event keydown 0x38
+event keypress 0x1e
+event keyup 0x38
+sleep 5
+event keydown 0x38
+event keypress 0x18
+event keyup 0x38
+sleep 20
+debug screenshot OUT/1-2-open.png
+event keydown 0x1d
+event keydown 0x38
+event keypress 0x01
+event keyup 0x38
+event keyup 0x1d
+sleep 5
+debug screenshot OUT/1-3-console.png
+event keydown 0x1d
+event keypress 0x2e
+event keyup 0x1d
+sleep 10
+type \n
+type tail -3 /tmp/m6.log; echo boot1-left=`ps -e | grep -c startmac`; exit\n
+wait boot1-left=
+wait login:
+type root\n
+wait # 
+type shutdown -y -g0 -i0\n
+wait The system is down
+sleep 10
+debug reset hard
+wait login:
+type guest\n
+sleep 5
+type TBWARN=1 startmac -e 6 2> /tmp/m6.log; echo m6-rc=$?\n
+sleep 150
+debug screenshot OUT/2-1-desktop.png
+event keydown 0x38
+event keypress 0x1e
+event keyup 0x38
+sleep 5
+event keydown 0x38
+event keypress 0x18
+event keyup 0x38
+sleep 20
+debug screenshot OUT/2-2-open.png
+event keydown 0x1d
+event keydown 0x38
+event keypress 0x01
+event keyup 0x38
+event keyup 0x1d
+sleep 5
+debug screenshot OUT/2-3-console.png
+event keydown 0x1d
+event keypress 0x2e
+event keyup 0x1d
+sleep 10
+type \n
+type tail -3 /tmp/m6.log; echo boot2-left=`ps -e | grep -c startmac`; exit\n
+wait boot2-left=
+sleep 2
+debug quit 0

@@ -113,9 +113,11 @@ Lisa's chips are not modelled. Environment `office` is `~/Lisa`, others `~/Lisa/
 `tools/makelisa.sh NAME IMAGE` installs the files of your ProFile image (DC42 or raw 532-byte
 blocks) there once, one host file per Lisa file, with a hidden sidecar `.NAME` holding its
 catalog entry and header (the document's title). No disk image is opened at run time.
-The folder also holds `lisa.rom` (`-r` names another) and `parameter-memory` (`-p`); these
-options follow `--`. The screen is centred, scaled down on hosts smaller than the
-Lisa's 720x364; without an 8-bit display it stops with a message. The host's power key is the
+The folder also holds `lisa.rom` (`-r` names another), `parameter-memory` (`-p`) and `screen`
+(`-s`); these options follow `--`. Lisa pixels are tall, so the screen shows at the host's aspect:
+720x364 drawn 720x546, rows 3:2, columns 1:1, centred. Hosts narrower than 720 get it scaled down
+to fit (640x480: 632x480). By default the environment takes the host's mode; `-s WxH`, or `lisa`
+for 720x546, asks for the nearest listed mode at start. Without an 8-bit display it stops with a message. The host's power key is the
 Lisa's power switch: the Office System shuts down, freeing the files it deleted, and the environment
 ends. The Wastebasket holds one document; throwing away another deletes it. Cmd-Q, closing the session or SIGTERM press it too; if the OS has not shut down within
 2 minutes, startlisa stops and says the volume was not closed. Design: `kernel/guest/mod/lisaguest/DESIGN.md`.

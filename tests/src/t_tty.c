@@ -14,6 +14,36 @@
 #include <errno.h>
 #include "t.h"
 
+#define BURST	65536
+
+/*
+ * One write of BURST bytes to the console: 64-byte lines, framed by
+ * "BURST area.name bytes crc32" and "BURST END" for the runner to check.
+ */
+static void
+burst()
+{
+	static char buf[BURST];
+	char hdr[64];
+	unsigned long crc = 0xffffffffUL;
+	int i, j, k;
+
+	for (i = 0; i < BURST; i += 64) {
+		sprintf(buf + i, "%04d ", i / 64);
+		for (j = 5; j < 63; j++)
+			buf[i + j] = '!' + (i / 64 * 7 + j * 13) % 94;
+		buf[i + 63] = '\n';
+	}
+	for (i = 0; i < BURST; i++)
+		for (crc ^= (unsigned char)buf[i], k = 0; k < 8; k++)
+			crc = crc & 1 ? (crc >> 1) ^ 0xedb88320UL : crc >> 1;
+	sprintf(hdr, "BURST tty.console_burst %d %08lx\n", BURST, ~crc & 0xffffffffUL);
+	write(1, hdr, strlen(hdr));
+	k = write(1, buf, BURST);
+	write(1, "BURST END\n", 10);
+	t_check("burst_write", k == BURST, "wrote %d", k);
+}
+
 int
 main()
 {
@@ -87,5 +117,6 @@ main()
 	if (k >= 0)
 		close(k);
 	close(fd);
+	burst();
 	return t_done();
 }

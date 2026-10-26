@@ -207,10 +207,15 @@ nap(ms)
 	poll((struct pollfd *)0, 0, ms);
 }
 
+static int w, h, sw, sh, top;		/* the host screen, the Lisa's on it */
+
 /*
- * The pointer's top left on the host screen: what changes when it moves 1
- * right and down, alone, or besides what changes by itself (a title's
- * blinking caret).
+ * The pointer's top left on the host screen: what changes when it moves 2
+ * right and down (1 can change nothing on a scaled screen), alone, or
+ * besides what changes by itself (a title's blinking caret).  A box one
+ * pixel wide is the caret alone.  Once found the pointer goes back; a
+ * failed try leaves it moved, so the next one is from elsewhere (off a menu
+ * item's edge).
  */
 static int
 pointer(x, y)
@@ -221,13 +226,15 @@ pointer(x, y)
 
 	for (k = 0; k < 10; k++) {
 		host("shot lp0");
-		host("move 1 1");
+		host("move 2 2");
 		nap(700);
 		host("shot lp1");
 		sprintf(req, "box lp0 lp1 0 %d %d %d %d", ig[0], ig[1], ig[2], ig[3]);
 		if (host(req) && sscanf(hrep, "%d %d %d %d", x, y, &x1, &y1) == 4 && x1 - *x < 40 &&
-		    y1 - *y < 40)
+		    y1 - *y < 40 * (sh ? sh : 364) / 364 && x1 - *x >= 2) {
+			host("move -2 -2");
 			return 1;
+		}
 		/* what changes with no input over a second */
 		for (i = 0; i < 4; i++) {
 			nap(300);
@@ -311,15 +318,14 @@ changed(a, b)
 }
 
 /*
- * The Lisa's mouse and keyboard on the desktop, the screen scaled to the
- * host's width and centred: the pointer moves, no micro diskette dialog
+ * The Lisa's mouse and keyboard on the desktop, the screen centred, its rows
+ * shown 3:2: the pointer moves, no micro diskette dialog
  * shows (a click where its Cancel would be changes nothing), a click on the volume's icon and typing renames it,
  * and Apple-O (a beep) keeps it running.
  */
 #define	LX(x)	((w - sw) / 2 + (x) * sw / 720)	/* a Lisa screen point on the host's */
 #define	LY(y)	(top + (y) * sh / 364)
 
-static int w, h, sw, sh, top;		/* the host screen, the Lisa's on it */
 static void office(), mandel(), watch(), menu(), calc();
 static int offmode;			/* the office run: files made, renamed, deleted */
 static int offpid, offgone;		/* its startlisa; gone after the power switch */
@@ -328,14 +334,28 @@ static void
 input()
 {
 	char *log = readlog(), *s, *e;
-	int x, y;
+	int x, y, x1, y1, ew = 720, eh = 546;
 
 	if ((s = strstr(log, "lisa: display ")) != 0)
 		sscanf(s, "lisa: display %dx%d, the screen at %dx%d", &w, &h, &sw, &sh);
-	t_check("display", w > 0 && sw == (w < 720 ? w : 720) && sh == (h < 364 ? h : 364), "%dx%d, the screen at %dx%d", w, h, sw, sh);
+	/* rows shown 3:2, columns 1:1; a narrower host gets it scaled down, aspect kept */
+	if (w < 720) {
+		ew = w;
+		eh = 546L * w / 720;
+	}
+	if (eh > h) {
+		eh = h;
+		ew = w < 720 ? 720L * h / 546 : 720;
+	}
+	t_check("display", w > 0 && sw == ew && sh == eh, "%dx%d, the screen at %dx%d", w, h, sw, sh);
 	if (w <= 0)
 		return;
 	top = (h - sh) / 2;
+	/* the desktop fills the drawn region */
+	host("shot lisa_ext");
+	t_check("aspect", host("ext lisa_ext") && sscanf(hrep, "%d %d %d %d", &x, &y, &x1, &y1) == 4 &&
+	    abs(x - (w - sw) / 2) <= 2 && abs(y - top) <= 2 && abs(x1 - x + 1 - sw) <= 2 && abs(y1 - y + 1 - sh) <= 2,
+	    "lit %s, the screen at %d,%d %dx%d", hrep, (w - sw) / 2, top, sw, sh);
 	if (offmode) {
 		office();
 		return;
@@ -737,7 +757,7 @@ calc()
 	menu(82);			/* Open */
 	watch(90000);
 	host("shot lce");
-	moveto(LX(68), LY(83));
+	moveto(LX(68), LY(95));		/* cell A2 */
 	host("click 1");
 	nap(2000);
 	type("hello");

@@ -35,7 +35,7 @@ mkdir -p "$W"
 CC="m68k-cbm-sysv4-gcc -m68030"
 CFLAGS="$AMIX_KERNEL_CFLAGS -Wall -Wno-comment"
 echo "[*] Atari platform objects"
-for s in ataboot ataentry ataintr; do
+for s in ataboot ataentry ataintr kptest030; do
 	$CC -c "$A/$s.s" -o "$W/$s.o"
 done
 for c in "$A/ataconf.c" "$A/ikbd.c" "$A/atadevsw.c" "$K/mac/video/fbcons.c" "$K/mac/video/fbfont.c" \
@@ -117,7 +117,7 @@ sh "$K/guest/build.sh" -k "$BASE" "$W/guest"
 
 OBJS="$W/dlm/dlm.o $W/dlm/dlm_root.o $W/dlm/dlm_sd.o $W/guest/guest.o $W/ataentry.o $W/ataintr.o $W/ataconf.o $W/vmrgn.o $W/ikbd.o $W/fbcons.o $W/fbfont.o
 $W/atadevsw.o $W/atacons.o $W/ds.o $W/atads.o $W/atadisk.o $W/ahdi.o $W/atartc.o $W/atafsflush.o $W/atavpfree.o $W/rd.o $RDB/rdimage.o
-$W/fpe030.o $FPEOBJS $W/fpe-obj/fpe_glue.o $W/fpe040.o"
+$W/fpe030.o $W/kptest030.o $FPEOBJS $W/fpe-obj/fpe_glue.o $W/fpe040.o"
 
 OVR="config putchar getchar callrom sysdump haltsys rtnfirm hw_clkstart clkreld
 p1int p2int p3int p4int p5int p6int parinit qlintr slpoll autocon delayus
@@ -189,6 +189,7 @@ python3 "$K/guest/patch_vec.py" "$OUT" "$W/guest/gates.lst"
 # own vector takes is no notice
 python3 "$PORT/src/patch_usptrap.py" "$OUT"
 python3 "$PORT/src/patch_profclk.py" "$OUT"
+python3 "$A/patch_kptest.py" "$OUT"
 python3 "$PORT/src/patch_pagerate.py" "$OUT"
 
 btext=$(m68k-linux-gnu-size -A "$BASE" | awk '$1==".text"{print $2}')

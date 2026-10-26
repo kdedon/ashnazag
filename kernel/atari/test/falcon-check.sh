@@ -14,7 +14,7 @@
 # TOSROM: the TOS 4.04 image or its zip (default: tos404*.zip in the
 # repo root).  Skips (exit 0) without the ROM or Hatari.  HOPTS: more
 # run-hatari.sh options, e.g. "-c 060 -t 32" for a CT60 with 32 MB FastRAM.
-# STAGES: any of vga rgb emutos scsi emutos-scsi mod tos tosint tosloop cubase x xtos xdm xdmboots mac6 xaaes (mod, tos and tosloop need an
+# STAGES: any of vga rgb emutos scsi emutos-scsi mod tos tosint tosloop cubase x xtos xdm xdmboots mac6 mac6boot xaaes (mod, tos and tosloop need an
 # image made with TESTS=modadmin MODS=<mod.d>, tos also takes TOSENV=1; x one made with X11=<pkg>)
 # (default "vga rgb").  x: startx in 256 colours, typing into xterm, the
 # server stopped and the console back; then in 2 colours with the German
@@ -39,7 +39,8 @@
 # t_xaaes as root, on EmuTOS: the checks needing no host line.
 # mac6 (an image made with MACENV=1): System 6's Finder desktop; Command-A
 # and Command-O open its windows; the hot key to the console, whose
-# Ctrl-C ends it.
+# Ctrl-C ends it.  mac6boot (the same image): the same as guest, on the
+# guest's own ~/Mac/6 from a cold boot, and again after a restart.
 # emutos: power-on boot on EmuTOS (no root-sector boot; the AUTO
 # launcher starts the loader) to a root login, root and /home on IDE.
 # scsi, emutos-scsi: the same on SCSI ID 0, on TOS 4.04 and on EmuTOS.
@@ -169,6 +170,14 @@ for s in $STAGES; do
 		! grep -q 'BUS ERROR\|PANIC\|panic' "$OUT/mac6.log.out" || { echo "[FAIL] mac6: fault notice or kernel error"; fail=1; }
 		python3 "$T/tosshot.py" differ "$OUT/mac6-1-desktop.png" "$OUT/mac6-2-open.png" || fail=1
 		python3 "$T/tosshot.py" differ "$OUT/mac6-2-open.png" "$OUT/mac6-3-console.png" || fail=1 ;;
+	mac6boot)
+		run mac6boot vga 3000
+		check "$OUT/mac6boot.log.out" 'boot1-left=0' 'boot2-left=0'
+		! grep -q 'BUS ERROR\|PANIC\|panic' "$OUT/mac6boot.log.out" || { echo "[FAIL] mac6boot: fault notice or kernel error"; fail=1; }
+		for b in 1 2; do
+			python3 "$T/tosshot.py" differ "$OUT/mac6boot-$b-1-desktop.png" "$OUT/mac6boot-$b-2-open.png" || fail=1
+			python3 "$T/tosshot.py" differ "$OUT/mac6boot-$b-2-open.png" "$OUT/mac6boot-$b-3-console.png" || fail=1
+		done ;;
 	tosint)
 		# each start must find its ST-RAM again after the last one's SIGINT
 		{ sed -n '1,/^wait mods-done/p' "$T/falcon-tos-keys.txt"

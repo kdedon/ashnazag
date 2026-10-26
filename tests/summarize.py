@@ -2,7 +2,7 @@
 # summarize.py SERIAL.LOG STATE [QEMU.ERR] -- per-area table and FAIL list from a test console log.
 # STATE: done, panic, timeout or exited.
 # Exit: 0 all PASS, 1 any FAIL, 2 run incomplete.
-import re, sys
+import re, sys, zlib
 
 log = open(sys.argv[1], 'rb').read().decode('latin-1').replace('\r', '')
 state = sys.argv[2] if len(sys.argv) > 2 else 'done'
@@ -28,6 +28,18 @@ for m in re.finditer(r'^HALT ([\w-]+)\.(\S+)$', log, re.M):
 	a['PASS' if ok else 'FAIL'] += 1
 	if not ok:
 		fails.append('%s.%s: no halt' % (area, name))
+
+# BURST area.name bytes crc: the lines up to "BURST END" arrived whole
+for m in re.finditer(r'^BURST ([\w-]+)\.(\S+) (\d+) ([0-9a-f]{8})\n', log, re.M):
+	area, name, n, crc = m.group(1), m.group(2), int(m.group(3)), int(m.group(4), 16)
+	end = log.find('\nBURST END\n', m.end() - 1)
+	got = log[m.end():end + 1].encode('latin-1') if end >= 0 else b''
+	ok = len(got) == n and zlib.crc32(got) == crc
+	a = areas.setdefault(area, {'PASS': 0, 'FAIL': 0, 'SKIP': 0})
+	a['PASS' if ok else 'FAIL'] += 1
+	if not ok:
+		fails.append('%s.%s: %s' % (area, name, '%d of %d bytes, crc %s' % (len(got), n,
+		    'ok' if zlib.crc32(got) == crc else 'wrong') if end >= 0 else 'no BURST END'))
 
 # a run cut short fails the test it was in, with the emulator's last words
 cur = re.findall(r'^(?:=== (\S+)|--- (\S+?):)', log, re.M)

@@ -201,6 +201,7 @@ if [ "$MACENV" = 1 ]; then
 	chmod -R go-w "$R6"
 	{ printf 't\t/usr/aux/aux2\t0\t3\t%s\n' "$R6/usr/aux/aux2"
 	  printf 't\t/mac/lib/env/6\t0\t3\t%s\n' "$R6/mac/lib/env/6"; } >> "$W/root.manifest"
+	envsys6home "$R6/mac/lib/env/6/System Folder"
 fi
 if [ -n "$X11$TOSENV$MACENV" ]; then
 	T2=${AMIX_TAPE:-$W/src/build/tape}
