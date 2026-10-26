@@ -869,8 +869,14 @@ priv1(gp, pi)
 		}
 		return 0;
 	}
-	if ((op & 0xff00) == 0xf500)			/* pflush, ptest */
-		return gp->gp_mmu ? guest_mmu_insn(gp, (int)op, (unsigned long)*areg(pi, reg)) : 0;
+	if ((op & 0xff00) == 0xf500) {			/* pflush, ptest */
+		if (gp->gp_mmu)
+			return guest_mmu_insn(gp, (int)op, (unsigned long)*areg(pi, reg));
+		/* no MMU: ptest finds the page resident at its own address */
+		if ((op & 0xffd8) == 0xf548)
+			gp->gp_vmmu[5] = (*areg(pi, reg) & ~0xfffUL) | 1;
+		return 0;
+	}
 	if ((op & 0xff80) == 0xf300)			/* fsave, frestore */
 		return fpstate(gp, pi, (int)op);
 	if ((op & 0xffc0) == 0xf000 && (gp->gp_flags & GPF_CPU030))	/* 68030 MMU */
