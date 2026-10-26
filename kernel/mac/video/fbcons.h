@@ -82,6 +82,7 @@ void	fbcons_text();		/* (cells): read the screen into cells, keep them */
 void	fbcons_hide();		/* screen lent away: output goes to the cells */
 void	fbcons_show();		/* screen back: repaint it from the cells */
 extern void (*fbcons_panicfn)();	/* called once, when a panic first draws */
+extern void (*fbcons_pollfn)();	/* called often while drawing */
 
 /* mode discovery (fbprobe.c) */
 int	fbcons_auxinit();	/* (info): aux_entry, A/UX low memory */

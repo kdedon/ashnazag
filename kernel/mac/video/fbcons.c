@@ -47,11 +47,13 @@ struct fbcons fbcons = { 0 };
 struct fbvt fbvt_kern = { 0, 0, { 0 }, 0, { 0, 0 }, 0, 1 };
 struct fbvt fbvt_tty = { 0, 0, { 0 }, 0, { 0, 0 }, 0, 0 };
 void (*fbcons_panicfn)() = 0;
+void (*fbcons_pollfn)() = 0;
 
 #define FC	(&fbcons)
 #define PIX(x, y) ((VOL unsigned char *)(FC->fc_m.fm_base + \
 	(unsigned long)(y) * FC->fc_m.fm_row + (unsigned long)(x) * FC->fc_m.fm_depth / 8))
 #define TXT(x, y) (FC->fc_text[(long)(y) * FC->fc_cols + (x)])
+#define FB_POLL()	do { if (fbcons_pollfn) (*fbcons_pollfn)(); } while (0)
 
 static void fb_vt();
 
@@ -123,8 +125,11 @@ register long n;
 {
 	if (d < s) {
 		if ((((unsigned long)d | (unsigned long)s) & 3) == 0)
-			for (; n >= 4; n -= 4, d += 4, s += 4)
+			for (; n >= 4; n -= 4, d += 4, s += 4) {
 				*(VOL FB_U32 *)d = *(VOL FB_U32 *)s;
+				if ((n & 1023) == 0)
+					FB_POLL();
+			}
 		for (; n > 0; n--)
 			*d++ = *s++;
 	} else if (d > s) {
@@ -135,6 +140,8 @@ register long n;
 				d -= 4;
 				s -= 4;
 				*(VOL FB_U32 *)d = *(VOL FB_U32 *)s;
+				if ((n & 1023) == 0)
+					FB_POLL();
 			}
 		for (; n > 0; n--)
 			*--d = *--s;
@@ -210,11 +217,17 @@ register long d, s, n;
 	if (t == 0)
 		return;
 	if (d < s)
-		for (; n > 0; n--)
+		for (; n > 0; n--) {
 			t[d++] = t[s++];
+			if ((n & 127) == 0)
+				FB_POLL();
+		}
 	else
-		for (d += n, s += n; n > 0; n--)
+		for (d += n, s += n; n > 0; n--) {
 			t[--d] = t[--s];
+			if ((n & 127) == 0)
+				FB_POLL();
+		}
 }
 
 /* cells x0..x1 of rows y0..y1 to the background */
@@ -235,8 +248,10 @@ int x0, y0, x1, y1;
 		return;
 	n = (x1 - x0 + 1) * FC->fc_m.fm_depth;	/* 8 pixels = depth bytes */
 	p = PIX(x0 * FB_CW, y0 * FB_CH);
-	for (r = (y1 - y0 + 1) * FB_CH; r > 0; r--, p += FC->fc_m.fm_row)
+	for (r = (y1 - y0 + 1) * FB_CH; r > 0; r--, p += FC->fc_m.fm_row) {
 		fb_fill(p, (long)n, FC->fc_bg);
+		FB_POLL();
+	}
 }
 
 /* rows top..bot move up by n (n < 0: down), vacated rows erased */
@@ -745,6 +760,7 @@ fb_release()
 		FC->fc_pget = (FC->fc_pget + 1) % FB_NPEND;
 		FB_IPLX(s);
 		fb_vt((e & 0x100) ? &fbvt_kern : &fbvt_tty, e & 0xFF);
+		FB_POLL();
 	}
 }
 
@@ -804,6 +820,7 @@ register int n, kern;
 			continue;
 		}
 		fb_vt(v, c);
+		FB_POLL();
 	}
 	fb_release();
 }

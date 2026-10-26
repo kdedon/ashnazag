@@ -78,7 +78,7 @@ sh "$AUX/images/envpkg/top/build.sh" "$O/top" > "$O/top.log" 2>&1 || { tail "$O/
 cp "$O/top/top" "$BIN/top"
 for s in ${ONLY:-"$T"/src/t_*.c "$T/src/runall.c"}; do
 	n=$(basename "$s" .c)
-	[ -n "$ONLY" ] || case $n in t_stable|t_smsqe) continue ;; esac
+	[ -n "$ONLY" ] || case $n in t_stable|t_smsqe|t_swp) continue ;; esac
 	if [ $n = t_dlopen ]; then
 		glcc "$T/src/dlso_a.c" "$O/dlso_a.o" -fPIC
 		glcc "$T/src/dlso_b.c" "$O/dlso_b.o" -fPIC
@@ -105,7 +105,7 @@ for s in ${ONLY:-"$T"/src/t_*.c "$T/src/runall.c"}; do
 		-I"$KDIR/guest/mod/tosguest" -I"$KDIR/guest/include" -I"$KDIR/guest/amiga" -I"$KDIR/net" \
 		-I"$KDIR/amiga/radeon" -I"$KDIR/kstat" $NHI
 	extra=
-	case $n in t_dlm|t_display|t_guestdlm|t_envram|t_aux|t_mac|t_mac6|t_mac76|t_mac81|t_ot81|t_coff81|t_coff81d|t_coff76|t_coff76c|t_tos|t_xaaes|t_mint|t_cpm|t_smsqe|t_amiga|t_sound|t_stable|t_scsi) extra=$MODO ;; esac
+	case $n in t_dlm|t_display|t_guestdlm|t_envram|t_aux|t_mac|t_mac6|t_mac76|t_mac81|t_ot81|t_coff81|t_coff81d|t_coff76|t_coff76c|t_tos|t_xaaes|t_mint|t_cpm|t_smsqe|t_amiga|t_sound|t_stable|t_scsi|t_swp) extra=$MODO ;; esac
 	case $n in
 	t_nativehost) extra="$O/nativehost.o $MODO" ;;
 	t_nhplat) extra=$O/nativehost_platform.o ;;

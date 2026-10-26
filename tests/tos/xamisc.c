@@ -2,7 +2,8 @@
  * xamisc.c -- XAMISC.PRG: MiNT calls of the layer, results as lines of
  * C:\XAMISC.TXT: "fork N" (the child's exit code, with the parent's
  * memory unchanged), "vfork N", "poll N" (descriptors ready), "sock N"
- * (bytes echoed over a loopback connection), each -1 on failure.
+ * (bytes echoed over a loopback connection), each -1 on failure;
+ * "super N" (bytes Super(ssp) from supervisor mode leaves on the stack).
  */
 #include <mint/osbind.h>
 #include <mint/mintbind.h>
@@ -94,6 +95,27 @@ tsock(void)
 	return n;
 }
 
+static long
+tsuper(void)
+{
+	long d;
+
+	__asm__ volatile (
+		"move.l	%%sp,%%a3\n\t"
+		"clr.l	-(%%sp)\n\t"
+		"move.w	#0x20,-(%%sp)\n\t"
+		"trap	#1\n\t"
+		"addq.l	#6,%%sp\n\t"
+		"move.l	%%d0,-(%%sp)\n\t"
+		"move.w	#0x20,-(%%sp)\n\t"
+		"trap	#1\n\t"
+		"move.l	%%a3,%0\n\t"
+		"sub.l	%%sp,%0\n\t"
+		"move.l	%%a3,%%sp"
+		: "=d" (d) : : "d0", "d1", "d2", "a0", "a1", "a2", "a3", "memory");
+	return d;
+}
+
 int
 main(void)
 {
@@ -105,6 +127,7 @@ main(void)
 	fprintf(f, "vfork %d\n", tvfork());
 	fprintf(f, "poll %d\n", tpoll());
 	fprintf(f, "sock %d\n", tsock());
+	fprintf(f, "super %ld\n", tsuper());
 	fclose(f);
 	(void)Frename(0, "C:\\XAMISC.TX_", "C:\\XAMISC.TXT");
 	return 0;

@@ -26,6 +26,7 @@ Direct boot also runs `display/hostio.py`: `t_display` sends it requests on SCC 
 | `tos` | t_tos t_xaaes t_env |
 | `mint`, `cpm`, `amiga`, `display`, `sound`, `win16`, `gl` | t_mint; t_cpm; t_amiga t_radeon t_env; t_display; t_sound; t_win16; t_gl t_dlopen |
 | `stable` | t_stable: each environment started and stopped five ways, leaks and idle CPU (`STABLE="mac76 cpm idle=30 cycles=1"` narrows it) |
+| `swap` | t_swp at 48 MB: paging to swap on the SCSI disk at ID 1 |
 
 Exit status: 0 all PASS, 1 any FAIL, 2 timeout, panic or no `TESTS DONE`.
 
@@ -82,6 +83,7 @@ INFO time.clk_tck: 60
 | `t_mac76` | `t_mac`'s `startmac` run (`t_mac.c` built with `SYS76`) on Mac OS 7.6.1: the System Folder `/mac/sys/S761` made from the CD image (`CD761`, local only) by `images/macenv/mksys76.sh`, the model set to a Quadra 800 (`uinter_boxflag` 29); checks `'boot'` 3's `_AUXDispatch(36, 0)` (it makes `/tmp/.mac/unix`), the Finder desktop, `SysVersion` `$0761`, the model, About This Computer, SimpleText (linked into `/Desktop Folder`) opened by keyboard and quit, the disk window and the Special menu; skips without the CD |
 | `t_vtop` | raw `rd0` read/write and `/proc` read/write with user buffers below 1 GB, each at the address equal to the physical address of the RAM-disk block it moves, so a kernel that takes it for a physical one only copies that block onto itself; raw SCSI read when a disk is present |
 | `t_display` | `/dev/fb0` ioctls (info, modes, bounds, `EFAULT`), VBL wait, sessions, `mmap` limits, CLUT round trip, pattern and CLUT rotation checked in screen dumps, blank, keys and mouse through QEMU with rising timestamps, background session gets no input, hotkey switch with contents and key releases, a forked mapping following a switch, partial `munmap` refused, close with a mapping keeping the session, emergency key, node modes and group `display` permissions, `kill -9` of `dstest` in front returns the console screen unchanged. Host parts need `hostio.py` (direct boot); elsewhere they are skipped |
+| `t_swp` | GROUP=swap only: four processes hold twice the free memory, as a pattern block or a list of small blocks, paged to a SCSI swap area; every word checked after it comes back, twice; `maxpgio` at least 1024 |
 | `t_stable` | GROUP=stable only: every environment on the root (Mac System 6, 7, 7.6.1, 8.1; EmuDesk, TeraDesk, XaAES; Amiga; CP/M; Win16) started until it settles, then stopped by SIGTERM, SIGINT, SIGHUP, SIGKILL and its own exit; after each stop no process, lock, Mac RAM, IPC object, record lock or pty left and memory back to the first stop; the guest module unloads and loads again; at rest the emulator's host CPU (`hostio.py cpu`) and the session's charged CPU each at most 5% |
 | `t_mac6`, `t_mac81` | `t_mac76`'s run on System 6.0.7 (A/UX 2.0.1's Mac environment, its files in `/usr/aux/aux2`) and on Mac OS 8.1 |
 | `t_tos` | TOS environment: `starttos`, its display session, 200 Hz and VBL timers, GEM desktop on screen, keys and mouse, TeraDesk, ending and logging out |

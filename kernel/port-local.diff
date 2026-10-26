@@ -1,9 +1,17 @@
 # Local changes to https://github.com/asokero/amix-040-060-port at 54fba4d
 diff --git a/relink-040.sh b/relink-040.sh
-index da977d2..f2e7b49 100644
+index b231f2d..635cd37 100644
 --- a/relink-040.sh
 +++ b/relink-040.sh
-@@ -1065,6 +1065,9 @@ run_step 1 python3 "$HERE/src/patch_inituser.py" "$OUT"
+@@ -1000,6 +1000,7 @@ run_step 2 python3 "$HERE/src/patch_execstk.py" "$OUT"
+ 
+ echo "[*] Model B pageout-policy defaults (SETUPCLOCK-VMETER-PATCH-SPEC.md: lotsfree/desfree/minfree + vmmeter UPIO fold)"
+ run_step 2 python3 "$HERE/src/patch_pageoutdefs.py" "$OUT"
++run_step 2 python3 "$HERE/src/patch_pagerate.py" "$OUT"
+ 
+ echo "[*] Model B mincore vector (MINCORE-VECTOR-PATCH-SPEC.md: btoc + alignment gate; 0x40000 chunk unchanged)"
+ run_step 2 python3 "$HERE/src/patch_mincore.py" "$OUT"
+@@ -1071,6 +1072,9 @@ run_step 1 python3 "$HERE/src/patch_inituser.py" "$OUT"
  echo "[*] 060-B: framesz[4] = 16 (68060 format-4 access-error frame; inert on 030/040)"
  python3 "$HERE/src/patch_framesz060.py" "$OUT"
  
@@ -448,10 +456,29 @@ index cbbf2d3..d350909 100644
  	rts
  	.balign	4			| pad section to a 4-byte multiple (bss placement guard)
 diff --git a/src/krnxmemflt040.s b/src/krnxmemflt040.s
-index 326ed16..e1cdcc9 100644
+index 326ed16..96391c5 100644
 --- a/src/krnxmemflt040.s
 +++ b/src/krnxmemflt040.s
-@@ -300,6 +300,18 @@ Lkx_ret:
+@@ -212,7 +212,18 @@ Lkx_inval:
+ Lkx_f1:
+ 	moveq	&1,%d1
+ 	braw	Lkx_flog
++| bprobe's own access (a /dev/kmem or /dev/mem read at an address nothing
++| maps, e.g. netstat chasing a stale list) fails by design: counted, not printed.
+ Lkx_f2:
++	moveal	%fp@(8),%a0
++	movel	%a0@(66),%d0		| faulting PC
++	cmpil	&bprobe,%d0
++	bcss	Lkx_f2log
++	cmpil	&memprobe,%d0
++	bccs	Lkx_f2log
++	addql	&1,krnxflt_probe_n
++	braw	Lkx_fail
++Lkx_f2log:
+ 	moveq	&2,%d1
+ 	braw	Lkx_flog
+ Lkx_f3:
+@@ -300,6 +311,18 @@ Lkx_ret:
  	andil	&0xfff,%d1
  	cmpil	&0xff8,%d1
  	bcsw	Lkx_nox			| neither MA nor the window -> nothing to do
@@ -470,6 +497,14 @@ index 326ed16..e1cdcc9 100644
  	movel	%d0,%sp@-		| v1 tier: preserve the return value, discard the far one
  	bsrw	Lkx_farfault
  	movel	%sp@+,%d0
+@@ -392,4 +415,7 @@ Lkx_maxactive:
+ 					|   view -- if this exceeds 4 while maxdepth
+ 					|   stays low, the old global gate WOULD have
+ 					|   produced a false EFAULT right there)
++	.globl	krnxflt_probe_n
++krnxflt_probe_n:
++	.long	0			| w=2 faults of bprobe
+ 	.balign 4			| pad section to a 4-byte multiple
 diff --git a/src/mainmarks.s b/src/mainmarks.s
 index 9e84745..d8eb608 100644
 --- a/src/mainmarks.s
@@ -949,3 +984,92 @@ index 5caa1de..3d133ac 100644
  	addqw	&4,%sp
  	movel	%d0,%d5			| d5 = brk's return (0 = ok; grow-fail = as_map errno)
  	movel	%a2@(56),%d6		| d6 = p_brksize AFTER
+diff --git a/src/patch_pagerate.py b/src/patch_pagerate.py
+new file mode 100644
+index 0000000..d1e6f9f
+--- /dev/null
++++ b/src/patch_pagerate.py
+@@ -0,0 +1,83 @@
++#!/usr/bin/env python3
++# patch_pagerate.py -- pageout rate defaults that setupclock installs when
++# the tunable is 0.  Stock maxpgio 40 and fastscan 200 cap paging at 40
++# page writes and 200 scanned pages a second, far below a SCSI disk.
++#
++#   maxpgio  40 -> 1024 page writes/s (pageout pushes maxpgio/4 per wakeup)
++#   fastscan 200 -> 4096 pages/s; setupclock still caps it at
++#            npages/loopfraction, and slowscan follows as fastscan/2
++#
++# Sites are found inside setupclock by their stock bytes, with the
++# relocated address fields masked, so one script serves both kernel bases.
++# maxpgio's `moveq #40,%d2` has no room for a 32-bit immediate:
++#   tstl maxpgio; bnew L; moveq #40,%d2; movel %d2,maxpgio; L:
++# becomes
++#   tstl maxpgio; bnes L; moveq #4,%d2; lsll #8,%d2; movel %d2,maxpgio; L:
++# keeping both address fields, and their relocations, in place.
++
++import struct, sys
++
++IMG = sys.argv[1] if len(sys.argv) > 1 else "build/unix-040"
++
++MAXPGIO = (bytes.fromhex("4ab9000000006600000a742823c200000000"),
++           bytes.fromhex("4ab900000000660a7404e18a23c200000000"),
++           (2, 14))
++FASTSCAN = (bytes.fromhex("23fc000000c800000000"),
++            bytes.fromhex("23fc0000100000000000"),
++            (6,))
++
++
++def u16(b, o): return struct.unpack(">H", b[o:o + 2])[0]
++def u32(b, o): return struct.unpack(">I", b[o:o + 4])[0]
++
++
++def func(b, name):
++    """file offset and size of an ELF function symbol"""
++    sh, ent, n = u32(b, 32), u16(b, 46), u16(b, 48)
++    secs = [(u32(b, sh + i * ent + 4), u32(b, sh + i * ent + 12),
++             u32(b, sh + i * ent + 16), u32(b, sh + i * ent + 20),
++             u32(b, sh + i * ent + 24)) for i in range(n)]
++    for typ, addr, off, size, link in secs:
++        if typ != 2:
++            continue
++        stro = secs[link][2]
++        for s in range(off, off + size, 16):
++            nm = u32(b, s)
++            e = b.index(b"\0", stro + nm)
++            if b[stro + nm:e] == name and b[s + 12] & 0xf == 2:
++                _, saddr, soff, _, _ = secs[u16(b, s + 14)]
++                return soff + u32(b, s + 4) - saddr, u32(b, s + 8)
++    raise SystemExit("ABORT: no %s in %s" % (name.decode(), IMG))
++
++
++def masked(b, fields):
++    b = bytearray(b)
++    for f in fields:
++        b[f:f + 4] = bytes(4)
++    return bytes(b)
++
++
++def main():
++    buf = bytearray(open(IMG, "rb").read())
++    fo, size = func(bytes(buf), b"setupclock")
++    body = bytes(buf[fo:fo + size])
++    for name, (old, new, fields) in (("maxpgio", MAXPGIO), ("fastscan", FASTSCAN)):
++        hits = {}
++        for i in range(0, size - len(old) + 1, 2):
++            m = masked(body[i:i + len(old)], fields)
++            if m in (old, new):
++                hits[i] = m
++        if len(hits) != 1:
++            raise SystemExit("ABORT: setupclock %s default: %d matches" % (name, len(hits)))
++        (i, m), = hits.items()
++        if m == new:
++            print("  [skip] setupclock %s default already raised" % name)
++            continue
++        for f in range(len(new)):
++            if not any(a <= f < a + 4 for a in fields):
++                buf[fo + i + f] = new[f]
++        print("  [ok]   setupclock+0x%x %s default raised" % (i, name))
++    open(IMG, "wb").write(buf)
++
++
++main()

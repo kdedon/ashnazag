@@ -57,6 +57,8 @@ _xa_trap1:
 1:	lea	64(sp),a0
 2:	moveq	#0,d1
 	move.w	(a0)+,d1
+	cmp.w	#0x20,d1
+	beq	Lsuper
 	cmp.w	#0x11a,d1
 	beq.s	Lsigret
 	cmp.w	#0x113,d1
@@ -122,6 +124,27 @@ Ltret:	btst	#5,(sp)
 	addq.l	#4,sp
 	movem.l	(sp)+,d0-d7/a0-a6
 1:	rte
+
+| Super(ssp) from supervisor mode, as MiNT does it: the caller goes on in
+| user mode on its stack with the arguments still there (TOS also leaves
+| its frame there); d0 that stack
+Lsuper:	btst	#5,56(sp)
+	beq	Lpass1
+	move.l	(a0),a1
+	cmp.l	#1,a1
+	bls	Lpass1
+	subq.l	#2,a0
+	move.l	a0,usp
+	move.l	a0,d0
+	move.w	#0x84,-(a1)
+	move.l	58(sp),-(a1)
+	move.w	56(sp),d1
+	and.w	#0xdfff,d1
+	move.w	d1,-(a1)
+	move.l	a1,56(sp)
+	movem.l	(sp)+,d1-d7/a0-a6
+	move.l	(sp),sp
+	rte
 
 | AES ($C8) to the registered dispatcher in the caller's context,
 | appl_yield ($C9) yields, the rest (VDI) to the old vector

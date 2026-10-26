@@ -17,8 +17,9 @@
 # line), screen.png, summary.txt.
 # AMIGANET=1 (direct boot): the root also has TCP/IP, for t_amiga's
 # bsdsocket.library checks (user-mode network, no echo service).
-# GROUP=smoke|core|mac|tos|mint|cpm|smsqe|amiga|display|sound|win16|gl|quake|native|lisa|v200|next|stable|scsi runs that set only.
+# GROUP=smoke|core|mac|tos|mint|cpm|smsqe|amiga|display|sound|win16|gl|quake|native|lisa|v200|next|stable|scsi|swap runs that set only.
 # GROUP=scsi: a blank scratch disk at ID 1 and SCSIROOT (default images/q800-unix-disk.img) read-only at ID 0.
+# GROUP=swap: pages to swap on the disk at ID 1, at 48 MB.
 # Exit: 0 all PASS, 1 any FAIL, 2 timeout, panic or no TESTS DONE.
 # up to QSLOTS QEMUs at once (tools/qslot.sh)
 # one run per checkout at a time: they share tests/build
@@ -70,7 +71,8 @@ v200)	G="t_v200 t_natenv" ;;
 next)	G="t_gmmu t_next"; GEOM=${GEOM:-1152x870x8} ;;
 stable)	G="t_stable"; TMO=${TMO0:-14400} ;;
 scsi)	G="t_scsi"; SCSIT=1 ;;
-*)	echo "GROUP: smoke core mac tos mint cpm smsqe amiga display sound win16 gl quake native lisa v200 next stable scsi"; exit 2 ;;
+swap)	G="t_swp"; MEM=${MEM:-48} ;;
+*)	echo "GROUP: smoke core mac tos mint cpm smsqe amiga display sound win16 gl quake native lisa v200 next stable scsi swap"; exit 2 ;;
 esac
 if [ -n "${G:-}" ]; then
 	ONLY="$T/src/runall.c"

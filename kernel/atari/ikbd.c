@@ -15,6 +15,7 @@
 #define MIDI_CTL	(*(VOL unsigned char *)0xFFFFFC04)
 
 #define RINGSZ	64
+#define RAWSZ	32
 
 #define K_LSHIFT	0x2A
 #define K_RSHIFT	0x36
@@ -25,6 +26,8 @@
 extern int ata_spltty();
 extern void ata_splx(), atacons_wake(), ata_dsrec();
 extern char *panicstr;
+extern void (*fbcons_pollfn)();
+void ikbd_poll();
 
 static unsigned char kb_ring[RINGSZ] = { 0 };
 static int kb_put = 1, kb_get = 1;
@@ -35,6 +38,10 @@ static int kb_mhdr = 1;		/* header of the mouse packet being read */
 static unsigned char kb_mb[2] = { 1 };
 unsigned long ikbd_nbytes = 1;
 unsigned long ikbd_nlost = 1;	/* overruns */
+
+/* ACIA status and data read by ikbd_poll, for ikbd_intr */
+static unsigned short kb_raw[RAWSZ] = { 1 };
+static int kb_rput = 1, kb_rget = 1, kb_rbusy = 1;
 
 static unsigned char kb_mods[] = { K_CTRL, K_LSHIFT, K_RSHIFT, K_ALT };
 static int kb_down = 1;		/* kb_mods held, by bit */
@@ -191,28 +198,62 @@ ikbd_init()
 	kb_down = 0;
 	kb_ds = kb_mhdr = 0;
 	ikbd_nbytes = ikbd_nlost = 0;
+	kb_rput = kb_rget = kb_rbusy = 0;
 	ACIA_CTL = 0x03;
 	ACIA_CTL = 0x96;
 	MIDI_CTL = 0x03;	/* MIDI shares GPIP4: reset, no interrupts */
 	MIDI_CTL = 0x15;
 	ikbd_send(0x12);	/* mouse off */
 	ikbd_send(0x1A);	/* joystick off */
+	fbcons_pollfn = ikbd_poll;
+}
+
+/*
+ * Move what the ACIA holds to kb_raw.  Console drawing runs with the MFP
+ * masked for longer than a byte takes, and calls this meanwhile.
+ */
+void
+ikbd_poll()
+{
+	register int n, c, s;
+
+	s = ata_spltty();
+	for (n = 0; n < 64 && ((c = ACIA_CTL) & ACIA_IRQ); n++) {
+		if ((kb_rput + 1) % RAWSZ == kb_rget)
+			break;
+		kb_raw[kb_rput] = c << 8 | ACIA_DAT;
+		kb_rput = (kb_rput + 1) % RAWSZ;
+	}
+	ata_splx(s);
+}
+
+/* Take the bytes in kb_raw in order; one caller at a time. */
+static void
+kb_drain()
+{
+	register int c;
+
+	ikbd_poll();
+	if (kb_rbusy)
+		return;
+	kb_rbusy = 1;
+	while (kb_rget != kb_rput) {
+		c = kb_raw[kb_rget];
+		kb_rget = (kb_rget + 1) % RAWSZ;
+		if (c & ACIA_OVRN << 8)
+			kb_lost();
+		if (c & ACIA_RDRF << 8)
+			kb_byte(c & 0xFF);
+		ikbd_poll();
+	}
+	kb_rbusy = 0;
 }
 
 /* From the GPIP4 interrupt: drain the ACIA, so its line rises again. */
 void
 ikbd_intr()
 {
-	register int n, c;
-
-	for (n = 0; n < 64 && ((c = ACIA_CTL) & ACIA_IRQ); n++) {
-		if (c & ACIA_OVRN)
-			kb_lost();
-		if (c & ACIA_RDRF)
-			kb_byte(ACIA_DAT);
-		else
-			(void)ACIA_DAT;		/* overrun: clear */
-	}
+	kb_drain();
 	if (kb_get != kb_put)
 		atacons_wake();
 }
@@ -224,8 +265,8 @@ ikbd_getc()
 	register int c, s;
 
 	s = ata_spltty();
-	if (kb_get == kb_put && (ACIA_CTL & ACIA_RDRF))
-		kb_byte(ACIA_DAT);
+	if (kb_get == kb_put)
+		kb_drain();
 	if (kb_get == kb_put)
 		c = -1;
 	else {

@@ -47,6 +47,7 @@ static struct {
 	{ "t_stress", 90 },
 	{ "t_ufs", 300 },
 	{ "t_page", 900 },
+	{ "t_swp", 1500 },
 	{ "t_moddemo", 120 },
 	{ "t_dlm", 90 },
 	{ "t_otb", 300 },

@@ -106,6 +106,8 @@ tos_kick(rr)
 	}
 }
 
+static int tos_pauser();
+
 /* stop: the guest sleeps until an interrupt above its new IPL is pending */
 static void
 tos_stop_insn(gp, r)
@@ -113,7 +115,7 @@ tos_stop_insn(gp, r)
 	char *r;
 {
 	struct tosctr *t = &tosc;
-	int s, e;
+	int s, e, id;
 	long t0 = lbolt;
 
 	if (gp->gp_flags & TGF_SOLO) {
@@ -124,10 +126,16 @@ tos_stop_insn(gp, r)
 	for (;;) {
 		tos_tcpoll(gp);		/* a Timer C still in service does not end it */
 		s = guest_splhi();
-		if (t->t_state != 1 || tos_dlevel() > GUEST_VIPL(gp))
+		if (t->t_paused && !tos_pauser())
+			t->t_paused = 0;
+		/* paused, nothing is taken: sleep on, checking each second that the pauser runs */
+		if (t->t_state != 1 || (!t->t_paused && tos_dlevel() > GUEST_VIPL(gp)))
 			break;
 		t->t_sleeping = 1;
+		id = t->t_paused ? ttimeout(wakeup, (caddr_t)&t->t_sleeping, (long)HZ) : -1;
 		e = sleep((caddr_t)&t->t_sleeping, (PZERO + 1) | PCATCH);
+		if (id != -1)
+			untimeout(id);
 		t->t_sleeping = 0;
 		if (e)
 			break;

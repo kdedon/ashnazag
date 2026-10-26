@@ -9,8 +9,8 @@
  * menu down, a double click opens drive C:'s window, XATICK.PRG keeps
  * counting meanwhile and, topped, gets a key typed on the host, and it
  * catches a signal; the guest's CPU use while all wait.  XAMISC.PRG's
- * Pfork, Pvfork, Fpoll and socket results; XABUSY.PRG spinning without
- * system calls while XATICK.PRG counts on, and its alarm; a TOS program
+ * Pfork, Pvfork, Fpoll, Super and socket results; XABUSY.PRG spinning
+ * without system calls while XATICK.PRG counts on, and its alarm; a TOS program
  * and a MiNT one (a Unix process) started from XATICK.PRG, each in a
  * console window taking typed lines.  Without the host line only the
  * checks needing no screen, pointer or keys run.  The layer's and
@@ -581,6 +581,7 @@ run()
 	t_check("pfork", misc("fork") == 43, "XAMISC.PRG fork: %ld", misc("fork"));
 	t_check("pvfork", misc("vfork") == 7, "XAMISC.PRG vfork: %ld", misc("vfork"));
 	t_check("fpoll", misc("poll") == 2, "XAMISC.PRG poll: %ld", misc("poll"));
+	t_check("super", misc("super") == 6, "XAMISC.PRG super: %ld", misc("super"));
 	/* without TCP/IP set up, connect finds no address after bind and listen */
 	if (stat("/etc/inet/strcf", &sb) < 0 && misc("sock") == -3)
 		t_skip("sockets", "no network: socket, bind and listen only");

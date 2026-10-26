@@ -46,7 +46,7 @@ fi
 [ -f "$RD/build/core/sbin/init" ] || { echo "[FAIL] no $RD/build/core (run mkroot.sh)"; exit 1; }
 [ -x "$B/bin/runall" ] || { echo "[FAIL] no tests/build/bin (run build.sh)"; exit 1; }
 
-nm "$KERNEL" | awk '$3 ~ /^(freemem|availrmem|availsmem|lbolt|fpu_present|anoninfo|ticks_til_clock|mac_ticks|dlm_inited|sn_nintr|sn_nslot|guest_loading|M68Kvec|guest_chain|guest_nftrap|guest_nfpriv|idle|rd_unit|adb_nintr|adb_nsrq|segmapcnt|waitloc|kmeminfo|pageio_out|cputype|sysinfo|end)$/ && ($3 != "idle" || $2 == "T") { print $3, $1 }' \
+nm "$KERNEL" | awk '$3 ~ /^(freemem|availrmem|availsmem|lbolt|fpu_present|anoninfo|ticks_til_clock|mac_ticks|dlm_inited|sn_nintr|sn_nslot|guest_loading|M68Kvec|guest_chain|guest_nftrap|guest_nfpriv|idle|rd_unit|adb_nintr|adb_nsrq|segmapcnt|waitloc|kmeminfo|pageio_out|cputype|sysinfo|maxpgio|end)$/ && ($3 != "idle" || $2 == "T") { print $3, $1 }' \
 	> "$B/ksyms"
 # t_dlm's modules, built against this kernel (none without module support)
 KDIR=$KDIR sh "$T/dlm/build.sh" "$KERNEL" "$B/dlm"
@@ -169,7 +169,7 @@ grep -q '^h /etc/sulogin' "$M" || echo "h /etc/sulogin /sbin/sh" >> "$M"
 	for f in "$B"/bin/*; do
 		# GROUP/ONLY: only the chosen tests (helpers that are not t_* stay)
 		# t_stable runs hours, t_smsqe is out of the default suite: only when chosen
-		case " $ONLY " in "  ") case $(basename "$f") in t_stable|t_smsqe) continue ;; esac ;; *t_*) case $(basename "$f") in t_*)
+		case " $ONLY " in "  ") case $(basename "$f") in t_stable|t_smsqe|t_swp) continue ;; esac ;; *t_*) case $(basename "$f") in t_*)
 			case " $ONLY " in *"/$(basename "$f").c "*) ;; *) continue ;; esac ;; esac ;; esac
 		echo "f /tests/$(basename "$f") 755 0 3 $f"
 	done
