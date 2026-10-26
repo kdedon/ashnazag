@@ -45,8 +45,15 @@ cp "$KERNEL" "$B/unix"
 
 # the tape's profile, shutdown and screendefs without the Amiga screens
 x() { (cd "$B" && cpio -i --quiet --to-stdout "$1" < tape/02); }
+# ports install in /opt/amix/bin, ahead of the tape's old bash
 x etc/profile | sed -e 's/TERM=amiga/TERM=vt100/' -e 's/^	if sioc$/	if false/' \
-	> "$B/profile"
+	-e 's,:/usr/public/bin:,:/opt/amix/bin&,' > "$B/profile"
+(cd "$B" && cpio -i --quiet --to-stdout etc/.login < tape/03) |
+	sed -e 's, /usr/public/bin , /opt/amix/bin&,' > "$B/login.csh"
+{ x etc/default/login; echo 'PATH=/usr/bin:/opt/amix/bin'; echo 'SUPATH=/usr/sbin:/usr/bin:/opt/amix/bin'; } > "$B/login.default"
+{ x etc/default/su; echo 'PATH=/usr/bin:/opt/amix/bin'; echo 'SUPATH=/sbin:/usr/sbin:/usr/bin:/etc:/opt/amix/bin'; } > "$B/su.default"
+[ "$(grep -c ':/opt/amix/bin:/usr/public/bin:' "$B/profile")" = 2 ] &&
+	grep -q ' /opt/amix/bin /usr/public/bin ' "$B/login.csh" || { echo "[FAIL] tape PATH changed"; exit 1; }
 x usr/sbin/shutdown | sed -e 's,^if /usr/amiga/bin/sioc &&,if false \&\&,' > "$B/shutdown"
 x etc/screendefs | grep '^#' > "$B/screendefs"
 { x etc/group | grep -v '^display:'; echo "display::25:"; } > "$B/group"

@@ -208,6 +208,7 @@ nap(ms)
 }
 
 static int w, h, sw, sh, top;		/* the host screen, the Lisa's on it */
+static int lw = 720, lh = 364;		/* the Lisa's screen */
 
 /*
  * The pointer's top left on the host screen: what changes when it moves 2
@@ -231,7 +232,7 @@ pointer(x, y)
 		host("shot lp1");
 		sprintf(req, "box lp0 lp1 0 %d %d %d %d", ig[0], ig[1], ig[2], ig[3]);
 		if (host(req) && sscanf(hrep, "%d %d %d %d", x, y, &x1, &y1) == 4 && x1 - *x < 40 &&
-		    y1 - *y < 40 * (sh ? sh : 364) / 364 && x1 - *x >= 2) {
+		    y1 - *y < 40 * (sh ? sh : lh) / lh && x1 - *x >= 2) {
 			host("move -2 -2");
 			return 1;
 		}
@@ -323,8 +324,11 @@ changed(a, b)
  * shows (a click where its Cancel would be changes nothing), a click on the volume's icon and typing renames it,
  * and Apple-O (a beep) keeps it running.
  */
-#define	LX(x)	((w - sw) / 2 + (x) * sw / 720)	/* a Lisa screen point on the host's */
-#define	LY(y)	(top + (y) * sh / 364)
+#define	LX(x)	((w - sw) / 2 + (x) * sw / lw)	/* a Lisa screen point on the host's */
+#define	LY(y)	(top + (y) * sh / lh)
+/* a desktop icon's spot, saved for 720x364, pinned on a smaller screen */
+#define	IX(x, d)	LX(((x) < lw - 64 ? (x) : lw - 64) + (d))
+#define	IY(y, d)	LY(((y) < lh - 61 ? (y) : lh - 61) + (d))
 
 static void office(), mandel(), watch(), menu(), calc();
 static int offmode;			/* the office run: files made, renamed, deleted */
@@ -334,20 +338,13 @@ static void
 input()
 {
 	char *log = readlog(), *s, *e;
-	int x, y, x1, y1, ew = 720, eh = 546;
+	int x, y, x1, y1;
 
 	if ((s = strstr(log, "lisa: display ")) != 0)
-		sscanf(s, "lisa: display %dx%d, the screen at %dx%d", &w, &h, &sw, &sh);
-	/* rows shown 3:2, columns 1:1; a narrower host gets it scaled down, aspect kept */
-	if (w < 720) {
-		ew = w;
-		eh = 546L * w / 720;
-	}
-	if (eh > h) {
-		eh = h;
-		ew = w < 720 ? 720L * h / 546 : 720;
-	}
-	t_check("display", w > 0 && sw == ew && sh == eh, "%dx%d, the screen at %dx%d", w, h, sw, sh);
+		sscanf(s, "lisa: display %dx%d, the screen at %dx%d, Lisa %dx%d", &w, &h, &sw, &sh, &lw, &lh);
+	/* the Lisa as wide as the host, in 16s, and 2/3 as high; rows shown 3:2, columns 1:1 */
+	t_check("display", w > 0 && lw == (w & ~15) && lh == h * 2 / 3 && sw == lw && sh == lh * 3 / 2,
+	    "%dx%d, the screen at %dx%d, Lisa %dx%d", w, h, sw, sh, lw, lh);
 	if (w <= 0)
 		return;
 	top = (h - sh) / 2;
@@ -381,7 +378,7 @@ input()
 		t_check("no_dialog", strcmp(s, "none") == 0, "a dialog closed: %s changed", s);
 	}
 	/* the first click may only bring the desktop forward */
-	moveto(LX(675), LY(352));
+	moveto(IX(636, 39), IY(303, 49));
 	host("click 1");
 	nap(3000);
 	host("click 1");
@@ -393,7 +390,7 @@ input()
 	host("shot li3");
 	s = changed("li2", "li3");
 	/* the new name shows under the icon */
-	t_check("keyboard", sscanf(s, "%*d %*d %d %d", &x, &y) == 2 && y >= LY(345), "typing changed %s", s);
+	t_check("keyboard", sscanf(s, "%*d %*d %d %d", &x, &y) == 2 && y >= IY(303, 42), "typing changed %s", s);
 	host("key meta_l+o");
 	nap(5000);
 	shot("lisa_desk", 1);
@@ -663,7 +660,7 @@ office()
 	t_check("no_strays", !bad, "%s left", bad);
 	/* the desktop writes a document's label when it goes into the Wastebasket; the pointer is still on the document */
 	host("button 1 500");
-	moveto(LX(418), LY(337));
+	moveto(IX(396, 22), IY(303, 34));
 	host("button 0");
 	watch(20000);
 	t_check("title", holds(p, "68656c6c6f") > 0, "%s: no title", p);
@@ -705,7 +702,7 @@ office()
 	host("shot lw3");
 	moveto(j, t);
 	host("button 1 500");
-	moveto(LX(418), LY(337));
+	moveto(IX(396, 22), IY(303, 34));
 	host("button 0");
 	watch(20000);
 	t_check("rename", doc2[0] && holds(p2, "776f726c64") > 0, "%s: no new title", doc2[0] ? p2 : "no second document");
@@ -778,7 +775,7 @@ calc()
 			strcpy(doc, nw[k]);
 	}
 	if (!t_check("calc_saved", doc[0] && holds(doc, "hello") > 0, "%s:%s", doc[0] ? "no cells in it" : "no document", list)) {
-		moveto(LX(596), LY(70));	/* the alert's Cancel */
+		moveto(LX(596 + (lw - 720) / 2), LY(70 + (lh - 364) / 2));	/* the alert's Cancel */
 		host("click 1");
 		watch(5000);
 		return;

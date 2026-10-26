@@ -591,7 +591,7 @@ ucheck()
 		"cwd", "attrib", "dfree", "pexec", "links_inside", "escape_dotdot",
 		"escape_link", "escape_uplink", "escape_cwd", "long_path", "c_auto", "drive_g",
 		"drive_cwd", "c_rw", "drive_d", "drive_h", "irq_rte", "irq_movesr", "irq_mask",
-		"irq_nest", "irq_tcbusy", "trap9", "trap10", "trap0", "env_hidden", "snd_lock", "snd_cookie",
+		"irq_nest", "irq_tcbusy", "irq_stress", "irq_supexec", "irq_pexec", "trap9", "trap10", "trap0", "env_hidden", "snd_lock", "snd_cookie",
 		"snd_play", "snd_end", "snd_stopped", "snd_unlock", 0
 	};
 	char b[2048], n[40], why[40], *l, *nm;
@@ -1612,6 +1612,14 @@ run(rom)
 		lasth = h;
 		if (hfd >= 0 && (up = desktop(S("desk"), 1)) != 0)
 			t_info(N("desktop_after"), "%ld s", (t_now_ms() - t0) / 1000);
+	}
+	/* boot ends once the desktop is up and its hardware writes stop for 2 s (10 s at most) */
+	for (i = 0; up && i < 5; i++) {
+		(void)ioctl(tfd, TOSIOC_STAT, &boot);
+		nap(2000);
+		(void)ioctl(tfd, TOSIOC_STAT, &st);
+		if (st.ts_iow == boot.ts_iow)
+			break;
 	}
 	boot = st;
 	if (tpid) {

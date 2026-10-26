@@ -41,7 +41,7 @@ A ROM in which a required routine is not found is refused at start, with its nam
 | MFP Timer C, 200 Hz | `int_timerc`, set up by `xbtimer(2, ...)` | vector $114 | host timer raises level 6 vector $114 |
 | | its in-service clear | `move.b #$df,$fffffa11.w` (or `bclr #5`) before `rte` | `clr.l` of the module's in-service flag: Timer C is not taken again until then, as on the MFP |
 | VBL | `int_vbl` | vector $70 | host timer raises level 4 |
-| MFP timers A, B, D | `xbtimer` | XBIOS 31 | timers A and B: host timer at the requested rate, vector from the MFP table; D (delay calibration) never fires, so EmuTOS keeps its default loop counts |
+| MFP timers A, B, D | `xbtimer` | XBIOS 31 | timers A and B: host timer at the requested rate, vector from the MFP table; a guest still behind at the next tick keeps one owed interrupt, not a backlog, so its main line runs; D (delay calibration) never fires, so EmuTOS keeps its default loop counts |
 | MFP enables | `jdisint`, `jenabint` (and `mfpint`, which calls them) | XBIOS 26, 27 | host calls: the module's enable mask; a disabled channel drops what it owed |
 | IKBD ACIA | `kbd_int` input | Kbdvbase | unchanged: the cartridge hands host events to TOS's handlers each VBL; events wait in its queue while the VBL queue is off |
 | IKBD ACIA | `ikbd_writeb` | XBIOS 25 (`ikbdws`) and its callee | unchanged: TX empty is a constant, writes are ignored |

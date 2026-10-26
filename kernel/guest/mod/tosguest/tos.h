@@ -24,6 +24,7 @@ struct tostimer {
 	unsigned long	tm_per;		/* MFP clocks per period, 0 stopped */
 	unsigned long	tm_acc;
 	int		tm_ev, tm_left;	/* event mode: events per interrupt, events left */
+	unsigned long	tm_ints;	/* interrupts delivered at the last tick */
 };
 
 struct tosctr {

@@ -180,7 +180,7 @@ apkg install gzip less       # dependencies too
 apkg list installed
 ```
 
-Most packages install into `/opt/amix/bin`; add it to `PATH`.
+Most packages install into `/opt/amix/bin`; login shells have it on `PATH`.
 
 ### Rebuilding
 

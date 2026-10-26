@@ -24,7 +24,8 @@
 # TOSENV and MACENV install the environment packages
 # (images/envpkg/mkenvpkgs.sh) and the ports (images/ports), their modules the Mac kernel's (MACKERNEL,
 # default kernel/build/unix-mac.elf, else this one) with this kernel's
-# where they differ.
+# where they differ.  APKG=dir installs apkg from the datastreams
+# getapkg.sh fetched.
 # TESTROOT: a directory whose tree goes on the root too (e.g. tests/build/root's
 # tos/xatick for t_xaaes).
 # X11: x11/package.sh's pkg directory, or 1 for the Atari X work tree
@@ -190,8 +191,26 @@ if [ -n "$TOSENV$MACENV" ]; then
 		envv200
 	fi
 fi
+[ -z "$APKG" ] || pk="$pk $(ls "$APKG"/APKGENG-*.pkg "$APKG"/APKG-*.pkg)"
 # one package database for X's and the environments' packages
 [ -z "$pk" ] || $PY "$DR/pkg/pkginst.py" "$W/xpkgs" $pk >> "$W/root.manifest"
+# the repository is a name-based virtual host, found through the hosts file
+if [ -n "$APKG" ]; then
+	c=$W/xpkgs/root/etc/apkg.conf
+	# the environment packages' admin file: no questions, needed packages kept
+	case $pk in
+	*envcore*)
+		sed -i 's,^admin=/var/apkg/admin$,admin=/var/sadm/install/admin/envpkg,' "$c"
+		grep -q '^admin=/var/sadm/install/admin/envpkg$' "$c" ||
+			{ echo "[FAIL] apkg.conf changed"; exit 1; } ;;
+	esac
+	ip=$(getent hosts pkg.amigaux.org | awk '{ print $1; exit }')
+	[ -n "$ip" ] || { echo "[FAIL] cannot resolve pkg.amigaux.org"; exit 1; }
+	(cd "$W/src/build" && cpio -i --quiet --to-stdout etc/inet/hosts < tape/02) > "$W/xpkgs/hosts"
+	printf '%s\tpkg.amigaux.org\n' "$ip" >> "$W/xpkgs/hosts"
+	printf 'f /etc/inet/hosts 444 0 3 %s\nd /usr/local 755 0 3\nd /usr/local/bin 755 0 3\n' \
+		"$W/xpkgs/hosts" >> "$W/root.manifest"
+fi
 if [ "$MACENV" = 1 ]; then
 	R6=$E/sys6
 	sh "$K/../images/macenv/mksys6.sh" "${CD201:-$K/../media/AUX_2.0.1_CD_Image.iso}" "$R6" \

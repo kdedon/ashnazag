@@ -30,10 +30,7 @@ wait boot1-left=
 wait login:
 type root\n
 wait # 
-type shutdown -y -g0 -i0\n
-wait The system is down
-sleep 10
-debug reset hard
+type /etc/init 6\n
 wait login:
 type guest\n
 sleep 5

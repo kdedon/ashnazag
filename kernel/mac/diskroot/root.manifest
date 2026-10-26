@@ -78,6 +78,9 @@ f /var/sadm/install/admin/default 444 0 3 etc/admin-default
 f /etc/nodename	644 0 3 etc/nodename
 f /etc/vfstab	744 0 3 build/vfstab
 f /etc/profile	644 0 3 build/profile
+f /etc/.login	644 2 2 build/login.csh
+f /etc/default/login	444 0 3 build/login.default
+f /etc/default/su	444 0 3 build/su.default
 f /etc/screendefs 644 2 2 build/screendefs
 f /etc/motd	644 2 2 build/motd
 f /sbin/shutdown 755 0 3 build/shutdown

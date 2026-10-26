@@ -47,6 +47,11 @@ extern void _start();
 #define	SYSAREA	0x8000UL		/* physical base of logical 0: the ROM keeps the first 32 KB */
 #define	SCRW	720
 #define	SCRH	364
+#define	MINW	512			/* the Lisa's size range */
+#define	MINH	256
+#define	MAXW	4080
+#define	MAXH	4080
+#define	MAXSCR	0x40000L		/* its screen memory at most */
 #define	BLK	532			/* a volume block: 20 tag bytes, 512 data */
 
 static char *disk;			/* the ProFile image, never written */
@@ -57,6 +62,8 @@ static int verbose;
 static unsigned long serial = 5L << 16 | 60100;	/* the machine's serial number, 005-60100 */
 static int lfd;				/* /dev/lisa */
 static char *screen;			/* the display size to request */
+static int lw = SCRW, lh = SCRH, lrb = SCRW / 8;	/* the Lisa's screen, rows lrb bytes apart */
+static long lsz = 0x8000;		/* its RAM, whole 32 KB video pages */
 
 
 static char fstack[8192];		/* signal handlers' stack */
@@ -444,6 +451,19 @@ addpat(fid, page0, f, off, p, n)
 		fprintf(stderr, "lisa: patch table full: file %d keeps %d bytes unpatched\n", fid, n - i);
 }
 
+/* bytes [off, off + n) of a page the OS wrote are its own: their patches are done */
+static void
+unpat(fid, page, off, n)
+	int fid, off, n;
+	long page;
+{
+	int i;
+
+	for (i = 0; i < npat; i++)
+		if (pat[i].fid == fid && pat[i].page == page && pat[i].off >= off && pat[i].off < off + n)
+			pat[i].fid = 0;
+}
+
 /* the only place in f[0..n) holding sig (len k), -1 none or several */
 static long
 find1(f, n, sig, k)
@@ -773,6 +793,84 @@ lldcops(fid, page0, f, n)
 }
 
 /*
+ * The cursor code's screen size, in immediates: the pointer's clamps (twice,
+ * W-1 and H-1), the cursor's clip (W-32, W, H), the row stride of its restore
+ * (move.w #rb,d1) and of its draw (moveq #rb,d5; mulu d5,d1; adda.l d1,a1,
+ * which becomes a call: rb may not fit a moveq), and the size query
+ * (move.w #W,d0; move.w #H,d1; rts).
+ */
+static unsigned short cstride[] = { 0x3a3c, 0, 0xc2c5, 0xd3c1, 0x4e75 };
+static int wmatch();
+
+static void
+lldscr(fid, page0, f, n)
+	int fid, page0;
+	unsigned char *f;
+	long n;
+{
+	static int clamp[] = { 0x0c40, SCRW - 1, 0x6f04, 0x303c, SCRW - 1, 0x4a41, 0x6c02, 0x4241, 0x0c41, SCRH - 1,
+	    0x6f04, 0x323c, SCRH - 1 };
+	static int clip[] = { 0x0c40, SCRW - 32, 0x6f14, 0x0c40, SCRW, 0x6602, 0x7600, 0x303c, SCRW - 32 };
+	static int cliph[] = { 0x3a3c, SCRH, 0x9a44, 0xb245, 0x6f0c, 0x383c, SCRH };
+	static int rest[] = { 0x323c, SCRW / 8, 0x6004, 0x2298, 0xd2c1 };
+	static int draw[] = { 0x7a00 | SCRW / 8, 0xc2c5, 0xd3c1 };
+	static int size[] = { 0x303c, SCRW, 0x323c, SCRH, 0x4e75 };
+	unsigned char d[6];
+	long a;
+	int k = 0;
+
+	for (a = 0; a + 26 <= n; a += 2)
+		if (wmatch(f + a, clamp, 13)) {
+			d[0] = (lw - 1) >> 8;
+			d[1] = lw - 1;
+			addpat(fid, page0, f, (int)a + 2, d, 2);
+			addpat(fid, page0, f, (int)a + 8, d, 2);
+			d[0] = (lh - 1) >> 8;
+			d[1] = lh - 1;
+			addpat(fid, page0, f, (int)a + 18, d, 2);
+			addpat(fid, page0, f, (int)a + 24, d, 2);
+			k++;
+		} else if (wmatch(f + a, clip, 9)) {
+			d[0] = (lw - 32) >> 8;
+			d[1] = lw - 32;
+			d[2] = lw >> 8;
+			d[3] = lw;
+			addpat(fid, page0, f, (int)a + 2, d, 2);
+			addpat(fid, page0, f, (int)a + 8, d + 2, 2);
+			addpat(fid, page0, f, (int)a + 16, d, 2);
+			k++;
+		} else if (wmatch(f + a, cliph, 7)) {
+			d[0] = lh >> 8;
+			d[1] = lh;
+			addpat(fid, page0, f, (int)a + 2, d, 2);
+			addpat(fid, page0, f, (int)a + 12, d, 2);
+			k++;
+		} else if (wmatch(f + a, rest, 5)) {
+			d[0] = lrb >> 8;
+			d[1] = lrb;
+			addpat(fid, page0, f, (int)a + 2, d, 2);
+			k++;
+		} else if (wmatch(f + a, draw, 3)) {
+			cstride[1] = lrb;
+			d[0] = 0x4e;
+			d[1] = 0xb9;
+			put32(d + 2, (unsigned long)cstride);
+			addpat(fid, page0, f, (int)a, d, 6);
+			k++;
+		} else if (wmatch(f + a, size, 5)) {
+			d[0] = lw >> 8;
+			d[1] = lw;
+			d[2] = lh >> 8;
+			d[3] = lh;
+			addpat(fid, page0, f, (int)a + 2, d, 2);
+			addpat(fid, page0, f, (int)a + 6, d + 2, 2);
+			k++;
+		}
+	if (k && verbose)
+		fprintf(stderr, "lisa: cursor code in file %d at %dx%d (%d)\n", fid, lw, lh, k);
+}
+
+/*
  * The low-level drivers' start-up programs the VIAs and reads the disk
  * controller's ID for the machine type.  It keeps the stores to memory:
  * D0 = 1 (the parallel port's line as the VIA's zero reads it) and the
@@ -880,6 +978,83 @@ sonydrv(fid, page0, f, n)
  *  - Yield_CPU with no other process ready waits in the host for an
  *    interrupt: an idle application's event loop yields on every pass.
  */
+/* the word at f + a moved by d */
+static void
+pinw(fid, page0, f, a, d)
+	int fid, page0, d;
+	unsigned char *f;
+	long a;
+{
+	unsigned char w[2];
+
+	d += (short)G16P(f + a);
+	w[0] = d >> 8;
+	w[1] = d;
+	addpat(fid, page0, f, (int)a, w, 2);
+}
+
+/*
+ * Desktop icons saved past a smaller screen are pinned on it, icon and label
+ * in view, as a drag would leave them.  The Desktop Manager keeps an icon's
+ * spot (v, h) in three places:
+ *  - its catalog: +0 the object's folder (0: the desktop), +4 the name's
+ *    length, +6 its offset 56, +18 the window, +26 the spot, +54 the name's end;
+ *  - its saved heap: a 144-byte block (word $4048), the spot at +8, the
+ *    label's rect at +136, the name's block ($40xx) at +144, its length at +148;
+ *  - the volumes' list: 14 bytes each, the volume's number, the spot, $0101, -1
+ *    (the last one may end after $0101).
+ */
+static void
+dmpin(fid, page0, f, n)
+	int fid, page0;
+	unsigned char *f;
+	long n;
+{
+	unsigned char *r;
+	long a, at;
+	int k, i, v, h, dv, dh, nm;
+
+	for (a = 0; a + 10 <= n; a += 2) {
+		r = f + a;
+		at = nm = -1;
+		k = G16P(r + 4);
+		if (k >= 1 && k < 64 && a + 0x38 + k <= n && !G16P(r) && !G16P(r + 2) && G16P(r + 6) == 0x38 &&
+		    G16P(r + 0x36) == 0x38 + k && (short)G16P(r + 0x12) < (short)G16P(r + 0x16) &&
+		    (short)G16P(r + 0x14) < (short)G16P(r + 0x18)) {
+			at = 0x1a;
+			nm = 0x38;
+		} else if (a + 0xd6 <= n && G16P(r) == 0x4048 && r[0x90] == 0x40 && (k = r[0x94]) >= 1 && k < 64 &&
+		    G16P(r + 0x8c) - G16P(r + 0x88) == 11 && (short)G16P(r + 0x8a) < (short)G16P(r + 0x8e)) {
+			at = 8;
+			nm = 0x95;
+		} else if (!G16P(r) && G16P(r + 2) && G16P(r + 2) < 64 && G16P(r + 8) == 0x0101 &&
+		    (a + 14 > n || (G16P(r + 10) == 0xffff && G16P(r + 12) == 0xffff))) {
+			at = 4;
+			nm = -1;
+		}
+		if (at < 0)
+			continue;
+		for (i = 0; nm > 0 && i < k && r[nm + i] >= ' '; i++)
+			;
+		v = G16P(r + at);
+		h = G16P(r + at + 2);
+		if ((nm > 0 && i < k) || v >= 0x7fff || h >= 0x7fff)
+			continue;
+		dv = v > lh - 61 ? lh - 61 - v : 0;
+		dh = h > lw - 64 ? lw - 64 - h : 0;
+		if (!dv && !dh)
+			continue;
+		pinw(fid, page0, f, a + at, dv);
+		pinw(fid, page0, f, a + at + 2, dh);
+		if (at == 8)
+			for (i = 0; i < 4; i++)
+				pinw(fid, page0, f, a + 0x88 + 2 * i, i & 1 ? dh : dv);
+		if (verbose)
+			fprintf(stderr, "lisa: icon %.*s pinned at %d,%d\n", nm > 0 ? k : 6, nm > 0 ? (char *)r + nm : "volume",
+			    v + dv, h + dh);
+	}
+}
+
 static unsigned char unpsig[] = { 0x4c, 0xdf, 0x1c, 0xf8, 0x4e, 0x5e, 0x20, 0x5f, 0xde, 0xfc, 0x00, 0x14, 0x4e, 0xd0,
     'U', 'N', 'P', 'A', 'C', 'K' };
 
@@ -914,6 +1089,68 @@ callsto(c, n, a, f)
 static unsigned short ctramp[12][12];
 static short ctlen[12];
 static long cpra5, cdva5;	/* off A5, from the code: the process's listing state, the device table */
+
+/*
+ * The screen's size in code, as immediates: move.w, cmpi.w, addi.w, subi.w,
+ * cmp.w, add.w and sub.w of 720, 719, 364 or 363, and rects pushed as longs
+ * (clr.l -(sp) twice; move.l #720,-(sp); then maybe move.l #364,-(sp)).
+ * Not patched: an angle's 720 (after cmpi.w #360), result codes (move.w #720
+ * then bra, next to #721) and a copy of one screen column into a 376-byte
+ * buffer (moveq #90 as its stride).  The OS's screen
+ * clear (move.w #$8000,d3; lsr.w #2,d3 then a dbf from $110) takes lsz.
+ */
+static int
+scrcode(c, n)
+	unsigned char *c;
+	long n;
+{
+	static const unsigned char clr[] = { 0x36, 0x3c, 0x80, 0x00, 0xe4, 0x4b, 0x57, 0x83, 0x22, 0x78, 0x01, 0x10 };
+	static const unsigned char rl[] = { 0x42, 0xa7, 0x42, 0xa7, 0x2f, 0x3c, 0x00, 0x00, 0x02, 0xd0 };
+	static const unsigned char rh[] = { 0x2f, 0x3c, 0x00, 0x00, 0x01, 0x6c };
+	unsigned char *p;
+	long a;
+	int k = 0, op, v, nv;
+
+	if (lw == SCRW && lh == SCRH && lsz == 0x8000)
+		return 0;
+	for (a = 0; a + 12 <= n; a += 2) {
+		p = c + a;
+		op = G16P(p);
+		v = G16P(p + 2);
+		if (!memcmp(p, clr, sizeof clr)) {
+			p[2] = lsz >> 10;
+			p[3] = lsz >> 2;
+			p[4] = 0x4e;
+			p[5] = 0x71;
+			k++;
+			continue;
+		}
+		if (!memcmp(p, rl, sizeof rl)) {
+			p[8] = lw >> 8;
+			p[9] = lw;
+			if (!memcmp(p + 10, rh, sizeof rh)) {
+				p[14] = lh >> 8;
+				p[15] = lh;
+			}
+			k++;
+			continue;
+		}
+		if (v != SCRW && v != SCRW - 1 && v != SCRH && v != SCRH - 1)
+			continue;
+		if ((op & 0xf03f) != 0x303c && (op & 0xffc0) != 0x0c40 && (op & 0xffc0) != 0x0640 &&
+		    (op & 0xffc0) != 0x0440 && (op & 0xf1ff) != 0xb07c && (op & 0xf1ff) != 0xd07c && (op & 0xf1ff) != 0x907c)
+			continue;
+		if (a >= 8 && (word(p - 4, 360) || word(p - 8, 0x705a)))
+			continue;
+		if ((p[4] == 0x60 && word(p + 6, op) && word(p + 8, v + 1)))	/* a result code */
+			continue;
+		nv = v == SCRW ? lw : v == SCRW - 1 ? lw - 1 : v == SCRH ? lh : lh - 1;
+		p[2] = nv >> 8;
+		p[3] = nv;
+		k++;
+	}
+	return k;
+}
 
 static int
 codepatch(c, n)
@@ -1145,7 +1382,7 @@ codepatch(c, n)
 			k++;
 		}
 	}
-	return k;
+	return k + scrcode(c, n);
 }
 
 /*
@@ -1297,7 +1534,9 @@ filepats(fid, page0, f, n)
 	lldmisc(fid, page0, f, n);
 	lldcops(fid, page0, f, n);
 	lldinit(fid, page0, f, n);
+	lldscr(fid, page0, f, n);
 	sonydrv(fid, page0, f, n);
+	dmpin(fid, page0, f, n);
 }
 
 static void applypat();
@@ -2107,6 +2346,7 @@ hcpage(r)
 	} else if (wr && f && off + n > 24) {
 		k = off > 24 ? off : 24;
 		pwrite(f->fd, pg + k, off + n - k, rel * 512 + k - 24);
+		unpat(s, rel, k - 24, off + n - k);
 	}
 	errout(err, 0);
 }
@@ -2164,6 +2404,7 @@ hcdata(r)
 		if (wr) {
 			if (gmem(buf + done, b, k, 0, 0L) < 0 || pwrite(f->fd, b, k, rel * 512 + off) != k)
 				e = 1885;
+			unpat(s, rel, off, k);
 		} else {
 			memset(b, 0, sizeof b);
 			pread(f->fd, b, k, rel * 512 + off);
@@ -2772,7 +3013,7 @@ hcbmap(r)
 /* ---- host services ---- */
 
 static int pastboot;
-static int patchload(), patchcops(), patchmmu(), patchserial(), patchprobe(), word();
+static int patchscr(), patchload(), patchcops(), patchmmu(), patchserial(), patchprobe(), word();
 static void hcreset();
 
 /* before each read, the code read and checked so far may need patches */
@@ -2793,6 +3034,8 @@ rampatches()
 			fprintf(stderr, "lisa: unpacked code by host call (%d)\n", k);
 		if ((k = patchprobe(lfd)) > 0 && verbose)
 			fprintf(stderr, "lisa: loader's controller probe skipped (%d)\n", k);
+		if ((k = patchscr(lfd)) > 0 && verbose)
+			fprintf(stderr, "lisa: screen %ld KB (%d)\n", lsz >> 10, k);
 		if ((k = patchcops(lfd)) > 0) {
 			if (verbose)
 				fprintf(stderr, "lisa: controller send patched (%d)\n", k);
@@ -2827,6 +3070,8 @@ ldrscan(fid, page0, f, n, cops)
 			fprintf(stderr, "lisa: unpacked code by host call (%d)\n", k);
 		if ((k = patchprobe(lfd)) > 0 && verbose)
 			fprintf(stderr, "lisa: loader's controller probe skipped (%d)\n", k);
+		if ((k = patchscr(lfd)) > 0 && verbose)
+			fprintf(stderr, "lisa: screen %ld KB (%d)\n", lsz >> 10, k);
 	} else if ((k = patchcops(lfd)) > 0) {
 		if (verbose)
 			fprintf(stderr, "lisa: controller send patched (%d)\n", k);
@@ -3428,7 +3673,7 @@ hcreset(r)
 	P32(0x2a4, 0x8000);
 	P32(0x294, RAMSZ);
 	P32(0x2a8, RAMSZ - 0x8000);
-	P32(0x110, RAMSZ - 0x10000);
+	P32(0x110, RAMSZ - 0x8000 - lsz);
 	P32(0x260, 0x2b0);
 	P8(0x1b3, 2);
 	for (i = 2; i < 64; i++)
@@ -3504,6 +3749,31 @@ patchprobe(fd)
 			setw(fd, a + 6, 0x6000 | (8 + sm[a + 15]));
 			n++;
 		}
+	return n;
+}
+
+/*
+ * The boot code and the loader place the screen below the top 32 KB:
+ * move.l $2A8,d0; subi.l #$8000,d0; move.l d0,$110.  The loader then
+ * allocates the OS's screens by its size variable, move.l #$8000,d16(a5)
+ * just before move.l #$200,d16(a5).  Both take lsz.
+ */
+static int
+patchscr(fd)
+	int fd;
+{
+	static const unsigned char sig[] = { 0x20, 0x38, 0x02, 0xa8, 0x04, 0x80, 0x00, 0x00, 0x80, 0x00, 0x21, 0xc0, 0x01, 0x10 };
+	static int var[] = { 0x2b7c, 0, 0x8000, -1, 0x2b7c, 0, 0x0200 };
+	unsigned char d[4];
+	unsigned long a;
+	int n = 0;
+
+	put32(d, lsz);
+	for (a = plo; a + sizeof sig < phi; a += 2)
+		if (sm[a] == sig[0] && !memcmp(sm + a, sig, sizeof sig))
+			n += pput(fd, a + 6, d, 4);
+		else if (sm[a] == 0x2b && wmatch(sm + a, var, 7))
+			n += pput(fd, a + 2, d, 4);
 	return n;
 }
 
@@ -3667,8 +3937,8 @@ static unsigned char adb2lisa[128] = {
 	0x00, 0x00, 0x00, 0x7e, 0x7c, 0x00, 0x00, 0x00	/* rshift ropt */
 };
 
-/* the Lisa's screen, rows lrb bytes apart, and its size on the host */
-static int lw = SCRW, lh = SCRH, lrb = SCRW / 8, ow, oh;
+/* the Lisa's screen's size on the host */
+static int ow, oh;
 
 /* host input to the module's queue as Lisa key bytes (bit 7 down; the mouse button is 6) and mouse deltas; 1 if any */
 static int
@@ -3676,7 +3946,7 @@ events(lf, kfd, mfd)
 	int lf, kfd, mfd;
 {
 	static int cmd;
-	static long rx, ry;
+	static long ry;
 	struct inev ev[32];
 	long dx = 0, dy = 0, x, y;
 	int fd, n, i, k, got = 0;
@@ -3710,13 +3980,10 @@ events(lf, kfd, mfd)
 				}
 	/*
 	 * Host pixels to Lisa ones, remainders kept.  The OS scales dy for its
-	 * tall pixels, so a screen shown 3:2 at full width takes deltas as they are.
+	 * tall pixels, so rows shown 3:2 take deltas as they are.
 	 */
-	rx += dx * lw;
 	ry += dy * 3 * lh;
-	dx = rx / ow;
 	dy = ry / (2 * oh);
-	rx -= dx * ow;
 	ry -= dy * 2 * oh;
 	while (dx || dy) {
 		x = dx < -127 ? -127 : dx > 127 ? 127 : dx;
@@ -3731,26 +3998,21 @@ events(lf, kfd, mfd)
 /*
  * The display process: the video page on the screen, and the boot's progress in the log.
  * Lisa pixels are about 2:3, so rows are shown 3:2 (one once, the next twice) and
- * columns 1:1, centred.  A host narrower than the Lisa gets it scaled down to fit,
- * aspect kept: Lisa columns (rows) that land on one host column (row) are ORed, so
- * one-pixel black strokes survive.  At 632 wide one column in eight pairs with its neighbour.
+ * columns 1:1, centred.  A host shorter than that gets the rows scaled down, those
+ * landing on one host row ORed, so one-pixel black strokes survive; a narrower one
+ * (a mode changed after start) shows the middle columns.
  *
  * Rows are compared every REFRESH ms while the screen changes or input comes,
  * less often when it stays the same.  A row is converted by table, a byte at a time,
- * and written to each host line it covers from the table or the converted line.
+ * and written to each host line it covers.
  */
 #define	REFRESH	20		/* ms between compares */
 #define	CALM	8		/* unchanged compares before each doubling, up to 8 * REFRESH */
 
-static unsigned long ex[256][2];	/* a Lisa byte at full width: 8 host pixels, black 0 */
-static unsigned long (*sxt)[256][2];	/* scaled: per column pattern, a byte ANDed onto up to 8 pixels */
-static unsigned long *sline;		/* a scaled row */
-static struct sxe {
-	unsigned long *pat;		/* a byte column's pattern */
-	unsigned long *at;		/* the line from its first host column */
-} *sx;
+static unsigned long ex[256][2];	/* a Lisa byte: 8 host pixels, black 0 */
 static unsigned char *last, *acc;
 static unsigned char *fb;
+static int lx;				/* the first Lisa byte column shown */
 
 extern int gettimeofday();
 
@@ -3777,52 +4039,6 @@ cpums()
 	return (t.tms_utime + t.tms_stime) * 1000L / sysconf(_SC_CLK_TCK);
 }
 
-/* the scaling tables; 0 if out of memory */
-static int
-scaling()
-{
-	unsigned char (*o)[8];
-	int j, k, b, p, x, np = 0, nb = lw / 8;
-
-	if ((o = (unsigned char (*)[8])malloc(nb * 8)) == 0)
-		return 0;
-	for (j = 0; j < nb; j++) {
-		x = 8L * j * ow / lw;
-		sx[j].at = (unsigned long *)((unsigned char *)sline + x);
-		for (k = 0; k < 8; k++)
-			o[j][k] = (8L * j + k) * ow / lw - x;
-	}
-	for (j = 0; j < nb; j++) {
-		for (p = 0; p < j && memcmp(o[p], o[j], 8); p++)
-			;
-		np += p == j;
-	}
-	if (sxt)
-		free((char *)sxt);
-	if ((sxt = (unsigned long (*)[256][2])malloc(np * sizeof *sxt)) == 0) {
-		free((char *)o);
-		return 0;
-	}
-	for (j = np = 0; j < nb; j++) {
-		for (p = 0; p < j && memcmp(o[p], o[j], 8); p++)
-			;
-		if (p < j) {
-			sx[j].pat = sx[p].pat;
-			continue;
-		}
-		sx[j].pat = sxt[np][0];
-		for (b = 0; b < 256; b++) {
-			sxt[np][b][0] = sxt[np][b][1] = ~0UL;
-			for (k = 0; k < 8; k++)
-				if (b >> (7 - k) & 1)
-					sxt[np][b][o[j][k] / 4] &= ~(0xffUL << (8 * (3 - o[j][k] % 4)));
-		}
-		np++;
-	}
-	free((char *)o);
-	return 1;
-}
-
 /* 1 if n bytes (even, 2-byte aligned) match */
 static int
 same(a, b, n)
@@ -3841,14 +4057,14 @@ same(a, b, n)
 	return 1;
 }
 
-/* Lisa row l at full width onto n host lines from d, rb apart, two at a time */
+/* Lisa row l onto n host lines from d, rb apart, two at a time */
 static void
 xrow(l, d, rb, n)
 	unsigned char *l, *d;
 	long rb;
 	int n;
 {
-	unsigned char *u, *e = l + lw / 8;
+	unsigned char *u, *e = l + ow / 8;
 	unsigned long *p, *q, *t;
 
 	for (; n > 1; n -= 2, d += 2 * rb)
@@ -3865,47 +4081,6 @@ xrow(l, d, rb, n)
 		}
 }
 
-/*
- * Lisa row l scaled onto n host lines from d.  Pointer loops, bounds in locals and
- * a small function keep the old compiler's loops short: it reloads globals
- * after every store and spills in a big function.
- */
-static void
-srow(l, d, rb, n)
-	unsigned char *l, *d;
-	long rb;
-	int n;
-{
-	unsigned long *t, *u, *z, *p;
-	unsigned char *e = l + lw / 8;
-	int b, w = ow;
-	struct sxe *x;
-
-	for (u = sline, z = sline + (w + 3) / 4; u + 4 <= z; u += 4)
-		u[0] = u[1] = u[2] = u[3] = ~0UL;
-	while (u < z)
-		*u++ = ~0UL;
-	/* a pattern's longs may start at any byte */
-	for (x = sx; l < e; x++)
-		if ((b = *l++) != 0) {
-			t = x->pat + 2 * b;
-			u = x->at;
-			u[0] &= t[0];
-			u[1] &= t[1];
-		}
-	for (z = sline + w / 4; n > 0; n--, d += rb) {
-		for (t = sline, p = (unsigned long *)d; t + 4 <= z; t += 4, p += 4) {
-			p[0] = t[0];
-			p[1] = t[1];
-			p[2] = t[2];
-			p[3] = t[3];
-		}
-		while (t < z)
-			*p++ = *t++;
-		memcpy((char *)p, (char *)t, w % 4);
-	}
-}
-
 /* the screen's changed rows (all of them when all) to fb; the Lisa rows drawn */
 static int
 draw(scr, rb, all)
@@ -3914,7 +4089,7 @@ draw(scr, rb, all)
 	int all;
 {
 	unsigned char *s, *l;
-	int y, e, r, j, n, oy, nb = lw / 8, rows = 0;
+	int y, e, r, j, n, oy, nb = ow / 8, rows = 0;
 
 	if (!all && same(last, scr, (long)lrb * lh))
 		return 0;
@@ -3930,6 +4105,7 @@ draw(scr, rb, all)
 			continue;
 		memcpy(l, s, (e - y) * lrb);
 		rows += e - y;
+		l += lx;
 		if (e - y > 1) {
 			memcpy(acc, l, nb);
 			for (r = 1; r < e - y; r++)
@@ -3937,10 +4113,7 @@ draw(scr, rb, all)
 					acc[j] |= l[r * lrb + j];
 			l = acc;
 		}
-		if (ow == lw)
-			xrow(l, fb + oy * rb, rb, n);
-		else
-			srow(l, fb + oy * rb, rb, n);
+		xrow(l, fb + oy * rb, rb, n);
 	}
 	return rows;
 }
@@ -3963,20 +4136,12 @@ layout(d)
 	}
 	w = d->info.fi_width;
 	h = d->info.fi_height;
-	if (w >= lw) {
-		ow = lw;
-		oh = h < a ? h : a;
-	} else {
-		ow = w;
-		oh = a * w / lw;
-		if (oh > h) {
-			oh = h;
-			ow = lw * h / a;
-		}
-	}
+	ow = w < lw ? w & ~7 : lw;
+	oh = h < a ? h : a;
+	lx = (lw - ow) / 16;
 	fb = (unsigned char *)d->mapping + d->info.fi_offset + (h - oh) / 2 * d->info.fi_rowbytes + (w - ow) / 2;
 	memset(d->mapping, 0, d->info.fi_size);
-	return ow == lw || scaling();
+	return 1;
 }
 
 /* the display mode nearest the setting */
@@ -4002,9 +4167,33 @@ request(d)
 		fprintf(stderr, "startlisa: screen %dx%d: %s\n", w, h, strerror(errno));
 }
 
+/*
+ * The Lisa's size from the host's w x h: columns 1:1, a multiple of 16
+ * (QuickDraw's rows are whole words), rows 2:3.  Too small a host gets the
+ * standard 720x364; too large a screen for its place in RAM loses rows.
+ */
 static void
-show(fd)
-	int fd;
+geometry(w, h)
+	int w, h;
+{
+	lw = (w > MAXW ? MAXW : w) & ~15;
+	lh = h * 2 / 3;
+	if (lw < MINW || lh < MINH) {
+		lw = SCRW;
+		lh = SCRH;
+	}
+	lrb = lw / 8;
+	if ((long)lrb * lh > MAXSCR)
+		lh = MAXSCR / lrb;
+	if (lh > MAXH)
+		lh = MAXH;
+	lsz = ((long)lrb * lh + 0x7fff) & ~0x7fffL;
+}
+
+/* the display process; the Lisa's size goes to the launcher on gfd */
+static void
+show(fd, gfd)
+	int fd, gfd;
 {
 	static unsigned char bits[256];
 	struct nh_display d;
@@ -4033,11 +4222,18 @@ show(fd)
 	}
 	if (screen)
 		request(&d);
-	sx = (struct sxe *)malloc(lw / 8 * sizeof *sx);
-	sline = (unsigned long *)malloc((lw / 4 + 3) * sizeof *sline);
+	if (ioctl(d.framebuffer, FBIOGINFO, &d.info) < 0) {
+		fprintf(stderr, "startlisa: display: %s\n", strerror(errno));
+		kill(pp, SIGKILL);
+		_exit(1);
+	}
+	geometry((int)d.info.fi_width, (int)d.info.fi_height);
+	k = lw << 16 | lh;
+	write(gfd, (char *)&k, sizeof k);
+	close(gfd);
 	last = (unsigned char *)malloc((long)lrb * lh);
 	acc = (unsigned char *)malloc(lw / 8);
-	if (!sx || !sline || !last || !acc || !layout(&d)) {
+	if (!last || !acc || !layout(&d)) {
 		fprintf(stderr, "startlisa: display: %s\n", strerror(errno));
 		kill(pp, SIGKILL);
 		_exit(1);
@@ -4054,7 +4250,8 @@ show(fd)
 	colors.cm_red = colors.cm_green = colors.cm_blue = grey;
 	ioctl(d.framebuffer, FBIOPUTCMAP, &colors);
 	if (verbose)
-		fprintf(stderr, "lisa: display %dx%d, the screen at %dx%d\n", (int)d.info.fi_width, (int)d.info.fi_height, ow, oh);
+		fprintf(stderr, "lisa: display %dx%d, the screen at %dx%d, Lisa %dx%d\n", (int)d.info.fi_width,
+		    (int)d.info.fi_height, ow, oh, lw, lh);
 	memset(&was, 0, sizeof was);
 	pf[0].fd = d.keyboard;
 	pf[1].fd = d.mouse;
@@ -4080,7 +4277,8 @@ show(fd)
 					}
 					vid = ~0UL;
 					if (verbose)
-						fprintf(stderr, "lisa: display %dx%d, the screen at %dx%d\n", (int)d.info.fi_width, (int)d.info.fi_height, ow, oh);
+						fprintf(stderr, "lisa: display %dx%d, the screen at %dx%d, Lisa %dx%d\n",
+						    (int)d.info.fi_width, (int)d.info.fi_height, ow, oh, lw, lh);
 				}
 			}
 			if (events(fd, d.keyboard, d.mouse)) {
@@ -4161,7 +4359,7 @@ main(argc, argv)
 {
 	struct lisaenter le;
 	unsigned long ssp, pc;
-	int c, fd;
+	int c, fd, gp[2];
 	pid_t pid;
 	time_t now;
 	struct tm *lt;
@@ -4188,8 +4386,6 @@ main(argc, argv)
 		disk = envpath(root, "profile.dc42");
 	volread();
 	memset((char *)ctramp, 0, sizeof ctramp);	/* in before the guest runs */
-	if (nboot)
-		bootpats();
 	if (!pmfile)
 		pmfile = envpath(root, "parameter-memory");
 	memset(pm, 0xff, sizeof pm);
@@ -4222,10 +4418,24 @@ main(argc, argv)
 		die(disk);
 	if (disk && oopen(envpath(root, "profile.writes")) < 0)
 		die("profile.writes");
+	if (pipe(gp) < 0)
+		die("pipe");
 	if ((pid = fork()) < 0)
 		die("fork");
-	if (pid == 0)
-		show(fd);
+	if (pid == 0) {
+		close(gp[0]);
+		show(fd, gp[1]);
+	}
+	close(gp[1]);
+	if (read(gp[0], (char *)&c, sizeof c) != sizeof c)
+		die("display");
+	close(gp[0]);
+	lw = c >> 16;
+	lh = c & 0xffff;
+	lrb = lw / 8;
+	lsz = ((long)lrb * lh + 0x7fff) & ~0x7fffL;
+	if (nboot)
+		bootpats();
 	/* our pages in before the guest runs: a page first touched inside a host call breaks it */
 	for (q = (char *)_start; q < &etext; q += 1024)
 		x += *q;

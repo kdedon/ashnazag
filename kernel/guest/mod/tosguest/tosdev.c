@@ -234,7 +234,7 @@ tos_timers(n)
 {
 	struct tosctr *t = &tosc;
 	struct tostimer *tm;
-	int i, k;
+	int i, k, ch;
 
 	/* subtracted, not divided: a constant divisor is a 64-bit multiply, which the 68060 traps */
 	t->t_tcacc += 200 * n;
@@ -243,11 +243,21 @@ tos_timers(n)
 	owe(CH_TIMERC, k);
 	for (i = 0; i < 2; i++) {
 		tm = &t->t_tm[i];
+		ch = i ? CH_TIMERB : CH_TIMERA;
 		if (tm->tm_per) {
 			tm->tm_acc += 2457600 / HZ * n;
-			owe(i ? CH_TIMERB : CH_TIMERA, (int)(tm->tm_acc / tm->tm_per));
+			/*
+			 * Still owed after deliveries since the last tick: the guest
+			 * cannot keep up.  It loses all but one, instead of running
+			 * only its handlers.
+			 */
+			if (t->t_ipend[ch] && t->t_st.ts_ints[ch] != tm->tm_ints)
+				t->t_ipend[ch] = 1;
+			else
+				owe(ch, (int)(tm->tm_acc / tm->tm_per));
 			tm->tm_acc %= tm->tm_per;
 		}
+		tm->tm_ints = t->t_st.ts_ints[ch];
 	}
 }
 

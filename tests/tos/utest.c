@@ -399,6 +399,9 @@ main()
 	check("irq_nest", (r = irqtest(4)) == 0, r);
 	r = irqtest(5);
 	check("irq_tcbusy", r == 0, r);
+	check("irq_stress", (r = irqtest(6)) == 0, r);
+	check("irq_supexec", (r = irqtest(7)) == 0, r);
+	check("irq_pexec", (r = irqtest(8)) == 0, r);
 
 	check("trap9", (r = traptest9()) == 0, r);
 	check("trap10", (r = traptest10()) == 0, r);
