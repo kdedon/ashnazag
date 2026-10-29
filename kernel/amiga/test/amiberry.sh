@@ -12,21 +12,22 @@
 # disk is the IDE master).  CSPPC: the CyberStorm PPC's flash image; the
 # card replaces the CPU and its RAM, the disk is unit CSPPCID (default 0)
 # on its SCSI; CSPPCMB its RAM (default 128).  MBMEM: motherboard fast
-# RAM in MB (default 16).  CDROM: an ISO image as a CD-ROM on that SCSI, unit 1.
+# RAM in MB (default 16).  CPUMEM: CPU slot RAM at 0x08000000 in MB
+# (default 32).  Z3MEM: Zorro III RAM in MB (default 0).  CDROM: an ISO image as a CD-ROM on that SCSI, unit 1.
 # STATE: config, home and IPC socket
 # directory (default hdfdir/run).  CARDS: Amiberry board names on the
 # PCI bus (default "ne2000_pci es1370 fm801").  GFX: a graphics card
 # (default ZZ9000_Z2; S3VIRGE_PCI or VOODOO3 puts one on PCI; empty for
 # none).  VOODOO3: the Voodoo3's BIOS (default media/amiga/voodoo3.rom).
 # MEDWIN: 256 or 512 puts a Mediator 4000 Mk II with that window in place
-# of the Prometheus.  PCIDMA=1 lets the bridge's cards master into
+# of the Prometheus; BRIDGE=none leaves the bridge out.  PCIDMA=1 lets the bridge's cards master into
 # Amiga RAM (real Mediators and Prometheus cannot).  Z3MAP: Zorro III placement (default uae; real
 # starts at 0x40000000).
 # The NE2000 is on the user-mode network; host port ECHOPORT (default
 # 2307) reaches the guest's TCP echo service.  DF0-DF3: ADF files in
 # the floppy drives.  UAEOPTS: extra config lines, last wins (e.g.
-# cpu_data_cache=true for a real 060's caches).  Runs until killed, or
-# for the given seconds.
+# cpu_data_cache=true for a real 060's caches).  SOUND: a file for the
+# raw sound output.  Runs until killed, or for the given seconds.
 set -e
 A=$(cd "$(dirname "$0")/.." && pwd)
 AUX=$(cd "$A/../.." && pwd)
@@ -64,10 +65,10 @@ a3000mem_size=${MBMEM:-16}
 $(if [ -n "$CSPPC" ]; then
 	echo cpuboard_type=CyberStormPPC; echo "cpuboard_rom_file=$CSPPC"; echo cpuboardmem1_size=${CSPPCMB:-128}
 else
-	echo mbresmem_size=32
+	echo mbresmem_size=${CPUMEM:-32}
 fi)
 fastmem_size=0
-z3mem_size=0
+z3mem_size=${Z3MEM:-0}
 z3mapping=${Z3MAP:-uae}
 $([ ! -d "$H/boot" ] || echo "filesystem2=rw,DH0:AmigaBoot:$H/boot,5")
 $(if [ -n "$CSPPC" ]; then
@@ -80,11 +81,11 @@ else
 fi)
 serial_port=TCP://127.0.0.1:${SERPORT:-1234}
 serial_direct=true
-sound_output=none
+sound_output=$([ -n "$SOUND" ] && echo exact || echo none)
 $(if [ -n "$MEDWIN" ]; then
 	echo mediator_rom_file=:ENABLED
 	echo "mediator_rom_options=subtype=4000mkii$([ "$MEDWIN" = 256 ] || echo ,winsize)${PCIDMA:+,fulldma}"
-else
+elif [ "$BRIDGE" != none ]; then
 	echo prometheus_rom_file=:ENABLED
 	[ -z "$PCIDMA" ] || echo prometheus_rom_options=fulldma
 fi)
@@ -124,6 +125,7 @@ fi
 export HOME=$ST/home XDG_CONFIG_HOME=$ST/home/.config XDG_RUNTIME_DIR=$ST/xdg
 export LD_LIBRARY_PATH=$AB/lib/x86_64-linux-gnu:$AB/lib/x86_64-linux-gnu/amiberry
 export SDL_VIDEO_DRIVER=offscreen SDL_AUDIO_DRIVER=dummy
+[ -z "$SOUND" ] || export SDL_AUDIO_DRIVER=disk SDL_AUDIO_DISK_OUTPUT_FILE="$SOUND"
 if [ -n "$2" ]; then
 	exec timeout "$2" nice -n 19 "$AB/bin/amiberry" -o rom_path="$ST/roms/" -f "$C" -G
 fi

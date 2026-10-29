@@ -1,0 +1,262 @@
+diff -ruN a/lib/amixcde/Imakefile b/lib/amixcde/Imakefile
+--- a/lib/amixcde/Imakefile
++++ b/lib/amixcde/Imakefile
+@@ -1,5 +1,6 @@
+ XCOMM lib/amixcde -- functions CDE uses that AMIX (SVR4.0) lacks; built on AMIX
+-XCOMM only (lib/Imakefile), linked into every program via ExtraLibraries.
++XCOMM only (lib/Imakefile), linked into every program via ExtraLibraries;
++XCOMM pwgr.c: passwd and group lookups without libc's, which crash.
+ #define DoNormalLib   YES
+ #define DoSharedLib   NO
+ #define DoDebugLib    NO
+@@ -8,9 +9,9 @@
+ #define LibName       amixcde
+ #define LibHeaders    NO
+ 
+-SRCS = amixcde.c
++SRCS = amixcde.c pwgr.c
+ 
+-OBJS = amixcde.o
++OBJS = amixcde.o pwgr.o
+ 
+ #include <Library.tmpl>
+ 
+diff -ruN a/lib/amixcde/pwgr.c b/lib/amixcde/pwgr.c
+--- a/lib/amixcde/pwgr.c	1969-12-31 18:00:00.000000000 -0600
++++ b/lib/amixcde/pwgr.c
+@@ -0,0 +1,235 @@
++/*
++ * amix-pwgr.c -- D3: getpwnam/getpwuid/getgrnam/getgrgid DEFINED INSIDE THE
++ * EXECUTABLE, as small direct parsers of /etc/passwd and /etc/group.
++ *
++ * Copyright (c) 2026 Jussi Alanärä.  MIT; see the repository's LICENSE.
++ * (Same approach as ../amix-packagemanager/heirloom/compat/amixcompat.c, which
++ * ships the sidestep in every binary of the ported pkg toolchain; written
++ * afresh here so a recipe can link it as one plain object.)
++ *
++ * WHY (ROADMAP.md D3, PORTING.md 3.1).  The FIRST getpwnam() of a process
++ * crashes inside the stock shared libc.so.1's passwd-record handling; the group
++ * path survives, but nothing about the passwd side is debuggable off-box, and
++ * interposition is ruled out because libc calls its internal helpers through
++ * non-preemptible bsrl.  An executable that DEFINES these four functions never
++ * reaches libc's copies at all: the static link binds every call the program
++ * itself makes to the program's own definition, so the dynamic linker has
++ * nothing to resolve.  A recipe links this object ONLY when the program maps
++ * uid<->name (tar: -c records owner names, -x as root maps them back).
++ *
++ * WHY THE PROGRAM STAYS DYNAMIC.  D3 says "link static"; what it needs is that
++ * the executable's own definitions win, and for the calls the program itself
++ * makes they win in a dynamic link just as surely (ld binds them at link time;
++ * the build asserts `nm` shows them T, never U).  A fully static link would also
++ * pull stock SVR4 libc.a object code into a binary this repo publishes -- the
++ * same exposure that kept whet out of amix-benchmark 1.3.  The one thing a
++ * dynamic link cannot reach is a getpwnam() called from INSIDE libc on the
++ * program's behalf; none of the programs that link this object do that.
++ *
++ * Semantics follow libc: a pointer to static storage, overwritten by the next
++ * call of the same family; NULL when not found or the file cannot be read.
++ * C89, no libc passwd machinery used at all (fgetpwent is declared by the SVR4
++ * header but absent from libc.so.1 -- measured with nm -- so it is not used).
++ */
++
++#include <sys/types.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <pwd.h>
++#include <grp.h>
++
++#define PWGR_LINE	1024
++#define PWGR_MEMB	128
++
++/* Split off the next ':'-separated field; an absent field reads as "". */
++static char *
++pwgr_field(char **cp)
++{
++	char *s, *p;
++
++	s = *cp;
++	if (s == NULL)
++		return "";
++	p = strchr(s, ':');
++	if (p != NULL) {
++		*p = '\0';
++		*cp = p + 1;
++	} else {
++		*cp = NULL;
++	}
++	return s;
++}
++
++/* Read the next non-empty, non-comment line; 0 at EOF.  Overlong lines are
++ * consumed whole and skipped rather than parsed in pieces. */
++static int
++pwgr_line(FILE *fp, char *buf, int len)
++{
++	char *p;
++	int c;
++
++	for (;;) {
++		if (fgets(buf, len, fp) == NULL)
++			return 0;
++		p = strchr(buf, '\n');
++		if (p == NULL) {
++			while ((c = getc(fp)) != EOF && c != '\n')
++				;
++			continue;
++		}
++		*p = '\0';
++		if (buf[0] == '\0' || buf[0] == '#')
++			continue;
++		return 1;
++	}
++}
++
++static struct passwd pwgr_pw;
++static char pwgr_pwline[PWGR_LINE];
++
++static struct passwd *
++pwgr_nextpw(FILE *fp)
++{
++	char *cp, *age;
++
++	if (!pwgr_line(fp, pwgr_pwline, (int)sizeof(pwgr_pwline)))
++		return NULL;
++	memset((void *)&pwgr_pw, 0, sizeof(pwgr_pw));
++	cp = pwgr_pwline;
++	pwgr_pw.pw_name = pwgr_field(&cp);
++	pwgr_pw.pw_passwd = pwgr_field(&cp);
++	pwgr_pw.pw_uid = (uid_t)atol(pwgr_field(&cp));
++	pwgr_pw.pw_gid = (gid_t)atol(pwgr_field(&cp));
++	pwgr_pw.pw_gecos = pwgr_field(&cp);
++	pwgr_pw.pw_dir = pwgr_field(&cp);
++	pwgr_pw.pw_shell = pwgr_field(&cp);
++	/* SVR4 password aging rides in the password field after a comma. */
++	age = strchr(pwgr_pw.pw_passwd, ',');
++	if (age != NULL) {
++		*age = '\0';
++		pwgr_pw.pw_age = age + 1;
++	} else {
++		pwgr_pw.pw_age = "";
++	}
++	pwgr_pw.pw_comment = pwgr_pw.pw_gecos;
++	return &pwgr_pw;
++}
++
++static struct group pwgr_gr;
++static char pwgr_grline[PWGR_LINE];
++static char *pwgr_memb[PWGR_MEMB + 1];
++
++static struct group *
++pwgr_nextgr(FILE *fp)
++{
++	char *cp, *m, *p;
++	int i;
++
++	if (!pwgr_line(fp, pwgr_grline, (int)sizeof(pwgr_grline)))
++		return NULL;
++	memset((void *)&pwgr_gr, 0, sizeof(pwgr_gr));
++	cp = pwgr_grline;
++	pwgr_gr.gr_name = pwgr_field(&cp);
++	pwgr_gr.gr_passwd = pwgr_field(&cp);
++	pwgr_gr.gr_gid = (gid_t)atol(pwgr_field(&cp));
++	m = pwgr_field(&cp);
++	i = 0;
++	while (*m != '\0' && i < PWGR_MEMB) {
++		pwgr_memb[i++] = m;
++		p = strchr(m, ',');
++		if (p == NULL)
++			break;
++		*p = '\0';
++		m = p + 1;
++	}
++	pwgr_memb[i] = NULL;
++	pwgr_gr.gr_mem = pwgr_memb;
++	return &pwgr_gr;
++}
++
++struct passwd *
++getpwnam(const char *name)
++{
++	FILE *fp;
++	struct passwd *pw;
++
++	if (name == NULL || (fp = fopen("/etc/passwd", "r")) == NULL)
++		return NULL;
++	while ((pw = pwgr_nextpw(fp)) != NULL)
++		if (strcmp(pw->pw_name, name) == 0)
++			break;
++	(void)fclose(fp);
++	return pw;
++}
++
++struct passwd *
++getpwuid(uid_t uid)
++{
++	FILE *fp;
++	struct passwd *pw;
++
++	if ((fp = fopen("/etc/passwd", "r")) == NULL)
++		return NULL;
++	while ((pw = pwgr_nextpw(fp)) != NULL)
++		if (pw->pw_uid == uid)
++			break;
++	(void)fclose(fp);
++	return pw;
++}
++
++struct group *
++getgrnam(const char *name)
++{
++	FILE *fp;
++	struct group *gr;
++
++	if (name == NULL || (fp = fopen("/etc/group", "r")) == NULL)
++		return NULL;
++	while ((gr = pwgr_nextgr(fp)) != NULL)
++		if (strcmp(gr->gr_name, name) == 0)
++			break;
++	(void)fclose(fp);
++	return gr;
++}
++
++struct group *
++getgrgid(gid_t gid)
++{
++	FILE *fp;
++	struct group *gr;
++
++	if ((fp = fopen("/etc/group", "r")) == NULL)
++		return NULL;
++	while ((gr = pwgr_nextgr(fp)) != NULL)
++		if (gr->gr_gid == gid)
++			break;
++	(void)fclose(fp);
++	return gr;
++}
++
++/* The passwd file in order, for programs that list users. */
++static FILE *pwgr_pwfp;
++
++void
++setpwent(void)
++{
++	if (pwgr_pwfp != NULL)
++		rewind(pwgr_pwfp);
++}
++
++struct passwd *
++getpwent(void)
++{
++	if (pwgr_pwfp == NULL && (pwgr_pwfp = fopen("/etc/passwd", "r")) == NULL)
++		return NULL;
++	return pwgr_nextpw(pwgr_pwfp);
++}
++
++void
++endpwent(void)
++{
++	if (pwgr_pwfp != NULL)
++		(void)fclose(pwgr_pwfp);
++	pwgr_pwfp = NULL;
++}

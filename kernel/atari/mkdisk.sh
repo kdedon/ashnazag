@@ -41,8 +41,10 @@
 # ALLENV=1: TOSENV and MACENV, plus every environment the Mac image
 # carries, set up from the user's media as there (images/envpkg/envmedia.sh):
 # Mac 7.6.1 and 8.1 (AUXROOT, CD761, CD81, ROM file AUXROM, default the
-# Quadra 800's), Amiga (AMIGASTAGE), Lisa, NeXT, Voyage 200; DISKMB
-# defaults to 2048, ROOTMB to 1024.
+# Quadra 800's), Amiga (AMIGASTAGE), Lisa, NeXT, Voyage 200, and with X11
+# CDE (XPKGS gains cde); DISKMB defaults to 1024, ROOTMB to 320.
+# XPKGS with cde adds CDEMB (default 144) to ROOTMB's default and needs a
+# 68040 or 68060 kernel.
 # With X11, TOSENV or MACENV, guest is in group display.
 # /etc/motd lists what the image holds and how to start it.
 # The tape segments come from the Mac build or $AMIX_TAPE.
@@ -54,10 +56,17 @@ DR=$K/mac/diskroot
 KERNEL=${1:-$K/build/unix-atari030.elf}
 W=$K/build/atari/disk
 OUT=${2:-$W/falcon-disk.img}
+rootset=${ROOTMB:+1}
 if [ "$ALLENV" = 1 ]; then
 	TOSENV=1 MACENV=1
-	DISKMB=${DISKMB:-2048} ROOTMB=${ROOTMB:-1024}
+	[ -z "$X11" ] || case " $XPKGS " in *" cde "*) ;; *) XPKGS="$XPKGS cde" ;; esac
+	DISKMB=${DISKMB:-1024} ROOTMB=${ROOTMB:-320}
 fi
+case " $XPKGS " in
+*" cde "*)
+	case $KERNEL in *030*) echo "[FAIL] CDE needs a 68040 or 68060 kernel"; exit 1 ;; esac
+	[ -n "$rootset" ] || ROOTMB=$((${ROOTMB:-128} + ${CDEMB:-144})) ;;
+esac
 DISKMB=${DISKMB:-512}
 ROOTMB=${ROOTMB:-128}
 SWAPMB=${SWAPMB:-64}
@@ -146,9 +155,15 @@ if [ -n "$X11" ]; then
 	# xdm's server takes the options file too
 	sed 's, /usr/x11r6/bin/Xamix , /usr/x11r6/lib/X11/xdm/Xserver ,' "$X11/xdm/Xservers" > "$W/src/build/Xservers"
 	grep -q xdm/Xserver "$W/src/build/Xservers"
-	if [ "$BOOTX" = 1 ]; then
-		sed 's/^BOOT=.*/BOOT=xdm/' "$X11/xdm/default-x" > "$W/src/build/default-x"
+	cde=; case " $XPKGS " in *" cde "*) cde=1 ;; esac; bx=; [ "$BOOTX" = 1 ] && bx=1
+	if [ "$BOOTX" = 1 ] || [ -n "$cde" ]; then
+		# with CDE, startx and xsession default to it
+		sed "${bx:+s/^BOOT=.*/BOOT=xdm/}" "$X11/xdm/default-x" | { [ -z "$cde" ] && cat || { grep -v '^SESSION='; echo SESSION=cde; }; } > "$W/src/build/default-x"
 		echo 'f /etc/default/x 644 0 3 build/default-x' >> "$W/root.manifest"
+	fi
+	if [ -n "$cde" ]; then
+		printf '#!/bin/sh\nexec /usr/dt/bin/Xsession\n' > "$W/src/build/xinitrc"
+		echo 'f /usr/x11r6/lib/X11/xinit/xinitrc 644 0 3 build/xinitrc' >> "$W/root.manifest"
 	fi
 	for p in $XPKGS; do
 		f=$X11/../$p/$(echo "$p" | tr a-z A-Z).pkg
@@ -206,7 +221,7 @@ if [ -n "$APKG" ]; then
 	esac
 	ip=$(getent hosts pkg.amigaux.org | awk '{ print $1; exit }')
 	[ -n "$ip" ] || { echo "[FAIL] cannot resolve pkg.amigaux.org"; exit 1; }
-	(cd "$W/src/build" && cpio -i --quiet --to-stdout etc/inet/hosts < tape/02) > "$W/xpkgs/hosts"
+	cpio -i --quiet --to-stdout etc/inet/hosts < "${AMIX_TAPE:-$W/src/build/tape}/02" > "$W/xpkgs/hosts"
 	printf '%s\tpkg.amigaux.org\n' "$ip" >> "$W/xpkgs/hosts"
 	printf 'f /etc/inet/hosts 444 0 3 %s\nd /usr/local 755 0 3\nd /usr/local/bin 755 0 3\n' \
 		"$W/xpkgs/hosts" >> "$W/root.manifest"

@@ -15,18 +15,32 @@
 extern int idepresent(), idequeue(), sd_attach();
 extern void ideintr(), dlm_cachepush();
 extern void (*int2_tbl[])();
+/* RAM above the kernel's region: its bus and kernel addresses differ */
+__asm__(".weak hr_tobus");
+__asm__(".weak hr_tokern");
+extern unsigned long hr_tobus(), hr_tokern();
+static unsigned long (*__volatile__ ide_tobus)() = hr_tobus;
+static unsigned long (*__volatile__ ide_tokern)() = hr_tokern;
 
 /* ide.c runs interrupt driven only when it finds itself in this table */
 void (*ide_int2_tbl[])() = { ideintr, 0 };
 
 static void (*int2_prev)();
 
-/* PIO goes through the uncached identity window; keep the cache out of it */
+/*
+ * PIO goes through the uncached one to one view, at the buffer's kernel
+ * address; keep the cache out of it.
+ */
 static bool
 ideq(c, cp)
 struct sdcom *cp;
 {
-	dlm_cachepush(cp->addr, cp->nbyte);
+	if (ide_tobus) {
+		cp->addr = (caddr_t)(*ide_tobus)(cp->addr);
+		dlm_cachepush(cp->addr, cp->nbyte);
+		cp->addr = (caddr_t)(*ide_tokern)(cp->addr);
+	} else
+		dlm_cachepush(cp->addr, cp->nbyte);
 	return idequeue(c, cp);
 }
 

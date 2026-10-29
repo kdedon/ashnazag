@@ -13,6 +13,9 @@ extern void pagezero(), ppcopy(), dlm_cacheflush();
 __asm__(".weak hat_cm_ram");
 extern long hat_cm_ram;
 static long *__volatile__ gm_hat4k = &hat_cm_ram;
+__asm__(".weak hr_tobus");
+extern unsigned long hr_tobus();
+static unsigned long (*__volatile__ gm_tobus)() = hr_tobus;
 
 
 static unsigned long
@@ -240,7 +243,7 @@ unsigned long off, len, limit, *out;
 			}
 			for (i = first; i <= last; i++)
 				m->dma[i] = 1;
-			*out = pa;
+			*out = gm_tobus ? (*gm_tobus)(pa) : pa;
 			return 0;
 		}
 	}
@@ -275,6 +278,7 @@ unsigned long off, len, limit, *out;
 	}
 	gm_uncharge(m, extra);
 	dlm_cacheflush();
-	*out = (gm_pfn(p) << m->shift) + (off & ((1UL << m->shift) - 1));
+	pa = (gm_pfn(p) << m->shift) + (off & ((1UL << m->shift) - 1));
+	*out = gm_tobus ? (*gm_tobus)(pa) : pa;
 	return 0;
 }

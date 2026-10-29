@@ -2,8 +2,9 @@
 # build.sh BASE OUTDIR -- compiles OUTDIR/vm.o for the AMIX base BASE and
 # prints the objcopy flags that let it replace the stock functions:
 # virtual swap (swapadd, swapdel, swap_free, anon_resv, anon_unresv) on every kernel, a heap
-# that grows (sptalloc, sptfree) on the 68040/68060 ones; /dev/kmem
-# holes (mmrw) on every kernel.
+# that grows (sptalloc, sptfree) and kernel segment PTEs that hold bus
+# frames (segkmem_*) on the 68040/68060 ones; /dev/kmem holes (mmrw) on
+# every kernel.
 # VM_CHAIN: functions the caller already wraps, its wrappers calling
 # __amix_<name>; ours become __amix_<name> and the caller weakens.
 # Needs the AMIX cross environment and PATH of the relink scripts.
@@ -18,8 +19,10 @@ m68k-cbm-sysv4-ld -r -o "$W/kmem.o" "$W/kmem1.o" "$W/kmemlen.o" >&2
 if m68k-linux-gnu-nm "$BASE" | grep -q ' [DdBb] kptr040$'; then
 	$CC -DVS_PGSHIFT=12 -c "$V/vswap.c" -o "$W/vswap.o" >&2
 	$CC -c "$V/kheap.c" -o "$W/kheap.o" >&2
-	m68k-cbm-sysv4-ld -r -o "$W/vm.o" "$W/vswap.o" "$W/kheap.o" "$W/kmem.o" >&2
+	$CC -c "$V/kseg.c" -o "$W/kseg.o" >&2
+	m68k-cbm-sysv4-ld -r -o "$W/vm.o" "$W/vswap.o" "$W/kheap.o" "$W/kseg.o" "$W/kmem.o" >&2
 	FN="$FN sptalloc:T sptfree:T kmem_alloc:T"
+	FN="$FN segkmem_alloc:T segkmem_free:T segkmem_mapin:T segkmem_mapout:T"
 else
 	$CC -DVS_PGSHIFT=11 -c "$V/vswap.c" -o "$W/vswap.o" >&2
 	m68k-cbm-sysv4-ld -r -o "$W/vm.o" "$W/vswap.o" "$W/kmem.o" >&2

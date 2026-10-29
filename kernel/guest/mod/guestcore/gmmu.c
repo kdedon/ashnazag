@@ -35,6 +35,14 @@ static long *__volatile__ gmu_hat4k = &hat_cm_ram;
 __asm__(".weak cputype");
 extern long gmu_cputype __asm__("cputype");
 static long *__volatile__ gmu_cpu = &gmu_cputype;
+/* frames of RAM placed above the kernel's: bus and kernel addresses differ */
+__asm__(".weak hr_tobus");
+__asm__(".weak hr_tokern");
+extern unsigned long hr_tobus(), hr_tokern();
+static unsigned long (*__volatile__ gmu_tobus)() = hr_tobus;
+static unsigned long (*__volatile__ gmu_tokern)() = hr_tokern;
+#define	TOBUS(a)	(gmu_tobus ? (*gmu_tobus)(a) : (a))
+#define	TOKERN(a)	(gmu_tokern ? (*gmu_tokern)(a) : (a))
 
 unsigned long guest_cflush_all = 0, guest_cflush_scoped = 0;	/* guest cache instructions: whole caches, lines or pages */
 
@@ -195,10 +203,10 @@ leaf(as, a)
 
 	if (!root || !((d = root[a >> 25]) & 2))
 		return 0;
-	d = ((unsigned long *)(d & ~0x1ffUL))[a >> 18 & 0x7f];
+	d = ((unsigned long *)TOKERN(d & ~0x1ffUL))[a >> 18 & 0x7f];
 	if (!(d & 2))
 		return 0;
-	return (unsigned long *)(d & ~0xffUL) + (a >> 12 & 0x3f);
+	return (unsigned long *)TOKERN(d & ~0xffUL) + (a >> 12 & 0x3f);
 }
 
 /* the host frame at a in the process, or -1 */
@@ -211,7 +219,7 @@ hostpfn(as, a)
 
 	if (!d || !(*d & 1))
 		return -1;
-	return (long)((*d & ~(HP - 1)) / HP);
+	return (long)(TOKERN(*d & ~(HP - 1)) / HP);
 }
 
 /*
@@ -590,7 +598,7 @@ fill(seg, m, va, rw, lock)
 		if ((d = pte(m, &m->sp[m->cur], va, 1, &dpa)) == 0)
 			return FC_NOMAP;
 	}
-	*d = (unsigned long)pf * HP | cm | 8 | (mod ? 0x10 : 4) | (m->glob ? GL : 0) | 1;
+	*d = TOBUS((unsigned long)pf * HP) | cm | 8 | (mod ? 0x10 : 4) | (m->glob ? GL : 0) | 1;
 	if (!m->glob)
 		m->sp[m->cur].local = 1;
 	hcpush(dpa, 1, 0);

@@ -72,17 +72,48 @@ mark1:
 	WRAP	page_init 0x15
 	WRAP	memialloc 0x16
 	WRAP	kmem_init 0x17
-	WRAP	seg_alloc 0x18
 	WRAP	segmap_create 0x19
 	WRAP	segu_create 0x1a
 	WRAP	dispinit 0x1b
 	WRAP	hrtinit 0x1c
 	WRAP	itinit 0x1d
 	WRAP	pid_init 0x1e
-	WRAP	svirtophys 0x1f
-	WRAP	vstart 0x20
 	WRAP	mlsetup 0x21
 	WRAP	figuredisplaytype 0x22
+
+| seg_alloc(as, base, size): segmap ends where the u-areas start
+	.globl	seg_alloc
+seg_alloc:
+	MARK	0x18
+	cmpil	&kvsegmap,%sp@(8)
+	bnes	1f
+	movel	&kvsegu,%d0
+	subl	&kvsegmap,%d0
+	cmpl	%sp@(12),%d0
+	bccs	1f
+	movel	%d0,%sp@(12)
+1:	jmp	__amix_seg_alloc
+
+| svirtophys(va): the bus address
+	.globl	svirtophys
+svirtophys:
+	MARK	0x1f
+	movel	%sp@(4),%sp@-
+	jsr	__amix_svirtophys
+	movel	%d0,%sp@
+	jsr	hr_tobus
+	addql	&4,%sp
+	moveal	%d0,%a0
+	rts
+
+| vstart: RAM above the kernel's region is mapped first
+	.globl	vstart
+vstart:
+	MARK	0x20
+	moveml	%d0-%d1/%a0-%a1,%sp@-
+	jsr	amiga_hrmap
+	moveml	%sp@+,%d0-%d1/%a0-%a1
+	jmp	__amix_vstart
 
 | the pstart trace letters ('A' entry, 'B' tables built, 'C' MMU on,
 | 'D' caches on, 'E'-'H' vstart, mlsetup, svirtophys)

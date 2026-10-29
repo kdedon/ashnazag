@@ -1,0 +1,3 @@
+# mistrtg: the MiSTer Minimig core's RTG board as the display service's screen
+$modtype misc
+mistrtg	mistrtg	m	0	0	0

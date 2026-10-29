@@ -98,7 +98,12 @@ done
 DISPLAY=:0
 export DISPLAY
 # client messages, including the broken-connection errors from clients
-# still open when the server stops, go to the session log, not the console
-sh $client > $HOME/.xsession-errors 2>&1
+# still open when the server stops, go to the session log, not the console;
+# an executable client runs under its own interpreter
+if [ -x $client ]; then
+	$client > $HOME/.xsession-errors 2>&1
+else
+	sh $client > $HOME/.xsession-errors 2>&1
+fi
 kill $server 2>/dev/null
 wait

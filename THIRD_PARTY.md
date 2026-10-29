@@ -12,6 +12,7 @@ The repository is MIT (`LICENSE`). Components below keep their own licences and 
 | hmlio `amix-gayle-ide` | `kernel/amiga/ide` | MIT, Copyright (c) 2026 Emre Bastuz (`kernel/amiga/ide/LICENSE`) |
 | jusii `amix-cdfs` | fetched at a pinned commit; glue `kernel/fs/cdfs` | BSD 2-clause, Copyright (c) 2026 Stefan Reinauer, Jussi Alanärä. Built as a loadable module only |
 | ZZ9000 driver | `kernel/amiga/zz9000` | MIT, Copyright (c) 2026 Ignacio Soriano (`LICENSE`) |
+| isoriano1968 `paula-amix` | `kernel/amiga/paula` (`paula.c`, `paula.h`, `paulatest.c`) | MIT, Copyright (c) 2026 isoriano1968 (`LICENSE`) |
 | Radeon init tables | `kernel/amiga/radeon/rdsinit.c` | MIT. Copyright 2004 ATI Technologies, 2007-8 Advanced Micro Devices, 2008 Red Hat. Notice in the file |
 | NetBSD m68k FPE | fetched at build from a pinned NetBSD tarball; glue `fpe_glue.c`, `fpe040.s` | BSD, see below |
 | Motorola M68040/M68060 software packages (FPSP, ISP) | fetched at build from the pinned NetBSD tarball; glue in the port and `kernel/port-isp060.diff` | Copyright Motorola Inc., see below |

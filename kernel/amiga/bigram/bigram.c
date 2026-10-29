@@ -6,9 +6,9 @@
  *	mknod /dev/dsk/bigram b <major> 0	(the major is printed at load)
  *	swap -a /dev/dsk/bigram 0 <blocks>	(512-byte blocks; swap -l lists KB)
  *
- * The kernel uses RAM only in the low gigabyte, so a Zorro III memory
- * board is free for this.  At load the module maps the largest such
- * board and claims a free row of bdevsw, as the floppy service hooks
+ * A Zorro III memory board the kernel did not take as main memory is
+ * free for this.  At load the module maps the largest such board and
+ * claims a free row of bdevsw, as the floppy service hooks
  * its row; unload gives the row back unless the device is open.
  * Requests are copies to and from the board through its uncached
  * supervisor mapping.
@@ -30,6 +30,11 @@
 extern int nodev(), nulldev(), printf(), plat_zorro();
 extern char *plat_iomap();
 extern void bcopy(), biodone(), bp_mapin(), bp_mapout();
+/* the bus span of RAM the kernel took as main memory */
+__asm__(".weak hr_blo");
+__asm__(".weak hr_bhi");
+extern unsigned long hr_blo, hr_bhi;
+static unsigned long *__volatile__ br_hrlo = &hr_blo, *__volatile__ br_hrhi = &hr_bhi;
 
 #define	BR_FIRSTROW	21		/* rows 0-15 and 21-31 are free in the AMIX table */
 #define	ERTF_MEMLIST	0x20
@@ -122,7 +127,8 @@ bigram_load()
 	 * Never an Elbox board: a Mediator's PCI window is not RAM. */
 	for (i = 0; plat_zorro(i, &zb) == 0; i++) {
 		if (!(zb.zb_type & ERTF_MEMLIST) || zb.zb_manuf == 2206 ||
-		    zb.zb_pa < 0x40000000UL || zb.zb_pa >= 0x80000000UL || zb.zb_size < BR_MINSIZE)
+		    zb.zb_pa < 0x40000000UL || zb.zb_pa >= 0x80000000UL || zb.zb_size < BR_MINSIZE ||
+		    (br_hrlo && zb.zb_pa < *br_hrhi && zb.zb_pa + zb.zb_size > *br_hrlo))
 			continue;
 		if (zb.zb_manuf == 4626 && zb.zb_prod == 134) {
 			br_pa = zb.zb_pa;

@@ -9,12 +9,12 @@
 # UNIX_Root ufs = c6d0s1, UNIX_Swap = c6d0s2) and outdir/boot/, the
 # AmigaDOS volume: S/Startup-Sequence runs unix_boot040 on the kernel.
 # A login runs on the serial port.  The root holds the amilib, opci, pci
-# ne, xsurf, zz9000, voodoo3, tdfx, radeonds, radeon, floppy, v3bars and bigram modules (floppy loaded at boot, bigram as swap when there is Zorro III RAM above 1 GB, the first of zz9000, voodoo3 and radeonds found, order in /etc/default/display), modadmin, lspci and pci.ids, fltool, tcpcat, drmtest, fbbench, fbmode, memhog, drmkill, radeontest, /dev/pci, /dev/ne0, /dev/dri/card0 (tdfx) and card1 (radeon), registered at
+# ne, xsurf, mistrtg, zz9000, voodoo3, tdfx, radeonds, radeon, floppy, v3bars, bigram and paula modules (floppy loaded at boot, bigram as swap when there is Zorro III RAM above 1 GB, the first of mistrtg, zz9000, voodoo3 and radeonds found, order in /etc/default/display), modadmin, lspci and pci.ids, fltool, tcpcat, drmtest, fbbench, fbmode, memhog, paulatest, drmkill, radeontest, /dev/pci, /dev/ne0, /dev/paula, /dev/dri/card0 (tdfx) and card1 (radeon), registered at
 # run level 2; ne0 comes up as 10.0.2.15 (Amiberry's user-mode network).
 # AMIX_TAPE: tape segments (default media/amix-tape).  UNIXBOOT: the
 # unix_boot040 executable.  OPENPCI: openpci's unpacked archive (Libs/
 # openpci.library, ENVARC/PCI-Configuration).  ROOTMB (default 128),
-# SWAPMB (default 32).
+# SWAPMB (default 32; maximig 512).
 # LOADBASE: where the loader puts the kernel (default 0x08000000, the
 # A3000's accelerator RAM); /stand/unix is linked there.
 # PKG: stage.sh's outdir, for the display module and the environment
@@ -23,6 +23,9 @@
 # (images/ports).  AMIGAENV:
 # mkamiga.sh's outdir, for Kickstart, the floppies and SYS:.  X11PKG:
 # x11/package.sh's pkg directory; X and the tape's clients are installed.
+# CDEPKG: x11/cde/build.sh's CDE.pkg (with X11PKG); CDE is the default
+# X session (startx, and xsession's first choice); ROOTMB's default grows
+# by CDEMB (default 144).
 # GLBIN: gl/build.sh's bin directory; its dritest, glprobe, glxgears, miptest
 # and swaptest go to /usr/x11r6/bin (with X11PKG), libGL.so to /usr/x11r6/lib
 # and the DRI drivers to /usr/x11r6/lib/modules/dri.
@@ -34,7 +37,8 @@
 # console and in /tmp/autorun.out.
 # HOST: a3000 (default; SCSI unit 6, AmigaDOS boots from outdir/boot/) or
 # a4000 (IDE master, which also answers as unit 6; the AmigaDOS volume is
-# a bootable FFS partition AmigaBoot after the AMIX ones, s3).
+# a bootable FFS partition AmigaBoot after the AMIX ones, s3), or maximig
+# (an a4000 loading the kernel into motherboard RAM, LOADBASE 0x07000000).
 # ROOTBUS: empty (default; root on the host's own controller, c6d0) or
 # ncr770: a CyberStorm PPC or MK III's SCSI, target CSPPCID (default 0),
 # root c<8+id>d0s1 (c8d0s1), swap s2; outdir/boot/ is made as for an a3000 and both boot volumes
@@ -50,12 +54,14 @@ DR=$K/mac/diskroot
 KERNEL=${1:-$K/build/unix-amiga}
 O=${2:-$K/build/amiga/hdf}
 TAPE=${AMIX_TAPE:-$AUX/media/amix-tape}
+[ -z "$CDEPKG" ] || ROOTMB=${ROOTMB:-$((128 + ${CDEMB:-144}))}
 ROOTMB=${ROOTMB:-128}
-LOADBASE=${LOADBASE:-0x08000000}
 case ${HOST:=a3000} in
 a3000|a4000) ;;
-*) echo "[FAIL] HOST: a3000 or a4000"; exit 1 ;;
+maximig) HOST=a4000; LOADBASE=${LOADBASE:-0x07000000} SWAPMB=${SWAPMB:-512} ;;
+*) echo "[FAIL] HOST: a3000, a4000 or maximig"; exit 1 ;;
 esac
+LOADBASE=${LOADBASE:-0x08000000}
 case ${ROOTBUS:=} in
 '') D=c6 ;;
 ncr770) CSPPCID=${CSPPCID:-0}; D=c$(printf %x $((8 + CSPPCID))) ;;
@@ -97,7 +103,7 @@ then /sbin/modadmin -r sdev xsurf 61 >/dev/null && /sbin/modadmin -l xsurf >/dev
 else /sbin/modadmin -r sdev ne 61 >/dev/null
 fi
 /sbin/modadmin -r cdev zz9000 49 >/dev/null
-CARDS="zz9000 voodoo3 radeonds"
+CARDS="mistrtg zz9000 voodoo3 radeonds"
 [ -f /etc/default/display ] && . /etc/default/display
 for m in $CARDS
 do /sbin/modadmin -l $m >/dev/null 2>&1 && break
@@ -105,11 +111,12 @@ done
 /sbin/modadmin -r cdev tdfx 63 >/dev/null
 /sbin/modadmin -r cdev radeon 66 >/dev/null
 /sbin/modadmin -r cdev floppy 62 >/dev/null
+/sbin/modadmin -r cdev paula 64 >/dev/null
 /sbin/modadmin -l floppy >/dev/null
 DLM
 cat > "$S/display" <<'DSP'
 # Display cards by preference: the first found drives the screen.
-CARDS="zz9000 voodoo3 radeonds"
+CARDS="mistrtg zz9000 voodoo3 radeonds"
 # The Amiga Workbench's depth where the card has it: 8, 16 or 32;
 # empty keeps its ScreenMode preferences.
 DEPTH=16
@@ -147,6 +154,7 @@ $CC -c -o "$S/bin/tcpcat.o" "$A/test/tcpcat.c"
 m68k-cbm-sysv4-ld -o "$S/bin/tcpcat" "$SYS/usr/ccs/lib/crt1.o" "$SYS/usr/ccs/lib/crti.o" \
 	"$S/bin/tcpcat.o" -L"$SYS/usr/lib" -lsocket -lnsl "$SYS/usr/lib/libc.so.1" "$S/libextra.a" \
 	$(ls "$AMIX_CROSS_PREFIX"/lib/gcc-lib/m68k-cbm-sysv4/*/libgcc.a | tail -1) "$SYS/usr/ccs/lib/crtn.o"
+$CC -Dgettimeofday=_gettimeofday -o "$S/bin/paulatest" "$A/paula/paulatest.c" "$S/libextra.a"
 cp "$OPENPCI/Libs/openpci.library" "$S/openpci.library"
 CONF=
 if [ -f "$OPENPCI/ENVARC/PCI-Configuration" ]; then
@@ -165,11 +173,19 @@ if [ -n "$PKG" ]; then
 	ENV=$(sed -e "s, etc/conf/mod.d/, $PKG/root/etc/conf/mod.d/," "$PKG/root.manifest.add")
 	ENVPKG=${ENVPKG:-$PKG/envpkg}
 fi
+pk=
 if [ -n "$ENVPKG" ]; then
 	EP=$(cd "$ENVPKG/pkgs/env" && pwd)
-	ENV="$ENV
-`$PY "$DR/pkg/pkginst.py" "$S/pkgs" $(ls "$EP"/*.pkg | grep -v macnet) $(sh "$AUX/images/ports/cached.sh")`"
+	pk="$(ls "$EP"/*.pkg | grep -v macnet) $(sh "$AUX/images/ports/cached.sh")"
 fi
+if [ -n "$CDEPKG" ]; then
+	[ -n "$X11PKG" ] || { echo "[FAIL] CDEPKG needs X11PKG"; exit 1; }
+	pk="$pk $(cd "$(dirname "$CDEPKG")" && pwd)/$(basename "$CDEPKG")"
+	printf '#!/bin/sh\nexec /usr/dt/bin/Xsession\n' > "$S/xinitrc"
+	{ grep -v '^SESSION=' "$AUX/x11/session/xdm/default-x"; echo SESSION=cde; } > "$S/default-x"
+fi
+[ -z "$pk" ] || ENV="$ENV
+`$PY "$DR/pkg/pkginst.py" "$S/pkgs" $pk`"
 if [ -n "$AMIGAENV" ]; then
 	AE=$(cd "$AMIGAENV/root" && pwd)
 	rm -rf "$S/amigasys"
@@ -208,6 +224,9 @@ if [ -n "$X11PKG" ]; then
 a tape/13
 a tape/14
 `grep -v '^f /etc/inittab ' "$XP/x11.manifest" | sed -e "s, x11pkg/, $XP/,"`"
+	[ -z "$CDEPKG" ] || ENV="$ENV
+f /usr/x11r6/lib/X11/xinit/xinitrc 644 0 3 xinitrc
+f /etc/default/x 644 0 3 default-x"
 	if [ -n "$GLBIN" ] && [ -f "$GLBIN/../lib/libGL.so" ]; then
 		ENV="$ENV
 d /usr/x11r6/lib/modules 755 2 2
@@ -251,6 +270,7 @@ f /usr/bin/fltool 555 2 2 bin/fltool
 f /usr/bin/tcpcat 555 2 2 bin/tcpcat
 f /usr/bin/kread 555 2 2 bin/kread
 f /usr/bin/memhog 555 2 2 bin/memhog
+f /usr/bin/paulatest 555 2 2 bin/paulatest
 f /usr/bin/drmtest 555 2 2 bin/drmtest
 f /usr/bin/fbbench 555 2 2 bin/fbbench
 f /usr/bin/fbmode 555 2 2 bin/fbmode
@@ -269,6 +289,7 @@ f /etc/conf/mod.d/opci 644 0 3 mods/mod.d/opci
 f /etc/conf/mod.d/pci 644 0 3 mods/mod.d/pci
 f /etc/conf/mod.d/ne 644 0 3 mods/mod.d/ne
 f /etc/conf/mod.d/xsurf 644 0 3 mods/mod.d/xsurf
+f /etc/conf/mod.d/mistrtg 644 0 3 mods/mod.d/mistrtg
 f /etc/conf/mod.d/zz9000 644 0 3 mods/mod.d/zz9000
 f /etc/conf/mod.d/voodoo3 644 0 3 mods/mod.d/voodoo3
 f /etc/conf/mod.d/tdfx 644 0 3 mods/mod.d/tdfx
@@ -277,6 +298,7 @@ f /etc/conf/mod.d/radeon 644 0 3 mods/mod.d/radeon
 f /etc/conf/mod.d/floppy 644 0 3 mods/mod.d/floppy
 f /etc/conf/mod.d/v3bars 644 0 3 mods/mod.d/v3bars
 f /etc/conf/mod.d/bigram 644 0 3 mods/mod.d/bigram
+f /etc/conf/mod.d/paula 644 0 3 mods/mod.d/paula
 f /etc/conf/mod.d/amigaide 644 0 3 $BM/amigaide
 f /etc/conf/mod.d/ncr770 644 0 3 $BM/ncr770
 c /dev/floppy0 666 0 3 62 0
@@ -284,6 +306,8 @@ c /dev/floppy1 666 0 3 62 1
 c /dev/floppy2 666 0 3 62 2
 c /dev/floppy3 666 0 3 62 3
 c /dev/zz9000 660 0 25 49 0
+c /dev/paula 666 0 3 64 0
+c /dev/audio 666 0 3 46 0
 d /dev/dri 755 0 3
 c /dev/dri/card0 660 0 25 63 0
 c /dev/dri/card1 660 0 25 66 0

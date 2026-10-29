@@ -1,0 +1,11 @@
+--- a/config/cf/host.def
++++ b/config/cf/host.def
+@@ -81,7 +81,7 @@
+  *   imports/motif/include, lib -> AmixSysroot/usr/motif/...
+  * X11ProjectRoot/MotifProjectRoot are the paths on the AMIX machine.
+  */
+-#define X11ProjectRoot		/usr/x11r6/xc/exports
++#define X11ProjectRoot		/usr/X
+ /* where the build finds the imported Motif archives (Motif.tmpl defaults to exports/lib) */
+ #define MBuildLibDir		$(TOP)/imports/motif/lib
+ #define MotifProjectRoot	/usr/motif

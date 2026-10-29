@@ -1,0 +1,40 @@
+XCOMM X11R6.3 client libraries for CDE, static, built with gcc14-cross-amix.
+XCOMM Included at the start of site.def's AfterVendorCF half.
+
+#define CrossCompiling YES
+
+#undef CcCmd
+#define CcCmd @GCC14@/bin/m68k-elf-gcc
+#undef DefaultCCOptions
+#define DefaultCCOptions -std=gnu89 -fno-strict-aliasing -fcommon -w
+#undef DefaultCDebugFlags
+#define DefaultCDebugFlags -O1
+#undef OptimizedCDebugFlags
+#define OptimizedCDebugFlags -O1
+#undef ArCmdBase
+#define ArCmdBase @GCC14@/bin/m68k-elf-ar
+#undef AsCmd
+#define AsCmd @GCC14@/bin/m68k-elf-as
+#undef LdCmd
+#define LdCmd @GCC14@/bin/m68k-elf-ld
+#define RanlibCmd @GCC14@/bin/m68k-elf-ranlib
+#define DoRanlibCmd YES
+#undef CppCmd
+#define CppCmd /usr/bin/cpp -traditional
+#undef PreProcessCmd
+#define PreProcessCmd /usr/bin/cpp -traditional
+#define DependCmd true
+
+#undef HasSharedLibraries
+#define HasSharedLibraries NO
+#undef ForceNormalLib
+#define ForceNormalLib YES
+
+#define BuildServer NO
+#define XnestServer NO
+#define XprtServer NO
+#define BuildXprint NO
+#define BuildLBX NO
+#define BuildXIE NO
+#undef BuildPexExt
+#define BuildPexExt NO

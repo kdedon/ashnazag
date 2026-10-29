@@ -531,10 +531,11 @@ macsnd(int a, int version)
 		if ((fd = open(tout, O_RDONLY)) >= 0) {
 			n = read(fd, line, sizeof line - 1);
 			close(fd);
+			/* since t0: the clock in ms wraps negative */
 			if (n > 0 && tpart < 0)
-				tpart = t_now_ms();
+				tpart = t_now_ms() - t0;
 			if (n > 0 && line[n - 1] == '\n') {
-				tdone = t_now_ms();
+				tdone = t_now_ms() - t0;
 				break;
 			}
 		}

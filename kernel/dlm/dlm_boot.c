@@ -147,6 +147,18 @@ dlm_bootpack(lo, hi, copy)
 	return top;
 }
 
+/* placed modules in [lo, hi) are reached at their address plus d once the MMU is on */
+void
+dlm_bootrebase(lo, hi, d)
+	unsigned long lo, hi, d;
+{
+	int i;
+
+	for (i = 0; i < nbm; i++)
+		if (bmst[i] == BM_PLACED && bm[i].bm_addr >= lo && bm[i].bm_addr < hi)
+			bm[i].bm_addr += d;
+}
+
 /* the module of that name while the boot modules link, else 0 */
 struct bootmod *
 dlm_bootfind(name)

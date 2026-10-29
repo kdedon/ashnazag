@@ -23,9 +23,12 @@ extern void __amix_aciabintr();
 extern int autocon();
 extern unsigned long VSIZOFMEM, MAINSTORE, dlm_bootpack();
 extern char end[];
-extern void amiga_boottab();
+extern void amiga_boottab(), dlm_bootrebase();
+extern unsigned long hr_n, hr_plo, hr_phi, hr_blo, hr_bhi, hr_seg[];
+extern unsigned long hr_tobus(), hr_tokern();
+extern unsigned long kroot040, hat_cm_ram, kh_alias;
 
-#define MAXMEM	0x8000000		/* more and segu cannot be allocated */
+#define MAXMEM	0x8000000		/* the page array's limit without highram() */
 
 #define INTENA	(*(__volatile__ unsigned short *)0xDFF09A)
 
@@ -130,9 +133,150 @@ char *bi;
 }
 
 /*
- * Runs after config(), interrupts still masked.  Memory is capped and boards AmigaOS drivers
- * left interrupting are silenced: nothing would acknowledge them before
- * their own driver starts.
+ * Fast RAM outside the kernel's region (Zorro III RAM) gets
+ * pseudo-physical addresses from the region's end E up: supervisor page
+ * tables map them, noncacheable as the rest of the kernel's one to one
+ * view, and the transparent window shrinks to [0, E).  A cached view of
+ * the kernel's region above them holds the page array.  The tables sit
+ * at the top of the last extent, below the boot modules.  Set up with
+ * the MMU off; everything here is in .data.
+ */
+#define HR_NSEG		4
+#define HR_PTR		0x2000000UL	/* a pointer table's span */
+#define HR_LEAF		0x40000UL	/* a page table's span */
+#define HR_PG		0x1000UL
+#define HR_TOP		0x40000000UL	/* the low gigabyte */
+#define HR_LAST		0x800000UL	/* the least last extent */
+
+static unsigned long hr_e = 0;		/* E; 0: no extents */
+static unsigned long hr_ptbus = 0;	/* first pointer table, bus address */
+static unsigned long hr_alva = 0;	/* the cached view of the kernel's region */
+
+/* [lo, hi) meets [a, b) */
+#define HR_MEETS(lo, hi, a, b)	((lo) < (b) && (hi) > (a))
+
+/* fill the tables at t (bus) for [va, va + len) -> pa or hr_tobus(va); returns past them, 512-aligned */
+static unsigned long
+hr_tables(t, va, len, pa, bits)
+unsigned long t, va, len, pa, bits;
+{
+	unsigned long *ptr, *leaf, v, p0 = va & ~(HR_PTR - 1), l0 = va & ~(HR_LEAF - 1);
+	unsigned long np = (va + len - 1 - p0) / HR_PTR + 1, nl = (va + len - 1 - l0) / HR_LEAF + 1;
+
+	ptr = (unsigned long *)t;
+	leaf = (unsigned long *)(t + np * 512);
+	bzero((char *)ptr, np * 512 + nl * 256);
+	for (v = l0; v < va + len; v += HR_LEAF, leaf += 64)
+		ptr[(v - p0) / HR_LEAF] = (unsigned long)leaf | 2;
+	leaf = (unsigned long *)(t + np * 512);
+	for (v = va; v < va + len; v += HR_PG)
+		leaf[(v - l0) / HR_PG] = (pa ? pa + (v - va) : hr_tobus(v)) | bits;
+	return (t + np * 512 + nl * 256 + 511) & ~511UL;
+}
+
+static void
+highram()
+{
+	unsigned long e = MAINSTORE + VSIZOFMEM, lo, hi, tot = 0, a, k, t, sz;
+	unsigned long sb[HR_NSEG], ss[HR_NSEG];
+	char *m;
+	int i, j, ns = 0;
+
+	if (e < 0x1000000 || (e & (e - 1)))
+		return;
+	for (i = 0, m = bootinfo + NAUTO * CDSIZE; i < 16; i++, m += 32) {
+		lo = L(m + 20);
+		hi = L(m + 24) & ~(HR_PG - 1);
+		if (hi <= lo || (W(m + 14) & 2) || lo < e)
+			continue;
+		if (ns == HR_NSEG)
+			break;
+		for (j = ns++; j > 0 && sb[j - 1] > lo; j--) {
+			sb[j] = sb[j - 1];
+			ss[j] = ss[j - 1];
+		}
+		sb[j] = lo;
+		ss[j] = hi - lo;
+		tot += hi - lo;
+	}
+	/* the last extent holds the boot modules and the tables */
+	if (ns == 0 || ss[ns - 1] < HR_LAST)
+		return;
+	a = (e + tot + HR_PTR - 1) & ~(HR_PTR - 1);
+	if (e + tot < e || a + VSIZOFMEM > HR_TOP || a + VSIZOFMEM < a)
+		return;
+	/* nothing else decodes the pseudo range or the cached view */
+	for (i = 0, m = bootinfo + NAUTO * CDSIZE; i < 16; i++, m += 32)
+		if (L(m + 24) && HR_MEETS(L(m + 20), L(m + 24), e, a + VSIZOFMEM))
+			return;
+	for (i = 0, m = bootinfo; i < NAUTO; i++, m += CDSIZE)
+		if (L(m + 36) && HR_MEETS(L(m + 32), L(m + 32) + L(m + 36), e, a + VSIZOFMEM))
+			return;
+	for (i = 0, lo = e; i < ns; lo += ss[i++]) {
+		hr_seg[i * 3] = lo;
+		hr_seg[i * 3 + 1] = sb[i];
+		hr_seg[i * 3 + 2] = ss[i];
+		if (sb[i] < hr_blo)
+			hr_blo = sb[i];
+		if (sb[i] + ss[i] > hr_bhi)
+			hr_bhi = sb[i] + ss[i];
+	}
+	hr_plo = e;
+	hr_phi = e + tot;
+	hr_n = ns;
+	/* boot modules, then the tables, at the top of the last extent */
+	lo = sb[ns - 1];
+	hi = lo + ss[ns - 1];
+	k = dlm_bootpack(lo, hi, 1) & ~(HR_PG - 1);
+	sz = ((e + tot - 1) / HR_PTR - e / HR_PTR + 1) * 512 + ((e + tot - 1) / HR_LEAF - e / HR_LEAF + 1) * 256 +
+	    ((a + VSIZOFMEM - 1) / HR_PTR - a / HR_PTR + 1) * 512 + ((a + VSIZOFMEM - 1) / HR_LEAF - a / HR_LEAF + 1) * 256 + 256;
+	t = (k - sz) & ~(HR_PG - 1);
+	hr_ptbus = t;
+	/* supervisor, noncacheable, used, modified, resident */
+	t = hr_tables(t, e, tot, 0UL, 0xF9UL);
+	/* supervisor, used, modified, resident, the cache mode of RAM */
+	(void)hr_tables(t, a, VSIZOFMEM, MAINSTORE, 0x99UL | hat_cm_ram);
+	dlm_bootrebase(lo, hi, hr_tokern(lo) - lo);
+	kh_alias = a - MAINSTORE;
+	hr_alva = a;
+	hr_e = e;
+	VSIZOFMEM = hr_tokern(hr_ptbus) - MAINSTORE;
+}
+
+/*
+ * MMU on, before the VM starts: the root's entries for the pseudo range
+ * and the cached view, then the transparent windows narrowed to [0, E).
+ */
+void
+amiga_hrmap()
+{
+	unsigned long *root = (unsigned long *)kroot040, t, v, tt;
+	int i;
+
+	if (hr_e == 0)
+		return;
+	__asm__ __volatile__(".word 0xf478" : : : "memory");	/* cpusha dc */
+	t = hr_ptbus;
+	for (i = hr_e / HR_PTR; i < HR_TOP / HR_PTR; i++)
+		root[i] = 0;
+	for (v = hr_e & ~(HR_PTR - 1); v < hr_phi; v += HR_PTR, t += 512)
+		root[v / HR_PTR] = t | 2;
+	t = (t + ((hr_phi - 1) / HR_LEAF - hr_e / HR_LEAF + 1) * 256 + 511) & ~511UL;
+	for (v = hr_alva; v < hr_alva + hr_e - MAINSTORE; v += HR_PTR, t += 512)
+		root[v / HR_PTR] = t | 2;
+	tt = ((hr_e >> 24) - 1) << 16;
+	__asm__ __volatile__("mov.l %0,%%d0; .word 0x4e7b,0x0006"	/* movec %d0,%dtt0 */
+	    : : "g" (tt | 0xA060) : "d0");
+	__asm__ __volatile__("mov.l %0,%%d0; .word 0x4e7b,0x0004"	/* movec %d0,%itt0 */
+	    : : "g" (tt | 0xA000) : "d0");
+	__asm__ __volatile__(".word 0xf518" : : : "memory");	/* pflusha */
+}
+
+/*
+ * Runs after config(), interrupts still masked.  RAM outside the kernel's
+ * region joins it if it can, else memory is capped, and boards AmigaOS
+ * drivers left interrupting are silenced: nothing would acknowledge them
+ * before their own driver starts.
  */
 void
 amiga_quiesce()
@@ -142,11 +286,14 @@ amiga_quiesce()
 	long n;
 	unsigned long k;
 
-	if (VSIZOFMEM > MAXMEM)
-		VSIZOFMEM = MAXMEM;
-	k = dlm_bootpack((unsigned long)end, MAINSTORE + VSIZOFMEM, 1);
-	if (k < MAINSTORE + VSIZOFMEM)		/* boot modules above */
-		VSIZOFMEM = (k & ~0xFFFUL) - MAINSTORE;
+	highram();
+	if (hr_e == 0) {
+		if (VSIZOFMEM > MAXMEM)
+			VSIZOFMEM = MAXMEM;
+		k = dlm_bootpack((unsigned long)end, MAINSTORE + VSIZOFMEM, 1);
+		if (k < MAINSTORE + VSIZOFMEM)		/* boot modules above */
+			VSIZOFMEM = (k & ~0xFFFUL) - MAINSTORE;
+	}
 	if (autocon(0x21400064, 0, &a, &n)) {			/* CyberStorm SCSI */
 		((__volatile__ unsigned char *)0xF60000)[8] = 0x82;
 		b = (__volatile__ unsigned char *)0xF40000;
@@ -234,7 +381,7 @@ unsigned long *pap;
 	p = tblfree + skip;
 	tblfree = p + n;
 	tblleft -= skip + n;
-	*pap = (unsigned long)p;
+	*pap = hr_tobus((unsigned long)p);
 	return p;
 }
 
@@ -270,13 +417,17 @@ unsigned long pa, size;
 	return 0;
 }
 
-/* the low gigabyte and the top one are mapped one to one, noncacheable */
+/* the low gigabyte (to E with RAM above) and the top one are mapped one to one, noncacheable */
 char *
 plat_iomap(pa, size)
 unsigned long pa, size;
 {
-	if (pa < 0x40000000 && size <= 0x40000000 - pa || pa >= 0xC0000000)
+	unsigned long tt = hr_e ? hr_e : 0x40000000;
+
+	if (pa < tt && size <= tt - pa || pa >= 0xC0000000)
 		return (char *)pa;
+	if (pa < 0x40000000)
+		return dev_kvmap(pa, size, 0x40, 0);
 	if (pa < 0x80000000 && size <= 0x80000000 - pa)
 		return iowin(pa, size) ? 0 : (char *)(pa + IOWIN);
 	return dev_kvmap(pa, size, 0x40, 0);
@@ -377,6 +528,8 @@ unsigned long a;
 
 	if (a >= 0x40000000 && a < 0x80000000)
 		return -1;
+	if (hr_e && a >= hr_e && a < 0x40000000)
+		return a < hr_phi ? hr_phi - a : 0;
 	for (i = 0, m = bootinfo + NAUTO * CDSIZE; i < 16; i++, m += 32) {
 		lo = W(m + 14) & 2 ? 0 : L(m + 20);		/* chip RAM from 0 */
 		hi = L(m + 24);

@@ -1,0 +1,28 @@
+#!/bin/sh
+# S92dt -- CDE's run-time directories, ToolTalk types and dtterm's
+# terminfo, made when missing.
+[ -x /usr/dt/bin/dtsession ] || exit 0
+for d in /etc/dt /etc/dt/config /etc/dt/appconfig /etc/dt/appconfig/types \
+	/etc/dt/appconfig/types/C /etc/dt/appconfig/icons /etc/dt/appconfig/icons/C \
+	/var/dt /var/dt/appconfig /var/dt/appconfig/appmanager; do
+	[ -d $d ] || { mkdir $d; chmod 755 $d; }
+done
+[ -d /var/dt/tmp ] || { mkdir /var/dt/tmp; chmod 1777 /var/dt/tmp; }
+# ToolTalk looks the node name up and registers with rpcbind
+n=`uname -n`
+awk '$1 !~ /^#/ { for (i = 2; i <= NF; i++) if ($i == n) f = 1 } END { if (f) exit 0; exit 1 }' \
+	n=$n /etc/inet/hosts || printf '127.0.0.1\t%s\n' $n >> /etc/inet/hosts
+ps -e | grep rpcbind > /dev/null || [ ! -x /usr/sbin/rpcbind ] ||
+	/usr/sbin/rpcbind > /dev/console 2>&1
+T=/usr/dt/appconfig/tttypes
+if [ ! -f $T/types.xdr ]; then
+	(cd $T/src && rm -f types.xdr .tt_lock &&
+	for p in dtfile dticon dtpad dtcm dtmail dtdbcache dtterm dtinfo; do
+		TTPATH=. /usr/dt/bin/tt_type_comp -sd user -m $p.ptype > /dev/null 2>&1
+		rm -f .tt_lock
+	done
+	[ -f types.xdr ] && mv types.xdr ../types.xdr && chmod 444 ../types.xdr)
+fi
+[ -f /usr/share/lib/terminfo/d/dtterm ] ||
+	(cd /var/tmp && tic /usr/dt/config/dtterm.ti > /dev/null 2>&1)
+exit 0

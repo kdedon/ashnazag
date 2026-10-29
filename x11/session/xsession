@@ -1,7 +1,7 @@
 #!/bin/sh
 # xsession -- the X session chooser and its sessions.
 #
-#   xsession [twm|xview|mac|tos|amiga|win|lisa|voyage200|console|cpm]
+#   xsession [twm|xview|cde|mac|tos|amiga|win|lisa|voyage200|console|cpm]
 #
 # Under xdm (no argument) it offers the installed sessions with the last
 # one, kept in $HOME/.xsession-choice, as the default: Return or 10 s
@@ -46,6 +46,7 @@ label() {
 	case $1 in
 	twm) echo "Desktop: twm" ;;
 	xview) echo "Desktop: XView (olvwm)" ;;
+	cde) echo "Desktop: CDE" ;;
 	mac) echo "Mac environment" ;;
 	tos) echo "TOS environment" ;;
 	amiga) echo "Amiga environment" ;;
@@ -60,8 +61,10 @@ label() {
 if [ -n "$choose" ]; then
 	list=twm
 	[ -x /usr/openwin/bin/olvwm ] && list="$list xview"
+	[ -x /usr/dt/bin/Xsession ] && list="$list cde"
 	list="$list $envs console $cpm"
 	last=`sed 1q $HOME/.xsession-choice 2> /dev/null`
+	[ -n "$last" ] || last=`sed -n 's/^SESSION=//p' /etc/default/x 2> /dev/null`
 	args=
 	for s in $list; do
 		args="$args $s"
@@ -129,6 +132,9 @@ xview)
 	xset +fp $OPENWINHOME/lib/fonts/misc/,$OPENWINHOME/lib/fonts/75dpi/
 	xterm -geometry 80x24+16+40 &
 	exec olvwm
+	;;
+cde)
+	exec /usr/dt/bin/Xsession
 	;;
 mac|tos|amiga|win|lisa|voyage200)
 	exec xdmenv $name

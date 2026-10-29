@@ -76,9 +76,15 @@ if [ -n "$APKG" ]; then
 	printf 'f /etc/inet/hosts 444 0 3 %s\nd /usr/local 755 0 3\nd /usr/local/bin 755 0 3\n' \
 		"$X11W/xpkgs/hosts" >> "$R/root.manifest"
 fi
-if [ "$BOOTX" = 1 ]; then
-	sed 's/^BOOT=.*/BOOT=xdm/' "$X11W/pkg/xdm/default-x" > "$R/default-x"
+cde=; case " $XPKGS " in *" cde "*) cde=1 ;; esac; bx=; [ "$BOOTX" = 1 ] && bx=1
+if [ "$BOOTX" = 1 ] || [ -n "$cde" ]; then
+	# with CDE, startx and xsession default to it
+	sed "${bx:+s/^BOOT=.*/BOOT=xdm/}" "$X11W/pkg/xdm/default-x" | { [ -z "$cde" ] && cat || { grep -v '^SESSION='; echo SESSION=cde; }; } > "$R/default-x"
 	echo "f /etc/default/x 644 0 3 default-x" >> "$R/root.manifest"
+fi
+if [ -n "$cde" ]; then
+	printf '#!/bin/sh\nexec /usr/dt/bin/Xsession\n' > "$R/xinitrc"
+	echo "f /usr/x11r6/lib/X11/xinit/xinitrc 644 0 3 xinitrc" >> "$R/root.manifest"
 fi
 : "${AMIX_TAPE:?AMIX_TAPE: tape segments 13 and 14}"
 DSSOURCE=${DSSOURCE:-$AUX/kernel/mac/display} AMIX_TAPE=$AMIX_TAPE ROOTMB=${ROOTMB:-96} nice -n 19 sh "$R/mkdiskimage.sh" "$KERNEL" "$OUT"

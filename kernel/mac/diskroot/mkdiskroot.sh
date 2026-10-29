@@ -38,7 +38,7 @@ done
 # network tools
 rm -rf "$B/net07"; mkdir -p "$B/net07"
 (cd "$B/net07" && cpio -idm --no-absolute-filenames --quiet \
-	usr/sbin/ping usr/sbin/route usr/sbin/arp usr/bin/netstat < ../tape/07)
+	usr/sbin/ping usr/sbin/route usr/sbin/arp usr/bin/netstat usr/sbin/rpcbind < ../tape/07)
 
 [ -f "$KERNEL" ] || { echo "[FAIL] no kernel $KERNEL"; exit 1; }
 cp "$KERNEL" "$B/unix"

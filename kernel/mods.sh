@@ -196,6 +196,7 @@ amigasrcs() {
 	opci)	echo "$A/opci/opci.c $A/mod/opci/opcimod.c" ;;
 	pci)	echo "$A/pci/pcidev.c" ;;
 	zz9000)	echo "$A/zz9000/zz9000.c $A/zz9000/zzds.c $A/mod/zz9000/zz9000mod.c" ;;
+	mistrtg)	echo "$A/mistrtg/mistrtg.c $A/mod/mistrtg/mistrtgmod.c" ;;
 	floppy)	echo "$A/floppy/flsvc.c" ;;
 	ne|xsurf)	echo "$K/atari/netusbee/nuchip.c $K/atari/netusbee/nudlpi.c $A/mod/ne/nemod.c" ;;
 	voodoo3)	echo "$A/voodoo3/v3ds.c $A/mod/voodoo3/v3mod.c" ;;
@@ -205,6 +206,7 @@ amigasrcs() {
 		    "$K/drm/radeon_mem.c $A/mod/radeon/radeonmod.c" ;;
 	v3bars)	echo "$A/test/v3bars.c" ;;
 	bigram)	echo "$A/bigram/bigram.c" ;;
+	paula)	echo "$A/paula/paula.c $A/paula/paulamod.c" ;;
 	esac
 }
 amiga() {
@@ -212,7 +214,7 @@ amiga() {
 	[ -z "$KERNEL" ] || grep -qx dlm_cacheflush "$O/exports" ||
 		{ echo "mods.sh: $KERNEL has no DLM" >&2; exit 1; }
 	IDE=${GAYLE_IDE:-$AUX/ref/amix-gayle-ide}
-	for m in amilib opci pci ne xsurf zz9000 voodoo3 tdfx radeonds radeon floppy v3bars bigram amigaide ncr770; do	# each after the module it depends on
+	for m in amilib opci pci ne xsurf mistrtg zz9000 voodoo3 tdfx radeonds radeon floppy v3bars bigram paula amigaide ncr770; do	# each after the module it depends on
 		want $m || continue
 		[ $m != amigaide ] || [ -f "$IDE/src/ide.c" ] || { echo "[skip] amigaide: no $IDE"; [ -z "$ONLY" ] || exit 1; continue; }
 		CC="$KC -fno-common -Wall -Wno-comment"
@@ -226,6 +228,7 @@ amiga() {
 			case $c in */zz9000/zz9000.c) cc=$(echo "$CC" | sed 's/ -Wall//') ;; esac	# upstream, as it is
 			case $m in amigaide|ncr770) cc="$(echo "$cc" | sed 's/ -Wall//') -m68040 -I$K/include/amiga/alien" ;; esac
 			case $c in */ide.c) cc="$cc -Dint2_tbl=ide_int2_tbl" ;; esac	# upstream, as it is
+			case $c in */paula/paula.c) cc="$cc -Daciaaintr=paula_aciaaintr" ;; esac	# upstream, as it is
 			[ $m != xsurf ] || cc=$(echo "$CC" | sed 's/ -DNU_PCI/ -DNU_XSURF/')
 			# ANSI templates, upstream warnings kept; __STDC__ 0 keeps the system headers' extensions
 			case $c in */drm/*) cc="$(echo "$CC" | sed 's/ -traditional//; s/ -Wall//') -D__STDC__=0 -DDS_AMIGA -I$K/mac/display" ;; esac

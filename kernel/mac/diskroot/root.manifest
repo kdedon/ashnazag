@@ -29,6 +29,7 @@ f /usr/sbin/ping	4555 0 3 build/net07/usr/sbin/ping
 f /usr/sbin/route	555 2 2 build/net07/usr/sbin/route
 f /usr/sbin/arp		2555 2 3 build/net07/usr/sbin/arp
 f /usr/bin/netstat	4555 0 3 build/net07/usr/bin/netstat
+f /usr/sbin/rpcbind	555 2 2 build/net07/usr/sbin/rpcbind
 
 # SCC printer port (the modem port is the console)
 c /dev/term/b	620 0 7 0 1

@@ -1,0 +1,8 @@
+PKG=cde
+NAME=CDE 2.2.4a - Common Desktop Environment
+ARCH=m68k
+VERSION=2.2.4a-1
+CATEGORY=x11
+CLASSES=none
+VENDOR=Ash Nazag
+DESC=The CDE desktop with Motif 2.3.8: dtwm with its front panel, dtterm, dtfile, dtpad, dtcalc, dtstyle, the help viewer. Start it with startx /usr/dt/bin/Xsession or pick CDE in xsession. Needs a 68040 or 68060. In /usr/dt.

@@ -1,0 +1,10 @@
+# sourced by Xsession: a held connection, so the server keeps the font
+# path; CDE's fonts and the ones its aliases name; Xlib's locale and
+# keysym databases
+/usr/dt/bin/xhold
+for d in C 75dpi 100dpi; do
+	/usr/X/bin/xset fp+ /usr/dt/config/xfonts/$d/ 2> /dev/null
+done
+XLOCALEDIR=/usr/dt/config/xlocale
+XKEYSYMDB=/usr/dt/config/XKeysymDB
+export XLOCALEDIR XKEYSYMDB

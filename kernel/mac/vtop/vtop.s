@@ -26,7 +26,7 @@ vtop:
 Lvt_kern:
 	movel	%fp@(8),%d0
 	cmpil	&0x40000000,%d0
-	bcsw	Lvt_ret
+	bcsw	Lvt_id
 	clrl	%sp@-
 	movel	%d0,%sp@-
 	jsr	vtop_orig		| kernel tables
@@ -35,6 +35,11 @@ Lvt_ret:
 	moveal	%d0,%a0
 	unlk	%fp
 	rts
+Lvt_id:
+	movel	%d0,%sp@-		| one to one: RAM above the kernel's is elsewhere
+	jsr	hr_tobus
+	addqw	&4,%sp
+	braw	Lvt_ret
 	.balign	4
 
 | prmapin(p, va, writing): /proc's kernel address for a locked user page,
@@ -44,6 +49,8 @@ prmapin:
 	movel	%sp@(4),%sp@-		| p
 	movel	%sp@(12),%sp@-		| va
 	jsr	vtop
+	movel	%d0,%sp@
+	jsr	hr_tokern
 	addqw	&8,%sp
 	movel	%d0,%d1
 	lsrl	&8,%d1

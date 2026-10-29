@@ -1,3 +1,4 @@
 # BOOT=xdm: graphical login on the screen; BOOT=console: text login.
 # Read at boot, or when the screen's xdm or getty is restarted.
+# SESSION: xsession's default until a user picks one (e.g. cde).
 BOOT=console

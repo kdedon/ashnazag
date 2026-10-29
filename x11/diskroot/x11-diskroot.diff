@@ -1,6 +1,6 @@
 --- a/kernel/mac/diskroot/root.manifest
 +++ b/kernel/mac/diskroot/root.manifest
-@@ -100,3 +100,72 @@
+@@ -106,3 +106,72 @@
  
  e /var/adm/utmp	644 0 2
  e /var/adm/utmpx 644 0 2

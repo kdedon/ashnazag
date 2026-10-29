@@ -1,5 +1,7 @@
+aciaaintr
 adb_dev
 adbkbd_setleds
+addupc_clk
 allocb
 AllocMem
 am_dsphys
@@ -19,6 +21,7 @@ as_fault
 as_map
 as_segat
 as_unmap
+audioinfo
 autocon
 availrmem
 availsmem
@@ -36,6 +39,7 @@ canput
 cantmask
 cdevcnt
 cdevsw
+clock_int
 closef
 cmn_err
 coffexec
@@ -142,6 +146,7 @@ ide_cpush
 ifstats
 int2_tbl
 issig
+kbintr
 kmem_alloc
 kmem_free
 kmem_zalloc
@@ -170,6 +175,7 @@ pages_base
 pages_pp_kernel
 pagezero
 panicstr
+parintr
 pause
 physmem
 pid_rele

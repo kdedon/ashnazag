@@ -32,6 +32,7 @@ extern page_t *pages;
 extern u_int pages_base;
 extern u_long *kptr040;
 extern struct seg kvseg, *segu;
+extern u_long hr_tobus();
 
 #define	KH_PG		4096
 #define	KH_NPG		1024			/* pages per chunk */
@@ -50,6 +51,9 @@ static struct kh_chunk kh_chunk[KH_MAX];
 static int kh_n;
 static int kh_wait;		/* sleepers in kmem_alloc */
 static u_long kh_base;
+
+/* a cached view of the RAM holding the page array, VA = PA + kh_alias; 0: none */
+u_long kh_alias = 0;
 
 /* first fit of n pages in c, or -1 */
 static int
@@ -123,7 +127,7 @@ kh_add()
 	c->c_free = KH_NPG;
 	/* 256-byte leaf tables of 64 entries */
 	for (i = 0; i < KH_SIZE / KH_PTSEG; i++)
-		pd[i] = (pt + i * 256) | 2;
+		pd[i] = hr_tobus(pt + i * 256) | 2;
 	flushmmu(0, 0);
 	kh_n++;
 	return c;
@@ -151,6 +155,8 @@ sptalloc(npages, mode, base, flag)
 	caddr_t va;
 	int i, s;
 
+	if (base && pages == 0 && kh_alias)
+		return (caddr_t)(base * KH_PG + kh_alias);
 	if (base || npages <= 0 || npages > KH_NPG)
 		return __vm_sptalloc(npages, mode, base, flag);
 	s = splhi();

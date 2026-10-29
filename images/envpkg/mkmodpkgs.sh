@@ -12,7 +12,7 @@
 #            amigaide ncr770; atari ataide scsi sd)
 #   modS     modules no other package holds
 # Amiga cards: amv3d (voodoo3 tdfx), amradeon (radeonds radeon), amzz9000,
-#   amopci (opci pci), amfloppy, ambigram, amilib, amnet (ne xsurf)
+#   ammistrtg, amopci (opci pci), amfloppy, ambigram, amilib, amnet (ne xsurf)
 # Atari: atnetS (aen dpn), atsndS (dmasnd auxsnd)
 # Modules go to /usr/aux/lib/mod.d (mac), mod.amiga, mod.atari (030) or
 # mod.atari060.  Missing modules are skipped.  The environment modules
@@ -72,6 +72,7 @@ for t in mac amiga atari030 atari060; do
 		pack $t $dir amv3d "Voodoo3/Banshee display and 3D (tdfx DRI)" amopci voodoo3 tdfx
 		pack $t $dir amradeon "Radeon display and 3D" amopci radeonds radeon
 		pack $t $dir amzz9000 "MNT ZZ9000 display" "" zz9000
+		pack $t $dir ammistrtg "MiSTer RTG display" "" mistrtg
 		pack $t $dir amfloppy "Amiga floppy drive service" "" floppy
 		pack $t $dir ambigram "Zorro III RAM above 1 GB as swap" "" bigram
 		pack $t $dir amnet "Ethernet: NE2000 on PCI, X-Surf" "amopci amilib" ne xsurf ;;
